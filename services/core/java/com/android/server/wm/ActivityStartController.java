@@ -484,7 +484,8 @@ public class ActivityStartController {
                         }
                     }
                 } finally {
-                    mService.mWindowManager.mStartingSurfaceController.endDeferAddStartingWindow();
+                    mService.mWindowManager.mStartingSurfaceController.endDeferAddStartingWindow(
+                            options != null ? options.getOriginalOptions() : null);
                     mService.continueWindowLayout();
                 }
             }
@@ -522,8 +523,8 @@ public class ActivityStartController {
     }
 
     void registerRemoteAnimationForNextActivityStart(String packageName,
-            RemoteAnimationAdapter adapter) {
-        mPendingRemoteAnimationRegistry.addPendingAnimation(packageName, adapter);
+            RemoteAnimationAdapter adapter, @Nullable IBinder launchCookie) {
+        mPendingRemoteAnimationRegistry.addPendingAnimation(packageName, adapter, launchCookie);
     }
 
     PendingRemoteAnimationRegistry getPendingRemoteAnimationRegistry() {
@@ -543,10 +544,8 @@ public class ActivityStartController {
 
         if (mLastHomeActivityStartRecord != null && (!dumpPackagePresent
                 || dumpPackage.equals(mLastHomeActivityStartRecord.packageName))) {
-            if (!dumped) {
-                dumped = true;
-                dumpLastHomeActivityStartResult(pw, prefix);
-            }
+            dumped = true;
+            dumpLastHomeActivityStartResult(pw, prefix);
             pw.print(prefix);
             pw.println("mLastHomeActivityStartRecord:");
             mLastHomeActivityStartRecord.dump(pw, prefix + "  ", true /* dumpAll */);
@@ -564,6 +563,7 @@ public class ActivityStartController {
                     dumpLastHomeActivityStartResult(pw, prefix);
                 }
                 pw.print(prefix);
+                pw.println("mLastStarter:");
                 mLastStarter.dump(pw, prefix + "  ");
 
                 if (dumpPackagePresent) {

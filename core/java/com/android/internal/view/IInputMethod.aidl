@@ -37,7 +37,7 @@ import com.android.internal.view.InlineSuggestionsRequestInfo;
  */
 oneway interface IInputMethod {
     void initializeInternal(IBinder token, IInputMethodPrivilegedOperations privOps,
-             int configChanges, boolean stylusHwSupported);
+             int configChanges, boolean stylusHwSupported, int navigationBarFlags);
 
     void onCreateInlineSuggestionsRequest(in InlineSuggestionsRequestInfo requestInfo,
             in IInlineSuggestionsRequestCallback cb);
@@ -47,7 +47,9 @@ oneway interface IInputMethod {
     void unbindInput();
 
     void startInput(in IBinder startInputToken, in IInputContext inputContext,
-            in EditorInfo attribute, boolean restarting);
+            in EditorInfo attribute, boolean restarting, int navigationBarFlags);
+
+    void onNavButtonFlagsChanged(int navButtonFlags);
 
     void createSession(in InputChannel channel, IInputSessionCallback callback);
 
@@ -61,5 +63,10 @@ oneway interface IInputMethod {
 
     void canStartStylusHandwriting(int requestId);
 
-    void startStylusHandwriting(in InputChannel channel, in List<MotionEvent> events);
+    void startStylusHandwriting(int requestId, in InputChannel channel,
+            in List<MotionEvent> events);
+
+    void initInkWindow();
+
+    void finishStylusHandwriting();
 }

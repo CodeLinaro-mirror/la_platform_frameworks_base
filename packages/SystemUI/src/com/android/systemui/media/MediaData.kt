@@ -20,6 +20,7 @@ import android.app.PendingIntent
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.Icon
 import android.media.session.MediaSession
+import com.android.systemui.R
 
 /** State of a media view. */
 data class MediaData(
@@ -149,23 +150,44 @@ data class MediaButton(
     /**
      * First custom action space
      */
-    var startCustom: MediaAction? = null,
+    var custom0: MediaAction? = null,
     /**
-     * Last custom action space
+     * Second custom action space
      */
-    var endCustom: MediaAction? = null
-)
+    var custom1: MediaAction? = null
+) {
+    fun getActionById(id: Int): MediaAction? {
+        return when (id) {
+            R.id.actionPlayPause -> playOrPause
+            R.id.actionNext -> nextOrCustom
+            R.id.actionPrev -> prevOrCustom
+            R.id.action0 -> custom0
+            R.id.action1 -> custom1
+            else -> null
+        }
+    }
+}
 
 /** State of a media action. */
 data class MediaAction(
-    val icon: Icon?,
+    val icon: Drawable?,
     val action: Runnable?,
-    val contentDescription: CharSequence?
+    val contentDescription: CharSequence?,
+    val background: Drawable?
 )
 
 /** State of the media device. */
-data class MediaDeviceData(
+data class MediaDeviceData
+@JvmOverloads constructor(
+    /** Whether or not to enable the chip */
     val enabled: Boolean,
+
+    /** Device icon to show in the chip */
     val icon: Drawable?,
-    val name: String?
+
+    /** Device display name */
+    val name: CharSequence?,
+
+    /** Optional intent to override the default output switcher for this control */
+    val intent: PendingIntent? = null
 )

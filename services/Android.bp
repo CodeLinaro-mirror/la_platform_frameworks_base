@@ -16,6 +16,15 @@ java_defaults {
             // "-Xep:AndroidFrameworkBinderIdentity:ERROR",
             "-Xep:AndroidFrameworkCompatChange:ERROR",
             // "-Xep:AndroidFrameworkUid:ERROR",
+            "-Xep:SelfEquals:ERROR",
+            "-Xep:NullTernary:ERROR",
+            "-Xep:TryFailThrowable:ERROR",
+            "-Xep:HashtableContains:ERROR",
+            "-Xep:FormatString:ERROR",
+            "-Xep:ArrayHashCode:ERROR",
+            "-Xep:SelfAssignment:ERROR",
+            "-Xep:ArrayEquals:ERROR",
+            "-Xep:IdentityBinaryExpression:ERROR",
             // NOTE: only enable to generate local patchfiles
             // "-XepPatchChecks:refaster:frameworks/base/errorprone/refaster/EfficientXml.java.refaster",
             // "-XepPatchLocation:/tmp/refaster/",
@@ -45,7 +54,9 @@ system_optimized_java_defaults {
         SYSTEM_OPTIMIZE_JAVA: {
             optimize: {
                 enabled: true,
-                optimize: true,
+                // TODO(b/210510433): Enable optimizations after improving
+                // retracing infra.
+                optimize: false,
                 shrink: true,
                 proguard_flags_files: ["proguard.flags"],
             },
@@ -77,8 +88,8 @@ filegroup {
         ":services.appwidget-sources",
         ":services.autofill-sources",
         ":services.backup-sources",
-        ":services.bluetooth-sources", // TODO(b/214988855) : Remove once apex/service-bluetooth jar is ready
         ":backuplib-sources",
+        ":services.cloudsearch-sources",
         ":services.companion-sources",
         ":services.contentcapture-sources",
         ":services.contentsuggestions-sources",
@@ -94,13 +105,13 @@ filegroup {
         ":services.selectiontoolbar-sources",
         ":services.smartspace-sources",
         ":services.speech-sources",
-        ":services.startop.iorap-sources",
         ":services.systemcaptions-sources",
         ":services.translation-sources",
         ":services.texttospeech-sources",
         ":services.usage-sources",
         ":services.usb-sources",
         ":services.voiceinteraction-sources",
+        ":services.wallpapereffectsgeneration-sources",
         ":services.wifi-sources",
     ],
     visibility: ["//visibility:private"],
@@ -133,6 +144,7 @@ java_library {
         "services.appwidget",
         "services.autofill",
         "services.backup",
+        "services.cloudsearch",
         "services.companion",
         "services.contentcapture",
         "services.contentsuggestions",
@@ -149,13 +161,13 @@ java_library {
         "services.selectiontoolbar",
         "services.smartspace",
         "services.speech",
-        "services.startop",
         "services.systemcaptions",
         "services.translation",
         "services.texttospeech",
         "services.usage",
         "services.usb",
         "services.voiceinteraction",
+        "services.wallpapereffectsgeneration",
         "services.wifi",
         "service-blobstore",
         "service-jobscheduler",
@@ -179,10 +191,6 @@ cc_library_shared {
     name: "libandroid_servers",
     defaults: ["libservices.core-libs"],
     whole_static_libs: ["libservices.core"],
-    required: [
-        // TODO: remove after NetworkStatsService is moved to the mainline module.
-        "libcom_android_net_module_util_jni",
-    ],
 }
 
 platform_compat_config {
@@ -205,7 +213,6 @@ stubs_defaults {
         " --hide-annotation android.annotation.Hide" +
         " --hide InternalClasses" + // com.android.* classes are okay in this interface
         // TODO: remove the --hide options below
-        " --hide-package com.google.android.startop.iorap" +
         " --hide DeprecationMismatch" +
         " --hide HiddenTypedefConstant",
     visibility: ["//frameworks/base:__subpackages__"],

@@ -50,12 +50,12 @@ public class DataServiceCallback {
      */
     @Retention(RetentionPolicy.SOURCE)
     @IntDef({RESULT_SUCCESS, RESULT_ERROR_UNSUPPORTED, RESULT_ERROR_INVALID_ARG, RESULT_ERROR_BUSY,
-            RESULT_ERROR_ILLEGAL_STATE})
+            RESULT_ERROR_ILLEGAL_STATE, RESULT_ERROR_TEMPORARILY_UNAVAILABLE})
     public @interface ResultCode {}
 
     /** Request is completed successfully */
     public static final int RESULT_SUCCESS              = 0;
-    /** Request is not support */
+    /** Request is not supported */
     public static final int RESULT_ERROR_UNSUPPORTED    = 1;
     /** Request contains invalid arguments */
     public static final int RESULT_ERROR_INVALID_ARG    = 2;
@@ -261,9 +261,10 @@ public class DataServiceCallback {
     }
 
     /**
-     * Unthrottles the APN on the current transport.  There is no matching "APN throttle" method.
-     * Instead, the APN is throttled when {@link IDataService#setupDataCall} fails within
-     * the time specified by {@link DataCallResponse#getRetryDurationMillis}.
+     * Unthrottles the APN on the current transport.
+     * The APN is throttled when {@link IDataService#setupDataCall} fails within
+     * the time specified by {@link DataCallResponse#getRetryDurationMillis} and will remain
+     * throttled until this method is called.
      * <p/>
      * see: {@link DataCallResponse#getRetryDurationMillis}
      *
@@ -284,9 +285,9 @@ public class DataServiceCallback {
 
     /**
      * Unthrottles the DataProfile on the current transport.
-     * There is no matching "DataProfile throttle" method.
-     * Instead, the DataProfile is throttled when {@link IDataService#setupDataCall} fails within
-     * the time specified by {@link DataCallResponse#getRetryDurationMillis}.
+     * The DataProfile is throttled when {@link IDataService#setupDataCall} fails within
+     * the time specified by {@link DataCallResponse#getRetryDurationMillis} and will remain
+     * throttled until this method is called.
      * <p/>
      * see: {@link DataCallResponse#getRetryDurationMillis}
      *

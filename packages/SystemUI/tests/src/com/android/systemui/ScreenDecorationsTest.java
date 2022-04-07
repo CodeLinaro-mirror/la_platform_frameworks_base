@@ -14,7 +14,6 @@
 
 package com.android.systemui;
 
-import static android.view.Display.DEFAULT_DISPLAY;
 import static android.view.DisplayCutout.BOUNDS_POSITION_BOTTOM;
 import static android.view.DisplayCutout.BOUNDS_POSITION_LEFT;
 import static android.view.DisplayCutout.BOUNDS_POSITION_LENGTH;
@@ -22,7 +21,7 @@ import static android.view.DisplayCutout.BOUNDS_POSITION_RIGHT;
 import static android.view.DisplayCutout.BOUNDS_POSITION_TOP;
 import static android.view.WindowManager.LayoutParams.PRIVATE_FLAG_IS_ROUNDED_CORNERS_OVERLAY;
 
-import static com.android.systemui.ScreenDecorations.rectsToRegion;
+import static com.android.dx.mockito.inline.extended.ExtendedMockito.spyOn;
 
 import static com.google.common.truth.Truth.assertThat;
 
@@ -32,7 +31,6 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isA;
 import static org.mockito.Mockito.atLeastOnce;
@@ -45,27 +43,37 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import android.annotation.IdRes;
 import android.content.res.Configuration;
 import android.content.res.TypedArray;
 import android.graphics.Insets;
-import android.graphics.Point;
+import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.graphics.drawable.VectorDrawable;
 import android.hardware.display.DisplayManager;
+import android.hardware.graphics.common.DisplayDecorationSupport;
 import android.os.Handler;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
 import android.testing.TestableLooper.RunWithLooper;
 import android.util.RotationUtils;
+import android.util.Size;
 import android.view.Display;
 import android.view.DisplayCutout;
 import android.view.View;
 import android.view.WindowManager;
 import android.view.WindowMetrics;
 
+import androidx.annotation.Nullable;
 import androidx.test.filters.SmallTest;
 
 import com.android.systemui.broadcast.BroadcastDispatcher;
+import com.android.systemui.decor.CornerDecorProvider;
+import com.android.systemui.decor.DecorProvider;
+import com.android.systemui.decor.OverlayWindow;
+import com.android.systemui.decor.PrivacyDotCornerDecorProviderImpl;
+import com.android.systemui.decor.PrivacyDotDecorProviderFactory;
+import com.android.systemui.decor.RoundedCornerResDelegate;
 import com.android.systemui.settings.UserTracker;
 import com.android.systemui.statusbar.events.PrivacyDotViewController;
 import com.android.systemui.tuner.TunerService;
@@ -81,14 +89,12 @@ import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
-import java.util.Collections;
+import java.util.ArrayList;
 
 @RunWithLooper
 @RunWith(AndroidTestingRunner.class)
 @SmallTest
 public class ScreenDecorationsTest extends SysuiTestCase {
-
-    private static final Rect ZERO_RECT = new Rect();
 
     private ScreenDecorations mScreenDecorations;
     private WindowManager mWindowManager;
@@ -96,6 +102,9 @@ public class ScreenDecorationsTest extends SysuiTestCase {
     private SecureSettings mSecureSettings;
     private final FakeExecutor mExecutor = new FakeExecutor(new FakeSystemClock());
     private FakeThreadFactory mThreadFactory;
+    private ArrayList<DecorProvider> mDecorProviders;
+    @Mock
+    private Display mDisplay;
     @Mock
     private TunerService mTunerService;
     @Mock
@@ -106,6 +115,16 @@ public class ScreenDecorationsTest extends SysuiTestCase {
     private PrivacyDotViewController mDotViewController;
     @Mock
     private TypedArray mMockTypedArray;
+    @Mock
+    private PrivacyDotDecorProviderFactory mPrivacyDotDecorProviderFactory;
+    @Mock
+    private CornerDecorProvider mPrivacyDotTopLeftDecorProvider;
+    @Mock
+    private CornerDecorProvider mPrivacyDotTopRightDecorProvider;
+    @Mock
+    private CornerDecorProvider mPrivacyDotBottomLeftDecorProvider;
+    @Mock
+    private CornerDecorProvider mPrivacyDotBottomRightDecorProvider;
 
     @Before
     public void setup() {
@@ -121,17 +140,42 @@ public class ScreenDecorationsTest extends SysuiTestCase {
                 .getMaximumWindowMetrics();
         when(mWindowManager.getMaximumWindowMetrics()).thenReturn(metrics);
         mContext.addMockSystemService(WindowManager.class, mWindowManager);
-
         mDisplayManager = mock(DisplayManager.class);
-        Display display = mContext.getSystemService(DisplayManager.class)
-                .getDisplay(DEFAULT_DISPLAY);
-        when(mDisplayManager.getDisplay(anyInt())).thenReturn(display);
         mContext.addMockSystemService(DisplayManager.class, mDisplayManager);
+
+        spyOn(mContext);
+        when(mContext.getDisplay()).thenReturn(mDisplay);
+        // Not support hwc layer by default
+        doReturn(null).when(mDisplay).getDisplayDecorationSupport();
+
         when(mMockTypedArray.length()).thenReturn(0);
+        mPrivacyDotTopLeftDecorProvider = spy(new PrivacyDotCornerDecorProviderImpl(
+                R.id.privacy_dot_top_left_container,
+                DisplayCutout.BOUNDS_POSITION_TOP,
+                DisplayCutout.BOUNDS_POSITION_LEFT,
+                R.layout.privacy_dot_top_left));
+
+        mPrivacyDotTopRightDecorProvider = spy(new PrivacyDotCornerDecorProviderImpl(
+                R.id.privacy_dot_top_right_container,
+                DisplayCutout.BOUNDS_POSITION_TOP,
+                DisplayCutout.BOUNDS_POSITION_RIGHT,
+                R.layout.privacy_dot_top_right));
+
+        mPrivacyDotBottomLeftDecorProvider = spy(new PrivacyDotCornerDecorProviderImpl(
+                R.id.privacy_dot_bottom_left_container,
+                DisplayCutout.BOUNDS_POSITION_BOTTOM,
+                DisplayCutout.BOUNDS_POSITION_LEFT,
+                R.layout.privacy_dot_bottom_left));
+
+        mPrivacyDotBottomRightDecorProvider = spy(new PrivacyDotCornerDecorProviderImpl(
+                R.id.privacy_dot_bottom_right_container,
+                DisplayCutout.BOUNDS_POSITION_BOTTOM,
+                DisplayCutout.BOUNDS_POSITION_RIGHT,
+                R.layout.privacy_dot_bottom_right));
 
         mScreenDecorations = spy(new ScreenDecorations(mContext, mExecutor, mSecureSettings,
                 mBroadcastDispatcher, mTunerService, mUserTracker, mDotViewController,
-                mThreadFactory) {
+                mThreadFactory, mPrivacyDotDecorProviderFactory) {
             @Override
             public void start() {
                 super.start();
@@ -157,7 +201,7 @@ public class ScreenDecorationsTest extends SysuiTestCase {
     private void verifyRoundedCornerViewsVisibility(
             @DisplayCutout.BoundsPosition final int overlayId,
             @View.Visibility final int visibility) {
-        final View overlay = mScreenDecorations.mOverlays[overlayId];
+        final View overlay = mScreenDecorations.mOverlays[overlayId].getRootView();
         final View left = overlay.findViewById(R.id.left);
         final View right = overlay.findViewById(R.id.right);
         assertNotNull(left);
@@ -166,23 +210,42 @@ public class ScreenDecorationsTest extends SysuiTestCase {
         assertThat(right.getVisibility()).isEqualTo(visibility);
     }
 
+    @Nullable
+    private View findViewFromOverlays(@IdRes int id) {
+        for (OverlayWindow overlay: mScreenDecorations.mOverlays) {
+            if (overlay == null) {
+                continue;
+            }
+
+            View view = overlay.getRootView().findViewById(id);
+            if (view != null) {
+                return view;
+            }
+        }
+        return null;
+    }
+
     private void verifyTopDotViewsNullable(final boolean isAssertNull) {
+        View tl = findViewFromOverlays(R.id.privacy_dot_top_left_container);
+        View tr = findViewFromOverlays(R.id.privacy_dot_top_right_container);
         if (isAssertNull) {
-            assertNull(mScreenDecorations.mTopLeftDot);
-            assertNull(mScreenDecorations.mTopRightDot);
+            assertNull(tl);
+            assertNull(tr);
         } else {
-            assertNotNull(mScreenDecorations.mTopLeftDot);
-            assertNotNull(mScreenDecorations.mTopRightDot);
+            assertNotNull(tl);
+            assertNotNull(tr);
         }
     }
 
     private void verifyBottomDotViewsNullable(final boolean isAssertNull) {
+        View bl = findViewFromOverlays(R.id.privacy_dot_bottom_left_container);
+        View br = findViewFromOverlays(R.id.privacy_dot_bottom_right_container);
         if (isAssertNull) {
-            assertNull(mScreenDecorations.mBottomLeftDot);
-            assertNull(mScreenDecorations.mBottomRightDot);
+            assertNull(bl);
+            assertNull(br);
         } else {
-            assertNotNull(mScreenDecorations.mBottomLeftDot);
-            assertNotNull(mScreenDecorations.mBottomRightDot);
+            assertNotNull(bl);
+            assertNotNull(br);
         }
     }
 
@@ -193,14 +256,18 @@ public class ScreenDecorationsTest extends SysuiTestCase {
 
     private void verifyTopDotViewsVisibility(@View.Visibility final int visibility) {
         verifyTopDotViewsNullable(false);
-        assertThat(mScreenDecorations.mTopLeftDot.getVisibility()).isEqualTo(visibility);
-        assertThat(mScreenDecorations.mTopRightDot.getVisibility()).isEqualTo(visibility);
+        View tl = findViewFromOverlays(R.id.privacy_dot_top_left_container);
+        View tr = findViewFromOverlays(R.id.privacy_dot_top_right_container);
+        assertThat(tl.getVisibility()).isEqualTo(visibility);
+        assertThat(tr.getVisibility()).isEqualTo(visibility);
     }
 
     private void verifyBottomDotViewsVisibility(@View.Visibility final int visibility) {
         verifyBottomDotViewsNullable(false);
-        assertThat(mScreenDecorations.mBottomLeftDot.getVisibility()).isEqualTo(visibility);
-        assertThat(mScreenDecorations.mBottomRightDot.getVisibility()).isEqualTo(visibility);
+        View bl = findViewFromOverlays(R.id.privacy_dot_bottom_left_container);
+        View br = findViewFromOverlays(R.id.privacy_dot_bottom_right_container);
+        assertThat(bl.getVisibility()).isEqualTo(visibility);
+        assertThat(br.getVisibility()).isEqualTo(visibility);
     }
 
     private void verifyDotViewsVisibility(@View.Visibility final int visibility) {
@@ -219,32 +286,32 @@ public class ScreenDecorationsTest extends SysuiTestCase {
 
         if (left) {
             assertNotNull(mScreenDecorations.mOverlays[BOUNDS_POSITION_LEFT]);
-            verify(mWindowManager, times(1))
-                    .addView(eq(mScreenDecorations.mOverlays[BOUNDS_POSITION_LEFT]), any());
+            verify(mWindowManager, times(1)).addView(
+                    eq(mScreenDecorations.mOverlays[BOUNDS_POSITION_LEFT].getRootView()), any());
         } else {
             assertNull(mScreenDecorations.mOverlays[BOUNDS_POSITION_LEFT]);
         }
 
         if (top) {
             assertNotNull(mScreenDecorations.mOverlays[BOUNDS_POSITION_TOP]);
-            verify(mWindowManager, times(1))
-                    .addView(eq(mScreenDecorations.mOverlays[BOUNDS_POSITION_TOP]), any());
+            verify(mWindowManager, times(1)).addView(
+                    eq(mScreenDecorations.mOverlays[BOUNDS_POSITION_TOP].getRootView()), any());
         } else {
             assertNull(mScreenDecorations.mOverlays[BOUNDS_POSITION_TOP]);
         }
 
         if (right) {
             assertNotNull(mScreenDecorations.mOverlays[BOUNDS_POSITION_RIGHT]);
-            verify(mWindowManager, times(1))
-                    .addView(eq(mScreenDecorations.mOverlays[BOUNDS_POSITION_RIGHT]), any());
+            verify(mWindowManager, times(1)).addView(
+                    eq(mScreenDecorations.mOverlays[BOUNDS_POSITION_RIGHT].getRootView()), any());
         } else {
             assertNull(mScreenDecorations.mOverlays[BOUNDS_POSITION_RIGHT]);
         }
 
         if (bottom) {
             assertNotNull(mScreenDecorations.mOverlays[BOUNDS_POSITION_BOTTOM]);
-            verify(mWindowManager, times(1))
-                    .addView(eq(mScreenDecorations.mOverlays[BOUNDS_POSITION_BOTTOM]), any());
+            verify(mWindowManager, times(1)).addView(
+                    eq(mScreenDecorations.mOverlays[BOUNDS_POSITION_BOTTOM].getRootView()), any());
         } else {
             assertNull(mScreenDecorations.mOverlays[BOUNDS_POSITION_BOTTOM]);
         }
@@ -356,7 +423,7 @@ public class ScreenDecorationsTest extends SysuiTestCase {
 
     @Test
     public void testRoundingRadius_NoCutout() {
-        final Point testRadiusPoint = new Point(1, 1);
+        final Size testRadiusPoint = new Size(1, 1);
         setupResources(1 /* radius */, 1 /* radiusTop */, 1 /* radiusBottom */,
                 0 /* roundedPadding */, false /* multipleRadius */,
                 false /* fillCutout */, true /* privacyDot */);
@@ -365,9 +432,9 @@ public class ScreenDecorationsTest extends SysuiTestCase {
 
         mScreenDecorations.start();
         // Size of corner view should same as rounded_corner_radius{_top|_bottom}
-        assertThat(mScreenDecorations.mRoundedDefault).isEqualTo(testRadiusPoint);
-        assertThat(mScreenDecorations.mRoundedDefaultTop).isEqualTo(testRadiusPoint);
-        assertThat(mScreenDecorations.mRoundedDefaultBottom).isEqualTo(testRadiusPoint);
+        final RoundedCornerResDelegate resDelegate = mScreenDecorations.mRoundedCornerResDelegate;
+        assertThat(resDelegate.getTopRoundedSize()).isEqualTo(testRadiusPoint);
+        assertThat(resDelegate.getBottomRoundedSize()).isEqualTo(testRadiusPoint);
     }
 
     @Test
@@ -381,22 +448,22 @@ public class ScreenDecorationsTest extends SysuiTestCase {
         doReturn(null).when(mScreenDecorations).getCutout();
 
         mScreenDecorations.start();
-        View leftRoundedCorner =
-                mScreenDecorations.mOverlays[BOUNDS_POSITION_TOP].findViewById(R.id.left);
-        View rightRoundedCorner =
-                mScreenDecorations.mOverlays[BOUNDS_POSITION_TOP].findViewById(R.id.right);
+        View leftRoundedCorner = mScreenDecorations.mOverlays[BOUNDS_POSITION_TOP].getRootView()
+                .findViewById(R.id.left);
+        View rightRoundedCorner = mScreenDecorations.mOverlays[BOUNDS_POSITION_TOP].getRootView()
+                .findViewById(R.id.right);
         verify(mScreenDecorations, atLeastOnce())
-                .setSize(leftRoundedCorner, new Point(testTopRadius, testTopRadius));
+                .setSize(leftRoundedCorner, new Size(testTopRadius, testTopRadius));
         verify(mScreenDecorations, atLeastOnce())
-                .setSize(rightRoundedCorner, new Point(testTopRadius, testTopRadius));
-        leftRoundedCorner =
-                mScreenDecorations.mOverlays[BOUNDS_POSITION_BOTTOM].findViewById(R.id.left);
-        rightRoundedCorner =
-                mScreenDecorations.mOverlays[BOUNDS_POSITION_BOTTOM].findViewById(R.id.right);
+                .setSize(rightRoundedCorner, new Size(testTopRadius, testTopRadius));
+        leftRoundedCorner = mScreenDecorations.mOverlays[BOUNDS_POSITION_BOTTOM].getRootView()
+                .findViewById(R.id.left);
+        rightRoundedCorner = mScreenDecorations.mOverlays[BOUNDS_POSITION_BOTTOM].getRootView()
+                .findViewById(R.id.right);
         verify(mScreenDecorations, atLeastOnce())
-                .setSize(leftRoundedCorner, new Point(testBottomRadius, testBottomRadius));
+                .setSize(leftRoundedCorner, new Size(testBottomRadius, testBottomRadius));
         verify(mScreenDecorations, atLeastOnce())
-                .setSize(rightRoundedCorner, new Point(testBottomRadius, testBottomRadius));
+                .setSize(rightRoundedCorner, new Size(testBottomRadius, testBottomRadius));
     }
 
     @Test
@@ -412,28 +479,28 @@ public class ScreenDecorationsTest extends SysuiTestCase {
                 .when(mScreenDecorations).getCutout();
 
         mScreenDecorations.start();
-        final Point topRadius = new Point(testTopRadius, testTopRadius);
-        final Point bottomRadius = new Point(testBottomRadius, testBottomRadius);
-        View leftRoundedCorner =
-                mScreenDecorations.mOverlays[BOUNDS_POSITION_LEFT].findViewById(R.id.left);
+        final Size topRadius = new Size(testTopRadius, testTopRadius);
+        final Size bottomRadius = new Size(testBottomRadius, testBottomRadius);
+        View leftRoundedCorner = mScreenDecorations.mOverlays[BOUNDS_POSITION_LEFT].getRootView()
+                .findViewById(R.id.left);
         boolean isTop = mScreenDecorations.isTopRoundedCorner(BOUNDS_POSITION_LEFT, R.id.left);
         verify(mScreenDecorations, atLeastOnce())
                 .setSize(leftRoundedCorner, isTop ? topRadius : bottomRadius);
 
-        View rightRoundedCorner =
-                mScreenDecorations.mOverlays[BOUNDS_POSITION_LEFT].findViewById(R.id.right);
+        View rightRoundedCorner = mScreenDecorations.mOverlays[BOUNDS_POSITION_LEFT].getRootView()
+                .findViewById(R.id.right);
         isTop = mScreenDecorations.isTopRoundedCorner(BOUNDS_POSITION_LEFT, R.id.right);
         verify(mScreenDecorations, atLeastOnce())
                 .setSize(rightRoundedCorner, isTop ? topRadius : bottomRadius);
 
-        leftRoundedCorner =
-                mScreenDecorations.mOverlays[BOUNDS_POSITION_RIGHT].findViewById(R.id.left);
+        leftRoundedCorner = mScreenDecorations.mOverlays[BOUNDS_POSITION_RIGHT].getRootView()
+                .findViewById(R.id.left);
         isTop = mScreenDecorations.isTopRoundedCorner(BOUNDS_POSITION_RIGHT, R.id.left);
         verify(mScreenDecorations, atLeastOnce())
                 .setSize(leftRoundedCorner, isTop ? topRadius : bottomRadius);
 
-        rightRoundedCorner =
-                mScreenDecorations.mOverlays[BOUNDS_POSITION_RIGHT].findViewById(R.id.right);
+        rightRoundedCorner = mScreenDecorations.mOverlays[BOUNDS_POSITION_RIGHT].getRootView()
+                .findViewById(R.id.right);
         isTop = mScreenDecorations.isTopRoundedCorner(BOUNDS_POSITION_RIGHT, R.id.right);
         verify(mScreenDecorations, atLeastOnce())
                 .setSize(rightRoundedCorner, isTop ? topRadius : bottomRadius);
@@ -442,7 +509,7 @@ public class ScreenDecorationsTest extends SysuiTestCase {
     @Test
     public void testRoundingMultipleRadius_NoCutout_NoPrivacyDot() {
         final VectorDrawable d = (VectorDrawable) mContext.getDrawable(R.drawable.rounded);
-        final Point multipleRadiusSize = new Point(d.getIntrinsicWidth(), d.getIntrinsicHeight());
+        final Size multipleRadiusSize = new Size(d.getIntrinsicWidth(), d.getIntrinsicHeight());
         setupResources(9999 /* radius */, 0 /* radiusTop */, 0 /* radiusBottom */,
                 9999 /* roundedPadding */, true /* multipleRadius */,
                 false /* fillCutout */, false /* privacyDot */);
@@ -468,15 +535,15 @@ public class ScreenDecorationsTest extends SysuiTestCase {
         verify(mDotViewController, never()).initialize(any(), any(), any(), any());
 
         // Size of corner view should exactly match max(width, height) of R.drawable.rounded
-        assertThat(mScreenDecorations.mRoundedDefault).isEqualTo(multipleRadiusSize);
-        assertThat(mScreenDecorations.mRoundedDefaultTop).isEqualTo(multipleRadiusSize);
-        assertThat(mScreenDecorations.mRoundedDefaultBottom).isEqualTo(multipleRadiusSize);
+        final RoundedCornerResDelegate resDelegate = mScreenDecorations.mRoundedCornerResDelegate;
+        assertThat(resDelegate.getTopRoundedSize()).isEqualTo(multipleRadiusSize);
+        assertThat(resDelegate.getBottomRoundedSize()).isEqualTo(multipleRadiusSize);
     }
 
     @Test
     public void testRoundingMultipleRadius_NoCutout_PrivacyDot() {
         final VectorDrawable d = (VectorDrawable) mContext.getDrawable(R.drawable.rounded);
-        final Point multipleRadiusSize = new Point(d.getIntrinsicWidth(), d.getIntrinsicHeight());
+        final Size multipleRadiusSize = new Size(d.getIntrinsicWidth(), d.getIntrinsicHeight());
         setupResources(9999 /* radius */, 0 /* radiusTop */, 0 /* radiusBottom */,
                 9999 /* roundedPadding */, true /* multipleRadius */,
                 false /* fillCutout */, true /* privacyDot */);
@@ -503,9 +570,9 @@ public class ScreenDecorationsTest extends SysuiTestCase {
                 isA(View.class), isA(View.class), isA(View.class), isA(View.class));
 
         // Size of corner view should exactly match max(width, height) of R.drawable.rounded
-        assertThat(mScreenDecorations.mRoundedDefault).isEqualTo(multipleRadiusSize);
-        assertThat(mScreenDecorations.mRoundedDefaultTop).isEqualTo(multipleRadiusSize);
-        assertThat(mScreenDecorations.mRoundedDefaultBottom).isEqualTo(multipleRadiusSize);
+        final RoundedCornerResDelegate resDelegate = mScreenDecorations.mRoundedCornerResDelegate;
+        assertThat(resDelegate.getTopRoundedSize()).isEqualTo(multipleRadiusSize);
+        assertThat(resDelegate.getBottomRoundedSize()).isEqualTo(multipleRadiusSize);
     }
 
     @Test
@@ -790,6 +857,22 @@ public class ScreenDecorationsTest extends SysuiTestCase {
 
         mScreenDecorations.onConfigurationChanged(new Configuration());
         verifyOverlaysExistAndAdded(true, false, true, false);
+
+        // Verify each privacy dot id appears only once
+        mDecorProviders.stream().map(DecorProvider::getViewId).forEach(viewId -> {
+            int findCount = 0;
+            for (OverlayWindow overlay: mScreenDecorations.mOverlays) {
+                if (overlay == null) {
+                    continue;
+                }
+                final View view = overlay.getRootView().findViewById(viewId);
+                if (view != null) {
+                    findCount++;
+                }
+            }
+            assertEquals(1, findCount);
+        });
+
     }
 
     @Test
@@ -860,12 +943,15 @@ public class ScreenDecorationsTest extends SysuiTestCase {
                 false /* fillCutout */, true /* privacyDot */);
 
         mScreenDecorations.start();
-        assertEquals(mScreenDecorations.mRoundedDefault, new Point(20, 20));
+        final RoundedCornerResDelegate resDelegate = mScreenDecorations.mRoundedCornerResDelegate;
+        assertEquals(resDelegate.getTopRoundedSize(), new Size(20, 20));
+        assertEquals(resDelegate.getBottomRoundedSize(), new Size(20, 20));
 
         when(mContext.getResources().getDimensionPixelSize(
                 com.android.internal.R.dimen.rounded_corner_radius)).thenReturn(5);
         mScreenDecorations.onConfigurationChanged(null);
-        assertEquals(mScreenDecorations.mRoundedDefault, new Point(5, 5));
+        assertEquals(resDelegate.getTopRoundedSize(), new Size(5, 5));
+        assertEquals(resDelegate.getBottomRoundedSize(), new Size(5, 5));
     }
 
     @Test
@@ -875,9 +961,9 @@ public class ScreenDecorationsTest extends SysuiTestCase {
                 false /* fillCutout */, true /* privacyDot */);
 
         mScreenDecorations.start();
-        assertEquals(new Point(0, 0), mScreenDecorations.mRoundedDefault);
-        assertEquals(new Point(10, 10), mScreenDecorations.mRoundedDefaultTop);
-        assertEquals(new Point(0, 0), mScreenDecorations.mRoundedDefaultBottom);
+        final RoundedCornerResDelegate resDelegate = mScreenDecorations.mRoundedCornerResDelegate;
+        assertEquals(new Size(10, 10), resDelegate.getTopRoundedSize());
+        assertEquals(new Size(0, 0), resDelegate.getBottomRoundedSize());
     }
 
     @Test
@@ -887,15 +973,9 @@ public class ScreenDecorationsTest extends SysuiTestCase {
                 false /* fillCutout */, true /* privacyDot */);
 
         mScreenDecorations.start();
-        assertEquals(new Point(0, 0), mScreenDecorations.mRoundedDefault);
-        assertEquals(new Point(0, 0), mScreenDecorations.mRoundedDefaultTop);
-        assertEquals(new Point(20, 20), mScreenDecorations.mRoundedDefaultBottom);
-    }
-
-    @Test
-    public void testBoundingRectsToRegion() throws Exception {
-        Rect rect = new Rect(1, 2, 3, 4);
-        assertThat(rectsToRegion(Collections.singletonList(rect)).getBounds(), is(rect));
+        final RoundedCornerResDelegate resDelegate = mScreenDecorations.mRoundedCornerResDelegate;
+        assertEquals(new Size(0, 0), resDelegate.getTopRoundedSize());
+        assertEquals(new Size(20, 20), resDelegate.getBottomRoundedSize());
     }
 
     @Test
@@ -947,6 +1027,114 @@ public class ScreenDecorationsTest extends SysuiTestCase {
         assertThat(mScreenDecorations.mIsRegistered, is(false));
     }
 
+    @Test
+    public void testSupportHwcLayer_SwitchFrom_NotSupport() {
+        setupResources(0 /* radius */, 10 /* radiusTop */, 20 /* radiusBottom */,
+                0 /* roundedPadding */, false /* multipleRadius */,
+                true /* fillCutout */, false /* privacyDot */);
+
+        // top cutout
+        final Rect[] bounds = {null, new Rect(9, 0, 10, 1), null, null};
+        doReturn(getDisplayCutoutForRotation(Insets.of(0, 1, 0, 0), bounds))
+                .when(mScreenDecorations).getCutout();
+
+        mScreenDecorations.start();
+        // should only inflate mOverlays when the hwc doesn't support screen decoration
+        assertNull(mScreenDecorations.mScreenDecorHwcWindow);
+        assertNotNull(mScreenDecorations.mOverlays);
+        assertNotNull(mScreenDecorations.mOverlays[BOUNDS_POSITION_TOP]);
+        assertNotNull(mScreenDecorations.mOverlays[BOUNDS_POSITION_BOTTOM]);
+
+        final DisplayDecorationSupport decorationSupport = new DisplayDecorationSupport();
+        decorationSupport.format = PixelFormat.R_8;
+        doReturn(decorationSupport).when(mDisplay).getDisplayDecorationSupport();
+        // Trigger the support hwc screen decoration change by changing the display unique id
+        mScreenDecorations.mDisplayUniqueId = "test";
+        mScreenDecorations.mDisplayListener.onDisplayChanged(1);
+
+        // should only inflate hwc layer when the hwc supports screen decoration
+        assertNotNull(mScreenDecorations.mScreenDecorHwcWindow);
+        assertNull(mScreenDecorations.mOverlays);
+    }
+
+    @Test
+    public void testNotSupportHwcLayer_SwitchFrom_Support() {
+        setupResources(0 /* radius */, 10 /* radiusTop */, 20 /* radiusBottom */,
+                0 /* roundedPadding */, false /* multipleRadius */,
+                true /* fillCutout */, false /* privacyDot */);
+        final DisplayDecorationSupport decorationSupport = new DisplayDecorationSupport();
+        decorationSupport.format = PixelFormat.R_8;
+        doReturn(decorationSupport).when(mDisplay).getDisplayDecorationSupport();
+
+        // top cutout
+        final Rect[] bounds = {null, new Rect(9, 0, 10, 1), null, null};
+        doReturn(getDisplayCutoutForRotation(Insets.of(0, 1, 0, 0), bounds))
+                .when(mScreenDecorations).getCutout();
+
+        mScreenDecorations.start();
+        // should only inflate hwc layer when the hwc supports screen decoration
+        assertNotNull(mScreenDecorations.mScreenDecorHwcWindow);
+        assertNull(mScreenDecorations.mOverlays);
+
+        doReturn(null).when(mDisplay).getDisplayDecorationSupport();
+        // Trigger the support hwc screen decoration change by changing the display unique id
+        mScreenDecorations.mDisplayUniqueId = "test";
+        mScreenDecorations.mDisplayListener.onDisplayChanged(1);
+
+        // should only inflate mOverlays when the hwc doesn't support screen decoration
+        assertNull(mScreenDecorations.mScreenDecorHwcWindow);
+        assertNotNull(mScreenDecorations.mOverlays);
+        assertNotNull(mScreenDecorations.mOverlays[BOUNDS_POSITION_TOP]);
+        assertNotNull(mScreenDecorations.mOverlays[BOUNDS_POSITION_BOTTOM]);
+    }
+
+    @Test
+    public void testHwcLayer_noPrivacyDot() {
+        setupResources(0 /* radius */, 10 /* radiusTop */, 20 /* radiusBottom */,
+                0 /* roundedPadding */, false /* multipleRadius */,
+                true /* fillCutout */, false /* privacyDot */);
+        final DisplayDecorationSupport decorationSupport = new DisplayDecorationSupport();
+        decorationSupport.format = PixelFormat.R_8;
+        doReturn(decorationSupport).when(mDisplay).getDisplayDecorationSupport();
+
+        // top cutout
+        final Rect[] bounds = {null, new Rect(9, 0, 10, 1), null, null};
+        doReturn(getDisplayCutoutForRotation(Insets.of(0, 1, 0, 0), bounds))
+                .when(mScreenDecorations).getCutout();
+
+        mScreenDecorations.start();
+
+        // Should only inflate hwc layer.
+        assertNotNull(mScreenDecorations.mScreenDecorHwcWindow);
+        assertNull(mScreenDecorations.mOverlays);
+    }
+
+    @Test
+    public void testHwcLayer_PrivacyDot() {
+        setupResources(0 /* radius */, 10 /* radiusTop */, 20 /* radiusBottom */,
+                0 /* roundedPadding */, false /* multipleRadius */,
+                true /* fillCutout */, true /* privacyDot */);
+        final DisplayDecorationSupport decorationSupport = new DisplayDecorationSupport();
+        decorationSupport.format = PixelFormat.R_8;
+        doReturn(decorationSupport).when(mDisplay).getDisplayDecorationSupport();
+
+        // top cutout
+        final Rect[] bounds = {null, new Rect(9, 0, 10, 1), null, null};
+        doReturn(getDisplayCutoutForRotation(Insets.of(0, 1, 0, 0), bounds))
+                .when(mScreenDecorations).getCutout();
+
+        mScreenDecorations.start();
+
+        assertNotNull(mScreenDecorations.mScreenDecorHwcWindow);
+        // mOverlays are inflated but the visibility should be GONE.
+        assertNotNull(mScreenDecorations.mOverlays);
+        final View topOverlay = mScreenDecorations.mOverlays[BOUNDS_POSITION_TOP].getRootView();
+        final View botOverlay = mScreenDecorations.mOverlays[BOUNDS_POSITION_BOTTOM].getRootView();
+        assertEquals(topOverlay.getVisibility(), View.INVISIBLE);
+        assertEquals(botOverlay.getVisibility(), View.INVISIBLE);
+
+    }
+
     private void setupResources(int radius, int radiusTop, int radiusBottom, int roundedPadding,
             boolean multipleRadius, boolean fillCutout, boolean privacyDot) {
         mContext.getOrCreateTestableResources().addOverride(
@@ -985,8 +1173,16 @@ public class ScreenDecorationsTest extends SysuiTestCase {
                 R.bool.config_roundedCornerMultipleRadius, multipleRadius);
         mContext.getOrCreateTestableResources().addOverride(
                 com.android.internal.R.bool.config_fillMainBuiltInDisplayCutout, fillCutout);
-        mContext.getOrCreateTestableResources().addOverride(
-                R.bool.config_enablePrivacyDot, privacyDot);
+
+        mDecorProviders = new ArrayList<>();
+        if (privacyDot) {
+            mDecorProviders.add(mPrivacyDotTopLeftDecorProvider);
+            mDecorProviders.add(mPrivacyDotTopRightDecorProvider);
+            mDecorProviders.add(mPrivacyDotBottomLeftDecorProvider);
+            mDecorProviders.add(mPrivacyDotBottomRightDecorProvider);
+        }
+        when(mPrivacyDotDecorProviderFactory.getProviders()).thenReturn(mDecorProviders);
+        when(mPrivacyDotDecorProviderFactory.getHasProviders()).thenReturn(privacyDot);
     }
 
     private DisplayCutout getDisplayCutoutForRotation(Insets safeInsets, Rect[] cutoutBounds) {

@@ -74,7 +74,12 @@
 
     <!-- The default tiles to display in QuickSettings -->
     <string name="quick_settings_tiles_default" translatable="false">
-        internet,bt,flashlight,dnd,alarm,airplane,controls,wallet,rotation,battery,cast,screenrecord,mictoggle,cameratoggle
+        internet,bt,flashlight,dnd,alarm,airplane,controls,wallet,rotation,battery,cast,screenrecord,mictoggle,cameratoggle,custom(com.android.permissioncontroller/.permission.service.SafetyCenterQsTileService)
+    </string>
+
+    <!-- The component name of the Safety Quick Settings Tile -->
+    <string name="safety_quick_settings_tile" translatable="false">
+        custom(com.android.permissioncontroller/.permission.service.SafetyCenterQsTileService)
     </string>
 
     <!-- The minimum number of tiles to display in QuickSettings -->
@@ -82,7 +87,7 @@
 
     <!-- Tiles native to System UI. Order should match "quick_settings_tiles_default" -->
     <string name="quick_settings_tiles_stock" translatable="false">
-        internet,bt,flashlight,dnd,alarm,airplane,controls,wallet,rotation,battery,cast,screenrecord,mictoggle,cameratoggle,location,hotspot,inversion,saver,dark,work,night,reverse,reduce_brightness,qr_code_scanner,onehanded,fgsmanager,color_correction
+        internet,bt,flashlight,dnd,alarm,airplane,controls,wallet,rotation,battery,cast,screenrecord,mictoggle,cameratoggle,location,hotspot,inversion,saver,dark,work,night,reverse,reduce_brightness,qr_code_scanner,onehanded,color_correction
     </string>
 
     <!-- The tiles to display in QuickSettings -->
@@ -101,6 +106,9 @@
         <item>accessibility_display_inversion_enabled:inversion</item>
         <item>one_handed_mode_enabled:onehanded</item>
     </string-array>
+
+    <!-- Use collapsed layout for media player in landscape QQS -->
+    <bool name="config_quickSettingsMediaLandscapeCollapsed">true</bool>
 
     <!-- Show indicator for Wifi on but not connected. -->
     <bool name="config_showWifiIndicatorWhenEnabled">false</bool>
@@ -288,42 +296,6 @@
 
     <!-- SystemUIFactory component -->
     <string name="config_systemUIFactoryComponent" translatable="false">com.android.systemui.SystemUIFactory</string>
-
-    <!-- SystemUI Services: The classes of base stuff to start by default for all
-         configurations. -->
-    <string-array name="config_systemUIServiceComponents" translatable="false">
-        <item>com.android.systemui.util.NotificationChannels</item>
-        <item>com.android.systemui.keyguard.KeyguardViewMediator</item>
-        <item>com.android.keyguard.KeyguardBiometricLockoutLogger</item>
-        <item>com.android.systemui.recents.Recents</item>
-        <item>com.android.systemui.volume.VolumeUI</item>
-        <item>com.android.systemui.statusbar.phone.StatusBar</item>
-        <item>com.android.systemui.usb.StorageNotification</item>
-        <item>com.android.systemui.power.PowerUI</item>
-        <item>com.android.systemui.media.RingtonePlayer</item>
-        <item>com.android.systemui.keyboard.KeyboardUI</item>
-        <item>com.android.systemui.shortcut.ShortcutKeyDispatcher</item>
-        <item>@string/config_systemUIVendorServiceComponent</item>
-        <item>com.android.systemui.util.leak.GarbageMonitor$Service</item>
-        <item>com.android.systemui.LatencyTester</item>
-        <item>com.android.systemui.globalactions.GlobalActionsComponent</item>
-        <item>com.android.systemui.ScreenDecorations</item>
-        <item>com.android.systemui.biometrics.AuthController</item>
-        <item>com.android.systemui.SliceBroadcastRelayHandler</item>
-        <item>com.android.systemui.statusbar.notification.InstantAppNotifier</item>
-        <item>com.android.systemui.theme.ThemeOverlayController</item>
-        <item>com.android.systemui.accessibility.WindowMagnification</item>
-        <item>com.android.systemui.accessibility.SystemActions</item>
-        <item>com.android.systemui.toast.ToastUI</item>
-        <item>com.android.systemui.wmshell.WMShell</item>
-        <item>com.android.systemui.clipboardoverlay.ClipboardListener</item>
-    </string-array>
-
-    <!-- SystemUI Services: The classes of the additional stuff to start. Services here are
-                            specified as an overlay to provide configuration-specific services that
-                            supplement those listed in config_systemUIServiceComponents. -->
-    <string-array name="config_additionalSystemUIServiceComponents" translatable="false">
-    </string-array>
 
     <!-- QS tile shape store width. negative implies fill configuration instead of stroke-->
     <dimen name="config_qsTileStrokeWidthActive">-1dp</dimen>
@@ -515,6 +487,9 @@
      space -->
     <bool name="config_showBatteryEstimateQSBH">false</bool>
 
+    <!-- Whether to show a severe low battery dialog. -->
+    <bool name="config_severe_battery_dialog">false</bool>
+
     <!-- A path similar to frameworks/base/core/res/res/values/config.xml
       config_mainBuiltInDisplayCutout that describes a path larger than the exact path of a display
       cutout. If present as well as config_enableDisplayCutoutProtection is set to true, then
@@ -581,6 +556,12 @@
     <!-- Whether to use the split 2-column notification shade -->
     <bool name="config_use_split_notification_shade">false</bool>
 
+    <!-- Whether we use large screen shade header which takes only one row compared to QS header -->
+    <bool name="config_use_large_screen_shade_header">false</bool>
+
+    <!-- Whether notification header should never show section headers. -->
+    <bool name="config_notification_never_show_section_headers">false</bool>
+
     <!-- Default udfps icon. Same path as ic_fingerprint.xml -->
     <string name="config_udfpsIcon" translatable="false">
         M25.5,16.3283C28.47,14.8433 31.9167,14 35.5834,14C39.2501,14 42.6968,14.8433 45.6668,16.3283
@@ -638,10 +619,6 @@
     <!-- Component name of communal source service -->
     <string name="config_communalSourceComponent" translatable="false">@null</string>
 
-    <!-- Whether idle mode should be enabled. When enabled, the lock screen will timeout to an idle
-         screen on inactivity. -->
-    <bool name="config_enableIdleMode">false</bool>
-
     <!-- This value is used when calculating whether the device is in ambient light mode. It is
         light mode when the light sensor sample value exceeds above this value. -->
     <integer name="config_ambientLightModeThreshold">5</integer>
@@ -679,7 +656,7 @@
     <integer name="config_connectionMinDuration">1000</integer>
 
     <!-- Flag to activate notification to contents feature -->
-    <bool name="config_notificationToContents">false</bool>
+    <bool name="config_notificationToContents">true</bool>
 
     <!-- Respect drawable/rounded_secondary.xml intrinsic size for multiple radius corner path
          customization for secondary display-->
@@ -724,4 +701,27 @@
 
     <!-- How often in milliseconds to jitter the dream overlay in order to avoid burn-in. -->
     <integer name="config_dreamOverlayBurnInProtectionUpdateIntervalMillis">500</integer>
+
+    <!-- How long in milliseconds before full burn-in protection is achieved. -->
+    <integer name="config_dreamOverlayMillisUntilFullJitter">240000</integer>
+
+    <integer name="complicationFadeOutMs">500</integer>
+
+    <integer name="complicationFadeInMs">500</integer>
+
+    <integer name="complicationRestoreMs">1000</integer>
+
+    <!-- Icons that don't show in a collapsed non-keyguard statusbar -->
+    <string-array name="config_collapsed_statusbar_icon_blocklist" translatable="false">
+        <item>@*android:string/status_bar_volume</item>
+        <item>@*android:string/status_bar_alarm_clock</item>
+        <item>@*android:string/status_bar_call_strength</item>
+    </string-array>
+
+    <!-- Icons that don't show in a collapsed statusbar on keyguard -->
+    <string-array name="config_keyguard_statusbar_icon_blocklist" translatable="false">
+        <item>@*android:string/status_bar_volume</item>
+        <item>@*android:string/status_bar_alarm_clock</item>
+        <item>@*android:string/status_bar_call_strength</item>
+    </string-array>
 </resources>

@@ -98,7 +98,7 @@ import android.util.PrintWriterPrinter;
 import android.util.Slog;
 import android.util.SparseArray;
 
-import com.android.internal.content.PackageHelper;
+import com.android.internal.content.InstallLocationUtils;
 import com.android.internal.util.ArrayUtils;
 import com.android.internal.util.IndentingPrintWriter;
 import com.android.internal.util.Preconditions;
@@ -131,6 +131,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.WeakHashMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -144,6 +145,10 @@ class PackageManagerShellCommand extends ShellCommand {
     private final static String ART_PROFILE_SNAPSHOT_DEBUG_LOCATION = "/data/misc/profman/";
     private static final int DEFAULT_STAGED_READY_TIMEOUT_MS = 60 * 1000;
     private static final String TAG = "PackageManagerShellCommand";
+    private static final Set<String> UNSUPPORTED_INSTALL_CMD_OPTS = Set.of(
+            "--multi-package"
+    );
+    private static final Set<String> UNSUPPORTED_SESSION_CREATE_OPTS = Collections.emptySet();
 
     final IPackageManager mInterface;
     final LegacyPermissionManagerInternal mLegacyPermissionManager;
@@ -159,9 +164,9 @@ class PackageManagerShellCommand extends ShellCommand {
 
     private static final SecureRandom RANDOM = new SecureRandom();
 
-    PackageManagerShellCommand(@NonNull PackageManagerService service,
+    PackageManagerShellCommand(@NonNull IPackageManager packageManager,
             @NonNull Context context, @NonNull DomainVerificationShell domainVerificationShell) {
-        mInterface = service;
+        mInterface = packageManager;
         mLegacyPermissionManager = LocalServices.getService(LegacyPermissionManagerInternal.class);
         mPermissionManager = context.getSystemService(PermissionManager.class);
         mContext = context;
@@ -183,6 +188,8 @@ class PackageManagerShellCommand extends ShellCommand {
                     return runDump();
                 case "list":
                     return runList();
+                case "gc":
+                    return runGc();
                 case "resolve-activity":
                     return runResolveActivity();
                 case "query-activities":
@@ -593,7 +600,7 @@ class PackageManagerShellCommand extends ShellCommand {
                         null /* splitApkPaths */, null /* splitRevisionCodes */,
                         apkLite.getTargetSdkVersion(), null /* requiredSplitTypes */,
                         null /* splitTypes */);
-                sessionSize += PackageHelper.calculateInstalledSize(pkgLite,
+                sessionSize += InstallLocationUtils.calculateInstalledSize(pkgLite,
                         params.sessionParams.abiOverride, fd.getFileDescriptor());
             } catch (IOException e) {
                 getErrPrintWriter().println("Error: Failed to parse APK file: " + inPath);
@@ -680,6 +687,13 @@ class PackageManagerShellCommand extends ShellCommand {
         }
         pw.println("Error: unknown list type '" + type + "'");
         return -1;
+    }
+
+    private int runGc() throws RemoteException {
+        Runtime.getRuntime().gc();
+        final PrintWriter pw = getOutPrintWriter();
+        pw.println("Ok");
+        return 0;
     }
 
     private int runListFeatures() throws RemoteException {
@@ -922,7 +936,7 @@ class PackageManagerShellCommand extends ShellCommand {
                 final List<SharedLibraryInfo> libs = libsSlice.getList();
                 for (int l = 0, lsize = libs.size(); l < lsize; ++l) {
                     SharedLibraryInfo lib = libs.get(l);
-                    if (lib.getType() == SharedLibraryInfo.TYPE_SDK) {
+                    if (lib.getType() == SharedLibraryInfo.TYPE_SDK_PACKAGE) {
                         name = lib.getName() + ":" + lib.getLongVersion();
                         break;
                     }
@@ -1330,7 +1344,7 @@ class PackageManagerShellCommand extends ShellCommand {
     }
 
     private int runStreamingInstall() throws RemoteException {
-        final InstallParams params = makeInstallParams();
+        final InstallParams params = makeInstallParams(UNSUPPORTED_INSTALL_CMD_OPTS);
         if (params.sessionParams.dataLoaderParams == null) {
             params.sessionParams.setDataLoaderParams(
                     PackageManagerShellCommandDataLoader.getStreamingDataLoaderParams(this));
@@ -1339,7 +1353,7 @@ class PackageManagerShellCommand extends ShellCommand {
     }
 
     private int runIncrementalInstall() throws RemoteException {
-        final InstallParams params = makeInstallParams();
+        final InstallParams params = makeInstallParams(UNSUPPORTED_INSTALL_CMD_OPTS);
         if (params.sessionParams.dataLoaderParams == null) {
             params.sessionParams.setDataLoaderParams(
                     PackageManagerShellCommandDataLoader.getIncrementalDataLoaderParams(this));
@@ -1348,7 +1362,7 @@ class PackageManagerShellCommand extends ShellCommand {
     }
 
     private int runInstall() throws RemoteException {
-        return doRunInstall(makeInstallParams());
+        return doRunInstall(makeInstallParams(UNSUPPORTED_INSTALL_CMD_OPTS));
     }
 
     private int doRunInstall(final InstallParams params) throws RemoteException {
@@ -1500,7 +1514,7 @@ class PackageManagerShellCommand extends ShellCommand {
 
     private int runInstallCreate() throws RemoteException {
         final PrintWriter pw = getOutPrintWriter();
-        final InstallParams installParams = makeInstallParams();
+        final InstallParams installParams = makeInstallParams(UNSUPPORTED_SESSION_CREATE_OPTS);
         final int sessionId = doCreateSession(installParams.sessionParams,
                 installParams.installerPackageName, installParams.userId);
 
@@ -1649,11 +1663,11 @@ class PackageManagerShellCommand extends ShellCommand {
     private int runGetInstallLocation() throws RemoteException {
         int loc = mInterface.getInstallLocation();
         String locStr = "invalid";
-        if (loc == PackageHelper.APP_INSTALL_AUTO) {
+        if (loc == InstallLocationUtils.APP_INSTALL_AUTO) {
             locStr = "auto";
-        } else if (loc == PackageHelper.APP_INSTALL_INTERNAL) {
+        } else if (loc == InstallLocationUtils.APP_INSTALL_INTERNAL) {
             locStr = "internal";
-        } else if (loc == PackageHelper.APP_INSTALL_EXTERNAL) {
+        } else if (loc == InstallLocationUtils.APP_INSTALL_EXTERNAL) {
             locStr = "external";
         }
         getOutPrintWriter().println(loc + "[" + locStr + "]");
@@ -2535,8 +2549,10 @@ class PackageManagerShellCommand extends ShellCommand {
             privAppPermissions = SystemConfig.getInstance()
                     .getSystemExtPrivAppPermissions(pkg);
         } else if (isApexApp(pkg)) {
+            final String apexName = ApexManager.getInstance().getApexModuleNameForPackageName(
+                    getApexPackageNameContainingPackage(pkg));
             privAppPermissions = SystemConfig.getInstance()
-                    .getApexPrivAppPermissions(getApexPackageNameContainingPackage(pkg), pkg);
+                    .getApexPrivAppPermissions(apexName, pkg);
         } else {
             privAppPermissions = SystemConfig.getInstance().getPrivAppPermissions(pkg);
         }
@@ -2562,8 +2578,10 @@ class PackageManagerShellCommand extends ShellCommand {
             privAppPermissions = SystemConfig.getInstance()
                     .getSystemExtPrivAppDenyPermissions(pkg);
         } else if (isApexApp(pkg)) {
+            final String apexName = ApexManager.getInstance().getApexModuleNameForPackageName(
+                    getApexPackageNameContainingPackage(pkg));
             privAppPermissions = SystemConfig.getInstance()
-                    .getApexPrivAppDenyPermissions(getApexPackageNameContainingPackage(pkg), pkg);
+                    .getApexPrivAppDenyPermissions(apexName, pkg);
         } else {
             privAppPermissions = SystemConfig.getInstance().getPrivAppDenyPermissions(pkg);
         }
@@ -2896,18 +2914,23 @@ class PackageManagerShellCommand extends ShellCommand {
         long stagedReadyTimeoutMs = DEFAULT_STAGED_READY_TIMEOUT_MS;
     }
 
-    private InstallParams makeInstallParams() {
+    private InstallParams makeInstallParams(Set<String> unsupportedOptions) {
         final SessionParams sessionParams = new SessionParams(SessionParams.MODE_FULL_INSTALL);
         final InstallParams params = new InstallParams();
 
         params.sessionParams = sessionParams;
         // Allowlist all permissions by default
         sessionParams.installFlags |= PackageManager.INSTALL_ALL_WHITELIST_RESTRICTED_PERMISSIONS;
+        // Set package source to other by default
+        sessionParams.setPackageSource(PackageInstaller.PACKAGE_SOURCE_OTHER);
 
         String opt;
         boolean replaceExisting = true;
         boolean forceNonStaged = false;
         while ((opt = getNextOption()) != null) {
+            if (unsupportedOptions.contains(opt)) {
+                throw new IllegalArgumentException("Unsupported option " + opt);
+            }
             switch (opt) {
                 case "-r": // ignore
                     break;
@@ -3563,18 +3586,27 @@ class PackageManagerShellCommand extends ShellCommand {
             }
             final LocalIntentReceiver receiver = new LocalIntentReceiver();
             session.commit(receiver.getIntentSender());
-            final Intent result = receiver.getResult();
-            final int status = result.getIntExtra(PackageInstaller.EXTRA_STATUS,
-                    PackageInstaller.STATUS_FAILURE);
-            if (status == PackageInstaller.STATUS_SUCCESS) {
+            if (!session.isStaged()) {
+                final Intent result = receiver.getResult();
+                final int status = result.getIntExtra(PackageInstaller.EXTRA_STATUS,
+                        PackageInstaller.STATUS_FAILURE);
+                if (status == PackageInstaller.STATUS_SUCCESS) {
+                    if (logSuccess) {
+                        pw.println("Success");
+                    }
+                } else {
+                    pw.println("Failure ["
+                            + result.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) + "]");
+                }
+                return status;
+            } else {
+                // Return immediately without retrieving the result. The caller will decide
+                // whether to wait for the session to become ready.
                 if (logSuccess) {
                     pw.println("Success");
                 }
-            } else {
-                pw.println("Failure ["
-                        + result.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) + "]");
+                return PackageInstaller.STATUS_SUCCESS;
             }
-            return status;
         } finally {
             IoUtils.closeQuietly(session);
         }
@@ -3806,7 +3838,7 @@ class PackageManagerShellCommand extends ShellCommand {
         pw.println("       [--user USER_ID] INTENT");
         pw.println("    Prints all broadcast receivers that can handle the given INTENT.");
         pw.println("");
-        pw.println("  install [-rtfdgw] [-i PACKAGE] [--user USER_ID|all|current]");
+        pw.println("  install [-rtfdg] [-i PACKAGE] [--user USER_ID|all|current]");
         pw.println("       [-p INHERIT_PACKAGE] [--install-location 0/1/2]");
         pw.println("       [--install-reason 0/1/2/3/4] [--originating-uri URI]");
         pw.println("       [--referrer URI] [--abi ABI_NAME] [--force-sdk]");

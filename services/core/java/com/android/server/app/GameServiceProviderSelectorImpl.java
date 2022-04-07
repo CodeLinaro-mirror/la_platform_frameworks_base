@@ -34,6 +34,7 @@ import android.util.Slog;
 import android.util.Xml;
 
 import com.android.server.SystemService;
+import com.android.server.app.GameServiceConfiguration.GameServiceComponentConfiguration;
 
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
@@ -57,7 +58,8 @@ final class GameServiceProviderSelectorImpl implements GameServiceProviderSelect
 
     @Override
     @Nullable
-    public GameServiceProviderConfiguration get(@Nullable SystemService.TargetUser user) {
+    public GameServiceConfiguration get(@Nullable SystemService.TargetUser user,
+            @Nullable String packageNameOverride) {
         if (user == null) {
             return null;
         }
@@ -68,9 +70,16 @@ final class GameServiceProviderSelectorImpl implements GameServiceProviderSelect
             return null;
         }
 
-        String gameServicePackage =
-                mResources.getString(
-                        com.android.internal.R.string.config_systemGameService);
+        int resolveInfoQueryFlags;
+        String gameServicePackage;
+        if (!TextUtils.isEmpty(packageNameOverride)) {
+            resolveInfoQueryFlags = 0;
+            gameServicePackage = packageNameOverride;
+        } else {
+            resolveInfoQueryFlags = PackageManager.MATCH_SYSTEM_ONLY;
+            gameServicePackage = mResources.getString(
+                    com.android.internal.R.string.config_systemGameService);
+        }
 
         if (TextUtils.isEmpty(gameServicePackage)) {
             Slog.w(TAG, "No game service package defined");
@@ -81,7 +90,7 @@ final class GameServiceProviderSelectorImpl implements GameServiceProviderSelect
         List<ResolveInfo> gameServiceResolveInfos =
                 mPackageManager.queryIntentServicesAsUser(
                         new Intent(GameService.ACTION_GAME_SERVICE).setPackage(gameServicePackage),
-                        PackageManager.GET_META_DATA | PackageManager.MATCH_SYSTEM_ONLY,
+                        PackageManager.GET_META_DATA | resolveInfoQueryFlags,
                         userId);
         if (DEBUG) {
             Slog.i(TAG, "Querying package: " + gameServicePackage + " and user id: " + userId);
@@ -90,10 +99,10 @@ final class GameServiceProviderSelectorImpl implements GameServiceProviderSelect
 
         if (gameServiceResolveInfos == null || gameServiceResolveInfos.isEmpty()) {
             Slog.w(TAG, "No available game service found for user id: " + userId);
-            return null;
+            return new GameServiceConfiguration(gameServicePackage, null);
         }
 
-        GameServiceProviderConfiguration selectedProvider = null;
+        GameServiceConfiguration selectedProvider = null;
         for (ResolveInfo resolveInfo : gameServiceResolveInfos) {
             if (resolveInfo.serviceInfo == null) {
                 continue;
@@ -107,16 +116,18 @@ final class GameServiceProviderSelectorImpl implements GameServiceProviderSelect
             }
 
             selectedProvider =
-                    new GameServiceProviderConfiguration(
-                            new UserHandle(userId),
-                            gameServiceServiceInfo.getComponentName(),
-                            gameSessionServiceComponentName);
+                    new GameServiceConfiguration(
+                            gameServicePackage,
+                            new GameServiceComponentConfiguration(
+                                    new UserHandle(userId),
+                                    gameServiceServiceInfo.getComponentName(),
+                                    gameSessionServiceComponentName));
             break;
         }
 
         if (selectedProvider == null) {
             Slog.w(TAG, "No valid game service found for user id: " + userId);
-            return null;
+            return new GameServiceConfiguration(gameServicePackage, null);
         }
 
         return selectedProvider;

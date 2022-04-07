@@ -402,7 +402,8 @@ public class ActivityTaskSupervisor implements RecentTasks.Callbacks {
                     activities.add(r.info);
                 });
             }
-            if (!displayContent.mDwpcHelper.canContainActivities(activities)) {
+            if (!displayContent.mDwpcHelper.canContainActivities(activities,
+                    displayContent.getWindowingMode())) {
                 return false;
             }
         }
@@ -906,8 +907,7 @@ public class ActivityTaskSupervisor implements RecentTasks.Callbacks {
                         proc.getReportedProcState(), r.getSavedState(), r.getPersistentSavedState(),
                         results, newIntents, r.takeOptions(), isTransitionForward,
                         proc.createProfilerInfoIfNeeded(), r.assistToken, activityClientController,
-                        r.createFixedRotationAdjustmentsIfNeeded(), r.shareableActivityToken,
-                        r.getLaunchedFromBubble()));
+                        r.shareableActivityToken, r.getLaunchedFromBubble()));
 
                 // Set desired final state.
                 final ActivityLifecycleItem lifecycleItem;
@@ -955,7 +955,7 @@ public class ActivityTaskSupervisor implements RecentTasks.Callbacks {
                 // This is the first time we failed -- restart process and
                 // retry.
                 r.launchFailed = true;
-                proc.removeActivity(r, true /* keepAssociation */);
+                r.detachFromProcess();
                 throw e;
             }
         } finally {
@@ -1047,6 +1047,9 @@ public class ActivityTaskSupervisor implements RecentTasks.Callbacks {
             // If a dead object exception was thrown -- fall through to
             // restart the application.
             knownToBeDead = true;
+            // Remove the process record so it won't be considered as alive.
+            mService.mProcessNames.remove(wpc.mName, wpc.mUid);
+            mService.mProcessMap.remove(wpc.getPid());
         }
 
         r.notifyUnknownVisibilityLaunchedForKeyguardTransition();
@@ -1437,20 +1440,20 @@ public class ActivityTaskSupervisor implements RecentTasks.Callbacks {
                 final Rect bounds = options.getLaunchBounds();
                 task.setBounds(bounds);
 
-                Task launchRootTask =
-                        mRootWindowContainer.getLaunchRootTask(null, options, task, ON_TOP);
+                Task targetRootTask =
+                        mRootWindowContainer.getOrCreateRootTask(null, options, task, ON_TOP);
 
-                if (launchRootTask != currentRootTask) {
-                    moveHomeRootTaskToFrontIfNeeded(flags, launchRootTask.getDisplayArea(), reason);
-                    task.reparent(launchRootTask, ON_TOP, REPARENT_KEEP_ROOT_TASK_AT_FRONT,
+                if (targetRootTask != currentRootTask) {
+                    moveHomeRootTaskToFrontIfNeeded(flags, targetRootTask.getDisplayArea(), reason);
+                    task.reparent(targetRootTask, ON_TOP, REPARENT_KEEP_ROOT_TASK_AT_FRONT,
                             !ANIMATE, DEFER_RESUME, reason);
-                    currentRootTask = launchRootTask;
+                    currentRootTask = targetRootTask;
                     reparented = true;
                     // task.reparent() should already placed the task on top,
                     // still need moveTaskToFrontLocked() below for any transition settings.
                 }
-                if (launchRootTask.shouldResizeRootTaskWithLaunchBounds()) {
-                    launchRootTask.resize(bounds, !PRESERVE_WINDOWS, !DEFER_RESUME);
+                if (targetRootTask.shouldResizeRootTaskWithLaunchBounds()) {
+                    targetRootTask.resize(bounds, !PRESERVE_WINDOWS, !DEFER_RESUME);
                 } else {
                     // WM resizeTask must be done after the task is moved to the correct stack,
                     // because Task's setBounds() also updates dim layer's bounds, but that has
@@ -1606,7 +1609,7 @@ public class ActivityTaskSupervisor implements RecentTasks.Callbacks {
         task.mTransitionController.requestCloseTransitionIfNeeded(task);
         task.mInRemoveTask = true;
         try {
-            task.performClearTask(reason);
+            task.removeActivities(reason, false /* excludingTaskOverlay */);
             cleanUpRemovedTaskLocked(task, killProcess, removeFromRecents);
             mService.getLockTaskController().clearLockedTask(task);
             mService.getTaskChangeNotificationController().notifyTaskStackChanged();
@@ -1694,7 +1697,7 @@ public class ActivityTaskSupervisor implements RecentTasks.Callbacks {
      */
     boolean restoreRecentTaskLocked(Task task, ActivityOptions aOptions, boolean onTop) {
         final Task rootTask =
-                mRootWindowContainer.getLaunchRootTask(null, aOptions, task, onTop);
+                mRootWindowContainer.getOrCreateRootTask(null, aOptions, task, onTop);
         final WindowContainer parent = task.getParent();
 
         if (parent == rootTask || task == rootTask) {
@@ -2224,25 +2227,9 @@ public class ActivityTaskSupervisor implements RecentTasks.Callbacks {
             return;
         }
 
-        if (!task.supportsSplitScreenWindowingMode() || forceNonResizable) {
-            if (task.mTransitionController.isShellTransitionsEnabled()) return;
-            // Dismiss docked root task. If task appeared to be in docked root task but is not
-            // resizable - we need to move it to top of fullscreen root task, otherwise it will
-            // be covered.
-            final TaskDisplayArea taskDisplayArea = task.getDisplayArea();
-            if (taskDisplayArea.isSplitScreenModeActivated()) {
-                // Display a warning toast that we tried to put an app that doesn't support
-                // split-screen in split-screen.
-                mService.getTaskChangeNotificationController()
-                        .notifyActivityDismissingDockedRootTask();
-                taskDisplayArea.onSplitScreenModeDismissed(task);
-                taskDisplayArea.mDisplayContent.ensureActivitiesVisible(null, 0, PRESERVE_WINDOWS,
-                        true /* notifyClients */);
-            }
-            return;
+        if (!forceNonResizable) {
+            handleForcedResizableTaskIfNeeded(task, FORCED_RESIZEABLE_REASON_SPLIT_SCREEN);
         }
-
-        handleForcedResizableTaskIfNeeded(task, FORCED_RESIZEABLE_REASON_SPLIT_SCREEN);
     }
 
     /** Notifies that the top activity of the task is forced to be resizeable. */

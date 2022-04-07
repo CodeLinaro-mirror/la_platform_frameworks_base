@@ -18,6 +18,7 @@ package com.android.systemui.dreams.complication;
 import static com.google.common.truth.Truth.assertThat;
 
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -27,7 +28,9 @@ import android.view.View;
 import androidx.constraintlayout.widget.ConstraintLayout;
 import androidx.test.filters.SmallTest;
 
+import com.android.systemui.R;
 import com.android.systemui.SysuiTestCase;
+import com.android.systemui.touch.TouchInsetManager;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -44,6 +47,9 @@ import java.util.function.Consumer;
 public class ComplicationLayoutEngineTest extends SysuiTestCase {
     @Mock
     ConstraintLayout mLayout;
+
+    @Mock
+    TouchInsetManager.TouchInsetSession mTouchSession;
 
     @Before
     public void setup() {
@@ -111,7 +117,8 @@ public class ComplicationLayoutEngineTest extends SysuiTestCase {
                 Complication.CATEGORY_STANDARD,
                 mLayout);
 
-        final ComplicationLayoutEngine engine = new ComplicationLayoutEngine(mLayout);
+        final ComplicationLayoutEngine engine =
+                new ComplicationLayoutEngine(mLayout, 0, mTouchSession, 0, 0);
         addComplication(engine, firstViewInfo);
 
         // Ensure the view is added to the top end corner
@@ -122,11 +129,41 @@ public class ComplicationLayoutEngineTest extends SysuiTestCase {
     }
 
     /**
+     * Makes sure the engine properly places a view within the {@link ConstraintLayout}.
+     */
+    @Test
+    public void testSnapToGuide() {
+        final ViewInfo firstViewInfo = new ViewInfo(
+                new ComplicationLayoutParams(
+                        100,
+                        100,
+                        ComplicationLayoutParams.POSITION_TOP
+                                | ComplicationLayoutParams.POSITION_END,
+                        ComplicationLayoutParams.DIRECTION_DOWN,
+                        0,
+                        true),
+                Complication.CATEGORY_STANDARD,
+                mLayout);
+
+        final ComplicationLayoutEngine engine =
+                new ComplicationLayoutEngine(mLayout, 0, mTouchSession, 0, 0);
+        addComplication(engine, firstViewInfo);
+
+        // Ensure the view is added to the top end corner
+        verifyChange(firstViewInfo, true, lp -> {
+            assertThat(lp.topToTop == ConstraintLayout.LayoutParams.PARENT_ID).isTrue();
+            assertThat(lp.endToEnd == ConstraintLayout.LayoutParams.PARENT_ID).isTrue();
+            assertThat(lp.startToEnd == R.id.complication_end_guide).isTrue();
+        });
+    }
+
+    /**
      * Ensures layout in a particular direction updates.
      */
     @Test
     public void testDirectionLayout() {
-        final ComplicationLayoutEngine engine = new ComplicationLayoutEngine(mLayout);
+        final ComplicationLayoutEngine engine =
+                new ComplicationLayoutEngine(mLayout, 0, mTouchSession, 0, 0);
 
         final ViewInfo firstViewInfo = new ViewInfo(
                 new ComplicationLayoutParams(
@@ -174,7 +211,8 @@ public class ComplicationLayoutEngineTest extends SysuiTestCase {
      */
     @Test
     public void testPositionLayout() {
-        final ComplicationLayoutEngine engine = new ComplicationLayoutEngine(mLayout);
+        final ComplicationLayoutEngine engine =
+                new ComplicationLayoutEngine(mLayout, 0, mTouchSession, 0, 0);
 
         final ViewInfo firstViewInfo = new ViewInfo(
                 new ComplicationLayoutParams(
@@ -256,11 +294,88 @@ public class ComplicationLayoutEngineTest extends SysuiTestCase {
     }
 
     /**
+     * Ensures margin is applied
+     */
+    @Test
+    public void testMargin() {
+        final int margin = 5;
+        final ComplicationLayoutEngine engine =
+                new ComplicationLayoutEngine(mLayout, margin, mTouchSession, 0, 0);
+
+        final ViewInfo firstViewInfo = new ViewInfo(
+                new ComplicationLayoutParams(
+                        100,
+                        100,
+                        ComplicationLayoutParams.POSITION_TOP
+                                | ComplicationLayoutParams.POSITION_END,
+                        ComplicationLayoutParams.DIRECTION_DOWN,
+                        0),
+                Complication.CATEGORY_STANDARD,
+                mLayout);
+
+        addComplication(engine, firstViewInfo);
+
+        final ViewInfo secondViewInfo = new ViewInfo(
+                new ComplicationLayoutParams(
+                        100,
+                        100,
+                        ComplicationLayoutParams.POSITION_TOP
+                                | ComplicationLayoutParams.POSITION_END,
+                        ComplicationLayoutParams.DIRECTION_START,
+                        0),
+                Complication.CATEGORY_SYSTEM,
+                mLayout);
+
+        addComplication(engine, secondViewInfo);
+
+        firstViewInfo.clearInvocations();
+        secondViewInfo.clearInvocations();
+
+        final ViewInfo thirdViewInfo = new ViewInfo(
+                new ComplicationLayoutParams(
+                        100,
+                        100,
+                        ComplicationLayoutParams.POSITION_TOP
+                                | ComplicationLayoutParams.POSITION_END,
+                        ComplicationLayoutParams.DIRECTION_START,
+                        1),
+                Complication.CATEGORY_SYSTEM,
+                mLayout);
+
+        addComplication(engine, thirdViewInfo);
+
+        // The first added view should now be underneath the second view.
+        verifyChange(firstViewInfo, false, lp -> {
+            assertThat(lp.topToBottom == thirdViewInfo.view.getId()).isTrue();
+            assertThat(lp.endToEnd == ConstraintLayout.LayoutParams.PARENT_ID).isTrue();
+            assertThat(lp.topMargin).isEqualTo(margin);
+        });
+
+        // The second view should be in underneath the third view.
+        verifyChange(secondViewInfo, false, lp -> {
+            assertThat(lp.endToStart == thirdViewInfo.view.getId()).isTrue();
+            assertThat(lp.topToTop == ConstraintLayout.LayoutParams.PARENT_ID).isTrue();
+            assertThat(lp.getMarginEnd()).isEqualTo(margin);
+        });
+
+        // The third view should be in at the top.
+        verifyChange(thirdViewInfo, true, lp -> {
+            assertThat(lp.topToTop == ConstraintLayout.LayoutParams.PARENT_ID).isTrue();
+            assertThat(lp.endToEnd == ConstraintLayout.LayoutParams.PARENT_ID).isTrue();
+            assertThat(lp.getMarginStart()).isEqualTo(0);
+            assertThat(lp.getMarginEnd()).isEqualTo(0);
+            assertThat(lp.topMargin).isEqualTo(0);
+            assertThat(lp.bottomMargin).isEqualTo(0);
+        });
+    }
+
+    /**
      * Ensures layout in a particular position updates.
      */
     @Test
     public void testRemoval() {
-        final ComplicationLayoutEngine engine = new ComplicationLayoutEngine(mLayout);
+        final ComplicationLayoutEngine engine =
+                new ComplicationLayoutEngine(mLayout, 0, mTouchSession, 0, 0);
 
         final ViewInfo firstViewInfo = new ViewInfo(
                 new ComplicationLayoutParams(
@@ -299,5 +414,38 @@ public class ComplicationLayoutEngineTest extends SysuiTestCase {
             assertThat(lp.topToTop == ConstraintLayout.LayoutParams.PARENT_ID).isTrue();
             assertThat(lp.endToEnd == ConstraintLayout.LayoutParams.PARENT_ID).isTrue();
         });
+    }
+
+    /**
+     * Ensures a second removal of a complication is a no-op.
+     */
+    @Test
+    public void testDoubleRemoval() {
+        final ComplicationLayoutEngine engine =
+                new ComplicationLayoutEngine(mLayout, 0, mTouchSession, 0, 0);
+
+        final ViewInfo firstViewInfo = new ViewInfo(
+                new ComplicationLayoutParams(
+                        100,
+                        100,
+                        ComplicationLayoutParams.POSITION_TOP
+                                | ComplicationLayoutParams.POSITION_END,
+                        ComplicationLayoutParams.DIRECTION_DOWN,
+                        0),
+                Complication.CATEGORY_STANDARD,
+                mLayout);
+
+        engine.addComplication(firstViewInfo.id, firstViewInfo.view, firstViewInfo.lp,
+                firstViewInfo.category);
+        verify(mLayout).addView(firstViewInfo.view);
+
+        assertThat(engine.removeComplication(firstViewInfo.id)).isTrue();
+        verify(firstViewInfo.view).getParent();
+        verify(mLayout).removeView(firstViewInfo.view);
+
+        Mockito.clearInvocations(mLayout, firstViewInfo.view);
+        assertThat(engine.removeComplication(firstViewInfo.id)).isFalse();
+        verify(firstViewInfo.view, never()).getParent();
+        verify(mLayout, never()).removeView(firstViewInfo.view);
     }
 }

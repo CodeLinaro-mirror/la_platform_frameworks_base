@@ -80,6 +80,7 @@ class UdfpsControllerOverlay(
     private val unlockedScreenOffAnimationController: UnlockedScreenOffAnimationController,
     private val sensorProps: FingerprintSensorPropertiesInternal,
     private var hbmProvider: UdfpsHbmProvider,
+    val requestId: Long,
     @ShowReason val requestReason: Int,
     private val controllerCallback: IUdfpsOverlayControllerCallback,
     private val onTouch: (View, MotionEvent, Boolean) -> Boolean,
@@ -276,6 +277,9 @@ class UdfpsControllerOverlay(
         }
     }
 
+    /** Checks if the id is relevant for this overlay. */
+    fun matchesRequestId(id: Long): Boolean = requestId == -1L || requestId == id
+
     private fun WindowManager.LayoutParams.updateForLocation(
         location: SensorLocationInternal,
         animation: UdfpsAnimationViewController<*>?
@@ -300,7 +304,10 @@ class UdfpsControllerOverlay(
         when (context.display!!.rotation) {
             Surface.ROTATION_90 -> {
                 if (!shouldRotate(animation)) {
-                    Log.v(TAG, "skip rotating udfps location ROTATION_90")
+                    Log.v(TAG, "skip rotating udfps location ROTATION_90" +
+                            " animation=$animation" +
+                            " isGoingToSleep=${keyguardUpdateMonitor.isGoingToSleep}" +
+                            " isOccluded=${keyguardStateController.isOccluded}")
                 } else {
                     Log.v(TAG, "rotate udfps location ROTATION_90")
                     x = (location.sensorLocationY - location.sensorRadius - paddingX)
@@ -309,7 +316,10 @@ class UdfpsControllerOverlay(
             }
             Surface.ROTATION_270 -> {
                 if (!shouldRotate(animation)) {
-                    Log.v(TAG, "skip rotating udfps location ROTATION_270")
+                    Log.v(TAG, "skip rotating udfps location ROTATION_270" +
+                            " animation=$animation" +
+                            " isGoingToSleep=${keyguardUpdateMonitor.isGoingToSleep}" +
+                            " isOccluded=${keyguardStateController.isOccluded}")
                 } else {
                     Log.v(TAG, "rotate udfps location ROTATION_270")
                     x = (p.x - location.sensorLocationY - location.sensorRadius - paddingX)

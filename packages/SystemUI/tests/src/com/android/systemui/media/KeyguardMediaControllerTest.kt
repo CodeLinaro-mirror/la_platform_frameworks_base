@@ -36,6 +36,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.mockito.Mock
+import org.mockito.Mockito.verify
 import org.mockito.junit.MockitoJUnit
 import org.mockito.Mockito.`when` as whenever
 
@@ -95,7 +96,6 @@ class KeyguardMediaControllerTest : SysuiTestCase() {
     fun testVisibleOnKeyguardOrFullScreenUserSwitcher() {
         testStateVisibility(StatusBarState.SHADE, GONE)
         testStateVisibility(StatusBarState.SHADE_LOCKED, GONE)
-        testStateVisibility(StatusBarState.FULLSCREEN_USER_SWITCHER, VISIBLE)
         testStateVisibility(StatusBarState.KEYGUARD, VISIBLE)
     }
 
@@ -150,5 +150,10 @@ class KeyguardMediaControllerTest : SysuiTestCase() {
 
         assertTrue("HostView wasn't attached to the single pane container",
             mediaContainerView.childCount == 1)
+    }
+
+    @Test
+    fun testMediaHost_expandedPlayer() {
+        verify(mediaHost).expansion = MediaHostState.EXPANDED
     }
 }

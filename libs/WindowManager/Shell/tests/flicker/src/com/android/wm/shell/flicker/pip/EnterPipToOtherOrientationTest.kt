@@ -204,7 +204,6 @@ class EnterPipToOtherOrientationTest(
     @Presubmit
     @Test
     fun testAppPlusPipLayerCoversFullScreenOnEnd() {
-        // This test doesn't work in shell transitions because of b/206669574
         testSpec.assertLayersEnd {
             val pipRegion = visibleRegion(pipApp.component).region
             visibleRegion(testApp.component)
@@ -225,7 +224,7 @@ class EnterPipToOtherOrientationTest(
         fun getParams(): Collection<FlickerTestParameter> {
             return FlickerTestParameterFactory.getInstance()
                 .getConfigNonRotationTests(supportedRotations = listOf(Surface.ROTATION_0),
-                    repetitions = 5)
+                    repetitions = 3)
         }
     }
 }

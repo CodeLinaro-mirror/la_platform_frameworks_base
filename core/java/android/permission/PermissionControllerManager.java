@@ -907,22 +907,24 @@ public final class PermissionControllerManager {
      * <li>Each permission in {@code permissions} must be a runtime permission.
      * </ul>
      * <p>
-     * For every permission in {@code permissions}, the entire permission group it belongs to will
-     * be revoked. This revocation happens asynchronously and kills all processes running in the
-     * same UID as {@code packageName}. It will be triggered once it is safe to do so.
+     * Background permissions which have no corresponding foreground permission still granted once
+     * the revocation is effective will also be revoked.
+     * <p>
+     * This revocation happens asynchronously and kills all processes running in the same UID as
+     * {@code packageName}. It will be triggered once it is safe to do so.
      *
      * @param packageName The name of the package for which the permissions will be revoked.
      * @param permissions List of permissions to be revoked.
-     * @param callback Callback called when the revocation request has been completed.
      *
-     * @see Context#revokeOwnPermissionsOnKill(Collection)
+     * @see Context#revokeSelfPermissionsOnKill(java.util.Collection)
      *
      * @hide
      */
-    public void revokeOwnPermissionsOnKill(@NonNull String packageName,
-            @NonNull List<String> permissions, AndroidFuture<Void> callback) {
+    public void revokeSelfPermissionsOnKill(@NonNull String packageName,
+            @NonNull List<String> permissions) {
         mRemoteService.postAsync(service -> {
-            service.revokeOwnPermissionsOnKill(packageName, permissions, callback);
+            AndroidFuture<Void> callback = new AndroidFuture<>();
+            service.revokeSelfPermissionsOnKill(packageName, permissions, callback);
             return callback;
         }).whenComplete((result, err) -> {
             if (err != null) {

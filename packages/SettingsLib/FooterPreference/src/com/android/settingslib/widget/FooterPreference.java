@@ -19,7 +19,6 @@ package com.android.settingslib.widget;
 import android.content.Context;
 import android.text.SpannableString;
 import android.text.TextUtils;
-import android.text.method.LinkMovementMethod;
 import android.text.style.URLSpan;
 import android.util.AttributeSet;
 import android.view.View;
@@ -42,6 +41,7 @@ public class FooterPreference extends Preference {
     @VisibleForTesting
     View.OnClickListener mLearnMoreListener;
     private CharSequence mContentDescription;
+    private CharSequence mLearnMoreText;
     private CharSequence mLearnMoreContentDescription;
     private FooterLearnMoreSpan mLearnMoreSpan;
 
@@ -58,10 +58,6 @@ public class FooterPreference extends Preference {
     public void onBindViewHolder(PreferenceViewHolder holder) {
         super.onBindViewHolder(holder);
         TextView title = holder.itemView.findViewById(android.R.id.title);
-        title.setMovementMethod(new LinkMovementMethod());
-        title.setClickable(false);
-        title.setLongClickable(false);
-        title.setFocusable(false);
         if (!TextUtils.isEmpty(mContentDescription)) {
             title.setContentDescription(mContentDescription);
         }
@@ -69,7 +65,12 @@ public class FooterPreference extends Preference {
         TextView learnMore = holder.itemView.findViewById(R.id.settingslib_learn_more);
         if (learnMore != null && mLearnMoreListener != null) {
             learnMore.setVisibility(View.VISIBLE);
-            SpannableString learnMoreText = new SpannableString(learnMore.getText());
+            if (TextUtils.isEmpty(mLearnMoreText)) {
+                mLearnMoreText = learnMore.getText();
+            } else {
+                learnMore.setText(mLearnMoreText);
+            }
+            SpannableString learnMoreText = new SpannableString(mLearnMoreText);
             if (mLearnMoreSpan != null) {
                 learnMoreText.removeSpan(mLearnMoreSpan);
             }
@@ -80,7 +81,6 @@ public class FooterPreference extends Preference {
             if (!TextUtils.isEmpty(mLearnMoreContentDescription)) {
                 learnMore.setContentDescription(mLearnMoreContentDescription);
             }
-            learnMore.setFocusable(false);
         } else {
             learnMore.setVisibility(View.GONE);
         }
@@ -123,6 +123,18 @@ public class FooterPreference extends Preference {
     }
 
     /**
+     * Sets the learn more text.
+     *
+     * @param learnMoreText The string of the learn more text.
+     */
+    public void setLearnMoreText(CharSequence learnMoreText) {
+        if (!TextUtils.equals(mLearnMoreText, learnMoreText)) {
+            mLearnMoreText = learnMoreText;
+            notifyChanged();
+        }
+    }
+
+    /**
      * To set content description of the learn more text. This can use for talkback
      * environment if developer wants to have a customization content.
      *
@@ -162,6 +174,7 @@ public class FooterPreference extends Preference {
         if (TextUtils.isEmpty(getKey())) {
             setKey(KEY_FOOTER);
         }
+        setSelectable(false);
     }
 
     /**

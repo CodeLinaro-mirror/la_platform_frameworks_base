@@ -27,7 +27,6 @@ import android.content.pm.permission.SplitPermissionInfoParcelable;
 import android.permission.IOnPermissionsChangeListener;
 import android.permission.PermissionManagerInternal;
 
-import com.android.internal.infra.AndroidFuture;
 import com.android.server.pm.parsing.pkg.AndroidPackage;
 
 import java.io.FileDescriptor;
@@ -326,28 +325,6 @@ public interface PermissionManagerServiceInterface extends PermissionManagerInte
      * @param userId The user for which to revoke
      */
     void revokePostNotificationPermissionWithoutKillForTest(String packageName, int userId);
-
-    /**
-     * Triggers the revocation of one or more permissions for a package, under the following
-     * conditions:
-     * <ul>
-     * <li>The package {@code packageName} must be under the same UID as the calling process
-     *   (typically, the target package is the calling package).
-     * <li>Each permission in {@code permissions} must be granted to the package
-     * {@code packageName}.
-     * <li>Each permission in {@code permissions} must be a runtime permission.
-     * </ul>
-     * <p>
-     * For every permission in {@code permissions}, the entire permission group it belongs to will
-     * be revoked. This revocation happens asynchronously and kills all processes running in the
-     * same UID as {@code packageName}. It will be triggered once it is safe to do so.
-     *
-     * @param packageName The name of the package for which the permissions will be revoked.
-     * @param permissions List of permissions to be revoked.
-     * @param callback Callback called when the revocation request has been completed.
-     */
-    void revokeOwnPermissionsOnKill(String packageName, List<String> permissions,
-            AndroidFuture<Void> callback);
 
     /**
      * Get whether you should show UI with rationale for requesting a permission. You should do this

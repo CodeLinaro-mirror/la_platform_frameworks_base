@@ -28,7 +28,6 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.Activity;
 import android.app.ActivityManager;
-import android.app.ActivityTaskManager;
 import android.app.SharedElementCallback;
 import android.app.prediction.AppPredictionContext;
 import android.app.prediction.AppPredictionManager;
@@ -71,11 +70,9 @@ import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
-import android.os.IBinder;
 import android.os.Message;
 import android.os.Parcelable;
 import android.os.PatternMatcher;
-import android.os.RemoteException;
 import android.os.ResultReceiver;
 import android.os.UserHandle;
 import android.os.UserManager;
@@ -90,6 +87,7 @@ import android.text.TextUtils;
 import android.util.AttributeSet;
 import android.util.HashedStringCache;
 import android.util.Log;
+import android.util.PluralsMessageFormatter;
 import android.util.Size;
 import android.util.Slog;
 import android.view.LayoutInflater;
@@ -106,7 +104,6 @@ import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.Space;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import com.android.internal.R;
 import com.android.internal.annotations.VisibleForTesting;
@@ -215,6 +212,9 @@ public class ChooserActivity extends ResolverActivity implements
     private static final String SHORTCUT_TARGET = "shortcut_target";
     private static final int APP_PREDICTION_SHARE_TARGET_QUERY_PACKAGE_LIMIT = 20;
     public static final String APP_PREDICTION_INTENT_FILTER_KEY = "intent_filter";
+
+    private static final String PLURALS_COUNT = "count";
+    private static final String PLURALS_FILE_NAME = "file_name";
 
     @VisibleForTesting
     public static final int LIST_VIEW_UPDATE_INTERVAL_IN_MILLIS = 250;
@@ -758,30 +758,17 @@ public class ChooserActivity extends ResolverActivity implements
             return false;
         }
 
-        try {
-            Intent delegationIntent = new Intent();
-            final ComponentName delegateActivity = ComponentName.unflattenFromString(
-                    Resources.getSystem().getString(R.string.config_chooserActivity));
-            IBinder permissionToken = ActivityTaskManager.getService()
-                    .requestStartActivityPermissionToken(delegateActivity);
-            delegationIntent.setComponent(delegateActivity);
-            delegationIntent.putExtra(Intent.EXTRA_INTENT, getIntent());
-            delegationIntent.putExtra(ActivityTaskManager.EXTRA_PERMISSION_TOKEN, permissionToken);
+        Intent delegationIntent = new Intent();
+        final ComponentName delegateActivity = ComponentName.unflattenFromString(
+                Resources.getSystem().getString(R.string.config_chooserActivity));
+        delegationIntent.setComponent(delegateActivity);
+        delegationIntent.putExtra(Intent.EXTRA_INTENT, getIntent());
+        delegationIntent.addFlags(Intent.FLAG_ACTIVITY_PREVIOUS_IS_TOP);
 
-            // Query prediction availability; mIsAppPredictorComponentAvailable isn't initialized.
-            delegationIntent.putExtra(
-                    EXTRA_IS_APP_PREDICTION_SERVICE_AVAILABLE, isAppPredictionServiceAvailable());
-
-            delegationIntent.addFlags(Intent.FLAG_ACTIVITY_PREVIOUS_IS_TOP);
-
-            // Don't close until the delegate finishes, or the token will be invalidated.
-            mAwaitingDelegateResponse = true;
-            startActivityForResult(delegationIntent, REQUEST_CODE_RETURN_FROM_DELEGATE_CHOOSER);
-            return true;
-        } catch (RemoteException e) {
-            Log.e(TAG, e.toString());
-        }
-        return false;
+        // Don't close until the delegate finishes, or the token will be invalidated.
+        mAwaitingDelegateResponse = true;
+        startActivityForResult(delegationIntent, REQUEST_CODE_RETURN_FROM_DELEGATE_CHOOSER);
+        return true;
     }
 
     @Override
@@ -968,34 +955,8 @@ public class ChooserActivity extends ResolverActivity implements
     /**
      * Returns true if app prediction service is defined and the component exists on device.
      */
-    @VisibleForTesting
-    public boolean isAppPredictionServiceAvailable() {
-        if (getPackageManager().getAppPredictionServicePackageName() == null) {
-            // Default AppPredictionService is not defined.
-            return false;
-        }
-
-        final String appPredictionServiceName =
-                getString(R.string.config_defaultAppPredictionService);
-        if (appPredictionServiceName == null) {
-            return false;
-        }
-        final ComponentName appPredictionComponentName =
-                ComponentName.unflattenFromString(appPredictionServiceName);
-        if (appPredictionComponentName == null) {
-            return false;
-        }
-
-        // Check if the app prediction component actually exists on the device. The component is
-        // only visible when this is running in a system activity; otherwise this check will fail.
-        Intent intent = new Intent();
-        intent.setComponent(appPredictionComponentName);
-        if (getPackageManager().resolveService(intent, PackageManager.MATCH_ALL) == null) {
-            Log.e(TAG, "App prediction service is defined, but does not exist: "
-                    + appPredictionServiceName);
-            return false;
-        }
-        return true;
+    private boolean isAppPredictionServiceAvailable() {
+        return getPackageManager().getAppPredictionServicePackageName() != null;
     }
 
     /**
@@ -1081,7 +1042,6 @@ public class ChooserActivity extends ResolverActivity implements
             ClipboardManager clipboardManager = (ClipboardManager) getSystemService(
                     Context.CLIPBOARD_SERVICE);
             clipboardManager.setPrimaryClipAsPackage(clipData, getReferrerPackageName());
-            Toast.makeText(getApplicationContext(), R.string.copied, Toast.LENGTH_SHORT).show();
 
             // Log share completion via copy
             LogMaker targetLogMaker = new LogMaker(
@@ -1551,8 +1511,13 @@ public class ChooserActivity extends ResolverActivity implements
             } else {
                 FileInfo fileInfo = extractFileInfo(uris.get(0), getContentResolver());
                 int remUriCount = uriCount - 1;
-                String fileName = getResources().getQuantityString(R.plurals.file_count,
-                        remUriCount, fileInfo.name, remUriCount);
+                Map<String, Object> arguments = new HashMap<>();
+                arguments.put(PLURALS_COUNT, remUriCount);
+                arguments.put(PLURALS_FILE_NAME, fileInfo.name);
+                String fileName = PluralsMessageFormatter.format(
+                        getResources(),
+                        arguments,
+                        R.string.file_count);
 
                 TextView fileNameView = contentPreviewLayout.findViewById(
                         R.id.content_preview_filename);

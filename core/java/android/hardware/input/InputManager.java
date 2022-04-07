@@ -35,6 +35,7 @@ import android.hardware.lights.Light;
 import android.hardware.lights.LightState;
 import android.hardware.lights.LightsManager;
 import android.hardware.lights.LightsRequest;
+import android.os.Binder;
 import android.os.BlockUntrustedTouchesMode;
 import android.os.Build;
 import android.os.CombinedVibration;
@@ -1078,16 +1079,24 @@ public final class InputManager {
     }
 
     /**
-     * Gets the key code produced by the specified location on a US keyboard layout.
-     * Key code as defined in {@link android.view.KeyEvent}.
-     * This API is only functional for devices with {@link InputDevice#SOURCE_KEYBOARD} available
-     * which can alter their key mapping using country specific keyboard layouts.
+     * Gets the {@link android.view.KeyEvent key code} produced by the given location on a reference
+     * QWERTY keyboard layout.
+     * <p>
+     * This API is useful for querying the physical location of keys that change the character
+     * produced based on the current locale and keyboard layout.
+     * <p>
+     * @see InputDevice#getKeyCodeForKeyLocation(int) for examples.
      *
-     * @param deviceId The input device id.
-     * @param locationKeyCode The location of a key on a US keyboard layout.
-     * @return The key code produced when pressing the key at the specified location, given the
-     *         active keyboard layout. Returns {@link KeyEvent#KEYCODE_UNKNOWN} if the requested
-     *         mapping could not be determined, or if an error occurred.
+     * @param locationKeyCode The location of a key specified as a key code on the QWERTY layout.
+     * This provides a consistent way of referring to the physical location of a key independently
+     * of the current keyboard layout. Also see the
+     * <a href="https://www.w3.org/TR/2017/CR-uievents-code-20170601/#key-alphanumeric-writing-system">
+     * hypothetical keyboard</a> provided by the W3C, which may be helpful for identifying the
+     * physical location of a key.
+     * @return The key code produced by the key at the specified location, given the current
+     * keyboard layout. Returns {@link KeyEvent#KEYCODE_UNKNOWN} if the device does not specify
+     * {@link InputDevice#SOURCE_KEYBOARD} or the requested mapping cannot be determined.
+     *
      * @hide
      */
     public int getKeyCodeForKeyLocation(int deviceId, int locationKeyCode) {
@@ -1211,7 +1220,7 @@ public final class InputManager {
      */
     public InputMonitor monitorGestureInput(String name, int displayId) {
         try {
-            return mIm.monitorGestureInput(name, displayId);
+            return mIm.monitorGestureInput(new Binder(), name, displayId);
         } catch (RemoteException ex) {
             throw ex.rethrowFromSystemServer();
         }
@@ -1359,19 +1368,18 @@ public final class InputManager {
     }
 
     /**
-     * Add a runtime association between the input device name and display, by unique id. Input
-     * device names are expected to be unique.
-     * @param inputDeviceName The name of the input device.
+     * Add a runtime association between the input port and display, by unique id. Input ports are
+     * expected to be unique.
+     * @param inputPort The port of the input device.
      * @param displayUniqueId The unique id of the associated display.
      * <p>
      * Requires {@link android.Manifest.permission.ASSOCIATE_INPUT_DEVICE_TO_DISPLAY}.
      * </p>
      * @hide
      */
-    public void addUniqueIdAssociation(@NonNull String inputDeviceName,
-            @NonNull String displayUniqueId) {
+    public void addUniqueIdAssociation(@NonNull String inputPort, @NonNull String displayUniqueId) {
         try {
-            mIm.addUniqueIdAssociation(inputDeviceName, displayUniqueId);
+            mIm.addUniqueIdAssociation(inputPort, displayUniqueId);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -1379,15 +1387,15 @@ public final class InputManager {
 
     /**
      * Removes a runtime association between the input device and display.
-     * @param inputDeviceName The name of the input device.
+     * @param inputPort The port of the input device.
      * <p>
      * Requires {@link android.Manifest.permission.ASSOCIATE_INPUT_DEVICE_TO_DISPLAY}.
      * </p>
      * @hide
      */
-    public void removeUniqueIdAssociation(@NonNull String inputDeviceName) {
+    public void removeUniqueIdAssociation(@NonNull String inputPort) {
         try {
-            mIm.removeUniqueIdAssociation(inputDeviceName);
+            mIm.removeUniqueIdAssociation(inputPort);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }

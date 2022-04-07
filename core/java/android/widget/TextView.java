@@ -788,7 +788,8 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
     private Layout mLayout;
     private boolean mLocalesChanged = false;
     private int mTextSizeUnit = -1;
-    private LineBreakConfig mLineBreakConfig = new LineBreakConfig();
+    private int mLineBreakStyle = DEFAULT_LINE_BREAK_STYLE;
+    private int mLineBreakWordStyle = DEFAULT_LINE_BREAK_WORD_STYLE;
 
     // This is used to reflect the current user preference for changing font weight and making text
     // more bold.
@@ -1457,13 +1458,12 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
                     break;
 
                 case com.android.internal.R.styleable.TextView_lineBreakStyle:
-                    mLineBreakConfig.setLineBreakStyle(
-                            a.getInt(attr, LineBreakConfig.LINE_BREAK_STYLE_NONE));
+                    mLineBreakStyle = a.getInt(attr, LineBreakConfig.LINE_BREAK_STYLE_NONE);
                     break;
 
                 case com.android.internal.R.styleable.TextView_lineBreakWordStyle:
-                    mLineBreakConfig.setLineBreakWordStyle(
-                            a.getInt(attr, LineBreakConfig.LINE_BREAK_WORD_STYLE_NONE));
+                    mLineBreakWordStyle = a.getInt(attr,
+                            LineBreakConfig.LINE_BREAK_WORD_STYLE_NONE);
                     break;
 
                 case com.android.internal.R.styleable.TextView_autoSizeTextType:
@@ -4301,13 +4301,12 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
             @LineBreakConfig.LineBreakStyle int lineBreakStyle,
             @LineBreakConfig.LineBreakWordStyle int lineBreakWordStyle) {
         boolean updated = false;
-        if (isLineBreakStyleSpecified && mLineBreakConfig.getLineBreakStyle() != lineBreakStyle) {
-            mLineBreakConfig.setLineBreakStyle(lineBreakStyle);
+        if (isLineBreakStyleSpecified && mLineBreakStyle != lineBreakStyle) {
+            mLineBreakStyle = lineBreakStyle;
             updated = true;
         }
-        if (isLineBreakWordStyleSpecified
-                && mLineBreakConfig.getLineBreakWordStyle() != lineBreakWordStyle) {
-            mLineBreakConfig.setLineBreakWordStyle(lineBreakWordStyle);
+        if (isLineBreakWordStyleSpecified && mLineBreakWordStyle != lineBreakWordStyle) {
+            mLineBreakWordStyle = lineBreakWordStyle;
             updated = true;
         }
         if (updated && mLayout != null) {
@@ -4461,7 +4460,7 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
      * pixel" units.  This size is adjusted based on the current density and
      * user font size preference.
      *
-     * <p>Note: if this TextView has the auto-size feature enabled than this function is no-op.
+     * <p>Note: if this TextView has the auto-size feature enabled, then this function is no-op.
      *
      * @param size The scaled pixel size.
      *
@@ -4476,7 +4475,7 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
      * Set the default text size to a given unit and value. See {@link
      * TypedValue} for the possible dimension units.
      *
-     * <p>Note: if this TextView has the auto-size feature enabled than this function is no-op.
+     * <p>Note: if this TextView has the auto-size feature enabled, then this function is no-op.
      *
      * @param unit The desired dimension unit.
      * @param size The desired size in the given units.
@@ -4871,50 +4870,72 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
     }
 
     /**
-     * Sets line break configuration indicates which strategy needs to be used when calculating the
-     * text wrapping.
-     * <P>
-     * There are two types of line break rules that can be configured at the same time. One is
-     * line break style(lb) and the other is line break word style(lw). The line break style
-     * affects rule-based breaking. The line break word style affects dictionary-based breaking
-     * and provide phrase-based breaking opportunities. There are several types for the
-     * line break style:
+     * Set the line break style for text wrapping.
+     *
+     * The line break style to indicates the line break strategies can be used when
+     * calculating the text wrapping. The line break style affects rule-based breaking. It
+     * specifies the strictness of line-breaking rules.
+     * There are several types for the line break style:
      * {@link LineBreakConfig#LINE_BREAK_STYLE_LOOSE},
      * {@link LineBreakConfig#LINE_BREAK_STYLE_NORMAL} and
-     * {@link LineBreakConfig#LINE_BREAK_STYLE_STRICT}.
-     * The type for the line break word style is
-     * {@link LineBreakConfig#LINE_BREAK_WORD_STYLE_PHRASE}.
-     * The default values of the line break style and the line break word style are
-     * {@link LineBreakConfig#LINE_BREAK_STYLE_NONE} and
-     * {@link LineBreakConfig#LINE_BREAK_WORD_STYLE_NONE} respectively, indicating that no line
-     * breaking rules are specified.
-     * See <a href="https://drafts.csswg.org/css-text/#line-break-property">
+     * {@link LineBreakConfig#LINE_BREAK_STYLE_STRICT}. The default values of the line break style
+     * is {@link LineBreakConfig#LINE_BREAK_STYLE_NONE}, indicating no breaking rule is specified.
+     * See <a href="https://www.w3.org/TR/css-text-3/#line-break-property">
      *         the line-break property</a>
      *
-     * @param lineBreakConfig the line break config for text wrapping.
+     * @param lineBreakStyle the line break style for the text.
      */
-    public void setLineBreakConfig(@NonNull LineBreakConfig lineBreakConfig) {
-        Objects.requireNonNull(lineBreakConfig);
-        if (mLineBreakConfig.equals(lineBreakConfig)) {
-            return;
-        }
-        mLineBreakConfig.set(lineBreakConfig);
-        if (mLayout != null) {
-            nullLayouts();
-            requestLayout();
-            invalidate();
+    public void setLineBreakStyle(@LineBreakConfig.LineBreakStyle int lineBreakStyle) {
+        if (mLineBreakStyle != lineBreakStyle) {
+            mLineBreakStyle = lineBreakStyle;
+            if (mLayout != null) {
+                nullLayouts();
+                requestLayout();
+                invalidate();
+            }
         }
     }
 
     /**
-     * Get the current line break configuration for text wrapping.
+     * Set the line break word style for text wrapping.
      *
-     * @return the current line break configuration to be used for text wrapping.
+     * The line break word style affects dictionary-based breaking and provide phrase-based
+     * breaking opportunities. The type for the line break word style is
+     * {@link LineBreakConfig#LINE_BREAK_WORD_STYLE_PHRASE}. The default values of the line break
+     * word style is {@link LineBreakConfig#LINE_BREAK_WORD_STYLE_NONE}, indicating no breaking rule
+     * is specified.
+     * See <a href="https://www.w3.org/TR/css-text-3/#word-break-property">
+     *         the word-break property</a>
+     *
+     * @param lineBreakWordStyle the line break word style for the tet
      */
-    public @NonNull LineBreakConfig getLineBreakConfig() {
-        LineBreakConfig lbConfig = new LineBreakConfig();
-        lbConfig.set(mLineBreakConfig);
-        return lbConfig;
+    public void setLineBreakWordStyle(@LineBreakConfig.LineBreakWordStyle int lineBreakWordStyle) {
+        if (mLineBreakWordStyle != lineBreakWordStyle) {
+            mLineBreakWordStyle = lineBreakWordStyle;
+            if (mLayout != null) {
+                nullLayouts();
+                requestLayout();
+                invalidate();
+            }
+        }
+    }
+
+    /**
+     * Get the current line break style for text wrapping.
+     *
+     * @return the current line break style to be used for text wrapping.
+     */
+    public @LineBreakConfig.LineBreakStyle int getLineBreakStyle() {
+        return mLineBreakStyle;
+    }
+
+    /**
+     * Get the current line word break style for text wrapping.
+     *
+     * @return the current line break word style to be used for text wrapping.
+     */
+    public @LineBreakConfig.LineBreakWordStyle int getLineBreakWordStyle() {
+        return mLineBreakWordStyle;
     }
 
     /**
@@ -4924,7 +4945,8 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
      * @see PrecomputedText
      */
     public @NonNull PrecomputedText.Params getTextMetricsParams() {
-        return new PrecomputedText.Params(new TextPaint(mTextPaint), mLineBreakConfig,
+        return new PrecomputedText.Params(new TextPaint(mTextPaint),
+                LineBreakConfig.getLineBreakConfig(mLineBreakStyle, mLineBreakWordStyle),
                 getTextDirectionHeuristic(),
                 mBreakStrategy, mHyphenationFrequency);
     }
@@ -4941,13 +4963,9 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
         mTextDir = params.getTextDirection();
         mBreakStrategy = params.getBreakStrategy();
         mHyphenationFrequency = params.getHyphenationFrequency();
-        if (params.getLineBreakConfig() != null) {
-            mLineBreakConfig.set(params.getLineBreakConfig());
-        } else {
-            // Set default value if the line break config in the PrecomputedText.Params is null.
-            mLineBreakConfig.setLineBreakStyle(DEFAULT_LINE_BREAK_STYLE);
-            mLineBreakConfig.setLineBreakWordStyle(DEFAULT_LINE_BREAK_WORD_STYLE);
-        }
+        LineBreakConfig lineBreakConfig = params.getLineBreakConfig();
+        mLineBreakStyle = lineBreakConfig.getLineBreakStyle();
+        mLineBreakWordStyle = lineBreakConfig.getLineBreakWordStyle();
         if (mLayout != null) {
             nullLayouts();
             requestLayout();
@@ -5081,7 +5099,7 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
      *
      * @param color A color value in the form 0xAARRGGBB.
      * Do not pass a resource ID. To get a color value from a resource ID, call
-     * {@link android.support.v4.content.ContextCompat#getColor(Context, int) getColor}.
+     * {@link androidx.core.content.ContextCompat#getColor(Context, int) getColor}.
      *
      * @see #setTextColor(ColorStateList)
      * @see #getTextColors()
@@ -6486,7 +6504,8 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
             }
             final @PrecomputedText.Params.CheckResultUsableResult int checkResult =
                     precomputed.getParams().checkResultUsable(getPaint(), mTextDir, mBreakStrategy,
-                            mHyphenationFrequency, mLineBreakConfig);
+                            mHyphenationFrequency, LineBreakConfig.getLineBreakConfig(
+                                    mLineBreakStyle, mLineBreakWordStyle));
             switch (checkResult) {
                 case PrecomputedText.Params.UNUSABLE:
                     throw new IllegalArgumentException(
@@ -9383,7 +9402,8 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
                         .setHyphenationFrequency(mHyphenationFrequency)
                         .setJustificationMode(mJustificationMode)
                         .setMaxLines(mMaxMode == LINES ? mMaximum : Integer.MAX_VALUE)
-                        .setLineBreakConfig(mLineBreakConfig);
+                        .setLineBreakConfig(LineBreakConfig.getLineBreakConfig(
+                                mLineBreakStyle, mLineBreakWordStyle));
                 if (shouldEllipsize) {
                     builder.setEllipsize(mEllipsize)
                             .setEllipsizedWidth(ellipsisWidth);
@@ -9498,7 +9518,8 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
                     .setHyphenationFrequency(mHyphenationFrequency)
                     .setJustificationMode(mJustificationMode)
                     .setMaxLines(mMaxMode == LINES ? mMaximum : Integer.MAX_VALUE)
-                    .setLineBreakConfig(mLineBreakConfig);
+                    .setLineBreakConfig(LineBreakConfig.getLineBreakConfig(
+                            mLineBreakStyle, mLineBreakWordStyle));
             if (shouldEllipsize) {
                 builder.setEllipsize(effectiveEllipsize)
                         .setEllipsizedWidth(ellipsisWidth);
@@ -9866,7 +9887,8 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
                 .setJustificationMode(getJustificationMode())
                 .setMaxLines(mMaxMode == LINES ? mMaximum : Integer.MAX_VALUE)
                 .setTextDirection(getTextDirectionHeuristic())
-                .setLineBreakConfig(mLineBreakConfig);
+                .setLineBreakConfig(LineBreakConfig.getLineBreakConfig(
+                        mLineBreakStyle, mLineBreakWordStyle));
 
         final StaticLayout layout = layoutBuilder.build();
 
@@ -10821,8 +10843,11 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
                         && mSavedMarqueeModeLayout.getLineWidth(0) > width));
     }
 
+    /**
+     * @hide
+     */
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.P, trackingBug = 115609023)
-    private void startMarquee() {
+    protected void startMarquee() {
         // Do not ellipsize EditText
         if (getKeyListener() != null) return;
 
@@ -10848,7 +10873,10 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
         }
     }
 
-    private void stopMarquee() {
+    /**
+     * @hide
+     */
+    protected void stopMarquee() {
         if (mMarquee != null && !mMarquee.isStopped()) {
             mMarquee.stop();
         }
@@ -12289,6 +12317,7 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
                     EXTRA_DATA_RENDERING_INFO_KEY,
                     EXTRA_DATA_TEXT_CHARACTER_LOCATION_KEY
             ));
+            info.setTextSelectable(isTextSelectable() || isTextEditable());
         } else {
             info.setAvailableExtraData(Arrays.asList(
                     EXTRA_DATA_RENDERING_INFO_KEY
@@ -12306,7 +12335,8 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
                 info.addAction(AccessibilityNodeInfo.ACTION_CUT);
             }
             if (canReplace()) {
-                info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_SUGGESTIONS);
+                info.addAction(
+                        AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_TEXT_SUGGESTIONS);
             }
             if (canShare()) {
                 info.addAction(new AccessibilityNodeInfo.AccessibilityAction(
@@ -12333,9 +12363,10 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
         }
 
         // A view should not be exposed as clickable/long-clickable to a service because of a
-        // LinkMovementMethod.
+        // LinkMovementMethod or because it has selectable and non-editable text.
         if ((info.isClickable() || info.isLongClickable())
-                && mMovement instanceof LinkMovementMethod) {
+                && (mMovement instanceof LinkMovementMethod
+                || (isTextSelectable() && !isTextEditable()))) {
             if (!hasOnClickListeners()) {
                 info.setClickable(false);
                 info.removeAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_CLICK);
@@ -12567,11 +12598,9 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
                         return true;
                     }
                     if (start >= 0 && start <= end && end <= text.length()) {
+                        requestFocusOnNonEditableSelectableText();
                         Selection.setSelection((Spannable) text, start, end);
-                        // Make sure selection mode is engaged.
-                        if (mEditor != null) {
-                            mEditor.startSelectionActionModeAsync(false);
-                        }
+                        hideAccessibilitySelectionControllers();
                         return true;
                     }
                 }
@@ -12627,7 +12656,7 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
             default: {
                 // New ids have static blocks to assign values, so they can't be used in a case
                 // block.
-                if (action == R.id.accessibilityActionShowSuggestions) {
+                if (action == R.id.accessibilityActionShowTextSuggestions) {
                     return isFocused() && canReplace() && onTextContextMenuItem(ID_REPLACE);
                 }
                 return super.performAccessibilityActionInternal(action, arguments);
@@ -12665,6 +12694,18 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
         return handled;
     }
 
+    private void requestFocusOnNonEditableSelectableText() {
+        if (!isTextEditable() && isTextSelectable()) {
+            if (!isEnabled()) {
+                return;
+            }
+
+            if (isFocusable() && !isFocused()) {
+                requestFocus();
+            }
+        }
+    }
+
     private boolean hasSpannableText() {
         return mText != null && mText instanceof Spannable;
     }
@@ -12693,9 +12734,7 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
     /**
      * Returns the text that should be exposed to accessibility services.
      * <p>
-     * This approximates what is displayed visually. If the user has specified
-     * that accessibility services should speak passwords, this method will
-     * bypass any password transformation method and return unobscured text.
+     * This approximates what is displayed visually.
      *
      * @return the text that should be exposed to accessibility services, may
      *         be {@code null} if no text is set
@@ -12767,7 +12806,9 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
     /**
      * Called when a context menu option for the text view is selected.  Currently
      * this will be one of {@link android.R.id#selectAll}, {@link android.R.id#cut},
-     * {@link android.R.id#copy}, {@link android.R.id#paste} or {@link android.R.id#shareText}.
+     * {@link android.R.id#copy}, {@link android.R.id#paste},
+     * {@link android.R.id#pasteAsPlainText} (starting at API level 23) or
+     * {@link android.R.id#shareText}.
      *
      * @return true if the context menu item action was performed.
      */
@@ -12958,6 +12999,7 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
      * method. The default actions can also be removed from the menu using
      * {@link android.view.Menu#removeItem(int)} and passing {@link android.R.id#selectAll},
      * {@link android.R.id#cut}, {@link android.R.id#copy}, {@link android.R.id#paste},
+     * {@link android.R.id#pasteAsPlainText} (starting at API level 23),
      * {@link android.R.id#replaceText} or {@link android.R.id#shareText} ids as parameters.
      *
      * <p>Returning false from
@@ -12996,7 +13038,8 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
      * {@link android.view.ActionMode.Callback#onPrepareActionMode(android.view.ActionMode,
      * android.view.Menu)} method. The default actions can also be removed from the menu using
      * {@link android.view.Menu#removeItem(int)} and passing {@link android.R.id#selectAll},
-     * {@link android.R.id#paste} or {@link android.R.id#replaceText} ids as parameters.</p>
+     * {@link android.R.id#paste}, {@link android.R.id#pasteAsPlainText} (starting at API
+     * level 23) or {@link android.R.id#replaceText} ids as parameters.</p>
      *
      * <p>Returning false from
      * {@link android.view.ActionMode.Callback#onCreateActionMode(android.view.ActionMode,
@@ -13672,6 +13715,13 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
     /**
      * @hide
      */
+    public void prepareForExtendedAccessibilitySelection() {
+        requestFocusOnNonEditableSelectableText();
+    }
+
+    /**
+     * @hide
+     */
     @Override
     public int getAccessibilitySelectionEnd() {
         return getSelectionEnd();
@@ -13693,8 +13743,12 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
             Selection.removeSelection((Spannable) text);
         }
         // Hide all selection controllers used for adjusting selection
-        // since we are doing so explicitlty by other means and these
+        // since we are doing so explicitly by other means and these
         // controllers interact with how selection behaves.
+        hideAccessibilitySelectionControllers();
+    }
+
+    private void hideAccessibilitySelectionControllers() {
         if (mEditor != null) {
             mEditor.hideCursorAndSpanControllers();
             mEditor.stopTextActionMode();

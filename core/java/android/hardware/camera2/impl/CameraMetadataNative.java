@@ -333,6 +333,8 @@ public class CameraMetadataNative implements Parcelable {
     private static final int MANDATORY_STREAM_CONFIGURATIONS_MAX_RESOLUTION = 1;
     private static final int MANDATORY_STREAM_CONFIGURATIONS_CONCURRENT = 2;
     private static final int MANDATORY_STREAM_CONFIGURATIONS_10BIT = 3;
+    private static final int MANDATORY_STREAM_CONFIGURATIONS_USE_CASE = 4;
+    private static final int MANDATORY_STREAM_CONFIGURATIONS_PREVIEW_STABILIZATION = 5;
 
     private static String translateLocationProviderToProcess(final String provider) {
         if (provider == null) {
@@ -700,6 +702,25 @@ public class CameraMetadataNative implements Parcelable {
                 });
 
         sGetCommandMap.put(
+                CameraCharacteristics.SCALER_MANDATORY_USE_CASE_STREAM_COMBINATIONS.getNativeKey(),
+                        new GetCommand() {
+                    @Override
+                    @SuppressWarnings("unchecked")
+                    public <T> T getValue(CameraMetadataNative metadata, Key<T> key) {
+                        return (T) metadata.getMandatoryUseCaseStreamCombinations();
+                    }
+                });
+        sGetCommandMap.put(
+                CameraCharacteristics.SCALER_MANDATORY_PREVIEW_STABILIZATION_OUTPUT_STREAM_COMBINATIONS.getNativeKey(),
+                new GetCommand() {
+                    @Override
+                    @SuppressWarnings("unchecked")
+                    public <T> T getValue(CameraMetadataNative metadata, Key<T> key) {
+                        return (T) metadata.getMandatoryPreviewStabilizationStreamCombinations();
+                    }
+                });
+
+        sGetCommandMap.put(
                 CameraCharacteristics.CONTROL_MAX_REGIONS_AE.getNativeKey(), new GetCommand() {
                     @Override
                     @SuppressWarnings("unchecked")
@@ -1037,7 +1058,7 @@ public class CameraMetadataNative implements Parcelable {
     }
 
     private DynamicRangeProfiles getDynamicRangeProfiles() {
-        int[] profileArray = getBase(
+        long[] profileArray = getBase(
                 CameraCharacteristics.REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES_MAP);
 
         if (profileArray == null) {
@@ -1389,6 +1410,24 @@ public class CameraMetadataNative implements Parcelable {
                 CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_BURST_CAPTURE);
     }
 
+    private boolean isPreviewStabilizationSupported() {
+        boolean ret = false;
+
+        int[] videoStabilizationModes =
+                getBase(CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES);
+        if (videoStabilizationModes == null) {
+            return false;
+        }
+        for (int mode : videoStabilizationModes) {
+            if (mode == CameraMetadata.CONTROL_VIDEO_STABILIZATION_MODE_PREVIEW_STABILIZATION) {
+                ret = true;
+                break;
+            }
+        }
+
+        return ret;
+    }
+
     private MandatoryStreamCombination[] getMandatoryStreamCombinationsHelper(
             int mandatoryStreamsType) {
         int[] capabilities = getBase(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES);
@@ -1400,7 +1439,7 @@ public class CameraMetadataNative implements Parcelable {
         int hwLevel = getBase(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL);
         MandatoryStreamCombination.Builder build = new MandatoryStreamCombination.Builder(
                 mCameraId, hwLevel, mDisplaySize, caps, getStreamConfigurationMap(),
-                getStreamConfigurationMapMaximumResolution());
+                getStreamConfigurationMapMaximumResolution(), isPreviewStabilizationSupported());
 
         List<MandatoryStreamCombination> combs = null;
         switch (mandatoryStreamsType) {
@@ -1412,6 +1451,12 @@ public class CameraMetadataNative implements Parcelable {
                 break;
             case MANDATORY_STREAM_CONFIGURATIONS_10BIT:
                 combs = build.getAvailableMandatory10BitStreamCombinations();
+                break;
+            case MANDATORY_STREAM_CONFIGURATIONS_USE_CASE:
+                combs = build.getAvailableMandatoryStreamUseCaseCombinations();
+                break;
+            case MANDATORY_STREAM_CONFIGURATIONS_PREVIEW_STABILIZATION:
+                combs = build.getAvailableMandatoryPreviewStabilizedStreamCombinations();
                 break;
             default:
                 combs = build.getAvailableMandatoryStreamCombinations();
@@ -1444,6 +1489,15 @@ public class CameraMetadataNative implements Parcelable {
 
     private MandatoryStreamCombination[] getMandatoryStreamCombinations() {
         return getMandatoryStreamCombinationsHelper(MANDATORY_STREAM_CONFIGURATIONS_DEFAULT);
+    }
+
+    private MandatoryStreamCombination[] getMandatoryUseCaseStreamCombinations() {
+        return getMandatoryStreamCombinationsHelper(MANDATORY_STREAM_CONFIGURATIONS_USE_CASE);
+    }
+
+    private MandatoryStreamCombination[] getMandatoryPreviewStabilizationStreamCombinations() {
+        return getMandatoryStreamCombinationsHelper(
+                MANDATORY_STREAM_CONFIGURATIONS_PREVIEW_STABILIZATION);
     }
 
     private StreamConfigurationMap getStreamConfigurationMap() {

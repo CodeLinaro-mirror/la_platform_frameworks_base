@@ -181,6 +181,22 @@ public class AudioManager {
     public static final String VOLUME_CHANGED_ACTION = "android.media.VOLUME_CHANGED_ACTION";
 
     /**
+     * @hide Broadcast intent when the volume for a particular stream type changes.
+     * Includes the stream, the new volume and previous volumes.
+     * Notes:
+     *  - for internal platform use only, do not make public,
+     *  - never used for "remote" volume changes
+     *
+     * @see #EXTRA_VOLUME_STREAM_TYPE
+     * @see #EXTRA_VOLUME_STREAM_VALUE
+     * @see #EXTRA_PREV_VOLUME_STREAM_VALUE
+     */
+    @SystemApi
+    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+    @SuppressLint("ActionValue")
+    public static final String ACTION_VOLUME_CHANGED = "android.media.VOLUME_CHANGED_ACTION";
+
+    /**
      * @hide Broadcast intent when the devices for a particular stream type changes.
      * Includes the stream, the new devices and previous devices.
      * Notes:
@@ -244,7 +260,8 @@ public class AudioManager {
     /**
      * @hide The stream type for the volume changed intent.
      */
-    @UnsupportedAppUsage
+    @SystemApi
+    @SuppressLint("ActionValue")
     public static final String EXTRA_VOLUME_STREAM_TYPE = "android.media.EXTRA_VOLUME_STREAM_TYPE";
 
     /**
@@ -261,7 +278,8 @@ public class AudioManager {
     /**
      * @hide The volume associated with the stream for the volume changed intent.
      */
-    @UnsupportedAppUsage
+    @SystemApi
+    @SuppressLint("ActionValue")
     public static final String EXTRA_VOLUME_STREAM_VALUE =
         "android.media.EXTRA_VOLUME_STREAM_VALUE";
 
@@ -368,7 +386,7 @@ public class AudioManager {
     public static final int STREAM_NOTIFICATION = AudioSystem.STREAM_NOTIFICATION;
     /** @hide Used to identify the volume of audio streams for phone calls when connected
      *        to bluetooth */
-    @UnsupportedAppUsage
+    @SystemApi
     public static final int STREAM_BLUETOOTH_SCO = AudioSystem.STREAM_BLUETOOTH_SCO;
     /** @hide Used to identify the volume of audio streams for enforced system sounds
      *        in certain countries (e.g camera in Japan) */
@@ -544,6 +562,7 @@ public class AudioManager {
      * Indicates the volume set/adjust call is for Bluetooth absolute volume
      * @hide
      */
+    @SystemApi
     public static final int FLAG_BLUETOOTH_ABS_VOLUME = 1 << 6;
 
     /**
@@ -584,6 +603,13 @@ public class AudioManager {
      */
     @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
     public static final int FLAG_FROM_KEY = 1 << 12;
+
+    /**
+     * Indicates that an absolute volume controller is notifying AudioService of a change in the
+     * volume or mute status of an external audio system.
+     * @hide
+     */
+    public static final int FLAG_ABSOLUTE_VOLUME = 1 << 13;
 
     /** @hide */
     @IntDef(prefix = {"ENCODED_SURROUND_OUTPUT_"}, value = {
@@ -642,6 +668,7 @@ public class AudioManager {
             FLAG_SHOW_UI_WARNINGS,
             FLAG_SHOW_VIBRATE_HINT,
             FLAG_FROM_KEY,
+            FLAG_ABSOLUTE_VOLUME,
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface Flags {}
@@ -663,6 +690,7 @@ public class AudioManager {
         FLAG_NAMES.put(FLAG_SHOW_UI_WARNINGS, "FLAG_SHOW_UI_WARNINGS");
         FLAG_NAMES.put(FLAG_SHOW_VIBRATE_HINT, "FLAG_SHOW_VIBRATE_HINT");
         FLAG_NAMES.put(FLAG_FROM_KEY, "FLAG_FROM_KEY");
+        FLAG_NAMES.put(FLAG_ABSOLUTE_VOLUME, "FLAG_ABSOLUTE_VOLUME");
     }
 
     /** @hide */
@@ -5605,27 +5633,33 @@ public class AudioManager {
      * Note that the information may be imprecise when the implementation
      * cannot distinguish whether a particular device is enabled.
      *
-     * {@hide}
+     * @deprecated on {@link android.os.Build.VERSION_CODES#T} as new devices
+     *             will have multi-bit device types.
+     *             Prefer to use {@link #getDevicesForAttributes()} instead,
+     *             noting that getDevicesForStream() has a few small discrepancies
+     *             for better volume handling.
+     * @hide
      */
     @UnsupportedAppUsage
+    @Deprecated
     public int getDevicesForStream(int streamType) {
         switch (streamType) {
-        case STREAM_VOICE_CALL:
-        case STREAM_SYSTEM:
-        case STREAM_RING:
-        case STREAM_MUSIC:
-        case STREAM_ALARM:
-        case STREAM_NOTIFICATION:
-        case STREAM_DTMF:
-        case STREAM_ACCESSIBILITY:
-            final IAudioService service = getService();
-            try {
-                return service.getDevicesForStream(streamType);
-            } catch (RemoteException e) {
-                throw e.rethrowFromSystemServer();
-            }
-        default:
-            return 0;
+            case STREAM_VOICE_CALL:
+            case STREAM_SYSTEM:
+            case STREAM_RING:
+            case STREAM_MUSIC:
+            case STREAM_ALARM:
+            case STREAM_NOTIFICATION:
+            case STREAM_DTMF:
+            case STREAM_ACCESSIBILITY:
+                final IAudioService service = getService();
+                try {
+                    return service.getDeviceMaskForStream(streamType);
+                } catch (RemoteException e) {
+                    throw e.rethrowFromSystemServer();
+                }
+            default:
+                return 0;
         }
     }
 
@@ -5855,7 +5889,7 @@ public class AudioManager {
         return false;
     }
 
-     /**
+    /**
      * Indicate wired accessory connection state change.
      * @param device type of device connected/disconnected (AudioManager.DEVICE_OUT_xxx)
      * @param state  new connection state: 1 connected, 0 disconnected
@@ -5864,10 +5898,29 @@ public class AudioManager {
      */
     @UnsupportedAppUsage
     @RequiresPermission(android.Manifest.permission.MODIFY_AUDIO_ROUTING)
-    public void setWiredDeviceConnectionState(int type, int state, String address, String name) {
+    public void setWiredDeviceConnectionState(int device, int state, String address,
+            String name) {
+        final IAudioService service = getService();
+        int role = isOutputDevice(device)
+                ? AudioDeviceAttributes.ROLE_OUTPUT : AudioDeviceAttributes.ROLE_INPUT;
+        AudioDeviceAttributes attributes = new AudioDeviceAttributes(
+                role, AudioDeviceInfo.convertInternalDeviceToDeviceType(device), address,
+                name, new ArrayList<>()/*mAudioProfiles*/, new ArrayList<>()/*mAudioDescriptors*/);
+        setWiredDeviceConnectionState(attributes, state);
+    }
+
+    /**
+     * Indicate wired accessory connection state change and attributes.
+     * @param state      new connection state: 1 connected, 0 disconnected
+     * @param attributes attributes of the connected device
+     * {@hide}
+     */
+    @UnsupportedAppUsage
+    @RequiresPermission(android.Manifest.permission.MODIFY_AUDIO_ROUTING)
+    public void setWiredDeviceConnectionState(AudioDeviceAttributes attributes, int state) {
         final IAudioService service = getService();
         try {
-            service.setWiredDeviceConnectionState(type, state, address, name,
+            service.setWiredDeviceConnectionState(attributes, state,
                     mApplicationContext.getOpPackageName());
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
@@ -5900,13 +5953,14 @@ public class AudioManager {
      * @param newDevice Bluetooth device connected or null if there is no new devices
      * @param previousDevice Bluetooth device disconnected or null if there is no disconnected
      * devices
-     * @param info contain all info related to the device. {@link BtProfileConnectionInfo}
+     * @param info contain all info related to the device. {@link BluetoothProfileConnectionInfo}
      * {@hide}
      */
     @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_STACK)
     public void handleBluetoothActiveDeviceChanged(@Nullable BluetoothDevice newDevice,
-            @Nullable BluetoothDevice previousDevice, @NonNull BtProfileConnectionInfo info) {
+            @Nullable BluetoothDevice previousDevice,
+            @NonNull BluetoothProfileConnectionInfo info) {
         final IAudioService service = getService();
         try {
             service.handleBluetoothActiveDeviceChanged(newDevice, previousDevice, info);
@@ -6907,7 +6961,8 @@ public class AudioManager {
         for (Integer format : formatsList) {
             int btSourceCodec = AudioSystem.audioFormatToBluetoothSourceCodec(format);
             if (btSourceCodec != BluetoothCodecConfig.SOURCE_CODEC_TYPE_INVALID) {
-                codecConfigList.add(new BluetoothCodecConfig(btSourceCodec));
+                codecConfigList.add(
+                        new BluetoothCodecConfig.Builder().setCodecType(btSourceCodec).build());
             }
         }
         return codecConfigList;
@@ -7238,6 +7293,29 @@ public class AudioManager {
      */
     public static boolean isHapticPlaybackSupported() {
         return AudioSystem.isHapticPlaybackSupported();
+    }
+
+    /**
+     * @hide
+     * Indicates whether a platform supports the Ultrasound feature which covers the playback
+     * and recording of 20kHz~ sounds. If platform supports Ultrasound, then the
+     * usage will be
+     * To start the Ultrasound playback:
+     *     - Create an AudioTrack with {@link AudioAttributes.CONTENT_TYPE_ULTRASOUND}.
+     * To start the Ultrasound capture:
+     *     - Create an AudioRecord with {@link MediaRecorder.AudioSource.ULTRASOUND}.
+     *
+     * @return whether the ultrasound feature is supported, true when platform supports both
+     * Ultrasound playback and capture, false otherwise.
+     */
+    @SystemApi
+    @RequiresPermission(android.Manifest.permission.ACCESS_ULTRASOUND)
+    public boolean isUltrasoundSupported() {
+        try {
+            return getService().isUltrasoundSupported();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
     }
 
     /**
@@ -7672,6 +7750,33 @@ public class AudioManager {
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
+    }
+
+    /**
+     * Returns a list of direct {@link AudioProfile} that are supported for the specified
+     * {@link AudioAttributes}. This can be empty in case of an error or if no direct playback
+     * is possible.
+     *
+     * <p>Direct playback means that the audio stream is not resampled or downmixed
+     * by the framework. Checking for direct support can help the app select the representation
+     * of audio content that most closely matches the capabilities of the device and peripherals
+     * (e.g. A/V receiver) connected to it. Note that the provided stream can still be re-encoded
+     * or mixed with other streams, if needed.
+     * <p>When using this information to inform your application which audio format to play,
+     * query again whenever audio output devices change (see {@link AudioDeviceCallback}).
+     * @param attributes a non-null {@link AudioAttributes} instance.
+     * @return a list of {@link AudioProfile}
+     */
+    @NonNull
+    public List<AudioProfile> getDirectProfilesForAttributes(@NonNull AudioAttributes attributes) {
+        Objects.requireNonNull(attributes);
+        ArrayList<AudioProfile> audioProfilesList = new ArrayList<>();
+        int status = AudioSystem.getDirectProfilesForAttributes(attributes, audioProfilesList);
+        if (status != SUCCESS) {
+            Log.w(TAG, "getDirectProfilesForAttributes failed.");
+            return new ArrayList<>();
+        }
+        return audioProfilesList;
     }
 
     /**
@@ -8255,6 +8360,125 @@ public class AudioManager {
                             stub -> stub.register(false));
             mMuteAwaitConnectionListeners = res.first;
             mMuteAwaitConnDispatcherStub = res.second;
+        }
+    }
+
+    /**
+     * Add UIDs that can be considered as assistant.
+     *
+     * @param assistantUids UIDs of the services that can be considered as assistant.
+     *
+     * @hide
+     */
+    @SystemApi
+    @RequiresPermission(android.Manifest.permission.MODIFY_AUDIO_ROUTING)
+    public void addAssistantServicesUids(@NonNull int[] assistantUids) {
+        try {
+            getService().addAssistantServicesUids(assistantUids);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Remove UIDs that can be considered as assistant.
+     *
+     * @param assistantUids UIDs of the services that should be remove.
+     *
+     * @hide
+     */
+    @SystemApi
+    @RequiresPermission(android.Manifest.permission.MODIFY_AUDIO_ROUTING)
+    public void removeAssistantServicesUids(@NonNull int[] assistantUids) {
+        try {
+            getService().removeAssistantServicesUids(assistantUids);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Get the assistants UIDs that been added with the
+     * {@link #addAssistantServicesUids(int[])} and not yet removed with
+     * {@link #removeAssistantServicesUids(int[])}
+     *
+     * <p> Note that during native audioserver crash and after boot up the list of assistant
+     * UIDs will be reset to an empty list (i.e. no UID will be considered as assistant)
+     * Just after user switch, the list of assistant will also reset to empty.
+     * In both cases,The component's UID of the assistiant role or assistant setting will be
+     * automitically added to the list by the audio service.
+     *
+     * @return array of assistants UIDs
+     *
+     * @hide
+     */
+    @SystemApi
+    @RequiresPermission(android.Manifest.permission.MODIFY_AUDIO_ROUTING)
+    public @NonNull int[] getAssistantServicesUids() {
+        try {
+            int[] uids = getService().getAssistantServicesUids();
+            return Arrays.copyOf(uids, uids.length);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Sets UIDs that can be considered as active assistant. Calling the API with a new array will
+     * overwrite previous UIDs. If the array of UIDs is empty then no UID will be considered active.
+     * In this manner calling the API with an empty array will remove all UIDs previously set.
+     *
+     * @param assistantUids UIDs of the services that can be considered active assistant. Can be
+     * an empty array, for this no UID will be considered active.
+     *
+     * <p> Note that during audio service crash reset and after boot up the list of active assistant
+     * UIDs will be reset to an empty list (i.e. no UID will be considered as an active assistant).
+     * Just after user switch the list of active assistant will also reset to empty.
+     *
+     * @hide
+     */
+    @SystemApi
+    @RequiresPermission(android.Manifest.permission.MODIFY_AUDIO_ROUTING)
+    public void setActiveAssistantServiceUids(@NonNull int[]  assistantUids) {
+        try {
+            getService().setActiveAssistantServiceUids(assistantUids);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Get active assistant UIDs last set with the
+     * {@link #setActiveAssistantServiceUids(int[])}
+     *
+     * @return array of active assistants UIDs
+     *
+     * @hide
+     */
+    @SystemApi
+    @RequiresPermission(android.Manifest.permission.MODIFY_AUDIO_ROUTING)
+    public @NonNull int[] getActiveAssistantServicesUids() {
+        try {
+            int[] uids = getService().getActiveAssistantServiceUids();
+            return Arrays.copyOf(uids, uids.length);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Returns the audio HAL version in the form MAJOR.MINOR. If there is no audio HAL found, null
+     * will be returned.
+     *
+     * @hide
+     */
+    @TestApi
+    public static @Nullable String getHalVersion() {
+        try {
+            return getService().getHalVersion();
+        } catch (RemoteException e) {
+            Log.e(TAG, "Error querying getHalVersion", e);
+            throw e.rethrowFromSystemServer();
         }
     }
 

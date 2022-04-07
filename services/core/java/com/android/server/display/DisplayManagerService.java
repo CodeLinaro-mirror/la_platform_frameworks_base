@@ -78,6 +78,7 @@ import android.hardware.display.IDisplayManagerCallback;
 import android.hardware.display.IVirtualDisplayCallback;
 import android.hardware.display.VirtualDisplayConfig;
 import android.hardware.display.WifiDisplayStatus;
+import android.hardware.graphics.common.DisplayDecorationSupport;
 import android.hardware.input.InputManagerInternal;
 import android.media.projection.IMediaProjection;
 import android.media.projection.IMediaProjectionManager;
@@ -141,7 +142,6 @@ import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -204,8 +204,8 @@ public final class DisplayManagerService extends SystemService {
     private static final String PROP_DEFAULT_DISPLAY_TOP_INSET = "persist.sys.displayinset.top";
     private static final long WAIT_FOR_DEFAULT_DISPLAY_TIMEOUT = 10000;
     // This value needs to be in sync with the threshold
-    // in RefreshRateConfigs::getFrameRateDivider.
-    private static final float THRESHOLD_FOR_REFRESH_RATES_DIVIDERS = 0.0009f;
+    // in RefreshRateConfigs::getFrameRateDivisor.
+    private static final float THRESHOLD_FOR_REFRESH_RATES_DIVISORS = 0.0009f;
 
     private static final int MSG_REGISTER_DEFAULT_DISPLAY_ADAPTERS = 1;
     private static final int MSG_REGISTER_ADDITIONAL_DISPLAY_ADAPTERS = 2;
@@ -397,8 +397,7 @@ public final class DisplayManagerService extends SystemService {
     private final ArrayList<DisplayViewport> mTempViewports = new ArrayList<>();
 
     // The default color mode for default displays. Overrides the usual
-    // Display.Display.COLOR_MODE_DEFAULT for displays with the
-    // DisplayDeviceInfo.FLAG_DEFAULT_DISPLAY flag set.
+    // Display.Display.COLOR_MODE_DEFAULT for local displays.
     private final int mDefaultDisplayDefaultColorMode;
 
     // Lists of UIDs that are present on the displays. Maps displayId -> array of UIDs.
@@ -895,13 +894,13 @@ public final class DisplayManagerService extends SystemService {
             return info;
         }
 
-        // Override the refresh rate only if it is a divider of the current
+        // Override the refresh rate only if it is a divisor of the current
         // refresh rate. This calculation needs to be in sync with the native code
-        // in RefreshRateConfigs::getFrameRateDivider
+        // in RefreshRateConfigs::getFrameRateDivisor
         Display.Mode currentMode = info.getMode();
         float numPeriods = currentMode.getRefreshRate() / frameRateHz;
         float numPeriodsRound = Math.round(numPeriods);
-        if (Math.abs(numPeriods - numPeriodsRound) > THRESHOLD_FOR_REFRESH_RATES_DIVIDERS) {
+        if (Math.abs(numPeriods - numPeriodsRound) > THRESHOLD_FOR_REFRESH_RATES_DIVISORS) {
             return info;
         }
         frameRateHz = currentMode.getRefreshRate() / numPeriodsRound;
@@ -913,9 +912,9 @@ public final class DisplayManagerService extends SystemService {
                 continue;
             }
 
-            if (mode.getRefreshRate() >= frameRateHz - THRESHOLD_FOR_REFRESH_RATES_DIVIDERS
+            if (mode.getRefreshRate() >= frameRateHz - THRESHOLD_FOR_REFRESH_RATES_DIVISORS
                     && mode.getRefreshRate()
-                    <= frameRateHz + THRESHOLD_FOR_REFRESH_RATES_DIVIDERS) {
+                    <= frameRateHz + THRESHOLD_FOR_REFRESH_RATES_DIVISORS) {
                 if (DEBUG) {
                     Slog.d(TAG, "found matching modeId " + mode.getModeId());
                 }
@@ -1318,7 +1317,9 @@ public final class DisplayManagerService extends SystemService {
 
         if (callingUid != Process.SYSTEM_UID
                 && (flags & VIRTUAL_DISPLAY_FLAG_OWN_DISPLAY_GROUP) != 0) {
-            if (!checkCallingPermission(ADD_TRUSTED_DISPLAY, "createVirtualDisplay()")) {
+            // The virtualDevice instance has been validated above using isValidVirtualDevice
+            if (virtualDevice == null
+                    && !checkCallingPermission(ADD_TRUSTED_DISPLAY, "createVirtualDisplay()")) {
                 throw new SecurityException("Requires ADD_TRUSTED_DISPLAY permission to "
                         + "create a virtual display which is not in the default DisplayGroup.");
             }
@@ -1680,8 +1681,7 @@ public final class DisplayManagerService extends SystemService {
         if (display.getPrimaryDisplayDeviceLocked() == device) {
             int colorMode = mPersistentDataStore.getColorMode(device);
             if (colorMode == Display.COLOR_MODE_INVALID) {
-                if ((device.getDisplayDeviceInfoLocked().flags
-                     & DisplayDeviceInfo.FLAG_DEFAULT_DISPLAY) != 0) {
+                if (display.getDisplayIdLocked() == Display.DEFAULT_DISPLAY) {
                     colorMode = mDefaultDisplayDefaultColorMode;
                 } else {
                     colorMode = Display.COLOR_MODE_DEFAULT;
@@ -1754,10 +1754,6 @@ public final class DisplayManagerService extends SystemService {
 
     void setUserPreferredDisplayModeInternal(int displayId, Display.Mode mode) {
         synchronized (mSyncRoot) {
-            if (Objects.equals(mUserPreferredMode, mode) && displayId == Display.INVALID_DISPLAY) {
-                return;
-            }
-
             if (mode != null && !isResolutionAndRefreshRateValid(mode)
                     && displayId == Display.INVALID_DISPLAY) {
                 throw new IllegalArgumentException("width, height and refresh rate of mode should "
@@ -1811,7 +1807,15 @@ public final class DisplayManagerService extends SystemService {
         Settings.Global.putInt(mContext.getContentResolver(),
                 Settings.Global.USER_PREFERRED_RESOLUTION_WIDTH, resolutionWidth);
         mDisplayDeviceRepo.forEachLocked((DisplayDevice device) -> {
-            device.setUserPreferredDisplayModeLocked(mode);
+            // If there is a display specific mode, don't override that
+            final Point deviceUserPreferredResolution =
+                    mPersistentDataStore.getUserPreferredResolution(device);
+            final float deviceRefreshRate =
+                    mPersistentDataStore.getUserPreferredRefreshRate(device);
+            if (!isValidResolution(deviceUserPreferredResolution)
+                    && !isValidRefreshRate(deviceRefreshRate)) {
+                device.setUserPreferredDisplayModeLocked(mode);
+            }
         });
     }
 
@@ -1825,6 +1829,16 @@ public final class DisplayManagerService extends SystemService {
                 return null;
             }
             return displayDevice.getUserPreferredDisplayModeLocked();
+        }
+    }
+
+    Display.Mode getSystemPreferredDisplayModeInternal(int displayId) {
+        synchronized (mSyncRoot) {
+            final DisplayDevice device = getDeviceForDisplayLocked(displayId);
+            if (device == null) {
+                return null;
+            }
+            return device.getSystemPreferredDisplayModeLocked();
         }
     }
 
@@ -1845,10 +1859,10 @@ public final class DisplayManagerService extends SystemService {
         return mDisplayModeDirector.getModeSwitchingType();
     }
 
-    private boolean getDisplayDecorationSupportInternal(int displayId) {
+    private DisplayDecorationSupport getDisplayDecorationSupportInternal(int displayId) {
         final IBinder displayToken = getDisplayToken(displayId);
         if (null == displayToken) {
-            return false;
+            return null;
         }
         return SurfaceControl.getDisplayDecorationSupport(displayToken);
     }
@@ -2178,6 +2192,16 @@ public final class DisplayManagerService extends SystemService {
         }
     }
 
+    Display.Mode getActiveDisplayModeAtStart(int displayId) {
+        synchronized (mSyncRoot) {
+            final DisplayDevice device = getDeviceForDisplayLocked(displayId);
+            if (device == null) {
+                return null;
+            }
+            return device.getActiveDisplayModeAtStartLocked();
+        }
+    }
+
     void setAmbientColorTemperatureOverride(float cct) {
         synchronized (mSyncRoot) {
             final DisplayPowerController displayPowerController = mDisplayPowerControllers.get(
@@ -2239,13 +2263,12 @@ public final class DisplayManagerService extends SystemService {
         final DisplayDeviceInfo info = device.getDisplayDeviceInfoLocked();
         final boolean ownContent = (info.flags & DisplayDeviceInfo.FLAG_OWN_CONTENT_ONLY) != 0;
 
-        // Mirror the part of WM hierarchy that corresponds to the provided window token.
-        IBinder windowTokenClientToMirror = device.getWindowTokenClientToMirrorLocked();
-
         // Find the logical display that the display device is showing.
         // Certain displays only ever show their own content.
         LogicalDisplay display = mLogicalDisplayMapper.getDisplayLocked(device);
-        if (!ownContent && windowTokenClientToMirror == null) {
+        // Proceed with display-managed mirroring only if window manager will not be handling it.
+        if (!ownContent && !device.isWindowManagerMirroringLocked()) {
+            // Only mirror the display if content recording is not taking place in WM.
             if (display != null && !display.hasContentLocked()) {
                 // If the display does not have any content of its own, then
                 // automatically mirror the requested logical display contents if possible.
@@ -2437,7 +2460,7 @@ public final class DisplayManagerService extends SystemService {
             pw.println("  mMinimumBrightnessCurve=" + mMinimumBrightnessCurve);
 
             if (mUserPreferredMode != null) {
-                pw.println(mUserPreferredMode);
+                pw.println(" mUserPreferredMode=" + mUserPreferredMode);
             }
 
             pw.println();
@@ -2553,7 +2576,7 @@ public final class DisplayManagerService extends SystemService {
 
         boolean getAllowNonNativeRefreshRateOverride() {
             return DisplayProperties
-                    .debug_allow_non_native_refresh_rate_override().orElse(false);
+                    .debug_allow_non_native_refresh_rate_override().orElse(true);
         }
 
         @NonNull
@@ -3466,6 +3489,16 @@ public final class DisplayManagerService extends SystemService {
         }
 
         @Override // Binder call
+        public Display.Mode getSystemPreferredDisplayMode(int displayId) {
+            final long token = Binder.clearCallingIdentity();
+            try {
+                return getSystemPreferredDisplayModeInternal(displayId);
+            } finally {
+                Binder.restoreCallingIdentity(token);
+            }
+        }
+
+        @Override // Binder call
         public void setShouldAlwaysRespectAppRequestedMode(boolean enabled) {
             mContext.enforceCallingOrSelfPermission(
                     Manifest.permission.OVERRIDE_DISPLAY_MODE_REQUESTS,
@@ -3515,7 +3548,7 @@ public final class DisplayManagerService extends SystemService {
         }
 
         @Override // Binder call
-        public boolean getDisplayDecorationSupport(int displayId) {
+        public DisplayDecorationSupport getDisplayDecorationSupport(int displayId) {
             final long token = Binder.clearCallingIdentity();
             try {
                 return getDisplayDecorationSupportInternal(displayId);
@@ -3529,6 +3562,14 @@ public final class DisplayManagerService extends SystemService {
         return !Float.isNaN(brightness)
                 && (brightness >= PowerManager.BRIGHTNESS_MIN)
                 && (brightness <= PowerManager.BRIGHTNESS_MAX);
+    }
+
+    private static boolean isValidResolution(Point resolution) {
+        return (resolution != null) && (resolution.x > 0) && (resolution.y > 0);
+    }
+
+    private static boolean isValidRefreshRate(float refreshRate) {
+        return !Float.isNaN(refreshRate) && (refreshRate > 0.0f);
     }
 
     private final class LocalService extends DisplayManagerInternal {
@@ -3820,23 +3861,11 @@ public final class DisplayManagerService extends SystemService {
         }
 
         @Override
-        public IBinder getWindowTokenClientToMirror(int displayId) {
-            final DisplayDevice device;
-            synchronized (mSyncRoot) {
-                device = getDeviceForDisplayLocked(displayId);
-                if (device == null) {
-                    return null;
-                }
-            }
-            return device.getWindowTokenClientToMirrorLocked();
-        }
-
-        @Override
-        public void setWindowTokenClientToMirror(int displayId, IBinder windowToken) {
+        public void setWindowManagerMirroring(int displayId, boolean isMirroring) {
             synchronized (mSyncRoot) {
                 final DisplayDevice device = getDeviceForDisplayLocked(displayId);
                 if (device != null) {
-                    device.setWindowTokenClientToMirrorLocked(windowToken);
+                    device.setWindowManagerMirroringLocked(isMirroring);
                 }
             }
         }
@@ -3849,8 +3878,8 @@ public final class DisplayManagerService extends SystemService {
                 if (device == null) {
                     return null;
                 }
+                return device.getDisplaySurfaceDefaultSizeLocked();
             }
-            return device.getDisplaySurfaceDefaultSize();
         }
 
         @Override
@@ -3908,11 +3937,21 @@ public final class DisplayManagerService extends SystemService {
      * Listens to changes in device state and reports the state to LogicalDisplayMapper.
      */
     class DeviceStateListener implements DeviceStateManager.DeviceStateCallback {
+        // Base state corresponds to the physical state of the device
+        private int mBaseState = DeviceStateManager.INVALID_DEVICE_STATE;
+
         @Override
         public void onStateChanged(int deviceState) {
+            boolean isDeviceStateOverrideActive = deviceState != mBaseState;
             synchronized (mSyncRoot) {
-                mLogicalDisplayMapper.setDeviceStateLocked(deviceState);
+                mLogicalDisplayMapper
+                        .setDeviceStateLocked(deviceState, isDeviceStateOverrideActive);
             }
+        }
+
+        @Override
+        public void onBaseStateChanged(int state) {
+            mBaseState = state;
         }
     };
 

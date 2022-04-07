@@ -82,6 +82,8 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
+import android.os.Process;
 import android.os.ResultReceiver;
 import android.os.SystemClock;
 import android.os.SystemProperties;
@@ -95,8 +97,11 @@ import android.util.Log;
 import android.util.PrintWriterPrinter;
 import android.util.Printer;
 import android.util.proto.ProtoOutputStream;
+import android.view.BatchedInputEventReceiver.SimpleBatchedInputEventReceiver;
+import android.view.Choreographer;
 import android.view.Gravity;
 import android.view.InputChannel;
+import android.view.InputEventReceiver;
 import android.view.KeyCharacterMap;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
@@ -135,8 +140,10 @@ import com.android.internal.annotations.GuardedBy;
 import com.android.internal.inputmethod.IInputContentUriToken;
 import com.android.internal.inputmethod.IInputMethodPrivilegedOperations;
 import com.android.internal.inputmethod.ImeTracing;
+import com.android.internal.inputmethod.InputMethodNavButtonFlags;
 import com.android.internal.inputmethod.InputMethodPrivilegedOperations;
 import com.android.internal.inputmethod.InputMethodPrivilegedOperationsRegistry;
+import com.android.internal.util.RingBuffer;
 import com.android.internal.view.IInlineSuggestionsRequestCallback;
 import com.android.internal.view.IInputContext;
 import com.android.internal.view.InlineSuggestionsRequestInfo;
@@ -148,6 +155,7 @@ import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.OptionalInt;
 
 /**
  * InputMethodService provides a standard implementation of an InputMethod,
@@ -327,6 +335,17 @@ public class InputMethodService extends AbstractInputMethodService {
             "persist.sys.ime.can_render_gestural_nav_buttons";
 
     /**
+     * Number of {@link MotionEvent} to buffer if IME is not ready with Ink view.
+     * This number may be configured eventually based on device's touch sampling frequency.
+     */
+    private static final int MAX_EVENTS_BUFFER = 500;
+
+    /**
+     * A circular buffer of size MAX_EVENTS_BUFFER in case IME is taking too long to add ink view.
+     **/
+    private RingBuffer<MotionEvent> mPendingEvents;
+
+    /**
      * Returns whether {@link InputMethodService} is responsible for rendering the back button and
      * the IME switcher button or not when the gestural navigation is enabled.
      *
@@ -341,7 +360,7 @@ public class InputMethodService extends AbstractInputMethodService {
      */
     @AnyThread
     public static boolean canImeRenderGesturalNavButtons() {
-        return SystemProperties.getBoolean(PROP_CAN_RENDER_GESTURAL_NAV_BUTTONS, false);
+        return SystemProperties.getBoolean(PROP_CAN_RENDER_GESTURAL_NAV_BUTTONS, true);
     }
 
     /**
@@ -567,11 +586,13 @@ public class InputMethodService extends AbstractInputMethodService {
 
     private boolean mAutomotiveHideNavBarForKeyboard;
     private boolean mIsAutomotive;
-    private boolean mHandwritingStarted;
+    private @NonNull OptionalInt mHandwritingRequestId = OptionalInt.empty();
+    private InputEventReceiver mHandwritingEventReceiver;
     private Handler mHandler;
     private boolean mImeSurfaceScheduledForRemoval;
     private ImsConfigurationTracker mConfigTracker = new ImsConfigurationTracker();
     private boolean mDestroyed;
+    private boolean mOnPreparedStylusHwCalled;
 
     /** Stylus handwriting Ink window.  */
     private InkWindow mInkWindow;
@@ -652,7 +673,7 @@ public class InputMethodService extends AbstractInputMethodService {
         @Override
         public final void initializeInternal(@NonNull IBinder token,
                 IInputMethodPrivilegedOperations privilegedOperations, int configChanges,
-                boolean stylusHwSupported) {
+                boolean stylusHwSupported, @InputMethodNavButtonFlags int navButtonFlags) {
             if (mDestroyed) {
                 Log.i(TAG, "The InputMethodService has already onDestroyed()."
                     + "Ignore the initialization.");
@@ -665,6 +686,7 @@ public class InputMethodService extends AbstractInputMethodService {
             if (stylusHwSupported) {
                 mInkWindow = new InkWindow(mWindow.getContext());
             }
+            mNavigationBarController.onNavButtonFlagsChanged(navButtonFlags);
             attachToken(token);
             Trace.traceEnd(TRACE_TAG_WINDOW_MANAGER);
         }
@@ -736,6 +758,10 @@ public class InputMethodService extends AbstractInputMethodService {
             onUnbindInput();
             mInputBinding = null;
             mInputConnection = null;
+            // free-up cached InkWindow surface on detaching from current client.
+            if (mInkWindow != null) {
+                mInkWindow.hide(true /* remove */);
+            }
         }
 
         /**
@@ -770,14 +796,24 @@ public class InputMethodService extends AbstractInputMethodService {
         @Override
         public final void dispatchStartInputWithToken(@Nullable InputConnection inputConnection,
                 @NonNull EditorInfo editorInfo, boolean restarting,
-                @NonNull IBinder startInputToken) {
+                @NonNull IBinder startInputToken, @InputMethodNavButtonFlags int navButtonFlags) {
             mPrivOps.reportStartInputAsync(startInputToken);
-
+            mNavigationBarController.onNavButtonFlagsChanged(navButtonFlags);
             if (restarting) {
                 restartInput(inputConnection, editorInfo);
             } else {
                 startInput(inputConnection, editorInfo);
             }
+        }
+
+        /**
+         * {@inheritDoc}
+         * @hide
+         */
+        @MainThread
+        @Override
+        public void onNavButtonFlagsChanged(@InputMethodNavButtonFlags int navButtonFlags) {
+            mNavigationBarController.onNavButtonFlagsChanged(navButtonFlags);
         }
 
         /**
@@ -814,10 +850,9 @@ public class InputMethodService extends AbstractInputMethodService {
             final boolean wasVisible = isInputViewShown();
             Trace.traceBegin(TRACE_TAG_WINDOW_MANAGER, "IMS.hideSoftInput");
 
-            applyVisibilityInInsetsConsumerIfNecessary(false /* setVisible */);
             mShowInputFlags = 0;
             mShowInputRequested = false;
-            doHideWindow();
+            hideWindow();
             final boolean isVisible = isInputViewShown();
             final boolean visibilityChanged = isVisible != wasVisible;
             if (resultReceiver != null) {
@@ -866,7 +901,6 @@ public class InputMethodService extends AbstractInputMethodService {
             final boolean wasVisible = isInputViewShown();
             if (dispatchOnShowInputRequested(flags, false)) {
                 showWindow(true);
-                applyVisibilityInInsetsConsumerIfNecessary(true /* setVisible */);
             }
             setImeWindowStatus(mapToImeWindowStatus(), mBackDisposition);
 
@@ -888,7 +922,7 @@ public class InputMethodService extends AbstractInputMethodService {
         @Override
         public void canStartStylusHandwriting(int requestId) {
             if (DEBUG) Log.v(TAG, "canStartStylusHandwriting()");
-            if (mHandwritingStarted) {
+            if (mHandwritingRequestId.isPresent()) {
                 Log.d(TAG, "There is an ongoing Handwriting session. ignoring.");
                 return;
             }
@@ -896,10 +930,16 @@ public class InputMethodService extends AbstractInputMethodService {
                 Log.d(TAG, "Input should have started before starting Stylus handwriting.");
                 return;
             }
+            if (!mOnPreparedStylusHwCalled) {
+                // prepare hasn't been called by Stylus HOVER.
+                onPrepareStylusHandwriting();
+                mOnPreparedStylusHwCalled = true;
+            }
             if (onStartStylusHandwriting()) {
-                mPrivOps.onStylusHandwritingReady(requestId);
+                mPrivOps.onStylusHandwritingReady(requestId, Process.myPid());
             } else {
                 Log.i(TAG, "IME is not ready. Can't start Stylus Handwriting");
+                // TODO(b/210039666): see if it's valuable to propagate this back to IMM.
             }
         }
 
@@ -910,18 +950,55 @@ public class InputMethodService extends AbstractInputMethodService {
         @MainThread
         @Override
         public void startStylusHandwriting(
-                @NonNull InputChannel channel, @Nullable List<MotionEvent> stylusEvents) {
+                int requestId, @NonNull InputChannel channel,
+                @NonNull List<MotionEvent> stylusEvents) {
             if (DEBUG) Log.v(TAG, "startStylusHandwriting()");
-            if (mHandwritingStarted) {
+            Objects.requireNonNull(channel);
+            Objects.requireNonNull(stylusEvents);
+
+            if (mHandwritingRequestId.isPresent()) {
                 return;
             }
 
-            mHandwritingStarted = true;
+            mHandwritingRequestId = OptionalInt.of(requestId);
             mShowInputRequested = false;
 
             mInkWindow.show();
-            // TODO: deliver previous @param stylusEvents
-            // TODO: create spy receiver for @param channel
+
+            // deliver previous @param stylusEvents
+            stylusEvents.forEach(InputMethodService.this::onStylusHandwritingMotionEvent);
+
+            // create receiver for channel
+            mHandwritingEventReceiver = new SimpleBatchedInputEventReceiver(
+                    channel,
+                    Looper.getMainLooper(), Choreographer.getInstance(),
+                    event -> {
+                        if (!(event instanceof MotionEvent)) {
+                            return false;
+                        }
+                        onStylusHandwritingMotionEvent((MotionEvent) event);
+                        return true;
+                    });
+        }
+
+        /**
+         * {@inheritDoc}
+         * @hide
+         */
+        @Override
+        public void initInkWindow() {
+            mInkWindow.initOnly();
+            onPrepareStylusHandwriting();
+            mOnPreparedStylusHwCalled = true;
+        }
+
+        /**
+         * {@inheritDoc}
+         * @hide
+         */
+        @Override
+        public void finishStylusHandwriting() {
+            InputMethodService.this.finishStylusHandwriting();
         }
 
         /**
@@ -931,24 +1008,6 @@ public class InputMethodService extends AbstractInputMethodService {
         @Override
         public void changeInputMethodSubtype(InputMethodSubtype subtype) {
             dispatchOnCurrentInputMethodSubtypeChanged(subtype);
-        }
-
-        /**
-         * {@inheritDoc}
-         * @hide
-         */
-        @Override
-        public void setCurrentShowInputToken(IBinder showInputToken) {
-            mCurShowInputToken = showInputToken;
-        }
-
-        /**
-         * {@inheritDoc}
-         * @hide
-         */
-        @Override
-        public void setCurrentHideInputToken(IBinder hideInputToken) {
-            mCurHideInputToken = hideInputToken;
         }
     }
 
@@ -1448,7 +1507,7 @@ public class InputMethodService extends AbstractInputMethodService {
                 Context.LAYOUT_INFLATER_SERVICE);
         Trace.traceBegin(TRACE_TAG_WINDOW_MANAGER, "IMS.initSoftInputWindow");
         mWindow = new SoftInputWindow(this, mTheme, mDispatcherState);
-
+        mNavigationBarController.onSoftInputWindowCreated(mWindow);
         {
             final Window window = mWindow.getWindow();
             {
@@ -1610,7 +1669,7 @@ public class InputMethodService extends AbstractInputMethodService {
                         onDisplayCompletions(completions);
                     }
                 } else {
-                    doHideWindow();
+                    hideWindow();
                 }
             } else if (mCandidatesVisibility == View.VISIBLE) {
                 // If the candidates are currently visible, make sure the
@@ -1618,7 +1677,7 @@ public class InputMethodService extends AbstractInputMethodService {
                 showWindow(false);
             } else {
                 // Otherwise hide the window.
-                doHideWindow();
+                hideWindow();
             }
             // If user uses hard keyboard, IME button should always be shown.
             boolean showing = onEvaluateInputViewShown();
@@ -2063,7 +2122,7 @@ public class InputMethodService extends AbstractInputMethodService {
             if (shown) {
                 showWindow(false);
             } else {
-                doHideWindow();
+                hideWindow();
             }
         }
     }
@@ -2175,10 +2234,12 @@ public class InputMethodService extends AbstractInputMethodService {
     }
     
     /**
-     * Called by the framework to create the layout for showing extacted text.
+     * Called by the framework to create the layout for showing extracted text.
      * Only called when in fullscreen mode.  The returned view hierarchy must
      * have an {@link ExtractEditText} whose ID is 
-     * {@link android.R.id#inputExtractEditText}.
+     * {@link android.R.id#inputExtractEditText}, with action ID
+     * {@link android.R.id#inputExtractAction} and accessories ID
+     * {@link android.R.id#inputExtractAccessories}.
      */
     public View onCreateExtractTextView() {
         return mInflater.inflate(
@@ -2295,7 +2356,19 @@ public class InputMethodService extends AbstractInputMethodService {
             }
         }
     }
-    
+
+    /**
+     * Called to prepare stylus handwriting.
+     * The system calls this before the {@link #onStartStylusHandwriting} request.
+     *
+     * <p>Note: The system tries to call this as early as possible, when it detects that
+     * handwriting stylus input is imminent. However, that a subsequent call to
+     * {@link #onStartStylusHandwriting} actually happens is not guaranteed.</p>
+     */
+    public void onPrepareStylusHandwriting() {
+        // Intentionally empty
+    }
+
     /**
      * Called when an app requests stylus handwriting
      * {@link InputMethodManager#startStylusHandwriting(View)}.
@@ -2306,12 +2379,40 @@ public class InputMethodService extends AbstractInputMethodService {
      *
      * If the IME supports handwriting for the current input, it should return {@code true},
      * ensure its inking views are attached to the {@link #getStylusHandwritingWindow()}, and handle
-     * stylus input received on the ink window via {@link #getCurrentInputConnection()}.
+     * stylus input received from {@link #onStylusHandwritingMotionEvent(MotionEvent)} on the
+     * {@link #getStylusHandwritingWindow()} via {@link #getCurrentInputConnection()}.
      * @return {@code true} if IME can honor the request, {@code false} if IME cannot at this time.
      */
     public boolean onStartStylusHandwriting() {
         // Intentionally empty
         return false;
+    }
+
+    /**
+     * Called after {@link #onStartStylusHandwriting()} returns {@code true} for every Stylus
+     * {@link MotionEvent}.
+     * By default, this method forwards all {@link MotionEvent}s to the
+     * {@link #getStylusHandwritingWindow()} once its visible, however IME can override it to
+     * receive them sooner.
+     * @param motionEvent {@link MotionEvent} from stylus.
+     */
+    public void onStylusHandwritingMotionEvent(@NonNull MotionEvent motionEvent) {
+        if (mInkWindow.isInkViewVisible()) {
+            mInkWindow.getDecorView().dispatchTouchEvent(motionEvent);
+        } else {
+            if (mPendingEvents == null) {
+                mPendingEvents = new RingBuffer(MotionEvent.class, MAX_EVENTS_BUFFER);
+            }
+            mPendingEvents.append(motionEvent);
+            mInkWindow.setInkViewVisibilityListener(() -> {
+                if (mPendingEvents != null && !mPendingEvents.isEmpty()) {
+                    for (MotionEvent event : mPendingEvents.toArray()) {
+                        mInkWindow.getDecorView().dispatchTouchEvent(event);
+                    }
+                    mPendingEvents.clear();
+                }
+            });
+        }
     }
 
     /**
@@ -2358,12 +2459,19 @@ public class InputMethodService extends AbstractInputMethodService {
         if (mInkWindow == null) {
             return;
         }
-        if (!mHandwritingStarted) {
+        if (!mHandwritingRequestId.isPresent()) {
             return;
         }
 
-        mHandwritingStarted = false;
+        final int requestId = mHandwritingRequestId.getAsInt();
+        mHandwritingRequestId = OptionalInt.empty();
+
+        mHandwritingEventReceiver.dispose();
+        mHandwritingEventReceiver = null;
         mInkWindow.hide(false /* remove */);
+
+        mPrivOps.resetStylusHandwriting(requestId);
+        mOnPreparedStylusHwCalled = false;
         onFinishStylusHandwriting();
     }
 
@@ -2464,12 +2572,11 @@ public class InputMethodService extends AbstractInputMethodService {
         mWindowVisible = true;
 
         // request draw for the IME surface.
-        // When IME is not pre-rendered, this will actually show the IME.
-        if ((previousImeWindowStatus & IME_ACTIVE) == 0) {
-            if (DEBUG) Log.v(TAG, "showWindow: draw decorView!");
-            mWindow.show();
-        }
+        if (DEBUG) Log.v(TAG, "showWindow: draw decorView!");
+        mWindow.show();
         mDecorViewWasVisible = true;
+        applyVisibilityInInsetsConsumerIfNecessary(true);
+        cancelImeSurfaceRemoval();
         mInShowWindow = false;
         Trace.traceEnd(TRACE_TAG_WINDOW_MANAGER);
     }
@@ -2526,9 +2633,6 @@ public class InputMethodService extends AbstractInputMethodService {
         ImeTracing.getInstance().triggerServiceDump(
                 "InputMethodService#applyVisibilityInInsetsConsumerIfNecessary", mDumper,
                 null /* icProto */);
-        if (setVisible) {
-            cancelImeSurfaceRemoval();
-        }
         mPrivOps.applyImeVisibilityAsync(setVisible
                 ? mCurShowInputToken : mCurHideInputToken, setVisible);
     }
@@ -2546,15 +2650,12 @@ public class InputMethodService extends AbstractInputMethodService {
         mCandidatesViewStarted = false;
     }
 
-    private void doHideWindow() {
-        setImeWindowStatus(0, mBackDisposition);
-        hideWindow();
-    }
-
     public void hideWindow() {
         if (DEBUG) Log.v(TAG, "CALL: hideWindow");
         ImeTracing.getInstance().triggerServiceDump("InputMethodService#hideWindow", mDumper,
                 null /* icProto */);
+        setImeWindowStatus(0, mBackDisposition);
+        applyVisibilityInInsetsConsumerIfNecessary(false);
         mWindowVisible = false;
         finishViews(false /* finishingInput */);
         if (mDecorViewVisible) {
@@ -2840,7 +2941,7 @@ public class InputMethodService extends AbstractInputMethodService {
                 // If we have the window visible for some other reason --
                 // most likely to show candidates -- then just get rid
                 // of it.  This really shouldn't happen, but just in case...
-                if (doIt) doHideWindow();
+                if (doIt) hideWindow();
             }
             return true;
         }

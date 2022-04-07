@@ -59,6 +59,7 @@ public class MediaOutputAdapterTest extends SysuiTestCase {
     private MediaDevice mMediaDevice2 = mock(MediaDevice.class);
     private Icon mIcon = mock(Icon.class);
     private IconCompat mIconCompat = mock(IconCompat.class);
+    private View mDialogLaunchView = mock(View.class);
 
     private MediaOutputAdapter mMediaOutputAdapter;
     private MediaOutputAdapter.MediaDeviceViewHolder mViewHolder;
@@ -100,7 +101,7 @@ public class MediaOutputAdapterTest extends SysuiTestCase {
     public void getItemCount_zeroMode_containExtraOneForPairNew() {
         when(mMediaOutputController.isZeroMode()).thenReturn(true);
 
-        assertThat(mMediaOutputAdapter.getItemCount()).isEqualTo(mMediaDevices.size());
+        assertThat(mMediaOutputAdapter.getItemCount()).isEqualTo(mMediaDevices.size() + 1);
     }
 
     @Test
@@ -245,7 +246,7 @@ public class MediaOutputAdapterTest extends SysuiTestCase {
         mMediaOutputAdapter.onBindViewHolder(mViewHolder, 2);
         mViewHolder.mContainerLayout.performClick();
 
-        verify(mMediaOutputController).launchBluetoothPairing();
+        verify(mMediaOutputController).launchBluetoothPairing(mViewHolder.mContainerLayout);
     }
 
     @Test

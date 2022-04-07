@@ -20,14 +20,17 @@
 <resources xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
     <string name="app_label" msgid="4811759950673118541">"ছিষ্টেম ইউআই"</string>
-    <string name="battery_low_title" msgid="6891106956328275225">"বেটাৰী অতি সোনকালে শেষ হ\'ব পাৰে"</string>
+    <string name="battery_low_title" msgid="5319680173344341779">"বেটাৰী সঞ্চয়কাৰী অন কৰিবনে?"</string>
+    <string name="battery_low_description" msgid="3282977755476423966">"আপোনাৰ <xliff:g id="PERCENTAGE">%s</xliff:g> বেটাৰী বাকী আছে। বেটাৰী সঞ্চয়কাৰীয়ে গাঢ় ৰঙৰ থীম অন কৰে, নেপথ্যৰ কাৰ্যকলাপ সীমাবদ্ধ কৰে আৰু জাননী পলম কৰে।"</string>
+    <string name="battery_low_intro" msgid="5148725009653088790">"বেটাৰী সঞ্চয়কাৰীয়ে গাঢ় ৰঙৰ থীম অন কৰে, নেপথ্যৰ কাৰ্যকলাপ সীমাবদ্ধ কৰে আৰু জাননী পলম কৰে।"</string>
     <string name="battery_low_percent_format" msgid="4276661262843170964">"<xliff:g id="PERCENTAGE">%s</xliff:g> বাকী আছে"</string>
     <string name="invalid_charger_title" msgid="938685362320735167">"ইউএছবি জৰিয়তে চ্চাৰ্জ কৰিব নোৱাৰি"</string>
     <string name="invalid_charger_text" msgid="2339310107232691577">"আপোনাৰ ডিভাইচৰ লগত পোৱা চ্চাৰ্জাৰটো ব্যৱহাৰ কৰক।"</string>
     <string name="battery_saver_confirmation_title" msgid="1234998463717398453">"বেটাৰী সঞ্চয়কাৰী অন কৰেনে?"</string>
     <string name="battery_saver_confirmation_title_generic" msgid="2299231884234959849">"বেটাৰী সঞ্চয়কাৰীৰ বিষয়ে"</string>
     <string name="battery_saver_confirmation_ok" msgid="5042136476802816494">"অন কৰক"</string>
-    <string name="battery_saver_start_action" msgid="4553256017945469937">"বেটাৰী সঞ্চয়কাৰী অন কৰক"</string>
+    <string name="battery_saver_start_action" msgid="8353766979886287140">"অন কৰক"</string>
+    <string name="battery_saver_dismiss_action" msgid="7199342621040014738">"নালাগে, ধন্যবাদ"</string>
     <string name="status_bar_settings_auto_rotation" msgid="8329080442278431708">"স্বয়ং-ঘূৰ্ণন স্ক্ৰীন"</string>
     <string name="usb_device_permission_prompt" msgid="4414719028369181772">"<xliff:g id="USB_DEVICE">%2$s</xliff:g>ত প্ৰৱেশ কৰিবলৈ <xliff:g id="APPLICATION">%1$s</xliff:g>ক অনুমতি দিবনে?"</string>
     <string name="usb_device_permission_prompt_warn" msgid="2309129784984063656">"<xliff:g id="APPLICATION">%1$s</xliff:g>ক <xliff:g id="USB_DEVICE">%2$s</xliff:g> এক্সেছ কৰিবলৈ অনুমতি দিবনে?\nএই এপ্‌টোক ৰেকর্ড কৰাৰ অনুমতি দিয়া হোৱা নাই কিন্তু ই এই ইউএছবি ডিভাইচটোৰ জৰিয়তে অডিঅ\' ৰেকর্ড কৰিব পাৰে।"</string>
@@ -46,6 +49,10 @@
     <string name="usb_debugging_allow" msgid="1722643858015321328">"অনুমতি দিয়ক"</string>
     <string name="usb_debugging_secondary_user_title" msgid="7843050591380107998">"ইউএছবি ডিবাগিঙৰ অনুমতি নাই"</string>
     <string name="usb_debugging_secondary_user_message" msgid="3740347841470403244">"এই ডিভাইচটোত বর্তমান ছাইন ইন হৈ থকা ব্যৱহাৰকাৰীজনে ইউএছবি ডিবাগিং অন কৰিব নোৱাৰে। এই সুবিধাটো ব্যৱহাৰ কৰিবলৈ হ\'লে মুখ্য ব্যৱহাৰকাৰী হিচাপে ছাইন ইন কৰক।"</string>
+    <string name="hdmi_cec_set_menu_language_title" msgid="1259765420091503742">"আপুনি ছিষ্টেমৰ ভাষা <xliff:g id="LANGUAGE">%1$s</xliff:g>লৈ সলনি কৰিবলৈ বিচাৰেনে?"</string>
+    <string name="hdmi_cec_set_menu_language_description" msgid="8176716678074126619">"অন্য এটা ডিভাইচে ছিষ্টেমৰ ভাষা সলনি কৰাৰ অনুৰোধ কৰিছে"</string>
+    <string name="hdmi_cec_set_menu_language_accept" msgid="2513689457281009578">"ভাষা সলনি কৰক"</string>
+    <string name="hdmi_cec_set_menu_language_decline" msgid="7650721096558646011">"বৰ্তমানৰ ভাষাটো ৰাখক"</string>
     <string name="wifi_debugging_title" msgid="7300007687492186076">"এই নেটৱৰ্কত ৱায়াৰলেচ ডি\'বাগিংৰ অনুমতি দিবনে?"</string>
     <string name="wifi_debugging_message" msgid="5461204211731802995">"নেটৱৰ্কৰ নাম (SSID)\n<xliff:g id="SSID_0">%1$s</xliff:g>\n\nৱাই-ফাইৰ ঠিকনা (BSSID)\n<xliff:g id="BSSID_1">%2$s</xliff:g>"</string>
     <string name="wifi_debugging_always" msgid="2968383799517975155">"এই নেটৱৰ্কত সদায় অনুমতি দিয়ক"</string>
@@ -124,6 +131,7 @@
     <string name="biometric_dialog_face_icon_description_authenticated" msgid="2242167416140740920">"মুখমণ্ডলৰ বিশ্বাসযোগ্যতা প্ৰমাণীকৰণ কৰা হ’ল"</string>
     <string name="biometric_dialog_face_icon_description_confirmed" msgid="7918067993953940778">"নিশ্চিত কৰিলে"</string>
     <string name="biometric_dialog_tap_confirm" msgid="9166350738859143358">"সম্পূৰ্ণ কৰিবলৈ নিশ্চিত কৰক-ত টিপক"</string>
+    <string name="biometric_dialog_tap_confirm_with_face" msgid="1597899891472340950">"আপোনাৰ মুখাৱয়বৰ দ্বাৰা আনলক কৰা হৈছে। অব্যাহত ৰাখিবলৈ দবাওক।"</string>
     <string name="biometric_dialog_authenticated" msgid="7337147327545272484">"বিশ্বাসযোগ্যতা প্ৰমাণীকৰণ কৰা হ’ল"</string>
     <string name="biometric_dialog_use_pin" msgid="8385294115283000709">"পিন ব্যৱহাৰ কৰক"</string>
     <string name="biometric_dialog_use_pattern" msgid="2315593393167211194">"আৰ্হি ব্যৱহাৰ কৰক"</string>
@@ -143,10 +151,6 @@
     <string name="biometric_dialog_last_pattern_attempt_before_wipe_profile" msgid="6045224069529284686">"আপুনি পৰৱৰ্তী প্ৰয়াসত এটা ভুল আৰ্হি দিলে, আপোনাৰ কৰ্মস্থানৰ প্ৰ’ফাইল আৰু ইয়াৰ ডেটা মচি পেলোৱা হ’ব।"</string>
     <string name="biometric_dialog_last_pin_attempt_before_wipe_profile" msgid="545567685899091757">"আপুনি পৰৱৰ্তী প্ৰয়াসত এটা ভুল পিন দিলে, আপোনাৰ কৰ্মস্থানৰ প্ৰ’ফাইল আৰু ইয়াৰ ডেটা মচি পেলোৱা হ’ব।"</string>
     <string name="biometric_dialog_last_password_attempt_before_wipe_profile" msgid="8538032972389729253">"আপুনি পৰৱৰ্তী প্ৰয়াসত এটা ভুল পাছৱৰ্ড দিলে, আপোনাৰ কৰ্মস্থানৰ প্ৰ’ফাইল আৰু ইয়াৰ ডেটা মচি পেলোৱা হ’ব।"</string>
-    <string name="biometric_dialog_failed_attempts_now_wiping_device" msgid="6585503524026243042">"বহুসংখ্যক ভুল প্ৰয়াস। এই ডিভাইচটোৰ ডেটা মচা হ\'ব।"</string>
-    <string name="biometric_dialog_failed_attempts_now_wiping_user" msgid="7015008539146949115">"বহুসংখ্যক ভুল প্ৰয়াস। এই ব্যৱহাৰকাৰীক মচা হ\'ব।"</string>
-    <string name="biometric_dialog_failed_attempts_now_wiping_profile" msgid="5239378521440749682">"বহুসংখ্যক ভুল প্ৰয়াস। এই কৰ্মস্থানৰ প্ৰ\'ফাইলটো আৰু তাৰ লগত জড়িত ডেটা মচা হ\'ব।"</string>
-    <string name="biometric_dialog_now_wiping_dialog_dismiss" msgid="7189432882125106154">"অগ্ৰাহ্য কৰক"</string>
     <string name="fingerprint_dialog_touch_sensor" msgid="2817887108047658975">"ফিংগাৰপ্ৰিণ্ট ছেন্সৰটো স্পৰ্শ কৰক"</string>
     <string name="accessibility_fingerprint_dialog_fingerprint_icon" msgid="4465698996175640549">"ফিংগাৰপ্ৰিণ্ট আইকন"</string>
     <string name="fingerprint_dialog_use_fingerprint_instead" msgid="6178228876763024452">"মুখাৱয়ব চিনিব নোৱাৰি। ফিংগাৰপ্ৰিণ্ট ব্যৱহাৰ কৰক।"</string>
@@ -234,7 +238,6 @@
     <string name="quick_settings_brightness_dialog_title" msgid="4980669966716685588">"উজ্জ্বলতা"</string>
     <string name="quick_settings_inversion_label" msgid="3501527749494755688">"ৰং বিপৰীতকৰণ"</string>
     <string name="quick_settings_color_correction_label" msgid="5636617913560474664">"ৰং শুধৰণী"</string>
-    <string name="quick_settings_more_settings" msgid="2878235926753776694">"অধিক ছেটিং"</string>
     <string name="quick_settings_more_user_settings" msgid="1064187451100861954">"ব্যৱহাৰকাৰীৰ ছেটিং"</string>
     <string name="quick_settings_done" msgid="2163641301648855793">"সম্পন্ন কৰা হ’ল"</string>
     <string name="quick_settings_close_user_panel" msgid="5599724542275896849">"বন্ধ কৰক"</string>
@@ -269,6 +272,8 @@
     <string name="quick_settings_dark_mode_secondary_label_until_sunrise" msgid="4404885070316716472">"সূৰ্যোদয়লৈকে"</string>
     <string name="quick_settings_dark_mode_secondary_label_on_at" msgid="5128758823486361279">"<xliff:g id="TIME">%s</xliff:g>ত অন কৰক"</string>
     <string name="quick_settings_dark_mode_secondary_label_until" msgid="2289774641256492437">"<xliff:g id="TIME">%s</xliff:g> পৰ্যন্ত"</string>
+    <string name="quick_settings_dark_mode_secondary_label_on_at_bedtime" msgid="2274300599408864897">"শোৱাৰ সময়ত"</string>
+    <string name="quick_settings_dark_mode_secondary_label_until_bedtime_ends" msgid="1790772410777123685">"শোৱাৰ সময় শেষ হোৱা পৰ্যন্ত"</string>
     <string name="quick_settings_nfc_label" msgid="1054317416221168085">"NFC"</string>
     <string name="quick_settings_nfc_off" msgid="3465000058515424663">"NFC নিষ্ক্ৰিয় হৈ আছে"</string>
     <string name="quick_settings_nfc_on" msgid="1004976611203202230">"NFC সক্ষম হৈ আছে"</string>
@@ -312,18 +317,14 @@
     <string name="keyguard_indication_charging_time" msgid="6492711711891071502">"<xliff:g id="PERCENTAGE">%2$s</xliff:g> • চাৰ্জ হৈ আছে • <xliff:g id="CHARGING_TIME_LEFT">%1$s</xliff:g>ত সম্পূৰ্ণ হ’ব"</string>
     <string name="keyguard_indication_charging_time_fast" msgid="8390311020603859480">"<xliff:g id="PERCENTAGE">%2$s</xliff:g> • দ্ৰুতগতিৰে চাৰ্জ হৈ আছে • <xliff:g id="CHARGING_TIME_LEFT">%1$s</xliff:g>ত সম্পূৰ্ণ হ’ব"</string>
     <string name="keyguard_indication_charging_time_slowly" msgid="301936949731705417">"<xliff:g id="PERCENTAGE">%2$s</xliff:g> • লাহে লাহে চাৰ্জ হৈ আছে • <xliff:g id="CHARGING_TIME_LEFT">%1$s</xliff:g>ত সম্পূৰ্ণ হ’ব"</string>
+    <string name="keyguard_indication_charging_time_dock" msgid="6150404291427377863">"<xliff:g id="PERCENTAGE">%2$s</xliff:g> • চাৰ্জিং ডক • সম্পূৰ্ণ হ’বলৈ <xliff:g id="CHARGING_TIME_LEFT">%1$s</xliff:g> লাগিব"</string>
     <string name="accessibility_multi_user_switch_switcher" msgid="5330448341251092660">"ব্যৱহাৰকাৰী সলনি কৰক"</string>
-    <string name="user_add_user" msgid="4336657383006913022">"ব্যৱহাৰকাৰী যোগ কৰক"</string>
-    <string name="user_new_user_name" msgid="2019166282704195789">"নতুন ব্যৱহাৰকাৰী"</string>
-    <string name="guest_exit_guest_dialog_title" msgid="5015697561580641422">"অতিথি আঁতৰাবনে?"</string>
     <string name="guest_exit_guest_dialog_message" msgid="8183450985628495709">"এই ছেশ্বনৰ আটাইবোৰ এপ্ আৰু ডেটা মচা হ\'ব।"</string>
     <string name="guest_exit_guest_dialog_remove" msgid="7505817591242703757">"আঁতৰাওক"</string>
     <string name="guest_wipe_session_title" msgid="7147965814683990944">"অতিথি, আপোনাক পুনৰ স্বাগতম!"</string>
     <string name="guest_wipe_session_message" msgid="3393823610257065457">"আপুনি আপোনাৰ ছেশ্বন অব্যাহত ৰাখিব বিচাৰেনে?"</string>
     <string name="guest_wipe_session_wipe" msgid="8056836584445473309">"আকৌ আৰম্ভ কৰক"</string>
     <string name="guest_wipe_session_dontwipe" msgid="3211052048269304205">"হয়, অব্যাহত ৰাখক"</string>
-    <string name="user_add_user_title" msgid="4172327541504825032">"নতুন ব্যৱহাৰকাৰী যোগ কৰিবনে?"</string>
-    <string name="user_add_user_message_short" msgid="2599370307878014791">"আপুনি যেতিয়া এজন নতুন ব্যৱহাৰকাৰী যোগ কৰে, তেওঁ নিজৰ স্থান ছেট আপ কৰা প্ৰয়োজন।\n\nযিকোনো ব্যৱহাৰকাৰীয়ে নিজৰ লগতে আন ব্যৱহাৰকাৰীৰো এপ্ আপডে’ট কৰিব পাৰে।"</string>
     <string name="user_limit_reached_title" msgid="2429229448830346057">"অধিকতম ব্যৱহাৰকাৰী সৃষ্টি কৰা হ’ল"</string>
     <plurals name="user_limit_reached_message" formatted="false" msgid="2573535787802908398">
       <item quantity="one">আপুনি <xliff:g id="COUNT">%d</xliff:g> জনলৈকে ব্যৱহাৰকাৰী যোগ কৰিব পাৰে।</item>
@@ -449,16 +450,12 @@
     <string name="wallet_secondary_label_device_locked" msgid="5175862019125370506">"ব্যৱহাৰ কৰিবলৈ আনলক কৰক"</string>
     <string name="wallet_error_generic" msgid="257704570182963611">"আপোনাৰ কাৰ্ড লাভ কৰোঁতে এটা সমস্যা হৈছে, অনুগ্ৰহ কৰি পাছত পুনৰ চেষ্টা কৰক"</string>
     <string name="wallet_lockscreen_settings_label" msgid="3539105300870383570">"লক স্ক্ৰীনৰ ছেটিং"</string>
-    <!-- no translation found for qr_code_scanner_title (5660820608548306581) -->
-    <skip />
-    <!-- no translation found for qr_code_scanner_description (7937603775306661863) -->
-    <skip />
+    <string name="qr_code_scanner_title" msgid="5290201053875420785">"কিউআৰ ক’ড স্কেন কৰক"</string>
     <string name="status_bar_work" msgid="5238641949837091056">"কৰ্মস্থানৰ প্ৰ\'ফাইল"</string>
     <string name="status_bar_airplane" msgid="4848702508684541009">"এয়াৰপ্লেইন ম\'ড"</string>
     <string name="zen_alarm_warning" msgid="7844303238486849503">"আপুনি আপোনাৰ পিছৰটো এলাৰ্ম <xliff:g id="WHEN">%1$s</xliff:g> বজাত শুনা নাপাব"</string>
     <string name="alarm_template" msgid="2234991538018805736">"<xliff:g id="WHEN">%1$s</xliff:g> বজাত"</string>
     <string name="alarm_template_far" msgid="3561752195856839456">"<xliff:g id="WHEN">%1$s</xliff:g> বজাত"</string>
-    <string name="accessibility_quick_settings_detail" msgid="544463655956179791">"ক্ষিপ্ৰ ছেটিং, <xliff:g id="TITLE">%s</xliff:g>।"</string>
     <string name="accessibility_status_bar_hotspot" msgid="2888479317489131669">"হটস্পট"</string>
     <string name="accessibility_managed_profile" msgid="4703836746209377356">"কৰ্মস্থানৰ প্ৰ\'ফাইল"</string>
     <string name="tuner_warning_title" msgid="7721976098452135267">"কিছুমানৰ বাবে আমোদজনক হয় কিন্তু সকলোৰে বাবে নহয়"</string>
@@ -640,7 +637,6 @@
     <string name="accessibility_quick_settings_user" msgid="505821942882668619">"<xliff:g id="ID_1">%s</xliff:g> হিচাপে ছাইন ইন হ’ল"</string>
     <string name="accessibility_quick_settings_choose_user_action" msgid="4554388498186576087">"ব্যৱহাৰকাৰী বাছনি কৰক"</string>
     <string name="data_connection_no_internet" msgid="691058178914184544">"ইণ্টাৰনেট সংযোগ নাই"</string>
-    <string name="accessibility_quick_settings_open_details" msgid="4879279912389052142">"বিৱৰণসমূহ খোলক।"</string>
     <string name="accessibility_quick_settings_open_settings" msgid="536838345505030893">"<xliff:g id="ID_1">%s</xliff:g>ৰ ছেটিং খোলক।"</string>
     <string name="accessibility_quick_settings_edit" msgid="1523745183383815910">"ছেটিঙৰ ক্ৰম সম্পাদনা কৰক।"</string>
     <string name="accessibility_quick_settings_power_menu" msgid="6820426108301758412">"পাৱাৰ মেনু"</string>
@@ -716,6 +712,8 @@
     <string name="ongoing_privacy_dialog_enterprise" msgid="3003314125311966061">"(কৰ্মস্থান)"</string>
     <string name="ongoing_privacy_dialog_phonecall" msgid="4487370562589839298">"ফ’ন কল"</string>
     <string name="ongoing_privacy_dialog_attribution_text" msgid="4738795925380373994">"(<xliff:g id="APPLICATION_NAME_S_">%s</xliff:g>ৰ জৰিয়তে)"</string>
+    <string name="ongoing_privacy_dialog_attribution_label" msgid="3385241594101496292">"(<xliff:g id="ATTRIBUTION_LABEL">%s</xliff:g>)"</string>
+    <string name="ongoing_privacy_dialog_attribution_proxy_label" msgid="1111829599659403249">"(<xliff:g id="ATTRIBUTION_LABEL">%1$s</xliff:g> • <xliff:g id="PROXY_LABEL">%2$s</xliff:g>)"</string>
     <string name="privacy_type_camera" msgid="7974051382167078332">"Camera"</string>
     <string name="privacy_type_location" msgid="7991481648444066703">"অৱস্থান"</string>
     <string name="privacy_type_microphone" msgid="9136763906797732428">"মাইক্ৰ\'ফ\'ন"</string>
@@ -777,9 +775,10 @@
     <string name="controls_structure_tooltip" msgid="4355922222944447867">"অধিক চাবলৈ ছোৱাইপ কৰক"</string>
     <string name="controls_seeding_in_progress" msgid="3033855341410264148">"চুপাৰিছসমূহ ল’ড কৰি থকা হৈছে"</string>
     <string name="controls_media_title" msgid="1746947284862928133">"মিডিয়া"</string>
-    <string name="controls_media_close_session" msgid="1193000643003066508">"এই মিডিয়াৰ ছেশ্বনটো লুকুৱাবনে?"</string>
+    <!-- no translation found for controls_media_close_session (4780485355795635052) -->
+    <skip />
     <string name="controls_media_active_session" msgid="3146882316024153337">"বৰ্তমানৰ মিডিয়াৰ ছেশ্বনটো লুকুৱাব নোৱাৰি।"</string>
-    <string name="controls_media_dismiss_button" msgid="9081375542265132213">"অগ্ৰাহ্য কৰক"</string>
+    <string name="controls_media_dismiss_button" msgid="4485675693008031646">"লুকুৱাওক"</string>
     <string name="controls_media_resume" msgid="1933520684481586053">"পুনৰ আৰম্ভ কৰক"</string>
     <string name="controls_media_settings_button" msgid="5815790345117172504">"ছেটিং"</string>
     <string name="controls_media_playing_item_description" msgid="4531853311504359098">"<xliff:g id="APP_LABEL">%3$s</xliff:g>ত <xliff:g id="ARTIST_NAME">%2$s</xliff:g>ৰ <xliff:g id="SONG_NAME">%1$s</xliff:g> গীতটো প্লে’ হৈ আছে"</string>
@@ -793,9 +792,12 @@
     <string name="controls_media_smartspace_rec_item_description" msgid="2189271793070870883">"<xliff:g id="APP_LABEL">%3$s</xliff:g>ত <xliff:g id="ARTIST_NAME">%2$s</xliff:g>ৰ <xliff:g id="SONG_NAME">%1$s</xliff:g> গীতটো প্লে’ কৰক"</string>
     <string name="controls_media_smartspace_rec_item_no_artist_description" msgid="8703614798636591077">"<xliff:g id="APP_LABEL">%2$s</xliff:g>ত <xliff:g id="SONG_NAME">%1$s</xliff:g> গীতটো প্লে’ কৰক"</string>
     <string name="media_transfer_undo" msgid="1895606387620728736">"আনডু কৰক"</string>
-    <!-- no translation found for media_move_closer_to_start_cast (2673104707465013176) -->
+    <string name="media_move_closer_to_start_cast" msgid="2673104707465013176">"<xliff:g id="DEVICENAME">%1$s</xliff:g>ত প্লে’ কৰিবলৈ ওচৰলৈ যাওক"</string>
+    <string name="media_move_closer_to_end_cast" msgid="6495907340926563656">"ইয়াত খেলিবলৈ <xliff:g id="DEVICENAME">%1$s</xliff:g>ৰ আৰু ওচৰলৈ যাওক"</string>
+    <string name="media_transfer_playing_different_device" msgid="7186806382609785610">"<xliff:g id="DEVICENAME">%1$s</xliff:g>ত প্লে কৰি থকা হৈছে"</string>
+    <string name="media_transfer_playing_this_device" msgid="1856890686844499172">"এই ফ’নটোত প্লে কৰি থকা হৈছে"</string>
+    <!-- no translation found for media_transfer_failed (7955354964610603723) -->
     <skip />
-    <string name="media_transfer_playing" msgid="3760048096352107789">"<xliff:g id="DEVICENAME">%1$s</xliff:g>ত প্লে\' কৰি থকা হৈছে"</string>
     <string name="controls_error_timeout" msgid="794197289772728958">"সক্ৰিয় নহয়, এপ্‌টো পৰীক্ষা কৰক"</string>
     <string name="controls_error_removed" msgid="6675638069846014366">"বিচাৰি পোৱা নগ’ল"</string>
     <string name="controls_error_removed_title" msgid="1207794911208047818">"নিয়ন্ত্ৰণটো উপলব্ধ নহয়"</string>
@@ -812,6 +814,9 @@
     <string name="media_output_dialog_disconnected" msgid="7090512852817111185">"(সংযোগ বিচ্ছিন্ন কৰা হৈছে)"</string>
     <string name="media_output_dialog_connect_failed" msgid="3080972621975339387">"সলনি কৰিব নোৱাৰি। আকৌ চেষ্টা কৰিবলৈ টিপক।"</string>
     <string name="media_output_dialog_pairing_new" msgid="9099497976087485862">"নতুন ডিভাইচ পেয়াৰ কৰক"</string>
+    <string name="media_output_dialog_launch_app_text" msgid="1527413319632586259">"এই ছেশ্বনটো কাষ্ট কৰিবলৈ, অনুগ্ৰহ কৰি এপ্‌টো খোলক"</string>
+    <string name="media_output_dialog_unknown_launch_app_name" msgid="1084899329829371336">"অজ্ঞাত এপ্"</string>
+    <string name="media_output_dialog_button_stop_casting" msgid="6581379537930199189">"কাষ্ট বন্ধ কৰক"</string>
     <string name="build_number_clip_data_label" msgid="3623176728412560914">"বিল্ডৰ নম্বৰ"</string>
     <string name="build_number_copy_toast" msgid="877720921605503046">"ক্লিপব’ৰ্ডলৈ বিল্ডৰ নম্বৰ প্ৰতিলিপি কৰা হ’ল।"</string>
     <string name="basic_status" msgid="2315371112182658176">"বাৰ্তালাপ খোলক"</string>
@@ -880,10 +885,27 @@
     <string name="qs_tile_request_dialog_add" msgid="4888460910694986304">"টাইল যোগ দিয়ক"</string>
     <string name="qs_tile_request_dialog_not_add" msgid="4168716573114067296">"টাইল যোগ নিদিব"</string>
     <string name="qs_user_switch_dialog_title" msgid="3045189293587781366">"ব্যৱহাৰকাৰী বাছনি কৰক"</string>
-    <string name="fgs_manager_dialog_title" msgid="656091833603337197">"নেপথ্যত চলি থকা এপ্"</string>
+    <plurals name="fgs_manager_footer_label" formatted="false" msgid="9091110396713032871">
+      <item quantity="one"><xliff:g id="COUNT_1">%s</xliff:g> টা সক্ৰিয় এপ্‌</item>
+      <item quantity="other"><xliff:g id="COUNT_1">%s</xliff:g> টা সক্ৰিয় এপ্‌</item>
+    </plurals>
+    <string name="fgs_dot_content_description" msgid="2865071539464777240">"নতুন তথ্য"</string>
+    <string name="fgs_manager_dialog_title" msgid="5879184257257718677">"সক্ৰিয় এপ্‌"</string>
     <string name="fgs_manager_app_item_stop_button_label" msgid="7188317969020801156">"বন্ধ কৰক"</string>
-    <!-- no translation found for clipboard_edit_text_copy (770856373439969178) -->
-    <skip />
-    <!-- no translation found for clipboard_overlay_text_copied (1872624400464891363) -->
-    <skip />
+    <string name="fgs_manager_app_item_stop_button_stopped_label" msgid="6950382004441263922">"বন্ধ হ’ল"</string>
+    <string name="clipboard_edit_text_copy" msgid="770856373439969178">"প্ৰতিলিপি কৰক"</string>
+    <string name="clipboard_overlay_text_copied" msgid="1872624400464891363">"প্ৰতিলিপি কৰা হ’ল"</string>
+    <string name="clipboard_edit_source" msgid="9156488177277788029">"<xliff:g id="APPNAME">%1$s</xliff:g>ৰ পৰা"</string>
+    <string name="clipboard_dismiss_description" msgid="7544573092766945657">"প্ৰতিলিপি কৰা UI অগ্ৰাহ্য কৰক"</string>
+    <string name="clipboard_edit_text_description" msgid="805254383912962103">"প্ৰতিলিপি কৰা পাঠ সম্পাদনা কৰক"</string>
+    <string name="clipboard_edit_image_description" msgid="8904857948976041306">"প্ৰতিলিপি কৰা প্ৰতিচ্ছবি সম্পাদনা কৰক"</string>
+    <string name="clipboard_send_nearby_description" msgid="4629769637846717650">"নিকটৱৰ্তী ডিভাইচলৈ পঠাওক"</string>
+    <string name="add" msgid="81036585205287996">"যোগ দিয়ক"</string>
+    <string name="manage_users" msgid="1823875311934643849">"ব্যৱহাৰকাৰী পৰিচালনা কৰক"</string>
+    <string name="drag_split_not_supported" msgid="4326847447699729722">"এই জাননীটোৱে টানি আনি এৰাৰ পৰা বিভাজিত স্ক্ৰীন সমৰ্থন নকৰে।"</string>
+    <string name="dream_overlay_status_bar_wifi_off" msgid="4497069245055003582">"ৱাই-ফাই উপলব্ধ নহয়"</string>
+    <string name="dream_overlay_status_bar_priority_mode" msgid="5428462123314728739">"অগ্ৰাধিকাৰ ম’ড"</string>
+    <string name="dream_overlay_status_bar_alarm_set" msgid="566707328356590886">"এলাৰ্ম ছেট কৰা হ’ল"</string>
+    <string name="dream_overlay_status_bar_camera_mic_off" msgid="3199425257833773569">"কেমেৰা আৰু মাইক অফ হৈ আছে"</string>
+    <string name="dream_overlay_status_bar_notification_indicator" msgid="8091389255691081711">"{count,plural, =1{# টা জাননী}one{# টা জাননী}other{# টা জাননী}}"</string>
 </resources>

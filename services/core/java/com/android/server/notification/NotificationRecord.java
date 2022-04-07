@@ -69,6 +69,8 @@ import com.android.server.EventLogTags;
 import com.android.server.LocalServices;
 import com.android.server.uri.UriGrantsManagerInternal;
 
+import dalvik.annotation.optimization.NeverCompile;
+
 import java.io.PrintWriter;
 import java.lang.reflect.Array;
 import java.util.ArrayList;
@@ -200,6 +202,10 @@ public final class NotificationRecord {
      */
     private boolean mIsAppImportanceLocked;
     private ArraySet<Uri> mGrantableUris;
+
+    // Storage for phone numbers that were found to be associated with
+    // contacts in this notification.
+    private ArraySet<String> mPhoneNumbers;
 
     // Whether this notification record should have an update logged the next time notifications
     // are sorted.
@@ -463,6 +469,7 @@ public final class NotificationRecord {
             rv.getPackage(), rv.getLayoutId(), rv.estimateMemoryUsage(), rv.toString());
     }
 
+    @NeverCompile // Avoid size overhead of debugging code.
     void dump(PrintWriter pw, String prefix, Context baseContext, boolean redact) {
         final Notification notification = getSbn().getNotification();
         pw.println(prefix + this);
@@ -471,6 +478,7 @@ public final class NotificationRecord {
         pw.println(prefix + "opPkg=" + getSbn().getOpPkg());
         pw.println(prefix + "icon=" + notification.getSmallIcon());
         pw.println(prefix + "flags=0x" + Integer.toHexString(notification.flags));
+        pw.println(prefix + "originalFlags=0x" + Integer.toHexString(mOriginalFlags));
         pw.println(prefix + "pri=" + notification.priority);
         pw.println(prefix + "key=" + getSbn().getKey());
         pw.println(prefix + "seen=" + mStats.hasSeen());
@@ -537,6 +545,7 @@ public final class NotificationRecord {
         if (notification == null) {
             pw.println(prefix + "None");
             return;
+
         }
         pw.println(prefix + "fullscreenIntent=" + notification.fullScreenIntent);
         pw.println(prefix + "contentIntent=" + notification.contentIntent);
@@ -1545,6 +1554,26 @@ public final class NotificationRecord {
     // setPendingLogUpdate to false to make sure other callers don't also do so.
     protected boolean hasPendingLogUpdate() {
         return mPendingLogUpdate;
+    }
+
+    /**
+     * Merge the given set of phone numbers into the list of phone numbers that
+     * are cached on this notification record.
+     */
+    public void mergePhoneNumbers(ArraySet<String> phoneNumbers) {
+        // if the given phone numbers are null or empty then don't do anything
+        if (phoneNumbers == null || phoneNumbers.size() == 0) {
+            return;
+        }
+        // initialize if not already
+        if (mPhoneNumbers == null) {
+            mPhoneNumbers = new ArraySet<>();
+        }
+        mPhoneNumbers.addAll(phoneNumbers);
+    }
+
+    public ArraySet<String> getPhoneNumbers() {
+        return mPhoneNumbers;
     }
 
     @VisibleForTesting

@@ -39,11 +39,12 @@ import java.io.IOException;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.Objects;
-import java.util.concurrent.Callable;
+import java.util.function.Supplier;
 
 /**
  * Used to store the required information to load a resource that was updated using
- * {@link DevicePolicyManager#setDrawables} and {@link DevicePolicyManager#setStrings}.
+ * {@link DevicePolicyResourcesManager#setDrawables} and
+ * {@link DevicePolicyResourcesManager#setStrings}.
  *
  * @hide
  */
@@ -175,11 +176,11 @@ public final class ParcelableResource implements Parcelable {
      * <p>Returns the default drawable by calling the {@code defaultDrawableLoader} if the updated
      * drawable was not found or could not be loaded.</p>
      */
-    @NonNull
+    @Nullable
     public Drawable getDrawable(
             Context context,
             int density,
-            @NonNull Callable<Drawable> defaultDrawableLoader) {
+            @NonNull Supplier<Drawable> defaultDrawableLoader) {
         // TODO(b/203548565): properly handle edge case when the device manager role holder is
         //  unavailable because it's being updated.
         try {
@@ -200,10 +201,10 @@ public final class ParcelableResource implements Parcelable {
      * <p>Returns the default string by calling  {@code defaultStringLoader} if the updated
      * string was not found or could not be loaded.</p>
      */
-    @NonNull
+    @Nullable
     public String getString(
             Context context,
-            @NonNull Callable<String> defaultStringLoader) {
+            @NonNull Supplier<String> defaultStringLoader) {
         // TODO(b/203548565): properly handle edge case when the device manager role holder is
         //  unavailable because it's being updated.
         try {
@@ -227,7 +228,7 @@ public final class ParcelableResource implements Parcelable {
     @Nullable
     public String getString(
             Context context,
-            @NonNull Callable<String> defaultStringLoader,
+            @NonNull Supplier<String> defaultStringLoader,
             @NonNull Object... formatArgs) {
         // TODO(b/203548565): properly handle edge case when the device manager role holder is
         //  unavailable because it's being updated.
@@ -267,39 +268,19 @@ public final class ParcelableResource implements Parcelable {
     /**
      * returns the {@link Drawable} loaded from calling {@code defaultDrawableLoader}.
      */
-    @NonNull
-    public static Drawable loadDefaultDrawable(@NonNull Callable<Drawable> defaultDrawableLoader) {
-        try {
-            Objects.requireNonNull(defaultDrawableLoader, "defaultDrawableLoader can't be null");
-
-            Drawable drawable = defaultDrawableLoader.call();
-            Objects.requireNonNull(drawable, "defaultDrawable can't be null");
-
-            return drawable;
-        } catch (NullPointerException rethrown) {
-            throw rethrown;
-        } catch (Exception e) {
-            throw new RuntimeException("Couldn't load default drawable: ", e);
-        }
+    @Nullable
+    public static Drawable loadDefaultDrawable(@NonNull Supplier<Drawable> defaultDrawableLoader) {
+        Objects.requireNonNull(defaultDrawableLoader, "defaultDrawableLoader can't be null");
+        return defaultDrawableLoader.get();
     }
 
     /**
      * returns the {@link String} loaded from calling {@code defaultStringLoader}.
      */
-    @NonNull
-    public static String loadDefaultString(@NonNull Callable<String> defaultStringLoader) {
-        try {
-            Objects.requireNonNull(defaultStringLoader, "defaultStringLoader can't be null");
-
-            String string = defaultStringLoader.call();
-            Objects.requireNonNull(string, "defaultString can't be null");
-
-            return string;
-        } catch (NullPointerException rethrown) {
-            throw rethrown;
-        } catch (Exception e) {
-            throw new RuntimeException("Couldn't load default string: ", e);
-        }
+    @Nullable
+    public static String loadDefaultString(@NonNull Supplier<String> defaultStringLoader) {
+        Objects.requireNonNull(defaultStringLoader, "defaultStringLoader can't be null");
+        return defaultStringLoader.get();
     }
 
     /**

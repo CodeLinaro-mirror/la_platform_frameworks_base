@@ -27,7 +27,7 @@ import java.lang.annotation.RetentionPolicy;
 import java.util.Objects;
 
 /**
- * A class to encapsulate a collection of attributes describing information about a vibration
+ * Encapsulates a collection of attributes describing information about a vibration.
  */
 public final class VibrationAttributes implements Parcelable {
     private static final String TAG = "VibrationAttributes";
@@ -37,6 +37,7 @@ public final class VibrationAttributes implements Parcelable {
             USAGE_CLASS_UNKNOWN,
             USAGE_CLASS_ALARM,
             USAGE_CLASS_FEEDBACK,
+            USAGE_CLASS_MEDIA,
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface UsageClass {}
@@ -105,20 +106,28 @@ public final class VibrationAttributes implements Parcelable {
     public static final int USAGE_NOTIFICATION = 0x30 | USAGE_CLASS_ALARM;
     /**
      * Usage value to use for vibrations which mean a request to enter/end a
-     * communication, such as a VoIP communication or video-conference.
+     * communication with the user, such as a voice prompt.
      */
     public static final int USAGE_COMMUNICATION_REQUEST = 0x40 | USAGE_CLASS_ALARM;
     /**
      * Usage value to use for touch vibrations.
+     *
+     * <p>Most typical haptic feedback should be classed as <em>touch</em> feedback. Examples
+     * include vibrations for tap, long press, drag and scroll.
      */
     public static final int USAGE_TOUCH = 0x10 | USAGE_CLASS_FEEDBACK;
     /**
-     * Usage value to use for vibrations which emulate physical effects, such as edge squeeze.
+     * Usage value to use for vibrations which emulate physical hardware reactions,
+     * such as edge squeeze.
+     *
+     * <p>Note that normal screen-touch feedback "click" effects would typically be
+     * classed as {@link #USAGE_TOUCH}, and that on-screen "physical" animations
+     * like bouncing would be {@link #USAGE_MEDIA}.
      */
     public static final int USAGE_PHYSICAL_EMULATION = 0x20 | USAGE_CLASS_FEEDBACK;
     /**
-     * Usage value to use for vibrations which provide a feedback for hardware interaction,
-     * such as a fingerprint sensor.
+     * Usage value to use for vibrations which provide a feedback for hardware
+     * component interaction, such as a fingerprint sensor.
      */
     public static final int USAGE_HARDWARE_FEEDBACK = 0x30 | USAGE_CLASS_FEEDBACK;
     /**
@@ -158,14 +167,30 @@ public final class VibrationAttributes implements Parcelable {
     public static final int FLAG_BYPASS_USER_VIBRATION_INTENSITY_OFF = 0x2;
 
     /**
+     * Flag requesting vibration effect to be played with fresh user settings values.
+     *
+     * <p>This flag is not protected by any permission, but vibrations that use it require an extra
+     * query of user vibration intensity settings, ringer mode and other controls that affect the
+     * vibration effect playback, which can increase the latency for the overall request.
+     *
+     * <p>This is intended to be used on scenarios where the user settings might have changed
+     * recently, and needs to be applied to this vibration, like settings controllers that preview
+     * newly set intensities to the user.
+     *
+     * @hide
+     */
+    public static final int FLAG_INVALIDATE_SETTINGS_CACHE = 0x3;
+
+    /**
      * All flags supported by vibrator service, update it when adding new flag.
      * @hide
      */
     public static final int FLAG_ALL_SUPPORTED =
-            FLAG_BYPASS_INTERRUPTION_POLICY | FLAG_BYPASS_USER_VIBRATION_INTENSITY_OFF;
+            FLAG_BYPASS_INTERRUPTION_POLICY | FLAG_BYPASS_USER_VIBRATION_INTENSITY_OFF
+                    | FLAG_INVALIDATE_SETTINGS_CACHE;
 
     /** Creates a new {@link VibrationAttributes} instance with given usage. */
-    public static @NonNull VibrationAttributes createForUsage(int usage) {
+    public static @NonNull VibrationAttributes createForUsage(@Usage int usage) {
         return new VibrationAttributes.Builder().setUsage(usage).build();
     }
 
@@ -182,7 +207,6 @@ public final class VibrationAttributes implements Parcelable {
 
     /**
      * Return the vibration usage class.
-     * @return USAGE_CLASS_ALARM, USAGE_CLASS_FEEDBACK or USAGE_CLASS_UNKNOWN
      */
     @UsageClass
     public int getUsageClass() {
@@ -191,7 +215,6 @@ public final class VibrationAttributes implements Parcelable {
 
     /**
      * Return the vibration usage.
-     * @return one of the values that can be set in {@link Builder#setUsage(int)}
      */
     @Usage
     public int getUsage() {
@@ -428,16 +451,8 @@ public final class VibrationAttributes implements Parcelable {
         }
 
         /**
-         * Sets the attribute describing the type of corresponding vibration.
-         * @param usage one of {@link VibrationAttributes#USAGE_ALARM},
-         * {@link VibrationAttributes#USAGE_RINGTONE},
-         * {@link VibrationAttributes#USAGE_NOTIFICATION},
-         * {@link VibrationAttributes#USAGE_COMMUNICATION_REQUEST},
-         * {@link VibrationAttributes#USAGE_TOUCH},
-         * {@link VibrationAttributes#USAGE_PHYSICAL_EMULATION},
-         * {@link VibrationAttributes#USAGE_HARDWARE_FEEDBACK}.
-         * {@link VibrationAttributes#USAGE_ACCESSIBILITY}.
-         * {@link VibrationAttributes#USAGE_MEDIA}.
+         * Sets the attribute describing the type of the corresponding vibration.
+         * @param usage The type of usage for the vibration
          * @return the same Builder instance.
          */
         public @NonNull Builder setUsage(@Usage int usage) {
@@ -447,8 +462,10 @@ public final class VibrationAttributes implements Parcelable {
         }
 
         /**
-         * Set flags
-         * @param flags combination of flags to be set.
+         * Sets only the flags specified in the bitmask, leaving the other supported flag values
+         * unchanged in the builder.
+         *
+         * @param flags Combination of flags to be set.
          * @param mask Bit range that should be changed.
          * @return the same Builder instance.
          */
@@ -457,6 +474,18 @@ public final class VibrationAttributes implements Parcelable {
             mFlags = (mFlags & ~mask) | (flags & mask);
             return this;
         }
+
+        /**
+         * Set all supported flags with given combination of flags, overriding any previous values
+         * set to this builder.
+         *
+         * @param flags combination of flags to be set.
+         * @return the same Builder instance.
+         *
+         * @hide
+         */
+        public @NonNull Builder setFlags(@Flag int flags) {
+            return setFlags(flags, FLAG_ALL_SUPPORTED);
+        }
     }
 }
-

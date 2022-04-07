@@ -20,14 +20,17 @@
 <resources xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
     <string name="app_label" msgid="4811759950673118541">"IU del sistema"</string>
-    <string name="battery_low_title" msgid="6891106956328275225">"Es posible que pronto se agote la batería"</string>
+    <string name="battery_low_title" msgid="5319680173344341779">"¿Quieres activar el Ahorro de batería?"</string>
+    <string name="battery_low_description" msgid="3282977755476423966">"Tienes <xliff:g id="PERCENTAGE">%s</xliff:g> de batería restante. El Ahorro de batería activa el Tema oscuro, restringe la actividad en segundo plano y retrasa las notificaciones."</string>
+    <string name="battery_low_intro" msgid="5148725009653088790">"El Ahorro de batería activa el Tema oscuro, restringe la actividad en segundo plano y retrasa las notificaciones."</string>
     <string name="battery_low_percent_format" msgid="4276661262843170964">"Queda un <xliff:g id="PERCENTAGE">%s</xliff:g> de batería."</string>
     <string name="invalid_charger_title" msgid="938685362320735167">"No se puede cargar mediante USB"</string>
     <string name="invalid_charger_text" msgid="2339310107232691577">"Usa el cargador que se incluyó con el dispositivo"</string>
     <string name="battery_saver_confirmation_title" msgid="1234998463717398453">"¿Deseas activar Ahorro de batería?"</string>
     <string name="battery_saver_confirmation_title_generic" msgid="2299231884234959849">"Acerca del Ahorro de batería"</string>
     <string name="battery_saver_confirmation_ok" msgid="5042136476802816494">"Activar"</string>
-    <string name="battery_saver_start_action" msgid="4553256017945469937">"Activar el Ahorro de batería"</string>
+    <string name="battery_saver_start_action" msgid="8353766979886287140">"Activar"</string>
+    <string name="battery_saver_dismiss_action" msgid="7199342621040014738">"No, gracias"</string>
     <string name="status_bar_settings_auto_rotation" msgid="8329080442278431708">"Girar la pantalla automáticamente"</string>
     <string name="usb_device_permission_prompt" msgid="4414719028369181772">"¿Deseas permitir que <xliff:g id="APPLICATION">%1$s</xliff:g> acceda a <xliff:g id="USB_DEVICE">%2$s</xliff:g>?"</string>
     <string name="usb_device_permission_prompt_warn" msgid="2309129784984063656">"¿Quieres permitir que <xliff:g id="APPLICATION">%1$s</xliff:g> acceda a <xliff:g id="USB_DEVICE">%2$s</xliff:g>?\nLa app no tiene permiso para grabar, pero podría capturar audio mediante este dispositivo USB."</string>
@@ -46,6 +49,10 @@
     <string name="usb_debugging_allow" msgid="1722643858015321328">"Permitir"</string>
     <string name="usb_debugging_secondary_user_title" msgid="7843050591380107998">"No tienes permitida la depuración por USB"</string>
     <string name="usb_debugging_secondary_user_message" msgid="3740347841470403244">"El usuario al que accediste en este dispositivo no puede activar la depuración por USB. Para usar esta función, debes cambiar al usuario principal."</string>
+    <string name="hdmi_cec_set_menu_language_title" msgid="1259765420091503742">"¿Quiere cambiar el idioma del sistema a <xliff:g id="LANGUAGE">%1$s</xliff:g>?"</string>
+    <string name="hdmi_cec_set_menu_language_description" msgid="8176716678074126619">"Cambio de idioma del sistema solicitado por otro dispositivo"</string>
+    <string name="hdmi_cec_set_menu_language_accept" msgid="2513689457281009578">"Cambiar idioma"</string>
+    <string name="hdmi_cec_set_menu_language_decline" msgid="7650721096558646011">"Mantener el idioma actual"</string>
     <string name="wifi_debugging_title" msgid="7300007687492186076">"¿Quieres permitir la depuración inalámbrica en esta red?"</string>
     <string name="wifi_debugging_message" msgid="5461204211731802995">"Nombre de red (SSID)\n<xliff:g id="SSID_0">%1$s</xliff:g>\n\nDirección Wi‑Fi (BSSID)\n<xliff:g id="BSSID_1">%2$s</xliff:g>"</string>
     <string name="wifi_debugging_always" msgid="2968383799517975155">"Permitir siempre en esta red"</string>
@@ -124,6 +131,7 @@
     <string name="biometric_dialog_face_icon_description_authenticated" msgid="2242167416140740920">"Se autenticó el rostro"</string>
     <string name="biometric_dialog_face_icon_description_confirmed" msgid="7918067993953940778">"Confirmado"</string>
     <string name="biometric_dialog_tap_confirm" msgid="9166350738859143358">"Presiona Confirmar para completar"</string>
+    <string name="biometric_dialog_tap_confirm_with_face" msgid="1597899891472340950">"Disp. desbloqueado con rostro. Presiona para continuar."</string>
     <string name="biometric_dialog_authenticated" msgid="7337147327545272484">"Autenticado"</string>
     <string name="biometric_dialog_use_pin" msgid="8385294115283000709">"Usar PIN"</string>
     <string name="biometric_dialog_use_pattern" msgid="2315593393167211194">"Usar patrón"</string>
@@ -143,10 +151,6 @@
     <string name="biometric_dialog_last_pattern_attempt_before_wipe_profile" msgid="6045224069529284686">"Si ingresas un patrón incorrecto en el próximo intento, se borrarán tu perfil de trabajo y sus datos."</string>
     <string name="biometric_dialog_last_pin_attempt_before_wipe_profile" msgid="545567685899091757">"Si ingresas un PIN incorrecto en el próximo intento, se borrarán tu perfil de trabajo y sus datos."</string>
     <string name="biometric_dialog_last_password_attempt_before_wipe_profile" msgid="8538032972389729253">"Si ingresas una contraseña incorrecta en el próximo intento, se borrarán tu perfil de trabajo y sus datos."</string>
-    <string name="biometric_dialog_failed_attempts_now_wiping_device" msgid="6585503524026243042">"Hubo demasiados intentos incorrectos. Se borrarán los datos del dispositivo."</string>
-    <string name="biometric_dialog_failed_attempts_now_wiping_user" msgid="7015008539146949115">"Hubo demasiados intentos incorrectos. Se borrará este usuario."</string>
-    <string name="biometric_dialog_failed_attempts_now_wiping_profile" msgid="5239378521440749682">"Hubo demasiados intentos incorrectos. Se borrarán este perfil de trabajo y sus datos."</string>
-    <string name="biometric_dialog_now_wiping_dialog_dismiss" msgid="7189432882125106154">"Descartar"</string>
     <string name="fingerprint_dialog_touch_sensor" msgid="2817887108047658975">"Toca el sensor de huellas dactilares"</string>
     <string name="accessibility_fingerprint_dialog_fingerprint_icon" msgid="4465698996175640549">"Ícono de huella dactilar"</string>
     <string name="fingerprint_dialog_use_fingerprint_instead" msgid="6178228876763024452">"No se reconoce el rostro. Usa la huella dactilar."</string>
@@ -234,7 +238,6 @@
     <string name="quick_settings_brightness_dialog_title" msgid="4980669966716685588">"Brillo"</string>
     <string name="quick_settings_inversion_label" msgid="3501527749494755688">"Inversión de color"</string>
     <string name="quick_settings_color_correction_label" msgid="5636617913560474664">"Corrección de colores"</string>
-    <string name="quick_settings_more_settings" msgid="2878235926753776694">"Más configuraciones"</string>
     <string name="quick_settings_more_user_settings" msgid="1064187451100861954">"Configuración del usuario"</string>
     <string name="quick_settings_done" msgid="2163641301648855793">"Listo"</string>
     <string name="quick_settings_close_user_panel" msgid="5599724542275896849">"Cerrar"</string>
@@ -269,6 +272,8 @@
     <string name="quick_settings_dark_mode_secondary_label_until_sunrise" msgid="4404885070316716472">"Hasta el amanecer"</string>
     <string name="quick_settings_dark_mode_secondary_label_on_at" msgid="5128758823486361279">"A la(s) <xliff:g id="TIME">%s</xliff:g>"</string>
     <string name="quick_settings_dark_mode_secondary_label_until" msgid="2289774641256492437">"Hasta la(s) <xliff:g id="TIME">%s</xliff:g>"</string>
+    <string name="quick_settings_dark_mode_secondary_label_on_at_bedtime" msgid="2274300599408864897">"Activar a la hora de dormir"</string>
+    <string name="quick_settings_dark_mode_secondary_label_until_bedtime_ends" msgid="1790772410777123685">"Hasta que finalice la hora de dormir"</string>
     <string name="quick_settings_nfc_label" msgid="1054317416221168085">"NFC"</string>
     <string name="quick_settings_nfc_off" msgid="3465000058515424663">"La tecnología NFC está inhabilitada"</string>
     <string name="quick_settings_nfc_on" msgid="1004976611203202230">"La tecnología NFC está habilitada"</string>
@@ -312,18 +317,14 @@
     <string name="keyguard_indication_charging_time" msgid="6492711711891071502">"<xliff:g id="PERCENTAGE">%2$s</xliff:g> • Cargando • Se completará en <xliff:g id="CHARGING_TIME_LEFT">%1$s</xliff:g>"</string>
     <string name="keyguard_indication_charging_time_fast" msgid="8390311020603859480">"<xliff:g id="PERCENTAGE">%2$s</xliff:g> • Carga rápida • Se completará en <xliff:g id="CHARGING_TIME_LEFT">%1$s</xliff:g>"</string>
     <string name="keyguard_indication_charging_time_slowly" msgid="301936949731705417">"<xliff:g id="PERCENTAGE">%2$s</xliff:g> • Cargando lento • Se completará en <xliff:g id="CHARGING_TIME_LEFT">%1$s</xliff:g>"</string>
+    <string name="keyguard_indication_charging_time_dock" msgid="6150404291427377863">"<xliff:g id="PERCENTAGE">%2$s</xliff:g> • Conectado y cargando • Carga completa en <xliff:g id="CHARGING_TIME_LEFT">%1$s</xliff:g>"</string>
     <string name="accessibility_multi_user_switch_switcher" msgid="5330448341251092660">"Cambiar usuario"</string>
-    <string name="user_add_user" msgid="4336657383006913022">"Agregar usuario"</string>
-    <string name="user_new_user_name" msgid="2019166282704195789">"Usuario nuevo"</string>
-    <string name="guest_exit_guest_dialog_title" msgid="5015697561580641422">"¿Quitar invitado?"</string>
     <string name="guest_exit_guest_dialog_message" msgid="8183450985628495709">"Se eliminarán las aplicaciones y los datos de esta sesión."</string>
     <string name="guest_exit_guest_dialog_remove" msgid="7505817591242703757">"Quitar"</string>
     <string name="guest_wipe_session_title" msgid="7147965814683990944">"¡Hola de nuevo, invitado!"</string>
     <string name="guest_wipe_session_message" msgid="3393823610257065457">"¿Quieres retomar la sesión?"</string>
     <string name="guest_wipe_session_wipe" msgid="8056836584445473309">"Volver a empezar"</string>
     <string name="guest_wipe_session_dontwipe" msgid="3211052048269304205">"Sí, continuar"</string>
-    <string name="user_add_user_title" msgid="4172327541504825032">"¿Agregar usuario nuevo?"</string>
-    <string name="user_add_user_message_short" msgid="2599370307878014791">"Cuando agregas un nuevo usuario, esa persona debe configurar su espacio.\n\nCualquier usuario puede actualizar las aplicaciones del resto de los usuarios."</string>
     <string name="user_limit_reached_title" msgid="2429229448830346057">"Alcanzaste el límite de usuarios"</string>
     <plurals name="user_limit_reached_message" formatted="false" msgid="2573535787802908398">
       <item quantity="other">Puedes agregar hasta <xliff:g id="COUNT">%d</xliff:g> usuarios.</item>
@@ -449,15 +450,12 @@
     <string name="wallet_secondary_label_device_locked" msgid="5175862019125370506">"Desbloquear para usar"</string>
     <string name="wallet_error_generic" msgid="257704570182963611">"Ocurrió un problema al obtener las tarjetas; vuelve a intentarlo más tarde"</string>
     <string name="wallet_lockscreen_settings_label" msgid="3539105300870383570">"Configuración de pantalla de bloqueo"</string>
-    <!-- no translation found for qr_code_scanner_title (5660820608548306581) -->
-    <skip />
-    <string name="qr_code_scanner_description" msgid="7937603775306661863">"Presiona para escanear"</string>
+    <string name="qr_code_scanner_title" msgid="5290201053875420785">"Escanear código QR"</string>
     <string name="status_bar_work" msgid="5238641949837091056">"Perfil de trabajo"</string>
     <string name="status_bar_airplane" msgid="4848702508684541009">"Modo de avión"</string>
     <string name="zen_alarm_warning" msgid="7844303238486849503">"No oirás la próxima alarma a la(s) <xliff:g id="WHEN">%1$s</xliff:g>"</string>
     <string name="alarm_template" msgid="2234991538018805736">"a la(s) <xliff:g id="WHEN">%1$s</xliff:g>"</string>
     <string name="alarm_template_far" msgid="3561752195856839456">"el <xliff:g id="WHEN">%1$s</xliff:g>"</string>
-    <string name="accessibility_quick_settings_detail" msgid="544463655956179791">"Configuración rápida: <xliff:g id="TITLE">%s</xliff:g>"</string>
     <string name="accessibility_status_bar_hotspot" msgid="2888479317489131669">"Hotspot"</string>
     <string name="accessibility_managed_profile" msgid="4703836746209377356">"Perfil de trabajo"</string>
     <string name="tuner_warning_title" msgid="7721976098452135267">"Diversión para algunos, pero no para todos"</string>
@@ -639,7 +637,6 @@
     <string name="accessibility_quick_settings_user" msgid="505821942882668619">"Accediste como <xliff:g id="ID_1">%s</xliff:g>"</string>
     <string name="accessibility_quick_settings_choose_user_action" msgid="4554388498186576087">"elegir usuario"</string>
     <string name="data_connection_no_internet" msgid="691058178914184544">"Sin Internet"</string>
-    <string name="accessibility_quick_settings_open_details" msgid="4879279912389052142">"Abrir página de detalles"</string>
     <string name="accessibility_quick_settings_open_settings" msgid="536838345505030893">"Abrir configuración de <xliff:g id="ID_1">%s</xliff:g>"</string>
     <string name="accessibility_quick_settings_edit" msgid="1523745183383815910">"Editar orden de configuración"</string>
     <string name="accessibility_quick_settings_power_menu" msgid="6820426108301758412">"Menú de encendido"</string>
@@ -715,6 +712,8 @@
     <string name="ongoing_privacy_dialog_enterprise" msgid="3003314125311966061">"(trabajo)"</string>
     <string name="ongoing_privacy_dialog_phonecall" msgid="4487370562589839298">"Llamada telefónica"</string>
     <string name="ongoing_privacy_dialog_attribution_text" msgid="4738795925380373994">"(a través de <xliff:g id="APPLICATION_NAME_S_">%s</xliff:g>)"</string>
+    <string name="ongoing_privacy_dialog_attribution_label" msgid="3385241594101496292">"(<xliff:g id="ATTRIBUTION_LABEL">%s</xliff:g>)"</string>
+    <string name="ongoing_privacy_dialog_attribution_proxy_label" msgid="1111829599659403249">"(<xliff:g id="ATTRIBUTION_LABEL">%1$s</xliff:g> • <xliff:g id="PROXY_LABEL">%2$s</xliff:g>)"</string>
     <string name="privacy_type_camera" msgid="7974051382167078332">"cámara"</string>
     <string name="privacy_type_location" msgid="7991481648444066703">"ubicación"</string>
     <string name="privacy_type_microphone" msgid="9136763906797732428">"micrófono"</string>
@@ -776,9 +775,10 @@
     <string name="controls_structure_tooltip" msgid="4355922222944447867">"Desliza el dedo para ver más elementos"</string>
     <string name="controls_seeding_in_progress" msgid="3033855341410264148">"Cargando recomendaciones"</string>
     <string name="controls_media_title" msgid="1746947284862928133">"Contenido multimedia"</string>
-    <string name="controls_media_close_session" msgid="1193000643003066508">"¿Quieres ocultar esta sesión multimedia?"</string>
+    <!-- no translation found for controls_media_close_session (4780485355795635052) -->
+    <skip />
     <string name="controls_media_active_session" msgid="3146882316024153337">"No se puede ocultar la sesión multimedia actual."</string>
-    <string name="controls_media_dismiss_button" msgid="9081375542265132213">"Descartar"</string>
+    <string name="controls_media_dismiss_button" msgid="4485675693008031646">"Ocultar"</string>
     <string name="controls_media_resume" msgid="1933520684481586053">"Reanudar"</string>
     <string name="controls_media_settings_button" msgid="5815790345117172504">"Configuración"</string>
     <string name="controls_media_playing_item_description" msgid="4531853311504359098">"Se está reproduciendo <xliff:g id="SONG_NAME">%1$s</xliff:g>, de <xliff:g id="ARTIST_NAME">%2$s</xliff:g>, en <xliff:g id="APP_LABEL">%3$s</xliff:g>"</string>
@@ -792,9 +792,12 @@
     <string name="controls_media_smartspace_rec_item_description" msgid="2189271793070870883">"Reproduce <xliff:g id="SONG_NAME">%1$s</xliff:g>, de <xliff:g id="ARTIST_NAME">%2$s</xliff:g>, en <xliff:g id="APP_LABEL">%3$s</xliff:g>"</string>
     <string name="controls_media_smartspace_rec_item_no_artist_description" msgid="8703614798636591077">"Reproducir <xliff:g id="SONG_NAME">%1$s</xliff:g> en <xliff:g id="APP_LABEL">%2$s</xliff:g>"</string>
     <string name="media_transfer_undo" msgid="1895606387620728736">"Deshacer"</string>
-    <!-- no translation found for media_move_closer_to_start_cast (2673104707465013176) -->
+    <string name="media_move_closer_to_start_cast" msgid="2673104707465013176">"Acércate para reproducir en <xliff:g id="DEVICENAME">%1$s</xliff:g>"</string>
+    <string name="media_move_closer_to_end_cast" msgid="6495907340926563656">"Acércate a <xliff:g id="DEVICENAME">%1$s</xliff:g> para reproducir aquí"</string>
+    <string name="media_transfer_playing_different_device" msgid="7186806382609785610">"Reproduciendo en <xliff:g id="DEVICENAME">%1$s</xliff:g>"</string>
+    <string name="media_transfer_playing_this_device" msgid="1856890686844499172">"Reproduciendo en este teléfono"</string>
+    <!-- no translation found for media_transfer_failed (7955354964610603723) -->
     <skip />
-    <string name="media_transfer_playing" msgid="3760048096352107789">"Reproduciendo en <xliff:g id="DEVICENAME">%1$s</xliff:g>"</string>
     <string name="controls_error_timeout" msgid="794197289772728958">"Inactivo. Verifica la app"</string>
     <string name="controls_error_removed" msgid="6675638069846014366">"No se encontró"</string>
     <string name="controls_error_removed_title" msgid="1207794911208047818">"El control no está disponible"</string>
@@ -811,6 +814,9 @@
     <string name="media_output_dialog_disconnected" msgid="7090512852817111185">"(desconectado)"</string>
     <string name="media_output_dialog_connect_failed" msgid="3080972621975339387">"No se pudo conectar. Presiona para volver a intentarlo."</string>
     <string name="media_output_dialog_pairing_new" msgid="9099497976087485862">"Vincular dispositivo nuevo"</string>
+    <string name="media_output_dialog_launch_app_text" msgid="1527413319632586259">"Para transmitir esta sesión, abre la app"</string>
+    <string name="media_output_dialog_unknown_launch_app_name" msgid="1084899329829371336">"App desconocida"</string>
+    <string name="media_output_dialog_button_stop_casting" msgid="6581379537930199189">"Detener transmisión"</string>
     <string name="build_number_clip_data_label" msgid="3623176728412560914">"Número de compilación"</string>
     <string name="build_number_copy_toast" msgid="877720921605503046">"Se copió el número de compilación en el portapapeles."</string>
     <string name="basic_status" msgid="2315371112182658176">"Conversación abierta"</string>
@@ -875,14 +881,31 @@
     <string name="to_switch_networks_disconnect_ethernet" msgid="6698111101156951955">"Para cambiar de red, desconéctate de Ethernet"</string>
     <string name="wifi_scan_notify_message" msgid="3753839537448621794">"Para mejorar la experiencia con el dispositivo, las apps y los servicios pueden seguir buscando redes Wi-Fi en cualquier momento, incluso cuando la conexión Wi-Fi esté desactivada. Puedes cambiar este parámetro en la configuración de búsqueda de Wi-Fi. "<annotation id="link">"Cambiar"</annotation></string>
     <string name="turn_off_airplane_mode" msgid="8425587763226548579">"Desactivar el modo de avión"</string>
-    <string name="qs_tile_request_dialog_text" msgid="3501359944139877694">"<xliff:g id="APPNAME">%1$s</xliff:g> quiere agregar el siguiente azulejo a la Configuración rápida"</string>
-    <string name="qs_tile_request_dialog_add" msgid="4888460910694986304">"Agregar azulejo"</string>
-    <string name="qs_tile_request_dialog_not_add" msgid="4168716573114067296">"No agregar azulejo"</string>
+    <string name="qs_tile_request_dialog_text" msgid="3501359944139877694">"<xliff:g id="APPNAME">%1$s</xliff:g> quiere agregar la siguiente tarjeta a la Configuración rápida"</string>
+    <string name="qs_tile_request_dialog_add" msgid="4888460910694986304">"Agregar tarjeta"</string>
+    <string name="qs_tile_request_dialog_not_add" msgid="4168716573114067296">"No agregar tarjeta"</string>
     <string name="qs_user_switch_dialog_title" msgid="3045189293587781366">"Seleccionar usuario"</string>
-    <string name="fgs_manager_dialog_title" msgid="656091833603337197">"Apps en ejecución en segundo plano"</string>
+    <plurals name="fgs_manager_footer_label" formatted="false" msgid="9091110396713032871">
+      <item quantity="other"><xliff:g id="COUNT_1">%s</xliff:g> apps activas</item>
+      <item quantity="one"><xliff:g id="COUNT_0">%s</xliff:g> app activa</item>
+    </plurals>
+    <string name="fgs_dot_content_description" msgid="2865071539464777240">"Nueva información"</string>
+    <string name="fgs_manager_dialog_title" msgid="5879184257257718677">"Apps activas"</string>
     <string name="fgs_manager_app_item_stop_button_label" msgid="7188317969020801156">"Detener"</string>
-    <!-- no translation found for clipboard_edit_text_copy (770856373439969178) -->
-    <skip />
-    <!-- no translation found for clipboard_overlay_text_copied (1872624400464891363) -->
-    <skip />
+    <string name="fgs_manager_app_item_stop_button_stopped_label" msgid="6950382004441263922">"Detenida"</string>
+    <string name="clipboard_edit_text_copy" msgid="770856373439969178">"Copiar"</string>
+    <string name="clipboard_overlay_text_copied" msgid="1872624400464891363">"Se copió"</string>
+    <string name="clipboard_edit_source" msgid="9156488177277788029">"De <xliff:g id="APPNAME">%1$s</xliff:g>"</string>
+    <string name="clipboard_dismiss_description" msgid="7544573092766945657">"Descartar la copia de la IU"</string>
+    <string name="clipboard_edit_text_description" msgid="805254383912962103">"Editar el texto copiado"</string>
+    <string name="clipboard_edit_image_description" msgid="8904857948976041306">"Editar la imagen copiada"</string>
+    <string name="clipboard_send_nearby_description" msgid="4629769637846717650">"Enviar a dispositivos cercanos"</string>
+    <string name="add" msgid="81036585205287996">"Agregar"</string>
+    <string name="manage_users" msgid="1823875311934643849">"Administrar usuarios"</string>
+    <string name="drag_split_not_supported" msgid="4326847447699729722">"Esta notificación no admite arrastrar entre pantallas divididas."</string>
+    <string name="dream_overlay_status_bar_wifi_off" msgid="4497069245055003582">"La red Wi-Fi no está disponible"</string>
+    <string name="dream_overlay_status_bar_priority_mode" msgid="5428462123314728739">"Modo prioridad"</string>
+    <string name="dream_overlay_status_bar_alarm_set" msgid="566707328356590886">"Se estableció la alarma"</string>
+    <string name="dream_overlay_status_bar_camera_mic_off" msgid="3199425257833773569">"La cámara y el micrófono están apagados"</string>
+    <string name="dream_overlay_status_bar_notification_indicator" msgid="8091389255691081711">"{count,plural, =1{# notificación}other{# notificaciones}}"</string>
 </resources>

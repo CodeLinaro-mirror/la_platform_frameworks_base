@@ -1839,7 +1839,7 @@ jobject JTuner::getAvSyncTime(jint id) {
     if (mDemuxClient == nullptr) {
         return nullptr;
     }
-    long time = mDemuxClient->getAvSyncTime((int)id);
+    int64_t time = mDemuxClient->getAvSyncTime((int)id);
     if (time >= 0) {
         JNIEnv *env = AndroidRuntime::getJNIEnv();
         jclass longClazz = env->FindClass("java/lang/Long");
@@ -4147,6 +4147,7 @@ static jint android_media_tv_Tuner_close_filter(JNIEnv *env, jobject filter) {
 
     Result r = filterClient->close();
     filterClient->decStrong(filter);
+    filterClient = nullptr;
     if (shared) {
         env->SetLongField(filter, gFields.sharedFilterContext, 0);
     } else {
@@ -4591,7 +4592,8 @@ static jlong android_media_tv_Tuner_read_dvr_from_array(
         ALOGD("Failed to GetByteArrayElements");
         return -1;
     }
-    long realSize = dvrClient->readFromBuffer(reinterpret_cast<signed char *>(src) + offset, size);
+    int64_t realSize =
+            dvrClient->readFromBuffer(reinterpret_cast<signed char *>(src) + offset, size);
     env->ReleaseByteArrayElements(buffer, src, 0);
     return (jlong)realSize;
 }
@@ -4623,7 +4625,8 @@ static jlong android_media_tv_Tuner_write_dvr_to_array(
         return -1;
     }
 
-    long realSize = dvrClient->writeToBuffer(reinterpret_cast<signed char *>(dst) + offset, size);
+    int64_t realSize =
+            dvrClient->writeToBuffer(reinterpret_cast<signed char *>(dst) + offset, size);
     env->ReleaseByteArrayElements(buffer, dst, 0);
     return (jlong)realSize;
 }

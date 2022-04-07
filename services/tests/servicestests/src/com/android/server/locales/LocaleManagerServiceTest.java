@@ -38,6 +38,7 @@ import android.Manifest;
 import android.app.ActivityManagerInternal;
 import android.content.Context;
 import android.content.pm.InstallSourceInfo;
+import android.content.pm.PackageInstaller;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManagerInternal;
 import android.os.Binder;
@@ -45,6 +46,7 @@ import android.os.LocaleList;
 
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 
+import com.android.internal.content.PackageMonitor;
 import com.android.server.wm.ActivityTaskManagerInternal;
 import com.android.server.wm.ActivityTaskManagerInternal.PackageConfig;
 
@@ -69,7 +71,8 @@ public class LocaleManagerServiceTest {
     private static final InstallSourceInfo DEFAULT_INSTALL_SOURCE_INFO = new InstallSourceInfo(
             /* initiatingPackageName = */ null, /* initiatingPackageSigningInfo = */ null,
             /* originatingPackageName = */ null,
-            /* installingPackageName = */ DEFAULT_INSTALLER_PACKAGE_NAME);
+            /* installingPackageName = */ DEFAULT_INSTALLER_PACKAGE_NAME,
+            /* packageSource = */ PackageInstaller.PACKAGE_SOURCE_UNSPECIFIED);
 
     private LocaleManagerService mLocaleManagerService;
     private LocaleManagerBackupHelper mMockBackupHelper;
@@ -84,6 +87,8 @@ public class LocaleManagerServiceTest {
     private ActivityTaskManagerInternal mMockActivityTaskManager;
     @Mock
     private ActivityManagerInternal mMockActivityManager;
+    @Mock
+    PackageMonitor mMockPackageMonitor;
 
     @Before
     public void setUp() throws Exception {
@@ -91,6 +96,7 @@ public class LocaleManagerServiceTest {
         mMockActivityTaskManager = mock(ActivityTaskManagerInternal.class);
         mMockActivityManager = mock(ActivityManagerInternal.class);
         mMockPackageManagerInternal = mock(PackageManagerInternal.class);
+        mMockPackageMonitor = mock(PackageMonitor.class);
 
         // For unit tests, set the default installer info
         PackageManager mockPackageManager = mock(PackageManager.class);
@@ -111,7 +117,8 @@ public class LocaleManagerServiceTest {
 
         mMockBackupHelper = mock(ShadowLocaleManagerBackupHelper.class);
         mLocaleManagerService = new LocaleManagerService(mMockContext, mMockActivityTaskManager,
-                mMockActivityManager, mMockPackageManagerInternal, mMockBackupHelper);
+                mMockActivityManager, mMockPackageManagerInternal,
+                mMockBackupHelper, mMockPackageMonitor);
     }
 
     @Test(expected = SecurityException.class)

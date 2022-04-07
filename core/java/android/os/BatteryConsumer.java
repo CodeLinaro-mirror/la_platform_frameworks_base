@@ -165,6 +165,7 @@ public abstract class BatteryConsumer {
             PROCESS_STATE_FOREGROUND,
             PROCESS_STATE_BACKGROUND,
             PROCESS_STATE_FOREGROUND_SERVICE,
+            PROCESS_STATE_CACHED,
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface ProcessState {
@@ -175,8 +176,9 @@ public abstract class BatteryConsumer {
     public static final int PROCESS_STATE_FOREGROUND = 1;
     public static final int PROCESS_STATE_BACKGROUND = 2;
     public static final int PROCESS_STATE_FOREGROUND_SERVICE = 3;
+    public static final int PROCESS_STATE_CACHED = 4;
 
-    public static final int PROCESS_STATE_COUNT = 4;
+    public static final int PROCESS_STATE_COUNT = 5;
 
     private static final String[] sProcessStateNames = new String[PROCESS_STATE_COUNT];
 
@@ -186,6 +188,7 @@ public abstract class BatteryConsumer {
         sProcessStateNames[PROCESS_STATE_FOREGROUND] = "fg";
         sProcessStateNames[PROCESS_STATE_BACKGROUND] = "bg";
         sProcessStateNames[PROCESS_STATE_FOREGROUND_SERVICE] = "fgs";
+        sProcessStateNames[PROCESS_STATE_CACHED] = "cached";
     }
 
     private static final int[] SUPPORTED_POWER_COMPONENTS_PER_PROCESS_STATE = {
@@ -673,6 +676,7 @@ public abstract class BatteryConsumer {
         public final int firstCustomConsumedPowerColumn;
         public final int firstCustomUsageDurationColumn;
         public final int columnCount;
+        public final Key[][] processStateKeys;
 
         private BatteryConsumerDataLayout(int firstColumn, String[] customPowerComponentNames,
                 boolean powerModelsIncluded, boolean includeProcessStateData) {
@@ -726,6 +730,28 @@ public abstract class BatteryConsumer {
                 }
 
                 keys[componentId] = perComponentKeys.toArray(KEY_ARRAY);
+            }
+
+            if (includeProcessStateData) {
+                processStateKeys = new Key[BatteryConsumer.PROCESS_STATE_COUNT][];
+                ArrayList<Key> perProcStateKeys = new ArrayList<>();
+                for (int processState = 0; processState < PROCESS_STATE_COUNT; processState++) {
+                    if (processState == PROCESS_STATE_UNSPECIFIED) {
+                        continue;
+                    }
+
+                    perProcStateKeys.clear();
+                    for (int i = 0; i < keys.length; i++) {
+                        for (int j = 0; j < keys[i].length; j++) {
+                            if (keys[i][j].processState == processState) {
+                                perProcStateKeys.add(keys[i][j]);
+                            }
+                        }
+                    }
+                    processStateKeys[processState] = perProcStateKeys.toArray(KEY_ARRAY);
+                }
+            } else {
+                processStateKeys = null;
             }
 
             firstCustomConsumedPowerColumn = columnIndex;

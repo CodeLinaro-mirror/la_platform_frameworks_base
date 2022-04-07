@@ -52,8 +52,6 @@ import android.view.LayoutInflater;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.MotionEvent;
-import android.view.OnBackInvokedDispatcher;
-import android.view.OnBackInvokedDispatcherOwner;
 import android.view.SearchEvent;
 import android.view.View;
 import android.view.View.OnCreateContextMenuListener;
@@ -62,6 +60,10 @@ import android.view.ViewGroup.LayoutParams;
 import android.view.Window;
 import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
+import android.window.OnBackInvokedCallback;
+import android.window.OnBackInvokedDispatcher;
+import android.window.OnBackInvokedDispatcherOwner;
+import android.window.WindowOnBackInvokedDispatcher;
 
 import com.android.internal.R;
 import com.android.internal.app.WindowDecorActionBar;
@@ -156,6 +158,7 @@ public class Dialog implements DialogInterface, Window.Callback,
 
     /** A {@link Runnable} to run instead of dismissing when {@link #dismiss()} is called. */
     private Runnable mDismissOverride;
+    private OnBackInvokedCallback mDefaultBackCallback;
 
     /**
      * Creates a dialog window that uses the default dialog theme.
@@ -453,6 +456,19 @@ public class Dialog implements DialogInterface, Window.Callback,
      */
     protected void onStart() {
         if (mActionBar != null) mActionBar.setShowHideAnimationEnabled(true);
+        if (mContext != null
+                && WindowOnBackInvokedDispatcher.isOnBackInvokedCallbackEnabled(mContext)) {
+            // Add onBackPressed as default back behavior.
+            mDefaultBackCallback = new OnBackInvokedCallback() {
+                @Override
+                public void onBackInvoked() {
+                    onBackPressed();
+                }
+            };
+            getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
+                    OnBackInvokedDispatcher.PRIORITY_DEFAULT, mDefaultBackCallback);
+            mDefaultBackCallback = null;
+        }
     }
 
     /**
@@ -460,6 +476,9 @@ public class Dialog implements DialogInterface, Window.Callback,
      */
     protected void onStop() {
         if (mActionBar != null) mActionBar.setShowHideAnimationEnabled(false);
+        if (mDefaultBackCallback != null) {
+            getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(mDefaultBackCallback);
+        }
     }
 
     private static final String DIALOG_SHOWING_TAG = "android:dialogShowing";
@@ -685,7 +704,8 @@ public class Dialog implements DialogInterface, Window.Callback,
     public boolean onKeyUp(int keyCode, @NonNull KeyEvent event) {
         if ((keyCode == KeyEvent.KEYCODE_BACK || keyCode == KeyEvent.KEYCODE_ESCAPE)
                 && event.isTracking()
-                && !event.isCanceled()) {
+                && !event.isCanceled()
+                && !WindowOnBackInvokedDispatcher.isOnBackInvokedCallbackEnabled(mContext)) {
             onBackPressed();
             return true;
         }
@@ -1449,15 +1469,9 @@ public class Dialog implements DialogInterface, Window.Callback,
      *
      * Returns null if the dialog is not attached to a window with a decor.
      */
-    @Nullable
+    @NonNull
     @Override
     public OnBackInvokedDispatcher getOnBackInvokedDispatcher() {
-        if (mWindow != null) {
-            View decorView = mWindow.getDecorView();
-            if (decorView != null) {
-                return decorView.getOnBackInvokedDispatcher();
-            }
-        }
-        return null;
+        return ((OnBackInvokedDispatcherOwner) mWindow).getOnBackInvokedDispatcher();
     }
 }

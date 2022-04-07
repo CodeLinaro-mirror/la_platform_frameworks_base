@@ -18,20 +18,19 @@ package com.android.systemui.dreams;
 
 import static com.android.systemui.doze.util.BurnInHelperKt.getBurnInOffset;
 
-import android.graphics.Rect;
-import android.graphics.Region;
 import android.os.Handler;
+import android.util.MathUtils;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.ViewTreeObserver;
 
-import com.android.internal.annotations.VisibleForTesting;
-import com.android.systemui.R;
+import com.android.keyguard.BouncerPanelExpansionCalculator;
 import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.dreams.complication.ComplicationHostViewController;
-import com.android.systemui.dreams.complication.dagger.ComplicationHostViewComponent;
 import com.android.systemui.dreams.dagger.DreamOverlayComponent;
 import com.android.systemui.dreams.dagger.DreamOverlayModule;
+import com.android.systemui.statusbar.BlurUtils;
+import com.android.systemui.statusbar.phone.KeyguardBouncer;
+import com.android.systemui.statusbar.phone.StatusBarKeyguardViewManager;
 import com.android.systemui.util.ViewController;
 
 import javax.inject.Inject;
@@ -42,10 +41,9 @@ import javax.inject.Named;
  */
 @DreamOverlayComponent.DreamOverlayScope
 public class DreamOverlayContainerViewController extends ViewController<DreamOverlayContainerView> {
-    // The height of the area at the top of the dream overlay to allow dragging down the
-    // notifications shade.
-    private final int mDreamOverlayNotificationsDragAreaHeight;
     private final DreamOverlayStatusBarViewController mStatusBarViewController;
+    private final StatusBarKeyguardViewManager mStatusBarKeyguardViewManager;
+    private final BlurUtils mBlurUtils;
 
     private final ComplicationHostViewController mComplicationHostViewController;
 
@@ -59,64 +57,81 @@ public class DreamOverlayContainerViewController extends ViewController<DreamOve
     // The interval in milliseconds between burn-in protection updates.
     private final long mBurnInProtectionUpdateInterval;
 
+    // Amount of time in milliseconds to linear interpolate toward the final jitter offset. Once
+    // this time is achieved, the normal jitter algorithm applies in full.
+    private final long mMillisUntilFullJitter;
+
     // Main thread handler used to schedule periodic tasks (e.g. burn-in protection updates).
     private final Handler mHandler;
 
-    // A hook into the internal inset calculation where we declare the overlays as the only
-    // touchable regions.
-    private final ViewTreeObserver.OnComputeInternalInsetsListener
-            mOnComputeInternalInsetsListener =
-            new ViewTreeObserver.OnComputeInternalInsetsListener() {
+    private long mJitterStartTimeMillis;
+
+    private boolean mBouncerAnimating;
+
+    private final KeyguardBouncer.BouncerExpansionCallback mBouncerExpansionCallback =
+            new KeyguardBouncer.BouncerExpansionCallback() {
+
                 @Override
-                public void onComputeInternalInsets(ViewTreeObserver.InternalInsetsInfo inoutInfo) {
-                    inoutInfo.setTouchableInsets(
-                            ViewTreeObserver.InternalInsetsInfo.TOUCHABLE_INSETS_REGION);
-                    final Region region = new Region();
-                    final Rect rect = new Rect();
-                    final int childCount = mDreamOverlayContentView.getChildCount();
-                    for (int i = 0; i < childCount; i++) {
-                        View child = mDreamOverlayContentView.getChildAt(i);
+                public void onStartingToShow() {
+                    mBouncerAnimating = true;
+                }
 
-                        if (mComplicationHostViewController.getView() == child) {
-                            region.op(mComplicationHostViewController.getTouchRegions(),
-                                    Region.Op.UNION);
-                            continue;
-                        }
+                @Override
+                public void onStartingToHide() {
+                    mBouncerAnimating = true;
+                }
 
-                        if (child.getGlobalVisibleRect(rect)) {
-                            region.op(rect, Region.Op.UNION);
-                        }
+                @Override
+                public void onFullyHidden() {
+                    mBouncerAnimating = false;
+                }
+
+                @Override
+                public void onFullyShown() {
+                    mBouncerAnimating = false;
+                }
+
+                @Override
+                public void onExpansionChanged(float bouncerHideAmount) {
+                    if (!mBouncerAnimating) return;
+                    final float scaledFraction =
+                            BouncerPanelExpansionCalculator.getBackScrimScaledExpansion(
+                                    bouncerHideAmount);
+                    final int blurRadius =
+                            (int) mBlurUtils.blurRadiusOfRatio(1 - scaledFraction);
+                    updateTransitionState(blurRadius, scaledFraction);
+                }
+
+                @Override
+                public void onVisibilityChanged(boolean isVisible) {
+                    // The bouncer may be hidden abruptly without triggering onExpansionChanged.
+                    // In this case, we should reset the transition state.
+                    if (!isVisible) {
+                        updateTransitionState(0, 1f);
                     }
-
-                    // Add the notifications drag area to the tap region (otherwise the
-                    // notifications shade can't be dragged down).
-                    if (mDreamOverlayContentView.getGlobalVisibleRect(rect)) {
-                        rect.bottom = rect.top + mDreamOverlayNotificationsDragAreaHeight;
-                        region.op(rect, Region.Op.UNION);
-                    }
-
-                    inoutInfo.touchableRegion.set(region);
                 }
             };
 
     @Inject
     public DreamOverlayContainerViewController(
             DreamOverlayContainerView containerView,
-            ComplicationHostViewComponent.Factory complicationHostViewFactory,
+            ComplicationHostViewController complicationHostViewController,
             @Named(DreamOverlayModule.DREAM_OVERLAY_CONTENT_VIEW) ViewGroup contentView,
             DreamOverlayStatusBarViewController statusBarViewController,
+            StatusBarKeyguardViewManager statusBarKeyguardViewManager,
+            BlurUtils blurUtils,
             @Main Handler handler,
             @Named(DreamOverlayModule.MAX_BURN_IN_OFFSET) int maxBurnInOffset,
             @Named(DreamOverlayModule.BURN_IN_PROTECTION_UPDATE_INTERVAL) long
-                    burnInProtectionUpdateInterval) {
+                    burnInProtectionUpdateInterval,
+            @Named(DreamOverlayModule.MILLIS_UNTIL_FULL_JITTER) long millisUntilFullJitter) {
         super(containerView);
         mDreamOverlayContentView = contentView;
         mStatusBarViewController = statusBarViewController;
-        mDreamOverlayNotificationsDragAreaHeight =
-                mView.getResources().getDimensionPixelSize(
-                        R.dimen.dream_overlay_notifications_drag_area_height);
+        mStatusBarKeyguardViewManager = statusBarKeyguardViewManager;
+        mBlurUtils = blurUtils;
 
-        mComplicationHostViewController = complicationHostViewFactory.create().getController();
+        mComplicationHostViewController = complicationHostViewController;
         final View view = mComplicationHostViewController.getView();
 
         mDreamOverlayContentView.addView(view,
@@ -126,6 +141,7 @@ public class DreamOverlayContainerViewController extends ViewController<DreamOve
         mHandler = handler;
         mMaxBurnInOffset = maxBurnInOffset;
         mBurnInProtectionUpdateInterval = burnInProtectionUpdateInterval;
+        mMillisUntilFullJitter = millisUntilFullJitter;
     }
 
     @Override
@@ -136,35 +152,52 @@ public class DreamOverlayContainerViewController extends ViewController<DreamOve
 
     @Override
     protected void onViewAttached() {
-        mView.getViewTreeObserver()
-                .addOnComputeInternalInsetsListener(mOnComputeInternalInsetsListener);
+        mJitterStartTimeMillis = System.currentTimeMillis();
         mHandler.postDelayed(this::updateBurnInOffsets, mBurnInProtectionUpdateInterval);
+        final KeyguardBouncer bouncer = mStatusBarKeyguardViewManager.getBouncer();
+        if (bouncer != null) {
+            bouncer.addBouncerExpansionCallback(mBouncerExpansionCallback);
+        }
     }
 
     @Override
     protected void onViewDetached() {
         mHandler.removeCallbacks(this::updateBurnInOffsets);
-        mView.getViewTreeObserver()
-                .removeOnComputeInternalInsetsListener(mOnComputeInternalInsetsListener);
+        final KeyguardBouncer bouncer = mStatusBarKeyguardViewManager.getBouncer();
+        if (bouncer != null) {
+            bouncer.removeBouncerExpansionCallback(mBouncerExpansionCallback);
+        }
     }
 
     View getContainerView() {
         return mView;
     }
 
-    @VisibleForTesting
-    int getDreamOverlayNotificationsDragAreaHeight() {
-        return mDreamOverlayNotificationsDragAreaHeight;
-    }
-
     private void updateBurnInOffsets() {
+        int burnInOffset = mMaxBurnInOffset;
+
+        // Make sure the offset starts at zero, to avoid a big jump in the overlay when it first
+        // appears.
+        long millisSinceStart = System.currentTimeMillis() - mJitterStartTimeMillis;
+        if (millisSinceStart < mMillisUntilFullJitter) {
+            float lerpAmount = (float) millisSinceStart / (float) mMillisUntilFullJitter;
+            burnInOffset = Math.round(MathUtils.lerp(0f, burnInOffset, lerpAmount));
+        }
+
         // These translation values change slowly, and the set translation methods are idempotent,
         // so no translation occurs when the values don't change.
-        mView.setTranslationX(getBurnInOffset(mMaxBurnInOffset * 2, true)
-                - mMaxBurnInOffset);
-        mView.setTranslationY(getBurnInOffset(mMaxBurnInOffset * 2, false)
-                - mMaxBurnInOffset);
+        int burnInOffsetX = getBurnInOffset(burnInOffset * 2, true)
+                - burnInOffset;
+        int burnInOffsetY = getBurnInOffset(burnInOffset * 2, false)
+                - burnInOffset;
+        mView.setTranslationX(burnInOffsetX);
+        mView.setTranslationY(burnInOffsetY);
 
         mHandler.postDelayed(this::updateBurnInOffsets, mBurnInProtectionUpdateInterval);
+    }
+
+    private void updateTransitionState(int blurRadiusPixels, float alpha) {
+        mBlurUtils.applyBlur(mView.getViewRootImpl(), blurRadiusPixels, false);
+        mView.setAlpha(alpha);
     }
 }

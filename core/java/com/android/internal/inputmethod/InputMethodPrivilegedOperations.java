@@ -396,16 +396,33 @@ public final class InputMethodPrivilegedOperations {
     }
 
     /**
-     * Calls {@link IInputMethodPrivilegedOperations#onStylusHandwritingReady()}
+     * Calls {@link IInputMethodPrivilegedOperations#onStylusHandwritingReady(int, int)}
      */
     @AnyThread
-    public void onStylusHandwritingReady(int requestId) {
+    public void onStylusHandwritingReady(int requestId, int pid) {
         final IInputMethodPrivilegedOperations ops = mOps.getAndWarnIfNull();
         if (ops == null) {
             return;
         }
         try {
-            ops.onStylusHandwritingReady(requestId);
+            ops.onStylusHandwritingReady(requestId, pid);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * IME notifies that the current handwriting session should be closed.
+     * @param requestId
+     */
+    @AnyThread
+    public void resetStylusHandwriting(int requestId) {
+        final IInputMethodPrivilegedOperations ops = mOps.getAndWarnIfNull();
+        if (ops == null) {
+            return;
+        }
+        try {
+            ops.resetStylusHandwriting(requestId);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }

@@ -3624,7 +3624,7 @@ public class SettingsProvider extends ContentProvider {
         }
 
         private final class UpgradeController {
-            private static final int SETTINGS_VERSION = 208;
+            private static final int SETTINGS_VERSION = 210;
 
             private final int mUserId;
 
@@ -5495,6 +5495,24 @@ public class SettingsProvider extends ContentProvider {
                     }
 
                     currentVersion = 208;
+                }
+
+                if (currentVersion == 208) {
+                    // Unused
+                    currentVersion = 209;
+                }
+                if (currentVersion == 209) {
+                    // Version 209: Enable enforcement of
+                    // android.Manifest.permission#POST_NOTIFICATIONS in order for applications
+                    // to post notifications.
+                    final SettingsState secureSettings = getSecureSettingsLocked(userId);
+                    secureSettings.insertSettingLocked(
+                            Secure.NOTIFICATION_PERMISSION_ENABLED,
+                            /* enabled= */ "1",
+                            /* tag= */ null,
+                            /* makeDefault= */ false,
+                            SettingsState.SYSTEM_PACKAGE_NAME);
+                    currentVersion = 210;
                 }
 
                 // vXXX: Add new settings above this point.

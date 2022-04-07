@@ -376,14 +376,16 @@ public class Instrumentation {
             Debug.stopMethodTracing();
         }
     }
-    
+
     /**
-     * Force the global system in or out of touch mode.  This can be used if
-     * your instrumentation relies on the UI being in one more or the other
-     * when it starts.
-     * 
-     * @param inTouch Set to true to be in touch mode, false to be in
-     * focus mode.
+     * Force the global system in or out of touch mode. This can be used if your
+     * instrumentation relies on the UI being in one more or the other when it starts.
+     *
+     * <p><b>Note:</b> Starting from Android {@link Build.VERSION_CODES#TIRAMISU}, this method
+     * will only take effect if the instrumentation was sourced from a process with
+     * {@code MODIFY_TOUCH_MODE_STATE} internal permission granted (shell already have it).
+     *
+     * @param inTouch Set to true to be in touch mode, false to be in focus mode.
      */
     public void setInTouchMode(boolean inTouch) {
         try {
@@ -393,11 +395,20 @@ public class Instrumentation {
             // Shouldn't happen!
         }
     }
-    
+
+    /**
+     * Resets the {@link #setInTouchMode touch mode} to the device default.
+     */
+    public void resetInTouchMode() {
+        final boolean defaultInTouchMode = getContext().getResources().getBoolean(
+                com.android.internal.R.bool.config_defaultInTouchMode);
+        setInTouchMode(defaultInTouchMode);
+    }
+
     /**
      * Schedule a callback for when the application's main thread goes idle
      * (has no more events to process).
-     * 
+     *
      * @param recipient Called the next time the thread's message queue is
      *                  idle.
      */
@@ -1988,7 +1999,7 @@ public class Instrumentation {
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     public ActivityResult execStartActivityAsCaller(
             Context who, IBinder contextThread, IBinder token, Activity target,
-            Intent intent, int requestCode, Bundle options, IBinder permissionToken,
+            Intent intent, int requestCode, Bundle options,
             boolean ignoreTargetSecurity, int userId) {
         IApplicationThread whoThread = (IApplicationThread) contextThread;
         if (mActivityMonitors != null) {
@@ -2023,7 +2034,7 @@ public class Instrumentation {
                     .startActivityAsCaller(whoThread, who.getOpPackageName(), intent,
                             intent.resolveTypeIfNeeded(who.getContentResolver()),
                             token, target != null ? target.mEmbeddedID : null,
-                            requestCode, 0, null, options, permissionToken,
+                            requestCode, 0, null, options,
                             ignoreTargetSecurity, userId);
             checkStartActivityResult(result, intent);
         } catch (RemoteException e) {

@@ -646,11 +646,9 @@ public abstract class Animation implements Cloneable {
      * @param bg The background color.  If 0, no background.  Currently must
      * be black, with any desired alpha level.
      *
-     * @deprecated None of window animations are running with background color.
      */
-    @Deprecated
     public void setBackgroundColor(@ColorInt int bg) {
-        // The background color is not needed any more, do nothing.
+        mBackgroundColor = bg;
     }
 
     /**
@@ -824,13 +822,10 @@ public abstract class Animation implements Cloneable {
 
     /**
      * Returns the background color behind the animation.
-     *
-     * @deprecated None of window animations are running with background color.
      */
-    @Deprecated
     @ColorInt
     public int getBackgroundColor() {
-        return 0;
+        return mBackgroundColor;
     }
 
     /**
@@ -862,6 +857,15 @@ public abstract class Animation implements Cloneable {
      */
     public boolean hasRoundedCorners() {
         return mHasRoundedCorners;
+    }
+
+    /**
+     * @return if a window animation has outsets applied to it.
+     *
+     * @hide
+     */
+    public boolean hasExtension() {
+        return false;
     }
 
     /**
@@ -942,6 +946,21 @@ public abstract class Animation implements Cloneable {
     }
 
     /**
+     * Gets the transformation to apply a specific point in time. Implementations of this method
+     * should always be kept in sync with getTransformation.
+     *
+     * @param normalizedTime time between 0 and 1 where 0 is the start of the animation and 1 the
+     *                       end.
+     * @param outTransformation A transformation object that is provided by the
+     *        caller and will be filled in by the animation.
+     * @hide
+     */
+    public void getTransformationAt(float normalizedTime, Transformation outTransformation) {
+        final float interpolatedTime = mInterpolator.getInterpolation(normalizedTime);
+        applyTransformation(interpolatedTime, outTransformation);
+    }
+
+    /**
      * Gets the transformation to apply at a specified point in time. Implementations of this
      * method should always replace the specified Transformation or document they are doing
      * otherwise.
@@ -987,8 +1006,7 @@ public abstract class Animation implements Cloneable {
                 normalizedTime = 1.0f - normalizedTime;
             }
 
-            final float interpolatedTime = mInterpolator.getInterpolation(normalizedTime);
-            applyTransformation(interpolatedTime, outTransformation);
+            getTransformationAt(normalizedTime, outTransformation);
         }
 
         if (expired) {
@@ -1228,18 +1246,19 @@ public abstract class Animation implements Cloneable {
         public float value;
 
         /**
-         * Size descriptions can appear inthree forms:
+         * Size descriptions can appear in four forms:
          * <ol>
          * <li>An absolute size. This is represented by a number.</li>
          * <li>A size relative to the size of the object being animated. This
-         * is represented by a number followed by "%".</li> *
+         * is represented by a number followed by "%".</li>
          * <li>A size relative to the size of the parent of object being
          * animated. This is represented by a number followed by "%p".</li>
+         * <li>(Starting from API 32) A complex number.</li>
          * </ol>
          * @param value The typed value to parse
          * @return The parsed version of the description
          */
-        static Description parseValue(TypedValue value) {
+        static Description parseValue(TypedValue value, Context context) {
             Description d = new Description();
             if (value == null) {
                 d.type = ABSOLUTE;
@@ -1259,6 +1278,11 @@ public abstract class Animation implements Cloneable {
                         value.type <= TypedValue.TYPE_LAST_INT) {
                     d.type = ABSOLUTE;
                     d.value = value.data;
+                    return d;
+                } else if (value.type == TypedValue.TYPE_DIMENSION) {
+                    d.type = ABSOLUTE;
+                    d.value = TypedValue.complexToDimension(value.data,
+                            context.getResources().getDisplayMetrics());
                     return d;
                 }
             }

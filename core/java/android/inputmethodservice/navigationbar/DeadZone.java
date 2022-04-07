@@ -27,6 +27,7 @@ import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.graphics.Canvas;
 import android.os.SystemClock;
+import android.util.FloatProperty;
 import android.util.Log;
 import android.view.MotionEvent;
 import android.view.Surface;
@@ -46,6 +47,20 @@ final class DeadZone {
     public static final int VERTICAL = 1;  // Consume taps along the left edge.
 
     private static final boolean CHATTY = true; // print to logcat when we eat a click
+
+    private static final FloatProperty<DeadZone> FLASH_PROPERTY =
+            new FloatProperty<DeadZone>("DeadZoneFlash") {
+        @Override
+        public void setValue(DeadZone object, float value) {
+            object.setFlash(value);
+        }
+
+        @Override
+        public Float get(DeadZone object) {
+            return object.getFlash();
+        }
+    };
+
     private final NavigationBarView mNavigationBarView;
 
     private boolean mShouldFlash;
@@ -63,11 +78,11 @@ final class DeadZone {
     private final Runnable mDebugFlash = new Runnable() {
         @Override
         public void run() {
-            ObjectAnimator.ofFloat(DeadZone.this, "flash", 1f, 0f).setDuration(150).start();
+            ObjectAnimator.ofFloat(DeadZone.this, FLASH_PROPERTY, 1f, 0f).setDuration(150).start();
         }
     };
 
-    public DeadZone(NavigationBarView view) {
+    DeadZone(NavigationBarView view) {
         mNavigationBarView = view;
         onConfigurationChanged(Surface.ROTATION_0);
     }
@@ -77,13 +92,15 @@ final class DeadZone {
     }
 
     private float getSize(long now) {
-        if (mSizeMax == 0)
+        if (mSizeMax == 0) {
             return 0;
+        }
         long dt = (now - mLastPokeTime);
-        if (dt > mHold + mDecay)
+        if (dt > mHold + mDecay) {
             return mSizeMin;
-        if (dt < mHold)
+        } else if (dt < mHold) {
             return mSizeMax;
+        }
         return (int) lerp(mSizeMax, mSizeMin, (float) (dt - mHold) / mDecay);
     }
 
@@ -131,7 +148,7 @@ final class DeadZone {
             if (DEBUG) {
                 Log.v(TAG, this + " ACTION_DOWN: " + event.getX() + "," + event.getY());
             }
-            //TODO(b/205803355): call mNavBarController.touchAutoDim(mDisplayId); here
+            //TODO(b/215443343): call mNavBarController.touchAutoDim(mDisplayId); here
             int size = (int) getSize(event.getEventTime());
             // In the vertical orientation consume taps along the left edge.
             // In horizontal orientation consume taps along the top edge.
@@ -162,8 +179,9 @@ final class DeadZone {
 
     private void poke(MotionEvent event) {
         mLastPokeTime = event.getEventTime();
-        if (DEBUG)
+        if (DEBUG) {
             Log.v(TAG, "poked! size=" + getSize(mLastPokeTime));
+        }
         if (mShouldFlash) mNavigationBarView.postInvalidate();
     }
 

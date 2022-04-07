@@ -456,7 +456,7 @@
     <string name="daltonizer_mode_protanomaly" msgid="7805583306666608440">"ಪ್ರೊಟನೋಮಲಿ (ಕೆಂಪು-ಹಸಿರು)"</string>
     <string name="daltonizer_mode_tritanomaly" msgid="7135266249220732267">"ಟ್ರಿಟನೋಮಲಿ (ನೀಲಿ-ಹಳದಿ)"</string>
     <string name="accessibility_display_daltonizer_preference_title" msgid="1810693571332381974">"ಬಣ್ಣ ತಿದ್ದುಪಡಿ"</string>
-    <string name="accessibility_display_daltonizer_preference_subtitle" msgid="2333641630205214702">"ನಿಮ್ಮ ಸಾಧನದಲ್ಲಿ ಬಣ್ಣಗಳು ಹೇಗೆ ಡಿಸ್‌ಪ್ಲೇ ಆಗುತ್ತವೆ ಎಂಬುದನ್ನು ಹೊಂದಿಸಿ. ನೀವು ಬಣ್ಣಗಳನ್ನು ಹೆಚ್ಚು ನಿಖರವಾಗಿ ನೋಡಲು ಬಯಸಿದಾಗ:&lt;br/&gt;&lt;br/&gt; &lt;ol&gt; &lt;li&gt;&amp;nbsp;ಇದು ಸಹಾಯಕವಾಗಿರುತ್ತದೆ&lt;/li&gt; &lt;li&gt;&amp;nbsp;ನಿಮಗೆ ಗಮನಹರಿಸಲು ಸಹಾಯ ಮಾಡಲು ಬಣ್ಣಗಳನ್ನು ತೆಗೆದುಹಾಕಿ&lt;/li&gt; &lt;/ol&gt;"</string>
+    <string name="accessibility_display_daltonizer_preference_subtitle" msgid="1522101114585266455">"ನೀವು ಹೆಚ್ಚು ಸ್ಪಷ್ಟವಾದ ಬಣ್ಣಗಳನ್ನು ನೋಡಲು ಬಯಸಿದರೆ :&lt;br/&gt; &lt;ol&gt; &lt;li&gt;&amp;nbsp; ಬಣ್ಣದ ತಿದ್ದುಪಡಿಯು ಸಹಾಯಕವಾಗಿರುತ್ತದೆ; ಗಮನವನ್ನು ಕೇಂದ್ರೀಕರಿಸಲು ನಿಮಗೆ ಸಹಾಯ ಮಾಡಲು ಬಣ್ಣಗಳನ್ನು ತೆಗೆದುಹಾಕಿ &lt;/li&gt; &lt;/ol&gt;"</string>
     <string name="daltonizer_type_overridden" msgid="4509604753672535721">"<xliff:g id="TITLE">%1$s</xliff:g> ಮೂಲಕ ಅತಿಕ್ರಮಿಸುತ್ತದೆ"</string>
     <string name="power_remaining_settings_home_page" msgid="4885165789445462557">"<xliff:g id="PERCENTAGE">%1$s</xliff:g> - <xliff:g id="TIME_STRING">%2$s</xliff:g>"</string>
     <string name="power_remaining_duration_only" msgid="8264199158671531431">"<xliff:g id="TIME_REMAINING">%1$s</xliff:g> ಸಮಯ ಬಾಕಿ ಉಳಿದಿದೆ"</string>
@@ -493,7 +493,9 @@
     <string name="battery_info_status_discharging" msgid="6962689305413556485">"ಚಾರ್ಜ್‌ ಆಗುತ್ತಿಲ್ಲ"</string>
     <string name="battery_info_status_not_charging" msgid="3371084153747234837">"ಕನೆಕ್ಟ್ ಆಗಿದೆ, ಚಾರ್ಜ್ ಆಗುತ್ತಿಲ್ಲ"</string>
     <string name="battery_info_status_full" msgid="1339002294876531312">"ಚಾರ್ಜ್ ಆಗಿದೆ"</string>
+    <string name="battery_info_status_full_charged" msgid="3536054261505567948">"ಪೂರ್ಣವಾಗಿ ಚಾರ್ಜ್ ಆಗಿದೆ"</string>
     <string name="disabled_by_admin_summary_text" msgid="5343911767402923057">"ನಿರ್ವಾಹಕರ ಮೂಲಕ ನಿಯಂತ್ರಿಸಲಾಗಿದೆ"</string>
+    <string name="disabled_by_app_ops_text" msgid="8373595926549098012">"ನಿರ್ಬಂಧಿಸಲಾದ ಸೆಟ್ಟಿಂಗ್ ಮೂಲಕ ನಿಯಂತ್ರಿಸಲಾಗುತ್ತದೆ"</string>
     <string name="disabled" msgid="8017887509554714950">"ನಿಷ್ಕ್ರಿಯಗೊಳಿಸಲಾಗಿದೆ"</string>
     <string name="external_source_trusted" msgid="1146522036773132905">"ಅನುಮತಿಸಲಾಗಿದೆ"</string>
     <string name="external_source_untrusted" msgid="5037891688911672227">"ಅನುಮತಿ ಇಲ್ಲ"</string>
@@ -526,14 +528,13 @@
     <string name="ims_reg_status_not_registered" msgid="2989287366045704694">"ನೋಂದಾಯಿಸಲಾಗಿಲ್ಲ"</string>
     <string name="status_unavailable" msgid="5279036186589861608">"ಲಭ್ಯವಿಲ್ಲ"</string>
     <string name="wifi_status_mac_randomized" msgid="466382542497832189">"MAC ಯಾದೃಚ್ಛಿಕವಾಗಿದೆ"</string>
-    <plurals name="wifi_tether_connected_summary" formatted="false" msgid="6317236306047306139">
-      <item quantity="one">%1$d ಸಾಧನಗಳನ್ನು ಸಂಪರ್ಕಿಸಲಾಗಿದೆ</item>
-      <item quantity="other">%1$d ಸಾಧನಗಳನ್ನು ಸಂಪರ್ಕಿಸಲಾಗಿದೆ</item>
-    </plurals>
+    <string name="wifi_tether_connected_summary" msgid="5282919920463340158">"{count,plural, =0{0 ಸಾಧನವನ್ನು ಕನೆಕ್ಟ್ ಮಾಡಲಾಗಿದೆ}=1{1 ಸಾಧನವನ್ನು ಕನೆಕ್ಟ್ ಮಾಡಲಾಗಿದೆ}one{# ಸಾಧನಗಳನ್ನು ಕನೆಕ್ಟ್ ಮಾಡಲಾಗಿದೆ}other{# ಸಾಧನಗಳನ್ನು ಕನೆಕ್ಟ್ ಮಾಡಲಾಗಿದೆ}}"</string>
     <string name="accessibility_manual_zen_more_time" msgid="5141801092071134235">"ಹೆಚ್ಚು ಸಮಯ."</string>
     <string name="accessibility_manual_zen_less_time" msgid="6828877595848229965">"ಕಡಿಮೆ ಸಮಯ."</string>
     <string name="cancel" msgid="5665114069455378395">"ರದ್ದುಮಾಡಿ"</string>
     <string name="okay" msgid="949938843324579502">"ಸರಿ"</string>
+    <!-- no translation found for done (381184316122520313) -->
+    <skip />
     <string name="alarms_and_reminders_label" msgid="6918395649731424294">"ಅಲಾರಾಮ್‌ಗಳು ಮತ್ತು ರಿಮೈಂಡರ್‌ಗಳು"</string>
     <string name="alarms_and_reminders_switch_title" msgid="4939393911531826222">"ಅಲಾರಂಗಳು ಮತ್ತು ರಿಮೈಂಡರ್‌ಗಳನ್ನು ಹೊಂದಿಸಲು ಅನುಮತಿಸಿ"</string>
     <string name="alarms_and_reminders_title" msgid="8819933264635406032">"ಅಲಾರಂಗಳು ಮತ್ತು ರಿಮೈಂಡರ್‌ಗಳು"</string>
@@ -552,7 +553,9 @@
     <string name="zen_mode_duration_always_prompt_title" msgid="3212996860498119555">"ಪ್ರತಿ ಬಾರಿ ಕೇಳಿ"</string>
     <string name="zen_mode_forever" msgid="3339224497605461291">"ನೀವು ಆಫ್ ಮಾಡುವವರೆಗೆ"</string>
     <string name="time_unit_just_now" msgid="3006134267292728099">"ಇದೀಗ"</string>
-    <string name="media_transfer_this_device_name" msgid="2357329267148436433">"ಈ ಫೋನ್"</string>
+    <string name="media_transfer_this_device_name" product="default" msgid="2357329267148436433">"ಈ ಫೋನ್"</string>
+    <!-- no translation found for media_transfer_this_device_name (3714653244000242800) -->
+    <skip />
     <string name="media_transfer_this_phone" msgid="7194341457812151531">"ಈ ಫೋನ್"</string>
     <string name="profile_connect_timeout_subtext" msgid="4043408193005851761">"ಕನೆಕ್ಟ್ ಮಾಡುವಾಗ ಸಮಸ್ಯೆ ಎದುರಾಗಿದೆ ಸಾಧನವನ್ನು ಆಫ್ ಮಾಡಿ ಹಾಗೂ ನಂತರ ಪುನಃ ಆನ್ ಮಾಡಿ"</string>
     <string name="media_transfer_wired_device_name" msgid="4447880899964056007">"ವೈರ್ ಹೊಂದಿರುವ ಆಡಿಯೋ ಸಾಧನ"</string>
@@ -592,7 +595,9 @@
     <string name="user_set_lock_button" msgid="1427128184982594856">"ಲಾಕ್ ಹೊಂದಿಸಿ"</string>
     <string name="user_switch_to_user" msgid="6975428297154968543">"<xliff:g id="USER_NAME">%s</xliff:g> ಗೆ ಬದಲಿಸಿ"</string>
     <string name="creating_new_user_dialog_message" msgid="7232880257538970375">"ಹೊಸ ಬಳಕೆದಾರರನ್ನು ರಚಿಸಲಾಗುತ್ತಿದೆ…"</string>
+    <string name="creating_new_guest_dialog_message" msgid="1114905602181350690">"ಹೊಸ ಅತಿಥಿಯನ್ನು ರಚಿಸಲಾಗುತ್ತಿದೆ…"</string>
     <string name="add_user_failed" msgid="4809887794313944872">"ಹೊಸ ಬಳಕೆದಾರರನ್ನು ರಚಿಸಲು ವಿಫಲವಾಗಿದೆ"</string>
+    <string name="add_guest_failed" msgid="8074548434469843443">"ಹೊಸ ಅತಿಥಿಯನ್ನು ರಚಿಸಲು ವಿಫಲವಾಗಿದೆ"</string>
     <string name="user_nickname" msgid="262624187455825083">"ಅಡ್ಡ ಹೆಸರು"</string>
     <string name="guest_new_guest" msgid="3482026122932643557">"ಅತಿಥಿಯನ್ನು ಸೇರಿಸಿ"</string>
     <string name="guest_exit_guest" msgid="5908239569510734136">"ಅತಿಥಿಯನ್ನು ತೆಗೆದುಹಾಕಿ"</string>
@@ -638,4 +643,14 @@
     <string name="accessibility_ethernet_disconnected" msgid="2832501530856497489">"ಇಥರ್ನೆಟ್ ಸಂಪರ್ಕ ಕಡಿತಗೊಳಿಸಲಾಗಿದೆ."</string>
     <string name="accessibility_ethernet_connected" msgid="6175942685957461563">"ಇಥರ್ನೆಟ್."</string>
     <string name="accessibility_no_calling" msgid="3540827068323895748">"ಕರೆ ಮಾಡಲಾಗುವುದಿಲ್ಲ."</string>
+    <string name="dream_complication_title_time" msgid="701747800712893499">"ಸಮಯ"</string>
+    <string name="dream_complication_title_date" msgid="8661176085446135789">"ದಿನಾಂಕ"</string>
+    <string name="dream_complication_title_weather" msgid="598609151677172783">"ಹವಾಮಾನ"</string>
+    <string name="dream_complication_title_aqi" msgid="4587552608957834110">"ವಾಯು ಗುಣಮಟ್ಟ"</string>
+    <string name="dream_complication_title_cast_info" msgid="4038776652841885084">"ಬಿತ್ತರಿಸಿದ ಮಾಹಿತಿ"</string>
+    <string name="avatar_picker_title" msgid="8492884172713170652">"ಪ್ರೊಫೈಲ್ ಚಿತ್ರವನ್ನು ಆಯ್ಕೆ ಮಾಡಿ"</string>
+    <string name="default_user_icon_description" msgid="6554047177298972638">"ಡೀಫಾಲ್ಟ್ ಬಳಕೆದಾರರ ಐಕಾನ್"</string>
+    <string name="physical_keyboard_title" msgid="4811935435315835220">"ಭೌತಿಕ ಕೀಬೋರ್ಡ್"</string>
+    <string name="keyboard_layout_dialog_title" msgid="3927180147005616290">"ಕೀಬೋರ್ಡ್ ಲೇಔಟ್ ಆರಿಸಿ"</string>
+    <string name="keyboard_layout_default_label" msgid="1997292217218546957">"ಡೀಫಾಲ್ಟ್"</string>
 </resources>

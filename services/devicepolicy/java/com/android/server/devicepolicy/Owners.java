@@ -620,30 +620,29 @@ class Owners {
         }
     }
 
-    /**
-     * Sets the indicator that the profile owner manages an organization-owned device,
-     * then write to file.
-     */
-    void markProfileOwnerOfOrganizationOwnedDevice(int userId) {
+    /** Set whether the profile owner manages an organization-owned device, then write to file. */
+    void setProfileOwnerOfOrganizationOwnedDevice(int userId, boolean isOrganizationOwnedDevice) {
         synchronized (mLock) {
             OwnerInfo profileOwner = mProfileOwners.get(userId);
             if (profileOwner != null) {
-                profileOwner.isOrganizationOwnedDevice = true;
+                profileOwner.isOrganizationOwnedDevice = isOrganizationOwnedDevice;
             } else {
                 Slog.e(TAG, String.format(
-                        "No profile owner for user %d to set as org-owned.", userId));
+                        "No profile owner for user %d to set org-owned flag.", userId));
             }
             writeProfileOwner(userId);
         }
     }
 
-    void setDeviceOwnerType(String packageName, @DeviceOwnerType int deviceOwnerType) {
+    void setDeviceOwnerType(String packageName, @DeviceOwnerType int deviceOwnerType,
+            boolean isAdminTestOnly) {
         synchronized (mLock) {
             if (!hasDeviceOwner()) {
                 Slog.e(TAG, "Attempting to set a device owner type when there is no device owner");
                 return;
-            } else if (isDeviceOwnerTypeSetForDeviceOwner(packageName)) {
-                Slog.e(TAG, "Device owner type for " + packageName + " has already been set");
+            } else if (!isAdminTestOnly && isDeviceOwnerTypeSetForDeviceOwner(packageName)) {
+                Slog.e(TAG, "Setting the device owner type more than once is only allowed"
+                        + " for test only admins");
                 return;
             }
 

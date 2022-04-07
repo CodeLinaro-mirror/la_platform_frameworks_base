@@ -16,6 +16,8 @@
 
 package com.android.server.wm;
 
+import static android.app.AppOpsManager.MODE_ALLOWED;
+import static android.app.AppOpsManager.OP_PICTURE_IN_PICTURE;
 import static android.app.TaskInfo.CAMERA_COMPAT_CONTROL_DISMISSED;
 import static android.app.TaskInfo.CAMERA_COMPAT_CONTROL_HIDDEN;
 import static android.app.TaskInfo.CAMERA_COMPAT_CONTROL_TREATMENT_APPLIED;
@@ -24,6 +26,7 @@ import static android.app.WindowConfiguration.ACTIVITY_TYPE_STANDARD;
 import static android.app.WindowConfiguration.WINDOWING_MODE_FREEFORM;
 import static android.app.WindowConfiguration.WINDOWING_MODE_FULLSCREEN;
 import static android.app.WindowConfiguration.WINDOWING_MODE_MULTI_WINDOW;
+import static android.app.WindowConfiguration.WINDOWING_MODE_PINNED;
 import static android.content.pm.ActivityInfo.CONFIG_ORIENTATION;
 import static android.content.pm.ActivityInfo.CONFIG_SCREEN_LAYOUT;
 import static android.content.pm.ActivityInfo.FLAG_SUPPORTS_PICTURE_IN_PICTURE;
@@ -54,6 +57,7 @@ import static android.view.WindowManager.LayoutParams.TYPE_APPLICATION_STARTING;
 import static android.view.WindowManager.LayoutParams.TYPE_BASE_APPLICATION;
 import static android.view.WindowManager.TRANSIT_CLOSE;
 import static android.view.WindowManager.TRANSIT_OLD_ACTIVITY_OPEN;
+import static android.view.WindowManager.TRANSIT_PIP;
 import static android.window.StartingWindowInfo.TYPE_PARAMETER_LEGACY_SPLASH_SCREEN;
 
 import static androidx.test.platform.app.InstrumentationRegistry.getInstrumentation;
@@ -85,7 +89,6 @@ import static com.android.server.wm.ActivityRecord.State.STARTED;
 import static com.android.server.wm.ActivityRecord.State.STOPPED;
 import static com.android.server.wm.ActivityRecord.State.STOPPING;
 import static com.android.server.wm.ActivityTaskManagerService.INSTRUMENTATION_KEY_DISPATCHING_TIMEOUT_MILLIS;
-import static com.android.server.wm.SurfaceAnimator.ANIMATION_TYPE_APP_TRANSITION;
 import static com.android.server.wm.TaskFragment.TASK_FRAGMENT_VISIBILITY_INVISIBLE;
 import static com.android.server.wm.TaskFragment.TASK_FRAGMENT_VISIBILITY_VISIBLE;
 import static com.android.server.wm.TaskFragment.TASK_FRAGMENT_VISIBILITY_VISIBLE_BEHIND_TRANSLUCENT;
@@ -109,7 +112,9 @@ import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.never;
 
 import android.app.ActivityOptions;
+import android.app.AppOpsManager;
 import android.app.ICompatCameraControlCallback;
+import android.app.PictureInPictureParams;
 import android.app.servertransaction.ActivityConfigurationChangeItem;
 import android.app.servertransaction.ClientTransaction;
 import android.app.servertransaction.DestroyActivityItem;
@@ -122,6 +127,7 @@ import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.graphics.Point;
 import android.graphics.Rect;
+import android.os.Binder;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.PersistableBundle;
@@ -2200,6 +2206,55 @@ public class ActivityRecordTests extends WindowTestsBase {
         assertFalse(activity.supportsPictureInPicture());
     }
 
+    @Test
+    public void testCheckEnterPictureInPictureState_displayNotSupportedPip() {
+        final Task task = new TaskBuilder(mSupervisor)
+                .setDisplay(mDisplayContent).build();
+        final ActivityRecord activity = new ActivityBuilder(mAtm)
+                .setTask(task)
+                .setResizeMode(ActivityInfo.RESIZE_MODE_UNRESIZEABLE)
+                .setActivityFlags(FLAG_SUPPORTS_PICTURE_IN_PICTURE)
+                .build();
+        mAtm.mSupportsPictureInPicture = true;
+        AppOpsManager appOpsManager = mAtm.getAppOpsManager();
+        doReturn(MODE_ALLOWED).when(appOpsManager).checkOpNoThrow(eq(OP_PICTURE_IN_PICTURE),
+                anyInt(), any());
+        doReturn(false).when(mAtm).shouldDisableNonVrUiLocked();
+
+        spyOn(mDisplayContent.mDwpcHelper);
+        doReturn(false).when(mDisplayContent.mDwpcHelper).isWindowingModeSupported(
+                WINDOWING_MODE_PINNED);
+
+        assertFalse(activity.checkEnterPictureInPictureState("TEST", false /* beforeStopping */));
+    }
+
+    @Test
+    public void testLaunchIntoPip() {
+        final PictureInPictureParams params = new PictureInPictureParams.Builder()
+                .build();
+        final ActivityOptions opts = ActivityOptions.makeLaunchIntoPip(params);
+        final ActivityRecord activity = new ActivityBuilder(mAtm)
+                .setLaunchIntoPipActivityOptions(opts)
+                .build();
+
+        // Verify the pictureInPictureArgs is set on the new Activity
+        assertNotNull(activity.pictureInPictureArgs);
+        assertTrue(activity.pictureInPictureArgs.isLaunchIntoPip());
+    }
+
+    @Test
+    public void testTransferLaunchCookieWhenFinishing() {
+        final ActivityRecord activity1 = createActivityWithTask();
+        final Binder launchCookie = new Binder();
+        activity1.mLaunchCookie = launchCookie;
+        final ActivityRecord activity2 = createActivityRecord(activity1.getTask());
+        activity1.setState(PAUSED, "test");
+        activity1.makeFinishingLocked();
+
+        assertEquals(launchCookie, activity2.mLaunchCookie);
+        assertNull(activity1.mLaunchCookie);
+    }
+
     private void verifyProcessInfoUpdate(ActivityRecord activity, State state,
             boolean shouldUpdate, boolean activityChange) {
         reset(activity.app);
@@ -2608,14 +2663,14 @@ public class ActivityRecordTests extends WindowTestsBase {
                 .setTask(sourceRecord.getTask()).build();
         secondRecord.showStartingWindow(null /* prev */, true /* newTask */, false,
                 true /* startActivity */, sourceRecord);
-        assertFalse(secondRecord.mSplashScreenStyleEmpty);
+        assertFalse(secondRecord.mSplashScreenStyleSolidColor);
         secondRecord.onStartingWindowDrawn();
 
         final ActivityRecord finalRecord = new ActivityBuilder(mAtm)
                 .setTask(sourceRecord.getTask()).build();
         finalRecord.showStartingWindow(null /* prev */, true /* newTask */, false,
                 true /* startActivity */, secondRecord);
-        assertTrue(finalRecord.mSplashScreenStyleEmpty);
+        assertTrue(finalRecord.mSplashScreenStyleSolidColor);
     }
 
     @Test
@@ -3044,7 +3099,7 @@ public class ActivityRecordTests extends WindowTestsBase {
         mDisplayContent.setImeLayeringTarget(app);
         mDisplayContent.updateImeInputAndControlTarget(app);
 
-        InsetsState state = mDisplayContent.getInsetsPolicy().getInsetsForWindow(app);
+        InsetsState state = app.getInsetsState();
         assertFalse(state.getSource(ITYPE_IME).isVisible());
         assertTrue(state.getSource(ITYPE_IME).getFrame().isEmpty());
 
@@ -3056,15 +3111,15 @@ public class ActivityRecordTests extends WindowTestsBase {
 
         // Simulate app re-start input or turning screen off/on then unlocked by un-secure
         // keyguard to back to the app, expect IME insets is not frozen
+        mDisplayContent.updateImeInputAndControlTarget(app);
+        assertFalse(app.mActivityRecord.mImeInsetsFrozenUntilStartInput);
         imeSource.setFrame(new Rect(100, 400, 500, 500));
         app.getInsetsState().addSource(imeSource);
         app.getInsetsState().setSourceVisible(ITYPE_IME, true);
-        mDisplayContent.updateImeInputAndControlTarget(app);
-        assertFalse(app.mActivityRecord.mImeInsetsFrozenUntilStartInput);
 
         // Verify when IME is visible and the app can receive the right IME insets from policy.
         makeWindowVisibleAndDrawn(app, mImeWindow);
-        state = mDisplayContent.getInsetsPolicy().getInsetsForWindow(app);
+        state = app.getInsetsState();
         assertTrue(state.getSource(ITYPE_IME).isVisible());
         assertEquals(state.getSource(ITYPE_IME).getFrame(), imeSource.getFrame());
     }
@@ -3076,7 +3131,7 @@ public class ActivityRecordTests extends WindowTestsBase {
         final WindowState app1 = createWindow(null, TYPE_APPLICATION, "app1");
         final WindowState app2 = createWindow(null, TYPE_APPLICATION, "app2");
 
-        mDisplayContent.getInsetsStateController().getSourceProvider(ITYPE_IME).setWindow(
+        mDisplayContent.getInsetsStateController().getSourceProvider(ITYPE_IME).setWindowContainer(
                 mImeWindow, null, null);
         mImeWindow.getControllableInsetProvider().setServerVisible(true);
 
@@ -3104,17 +3159,19 @@ public class ActivityRecordTests extends WindowTestsBase {
         doReturn(true).when(app2).isReadyToDispatchInsetsState();
         mDisplayContent.setImeLayeringTarget(app2);
         mDisplayContent.updateImeInputAndControlTarget(app2);
+        mDisplayContent.mWmService.mRoot.performSurfacePlacement();
 
         // Verify after unfreezing app2's IME insets state, we won't dispatch visible IME insets
         // to client if the app didn't request IME visible.
         assertFalse(app2.mActivityRecord.mImeInsetsFrozenUntilStartInput);
-        verify(app2.mClient, atLeastOnce()).insetsChanged(insetsStateCaptor.capture(), anyBoolean(),
-                anyBoolean());
-        assertFalse(insetsStateCaptor.getAllValues().get(0).peekSource(ITYPE_IME).isVisible());
+        verify(app2.mClient, atLeastOnce()).resized(any(), anyBoolean(), any(),
+                insetsStateCaptor.capture(), anyBoolean(), anyBoolean(), anyInt(), anyInt(),
+                anyInt());
+        assertFalse(app2.getInsetsState().getSource(ITYPE_IME).isVisible());
     }
 
     @Test
-    public void testInClosingAnimation_doNotHideSurface() {
+    public void testInClosingAnimation_visibilityNotCommitted_doNotHideSurface() {
         final WindowState app = createWindow(null, TYPE_APPLICATION, "app");
         makeWindowVisibleAndDrawn(app);
 
@@ -3123,16 +3180,45 @@ public class ActivityRecordTests extends WindowTestsBase {
         mDisplayContent.mClosingApps.add(app.mActivityRecord);
         mDisplayContent.prepareAppTransition(TRANSIT_CLOSE);
 
-        // Update visibility and call to remove window
-        app.mActivityRecord.commitVisibility(false, false);
+        // Remove window during transition, so it is requested to hide, but won't be committed until
+        // the transition is finished.
+        app.mActivityRecord.onRemovedFromDisplay();
+
+        assertTrue(mDisplayContent.mClosingApps.contains(app.mActivityRecord));
+        assertFalse(app.mActivityRecord.isVisibleRequested());
+        assertTrue(app.mActivityRecord.isVisible());
+        assertTrue(app.mActivityRecord.isSurfaceShowing());
+
+        // Start transition.
         app.mActivityRecord.prepareSurfaces();
 
         // Because the app is waiting for transition, it should not hide the surface.
         assertTrue(app.mActivityRecord.isSurfaceShowing());
+    }
 
-        // Ensure onAnimationFinished will callback when the closing animation is finished.
-        verify(app.mActivityRecord).onAnimationFinished(eq(ANIMATION_TYPE_APP_TRANSITION),
-                eq(null));
+    @Test
+    public void testInClosingAnimation_visibilityCommitted_hideSurface() {
+        final WindowState app = createWindow(null, TYPE_APPLICATION, "app");
+        makeWindowVisibleAndDrawn(app);
+
+        // Put the activity in close transition.
+        mDisplayContent.mOpeningApps.clear();
+        mDisplayContent.mClosingApps.add(app.mActivityRecord);
+        mDisplayContent.prepareAppTransition(TRANSIT_CLOSE);
+
+        // Commit visibility before start transition.
+        app.mActivityRecord.commitVisibility(false, false);
+
+        assertFalse(app.mActivityRecord.isVisibleRequested());
+        assertFalse(app.mActivityRecord.isVisible());
+        assertTrue(app.mActivityRecord.isSurfaceShowing());
+
+        // Start transition.
+        app.mActivityRecord.prepareSurfaces();
+
+        // Because the app visibility has been committed before the transition start, it should hide
+        // the surface.
+        assertFalse(app.mActivityRecord.isSurfaceShowing());
     }
 
     @Test
@@ -3328,6 +3414,47 @@ public class ActivityRecordTests extends WindowTestsBase {
                 null);
         assertEquals(DEFAULT_DISPATCHING_TIMEOUT_MILLIS,
                 noProcActivity.mInputDispatchingTimeoutMillis);
+    }
+
+    @Test
+    public void testEnsureActivitiesVisibleAnotherUserTasks() {
+        // Create an activity with hierarchy:
+        //    RootTask
+        //       - TaskFragment
+        //          - Activity
+        DisplayContent display = createNewDisplay();
+        Task rootTask = createTask(display);
+        ActivityRecord activity = createActivityRecord(rootTask);
+        final TaskFragment taskFragment = new TaskFragment(mAtm, new Binder(),
+                true /* createdByOrganizer */, true /* isEmbedded */);
+        activity.getTask().addChild(taskFragment, POSITION_TOP);
+        activity.reparent(taskFragment, POSITION_TOP);
+
+        // Ensure the activity visibility is updated even it is not shown to current user.
+        activity.mVisibleRequested = true;
+        doReturn(false).when(activity).showToCurrentUser();
+        spyOn(taskFragment);
+        doReturn(false).when(taskFragment).shouldBeVisible(any());
+        display.ensureActivitiesVisible(null, 0, false, false);
+        assertFalse(activity.mVisibleRequested);
+    }
+
+    @Test
+    public void testShellTransitionTaskWindowingModeChange() {
+        final ActivityRecord activity = createActivityWithTask();
+        final Task task = activity.getTask();
+        task.setWindowingMode(WINDOWING_MODE_FULLSCREEN);
+
+        assertTrue(activity.isVisible());
+        assertTrue(activity.isVisibleRequested());
+        assertEquals(WINDOWING_MODE_FULLSCREEN, activity.getWindowingMode());
+
+        registerTestTransitionPlayer();
+        task.mTransitionController.requestTransitionIfNeeded(TRANSIT_PIP, task);
+        task.setWindowingMode(WINDOWING_MODE_PINNED);
+
+        // Collect activity in the transition if the Task windowing mode is going to change.
+        assertTrue(activity.inTransition());
     }
 
     private ICompatCameraControlCallback getCompatCameraControlCallback() {

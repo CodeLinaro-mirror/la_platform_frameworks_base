@@ -36,7 +36,6 @@ import android.os.storage.StorageManagerInternal;
 import android.os.storage.VolumeInfo;
 import android.security.AndroidKeyStoreMaintenance;
 import android.system.keystore2.Domain;
-import android.system.keystore2.KeyDescriptor;
 import android.text.TextUtils;
 import android.util.Log;
 import android.util.Slog;
@@ -48,6 +47,7 @@ import com.android.server.SystemServerInitThreadPool;
 import com.android.server.pm.dex.ArtManagerService;
 import com.android.server.pm.parsing.pkg.AndroidPackage;
 import com.android.server.pm.parsing.pkg.AndroidPackageUtils;
+import com.android.server.pm.pkg.PackageStateInternal;
 import com.android.server.pm.pkg.SELinuxUtil;
 
 import dalvik.system.VMRuntime;
@@ -217,8 +217,9 @@ final class AppDataHelper {
 
         final String seInfo = pkgSeInfo + seInfoUser;
         final int targetSdkVersion = pkg.getTargetSdkVersion();
+        final boolean usesSdk = !pkg.getUsesSdkLibraries().isEmpty();
         final CreateAppDataArgs args = Installer.buildCreateAppDataArgs(volumeUuid, packageName,
-                userId, flags, appId, seInfo, targetSdkVersion);
+                userId, flags, appId, seInfo, targetSdkVersion, usesSdk);
         args.previousAppId = previousAppId;
 
         return batch.createAppData(args).whenComplete((ceDataInode, e) -> {
@@ -277,8 +278,8 @@ final class AppDataHelper {
         });
     }
 
-    public void prepareAppDataContentsLIF(AndroidPackage pkg, @Nullable PackageSetting pkgSetting,
-            int userId, int flags) {
+    public void prepareAppDataContentsLIF(AndroidPackage pkg,
+            @Nullable PackageStateInternal pkgSetting, int userId, int flags) {
         if (pkg == null) {
             Slog.wtf(TAG, "Package was null!", new Throwable());
             return;
@@ -287,7 +288,7 @@ final class AppDataHelper {
     }
 
     private void prepareAppDataContentsLeafLIF(AndroidPackage pkg,
-            @Nullable PackageSetting pkgSetting, int userId, int flags) {
+            @Nullable PackageStateInternal pkgSetting, int userId, int flags) {
         final String volumeUuid = pkg.getVolumeUuid();
         final String packageName = pkg.getPackageName();
 
@@ -375,6 +376,12 @@ final class AppDataHelper {
         Slog.v(TAG, "reconcileAppsData for " + volumeUuid + " u" + userId + " 0x"
                 + Integer.toHexString(flags) + " migrateAppData=" + migrateAppData);
         List<String> result = onlyCoreApps ? new ArrayList<>() : null;
+
+        try {
+            mInstaller.cleanupInvalidPackageDirs(volumeUuid, userId, flags);
+        } catch (Installer.InstallerException e) {
+            logCriticalInfo(Log.WARN, "Failed to cleanup deleted dirs: " + e);
+        }
 
         final File ceDir = Environment.getDataUserCeDirectory(volumeUuid, userId);
         final File deDir = Environment.getDataUserDeDirectory(volumeUuid, userId);
@@ -545,22 +552,6 @@ final class AppDataHelper {
             Slog.i(TAG, "Deferred reconcileAppsData finished " + count + " packages");
         }, "prepareAppData");
         return prepareAppDataFuture;
-    }
-
-    public void migrateKeyStoreData(int previousAppId, int appId) {
-        for (int userId : mPm.resolveUserIds(UserHandle.USER_ALL)) {
-            int srcUid = UserHandle.getUid(userId, previousAppId);
-            int destUid = UserHandle.getUid(userId, appId);
-            final KeyDescriptor[] keys = AndroidKeyStoreMaintenance.listEntries(Domain.APP, srcUid);
-            if (keys == null) continue;
-            for (final KeyDescriptor key : keys) {
-                KeyDescriptor dest = new KeyDescriptor();
-                dest.domain = Domain.APP;
-                dest.nspace = destUid;
-                dest.alias = key.alias;
-                AndroidKeyStoreMaintenance.migrateKeyNamespace(key, dest);
-            }
-        }
     }
 
     void clearAppDataLIF(AndroidPackage pkg, int userId, int flags) {

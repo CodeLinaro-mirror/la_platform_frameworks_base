@@ -98,6 +98,7 @@ public final class SplitLayout implements DisplayInsetsController.OnInsetsChange
     private WindowContainerToken mWinToken2;
     private int mDividePosition;
     private boolean mInitialized = false;
+    private boolean mFreezeDividerWindow = false;
     private int mOrientation;
     private int mRotation;
 
@@ -144,19 +145,40 @@ public final class SplitLayout implements DisplayInsetsController.OnInsetsChange
         return Math.max(dividerInset, radius);
     }
 
-    /** Gets bounds of the primary split. */
+    /** Gets bounds of the primary split with screen based coordinate. */
     public Rect getBounds1() {
         return new Rect(mBounds1);
     }
 
-    /** Gets bounds of the secondary split. */
+    /** Gets bounds of the primary split with parent based coordinate. */
+    public Rect getRefBounds1() {
+        Rect outBounds = getBounds1();
+        outBounds.offset(-mRootBounds.left, -mRootBounds.top);
+        return outBounds;
+    }
+
+    /** Gets bounds of the secondary split with screen based coordinate. */
     public Rect getBounds2() {
         return new Rect(mBounds2);
     }
 
-    /** Gets bounds of divider window. */
+    /** Gets bounds of the secondary split with parent based coordinate. */
+    public Rect getRefBounds2() {
+        final Rect outBounds = getBounds2();
+        outBounds.offset(-mRootBounds.left, -mRootBounds.top);
+        return outBounds;
+    }
+
+    /** Gets bounds of divider window with screen based coordinate. */
     public Rect getDividerBounds() {
         return new Rect(mDividerBounds);
+    }
+
+    /** Gets bounds of divider window with parent based coordinate. */
+    public Rect getRefDividerBounds() {
+        final Rect outBounds = getDividerBounds();
+        outBounds.offset(-mRootBounds.left, -mRootBounds.top);
+        return outBounds;
     }
 
     /** Returns leash of the current divider bar. */
@@ -203,11 +225,6 @@ public final class SplitLayout implements DisplayInsetsController.OnInsetsChange
         mRotation = rotation;
         mDividerSnapAlgorithm = getSnapAlgorithm(mContext, mRootBounds, null);
         initDividerPosition(mTempRect);
-
-        if (mInitialized) {
-            release();
-            init();
-        }
 
         return true;
     }
@@ -277,18 +294,35 @@ public final class SplitLayout implements DisplayInsetsController.OnInsetsChange
     }
 
     /** Releases the surface holding the current {@link DividerView}. */
-    public void release() {
+    public void release(SurfaceControl.Transaction t) {
         if (!mInitialized) return;
         mInitialized = false;
-        mSplitWindowManager.release();
+        mSplitWindowManager.release(t);
         mDisplayImeController.removePositionProcessor(mImePositionProcessor);
         mImePositionProcessor.reset();
+    }
+
+    public void release() {
+        release(null /* t */);
+    }
+
+    /** Releases and re-inflates {@link DividerView} on the root surface. */
+    public void update(SurfaceControl.Transaction t) {
+        if (!mInitialized) return;
+        mSplitWindowManager.release(t);
+        mImePositionProcessor.reset();
+        mSplitWindowManager.init(this, mInsetsState);
     }
 
     @Override
     public void insetsChanged(InsetsState insetsState) {
         mInsetsState.set(insetsState);
         if (!mInitialized) {
+            return;
+        }
+        if (mFreezeDividerWindow) {
+            // DO NOT change its layout before transition actually run because it might cause
+            // flicker.
             return;
         }
         mSplitWindowManager.onInsetsChanged(insetsState);
@@ -300,6 +334,10 @@ public final class SplitLayout implements DisplayInsetsController.OnInsetsChange
         if (!mInsetsState.equals(insetsState)) {
             insetsChanged(insetsState);
         }
+    }
+
+    public void setFreezeDividerWindow(boolean freezeDividerWindow) {
+        mFreezeDividerWindow = freezeDividerWindow;
     }
 
     /**
@@ -452,14 +490,17 @@ public final class SplitLayout implements DisplayInsetsController.OnInsetsChange
             SurfaceControl leash2, SurfaceControl dimLayer1, SurfaceControl dimLayer2) {
         final SurfaceControl dividerLeash = getDividerLeash();
         if (dividerLeash != null) {
-            t.setPosition(dividerLeash, mDividerBounds.left, mDividerBounds.top);
+            mTempRect.set(getRefDividerBounds());
+            t.setPosition(dividerLeash, mTempRect.left, mTempRect.top);
             // Resets layer of divider bar to make sure it is always on top.
             t.setLayer(dividerLeash, SPLIT_DIVIDER_LAYER);
         }
-        t.setPosition(leash1, mBounds1.left, mBounds1.top)
-                .setWindowCrop(leash1, mBounds1.width(), mBounds1.height());
-        t.setPosition(leash2, mBounds2.left, mBounds2.top)
-                .setWindowCrop(leash2, mBounds2.width(), mBounds2.height());
+        mTempRect.set(getRefBounds1());
+        t.setPosition(leash1, mTempRect.left, mTempRect.top)
+                .setWindowCrop(leash1, mTempRect.width(), mTempRect.height());
+        mTempRect.set(getRefBounds2());
+        t.setPosition(leash2, mTempRect.left, mTempRect.top)
+                .setWindowCrop(leash2, mTempRect.width(), mTempRect.height());
 
         if (mImePositionProcessor.adjustSurfaceLayoutForIme(
                 t, dividerLeash, leash1, leash2, dimLayer1, dimLayer2)) {
@@ -472,20 +513,26 @@ public final class SplitLayout implements DisplayInsetsController.OnInsetsChange
     /** Apply recorded task layout to the {@link WindowContainerTransaction}. */
     public void applyTaskChanges(WindowContainerTransaction wct,
             ActivityManager.RunningTaskInfo task1, ActivityManager.RunningTaskInfo task2) {
-        if (mImePositionProcessor.applyTaskLayoutForIme(wct, task1.token, task2.token)) {
-            return;
-        }
-
         if (!mBounds1.equals(mWinBounds1) || !task1.token.equals(mWinToken1)) {
             wct.setBounds(task1.token, mBounds1);
+            wct.setSmallestScreenWidthDp(task1.token, getSmallestWidthDp(mBounds1));
             mWinBounds1.set(mBounds1);
             mWinToken1 = task1.token;
         }
         if (!mBounds2.equals(mWinBounds2) || !task2.token.equals(mWinToken2)) {
             wct.setBounds(task2.token, mBounds2);
+            wct.setSmallestScreenWidthDp(task2.token, getSmallestWidthDp(mBounds2));
             mWinBounds2.set(mBounds2);
             mWinToken2 = task2.token;
         }
+    }
+
+    private int getSmallestWidthDp(Rect bounds) {
+        mTempRect.set(bounds);
+        mTempRect.inset(getDisplayInsets(mContext));
+        final int minWidth = Math.min(mTempRect.width(), mTempRect.height());
+        final float density = mContext.getResources().getDisplayMetrics().density;
+        return (int) (minWidth / density);
     }
 
     /**
@@ -707,6 +754,7 @@ public final class SplitLayout implements DisplayInsetsController.OnInsetsChange
 
         private final int mDisplayId;
 
+        private boolean mHasImeFocus;
         private boolean mImeShown;
         private int mYOffsetForIme;
         private float mDimValue1;
@@ -729,25 +777,32 @@ public final class SplitLayout implements DisplayInsetsController.OnInsetsChange
         @Override
         public int onImeStartPositioning(int displayId, int hiddenTop, int shownTop,
                 boolean showing, boolean isFloating, SurfaceControl.Transaction t) {
-            if (displayId != mDisplayId) return 0;
+            if (displayId != mDisplayId || !mInitialized) {
+                return 0;
+            }
+
             final int imeTargetPosition = getImeTargetPosition();
-            if (!mInitialized || imeTargetPosition == SPLIT_POSITION_UNDEFINED) return 0;
+            mHasImeFocus = imeTargetPosition != SPLIT_POSITION_UNDEFINED;
+            if (!mHasImeFocus) {
+                return 0;
+            }
+
             mStartImeTop = showing ? hiddenTop : shownTop;
             mEndImeTop = showing ? shownTop : hiddenTop;
             mImeShown = showing;
 
             // Update target dim values
             mLastDim1 = mDimValue1;
-            mTargetDim1 = imeTargetPosition == SPLIT_POSITION_BOTTOM_OR_RIGHT && showing
+            mTargetDim1 = imeTargetPosition == SPLIT_POSITION_BOTTOM_OR_RIGHT && mImeShown
                     ? ADJUSTED_NONFOCUS_DIM : 0.0f;
             mLastDim2 = mDimValue2;
-            mTargetDim2 = imeTargetPosition == SPLIT_POSITION_TOP_OR_LEFT && showing
+            mTargetDim2 = imeTargetPosition == SPLIT_POSITION_TOP_OR_LEFT && mImeShown
                     ? ADJUSTED_NONFOCUS_DIM : 0.0f;
 
             // Calculate target bounds offset for IME
             mLastYOffset = mYOffsetForIme;
             final boolean needOffset = imeTargetPosition == SPLIT_POSITION_BOTTOM_OR_RIGHT
-                    && !isFloating && !isLandscape(mRootBounds) && showing;
+                    && !isFloating && !isLandscape(mRootBounds) && mImeShown;
             mTargetYOffset = needOffset ? getTargetYOffset() : 0;
 
             if (mTargetYOffset != mLastYOffset) {
@@ -766,15 +821,14 @@ public final class SplitLayout implements DisplayInsetsController.OnInsetsChange
             // ImePositionProcessor#onImeVisibilityChanged directly in DividerView is not enough
             // because DividerView won't receive onImeVisibilityChanged callback after it being
             // re-inflated.
-            mSplitWindowManager.setInteractive(
-                    !showing || imeTargetPosition == SPLIT_POSITION_UNDEFINED);
+            mSplitWindowManager.setInteractive(!mImeShown || !mHasImeFocus);
 
             return needOffset ? IME_ANIMATION_NO_ALPHA : 0;
         }
 
         @Override
         public void onImePositionChanged(int displayId, int imeTop, SurfaceControl.Transaction t) {
-            if (displayId != mDisplayId) return;
+            if (displayId != mDisplayId || !mHasImeFocus) return;
             onProgress(getProgress(imeTop));
             mSplitLayoutHandler.onLayoutPositionChanging(SplitLayout.this);
         }
@@ -782,7 +836,7 @@ public final class SplitLayout implements DisplayInsetsController.OnInsetsChange
         @Override
         public void onImeEndPositioning(int displayId, boolean cancel,
                 SurfaceControl.Transaction t) {
-            if (displayId != mDisplayId || cancel) return;
+            if (displayId != mDisplayId || !mHasImeFocus || cancel) return;
             onProgress(1.0f);
             mSplitLayoutHandler.onLayoutPositionChanging(SplitLayout.this);
         }
@@ -794,6 +848,7 @@ public final class SplitLayout implements DisplayInsetsController.OnInsetsChange
             if (!controlling && mImeShown) {
                 reset();
                 mSplitWindowManager.setInteractive(true);
+                mSplitLayoutHandler.setLayoutOffsetTarget(0, 0, SplitLayout.this);
                 mSplitLayoutHandler.onLayoutPositionChanging(SplitLayout.this);
             }
         }
@@ -827,30 +882,11 @@ public final class SplitLayout implements DisplayInsetsController.OnInsetsChange
         }
 
         void reset() {
+            mHasImeFocus = false;
             mImeShown = false;
             mYOffsetForIme = mLastYOffset = mTargetYOffset = 0;
             mDimValue1 = mLastDim1 = mTargetDim1 = 0.0f;
             mDimValue2 = mLastDim2 = mTargetDim2 = 0.0f;
-        }
-
-        /**
-         * Applies adjusted task layout for showing IME.
-         *
-         * @return {@code false} if there's no need to adjust, otherwise {@code true}
-         */
-        boolean applyTaskLayoutForIme(WindowContainerTransaction wct,
-                WindowContainerToken token1, WindowContainerToken token2) {
-            if (mYOffsetForIme == 0) return false;
-
-            mTempRect.set(mBounds1);
-            mTempRect.offset(0, mYOffsetForIme);
-            wct.setBounds(token1, mTempRect);
-
-            mTempRect.set(mBounds2);
-            mTempRect.offset(0, mYOffsetForIme);
-            wct.setBounds(token2, mTempRect);
-
-            return true;
         }
 
         /**

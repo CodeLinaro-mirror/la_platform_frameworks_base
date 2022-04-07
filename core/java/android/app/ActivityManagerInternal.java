@@ -22,6 +22,7 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.UserIdInt;
 import android.app.ActivityManager.ProcessCapability;
+import android.app.ActivityManager.RestrictionLevel;
 import android.content.ComponentName;
 import android.content.IIntentReceiver;
 import android.content.IIntentSender;
@@ -212,6 +213,14 @@ public abstract class ActivityManagerInternal {
      * @return {@code true} if system is ready, {@code false} otherwise.
      */
     public abstract boolean isSystemReady();
+
+    /**
+     * Returns package name given pid.
+     *
+     * @param pid The pid we are searching package name for.
+     */
+    @Nullable
+    public abstract String getPackageNameByPid(int pid);
 
     /**
      * Sets if the given pid has an overlay UI or not.
@@ -528,9 +537,11 @@ public abstract class ActivityManagerInternal {
             Notification notification, int id, String pkg, @UserIdInt int userId);
 
     /**
-     * Un-foreground all foreground services in the given app.
+     * Fully stop the given app's processes without restoring service starts or
+     * bindings, but without the other durable effects of the full-scale
+     * "force stop" intervention.
      */
-    public abstract void makeServicesNonForeground(String pkg, @UserIdInt int userId);
+    public abstract void stopAppForUser(String pkg, @UserIdInt int userId);
 
     /**
      * If the given app has any FGSs whose notifications are in the given channel,
@@ -619,8 +630,9 @@ public abstract class ActivityManagerInternal {
     /**
      * Delete uid from the ActivityManagerService PendingStartActivityUids list.
      * @param uid uid
+     * @param nowElapsed starting time of updateOomAdj
      */
-    public abstract void deletePendingTopUid(int uid);
+    public abstract void deletePendingTopUid(int uid, long nowElapsed);
 
     /**
      * Is the uid in ActivityManagerService PendingStartActivityUids list?
@@ -673,6 +685,11 @@ public abstract class ActivityManagerInternal {
     public abstract @TempAllowListType int getPushMessagingOverQuotaBehavior();
 
     /**
+     * Return the startForeground() grace period after calling startForegroundService().
+     */
+    public abstract int getServiceStartForegroundTimeout();
+
+    /**
      * Returns the capability of the given uid
      */
     public abstract @ProcessCapability int getUidCapability(int uid);
@@ -712,4 +729,117 @@ public abstract class ActivityManagerInternal {
          */
         void notifyActivityEventChanged();
     }
+
+    /**
+     * Get the restriction level of the given UID, if it hosts multiple packages,
+     * return least restricted level.
+     */
+    public abstract @RestrictionLevel int getRestrictionLevel(int uid);
+
+    /**
+     * Get the restriction level of the given package for given user id.
+     */
+    public abstract @RestrictionLevel int getRestrictionLevel(String pkg, @UserIdInt int userId);
+
+    /**
+     * Get whether or not apps would be put into restricted standby bucket automatically
+     * when it's background-restricted.
+     */
+    public abstract boolean isBgAutoRestrictedBucketFeatureFlagEnabled();
+
+    /**
+     * A listener interface, which will be notified on background restriction changes.
+     */
+    public interface AppBackgroundRestrictionListener {
+        /**
+         * Called when the background restriction level of given uid/package is changed.
+         */
+        default void onRestrictionLevelChanged(int uid, String packageName,
+                @RestrictionLevel int newLevel) {
+        }
+
+        /**
+         * Called when toggling the feature flag of moving to restricted standby bucket
+         * automatically on background-restricted.
+         */
+        default void onAutoRestrictedBucketFeatureFlagChanged(boolean autoRestrictedBucket) {
+        }
+    }
+
+    /**
+     * Register the background restriction listener callback.
+     */
+    public abstract void addAppBackgroundRestrictionListener(
+            @NonNull AppBackgroundRestrictionListener listener);
+
+    /**
+     * A listener interface, which will be notified on foreground service state changes.
+     */
+    public interface ForegroundServiceStateListener {
+        /**
+         * Call when the given process's foreground service state changes.
+         *
+         * @param packageName The package name of the process.
+         * @param uid The UID of the process.
+         * @param pid The pid of the process.
+         * @param started {@code true} if the process transits from non-FGS state to FGS state.
+         */
+        void onForegroundServiceStateChanged(String packageName, int uid, int pid, boolean started);
+
+        /**
+         * Call when the notification of the foreground service is updated.
+         *
+         * @param packageName The package name of the process.
+         * @param uid The UID of the process.
+         * @param foregroundId The current foreground service notification ID, a negative value
+         *                     means this notification is being removed.
+         */
+        void onForegroundServiceNotificationUpdated(String packageName, int uid, int foregroundId);
+    }
+
+    /**
+     * Register the foreground service state change listener callback.
+     */
+    public abstract void addForegroundServiceStateListener(
+            @NonNull ForegroundServiceStateListener listener);
+
+    /**
+     * A listener interface, which will be notified on the package sends a broadcast.
+     */
+    public interface BroadcastEventListener {
+        /**
+         * Called when the given package/uid is sending a broadcast.
+         */
+        void onSendingBroadcast(String packageName, int uid);
+    }
+
+    /**
+     * Register the broadcast event listener callback.
+     */
+    public abstract void addBroadcastEventListener(@NonNull BroadcastEventListener listener);
+
+    /**
+     * A listener interface, which will be notified on the package binding to a service.
+     */
+    public interface BindServiceEventListener {
+        /**
+         * Called when the given package/uid is binding to a service
+         */
+        void onBindingService(String packageName, int uid);
+    }
+
+    /**
+     * Register the bind service event listener callback.
+     */
+    public abstract void addBindServiceEventListener(@NonNull BindServiceEventListener listener);
+
+    /**
+     * Restart android.
+     */
+    public abstract void restart();
+
+    /**
+     * Returns some summary statistics of the current PendingIntent queue - sizes and counts.
+     */
+    public abstract List<PendingIntentStats> getPendingIntentStats();
 }

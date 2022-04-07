@@ -191,7 +191,8 @@ public class ActivityTaskManagerServiceTests extends WindowTestsBase {
             public void onFixedRotationFinished(int displayId) {}
 
             @Override
-            public void onKeepClearAreasChanged(int displayId, List<Rect> keepClearAreas) {}
+            public void onKeepClearAreasChanged(int displayId, List<Rect> restricted,
+                    List<Rect> unrestricted) {}
         };
         int[] displayIds = mAtm.mWindowManager.registerDisplayWindowListener(listener);
         for (int i = 0; i < displayIds.length; i++) {
@@ -354,7 +355,8 @@ public class ActivityTaskManagerServiceTests extends WindowTestsBase {
     @Test
     public void testUpdateSleep() {
         doCallRealMethod().when(mWm.mRoot).hasAwakeDisplay();
-        mSupervisor.mGoingToSleepWakeLock = mock(PowerManager.WakeLock.class);
+        mSupervisor.mGoingToSleepWakeLock =
+                mSystemServicesTestRule.createStubbedWakeLock(true /* needVerification */);
         final Task rootHomeTask = mWm.mRoot.getDefaultTaskDisplayArea().getOrCreateRootHomeTask();
         final ActivityRecord homeActivity = new ActivityBuilder(mAtm).setTask(rootHomeTask).build();
         final ActivityRecord topActivity = new ActivityBuilder(mAtm).setCreateTask(true).build();

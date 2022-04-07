@@ -16,15 +16,25 @@
 
 package com.android.server.app;
 
+import android.Manifest;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.annotation.RequiresPermission;
 import android.app.ActivityManager.RunningTaskInfo;
+import android.app.ActivityManagerInternal;
 import android.app.ActivityTaskManager;
+import android.app.IActivityManager;
 import android.app.IActivityTaskManager;
+import android.app.IProcessObserver;
 import android.app.TaskStackListener;
 import android.content.ComponentName;
+import android.content.Context;
+import android.content.Intent;
 import android.graphics.Bitmap;
+import android.graphics.Insets;
 import android.graphics.Rect;
+import android.net.Uri;
+import android.os.Bundle;
 import android.os.RemoteException;
 import android.os.UserHandle;
 import android.service.games.CreateGameSessionRequest;
@@ -37,25 +47,70 @@ import android.service.games.IGameServiceController;
 import android.service.games.IGameSession;
 import android.service.games.IGameSessionController;
 import android.service.games.IGameSessionService;
+import android.text.TextUtils;
 import android.util.Slog;
+import android.view.SurfaceControl;
 import android.view.SurfaceControlViewHost.SurfacePackage;
+import android.view.WindowManager;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.infra.AndroidFuture;
 import com.android.internal.infra.ServiceConnector;
+import com.android.internal.infra.ServiceConnector.ServiceLifecycleCallbacks;
+import com.android.internal.os.BackgroundThread;
+import com.android.internal.util.ScreenshotHelper;
 import com.android.server.wm.WindowManagerInternal;
+import com.android.server.wm.WindowManagerInternal.TaskSystemBarsListener;
 import com.android.server.wm.WindowManagerService;
 
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 final class GameServiceProviderInstanceImpl implements GameServiceProviderInstance {
     private static final String TAG = "GameServiceProviderInstance";
     private static final int CREATE_GAME_SESSION_TIMEOUT_MS = 10_000;
     private static final boolean DEBUG = false;
+
+    private final ServiceLifecycleCallbacks<IGameService> mGameServiceLifecycleCallbacks =
+            new ServiceLifecycleCallbacks<IGameService>() {
+                @Override
+                public void onConnected(@NonNull IGameService service) {
+                    try {
+                        service.connected(mGameServiceController);
+                    } catch (RemoteException ex) {
+                        Slog.w(TAG, "Failed to send connected event", ex);
+                    }
+                }
+            };
+
+    private final ServiceLifecycleCallbacks<IGameSessionService>
+            mGameSessionServiceLifecycleCallbacks =
+            new ServiceLifecycleCallbacks<IGameSessionService>() {
+                @Override
+                public void onBinderDied() {
+                    mBackgroundExecutor.execute(() -> {
+                        synchronized (mLock) {
+                            destroyAndClearAllGameSessionsLocked();
+                        }
+                    });
+                }
+            };
+
+    private final TaskSystemBarsListener mTaskSystemBarsVisibilityListener =
+            new TaskSystemBarsListener() {
+                @Override
+                public void onTransientSystemBarsVisibilityChanged(
+                        int taskId,
+                        boolean visible,
+                        boolean wereRevealedFromSwipeOnSystemBar) {
+                    GameServiceProviderInstanceImpl.this.onTransientSystemBarsVisibilityChanged(
+                            taskId, visible, wereRevealedFromSwipeOnSystemBar);
+                }
+            };
 
     private final TaskStackListener mTaskStackListener = new TaskStackListener() {
         @Override
@@ -82,18 +137,52 @@ final class GameServiceProviderInstanceImpl implements GameServiceProviderInstan
                 GameServiceProviderInstanceImpl.this.onTaskFocusChanged(taskId, focused);
             });
         }
+    };
 
-        // TODO(b/204503192): Limit the lifespan of the game session in the Game Service provider
-        // to only when the associated task is running. Right now it is possible for a task to
-        // move into the background and for all associated processes to die and for the Game Session
-        // provider's GameSessionService to continue to be running. Ideally we could unbind the
-        // service when this happens.
+    /**
+     * The TaskStackListener declared above gives us good visibility into game task lifecycle.
+     * However, it is possible for the Android system to kill all the processes associated with a
+     * game task (e.g., when the system is under memory pressure or reaches a background process
+     * limit). When this happens, the game task remains (and no TaskStackListener callbacks are
+     * invoked), but we would nonetheless want to destroy a game session associated with the task
+     * if this were to happen.
+     *
+     * This process observer gives us visibility into process lifecycles and lets us track all the
+     * processes associated with each package so that any game sessions associated with the package
+     * are destroyed if the process count for a given package reaches zero (most packages will
+     * have at most one task). If processes for a given package are started up again, the destroyed
+     * game sessions will be re-created.
+     */
+    private final IProcessObserver mProcessObserver = new IProcessObserver.Stub() {
+        @Override
+        public void onForegroundActivitiesChanged(int pid, int uid, boolean fg) {
+            // This callback is used to track how many processes are running for a given package.
+            // Then, when a process dies, we will know if it was the only process running for that
+            // package and the associated game sessions should be destroyed.
+            mBackgroundExecutor.execute(() -> {
+                GameServiceProviderInstanceImpl.this.onForegroundActivitiesChanged(pid);
+            });
+        }
+
+        @Override
+        public void onProcessDied(int pid, int uid) {
+            mBackgroundExecutor.execute(() -> {
+                GameServiceProviderInstanceImpl.this.onProcessDied(pid);
+            });
+        }
+
+        @Override
+        public void onForegroundServicesChanged(int pid, int uid, int serviceTypes) {
+        }
     };
 
     private final IGameServiceController mGameServiceController =
             new IGameServiceController.Stub() {
                 @Override
+                @RequiresPermission(Manifest.permission.MANAGE_GAME_ACTIVITY)
                 public void createGameSession(int taskId) {
+                    mContext.enforceCallingPermission(Manifest.permission.MANAGE_GAME_ACTIVITY,
+                            "createGameSession()");
                     mBackgroundExecutor.execute(() -> {
                         GameServiceProviderInstanceImpl.this.createGameSession(taskId);
                     });
@@ -103,11 +192,24 @@ final class GameServiceProviderInstanceImpl implements GameServiceProviderInstan
     private final IGameSessionController mGameSessionController =
             new IGameSessionController.Stub() {
                 @Override
+                @RequiresPermission(android.Manifest.permission.MANAGE_GAME_ACTIVITY)
                 public void takeScreenshot(int taskId,
                         @NonNull AndroidFuture gameScreenshotResultFuture) {
+                    mContext.enforceCallingPermission(Manifest.permission.MANAGE_GAME_ACTIVITY,
+                            "takeScreenshot()");
                     mBackgroundExecutor.execute(() -> {
                         GameServiceProviderInstanceImpl.this.takeScreenshot(taskId,
                                 gameScreenshotResultFuture);
+                    });
+                }
+
+                @Override
+                @RequiresPermission(Manifest.permission.MANAGE_GAME_ACTIVITY)
+                public void restartGame(int taskId) {
+                    mContext.enforceCallingPermission(Manifest.permission.MANAGE_GAME_ACTIVITY,
+                            "restartGame()");
+                    mBackgroundExecutor.execute(() -> {
+                        GameServiceProviderInstanceImpl.this.restartGame(taskId);
                     });
                 }
             };
@@ -115,10 +217,14 @@ final class GameServiceProviderInstanceImpl implements GameServiceProviderInstan
     private final Object mLock = new Object();
     private final UserHandle mUserHandle;
     private final Executor mBackgroundExecutor;
+    private final Context mContext;
     private final GameClassifier mGameClassifier;
+    private final IActivityManager mActivityManager;
+    private final ActivityManagerInternal mActivityManagerInternal;
     private final IActivityTaskManager mActivityTaskManager;
     private final WindowManagerService mWindowManagerService;
     private final WindowManagerInternal mWindowManagerInternal;
+    private final ScreenshotHelper mScreenshotHelper;
     private final ServiceConnector<IGameService> mGameServiceConnector;
     private final ServiceConnector<IGameSessionService> mGameSessionServiceConnector;
 
@@ -126,25 +232,39 @@ final class GameServiceProviderInstanceImpl implements GameServiceProviderInstan
     private final ConcurrentHashMap<Integer, GameSessionRecord> mGameSessions =
             new ConcurrentHashMap<>();
     @GuardedBy("mLock")
+    private final ConcurrentHashMap<Integer, String> mPidToPackageMap = new ConcurrentHashMap<>();
+    @GuardedBy("mLock")
+    private final ConcurrentHashMap<String, Integer> mPackageNameToProcessCountMap =
+            new ConcurrentHashMap<>();
+
+    @GuardedBy("mLock")
     private volatile boolean mIsRunning;
 
     GameServiceProviderInstanceImpl(
             @NonNull UserHandle userHandle,
             @NonNull Executor backgroundExecutor,
+            @NonNull Context context,
             @NonNull GameClassifier gameClassifier,
+            @NonNull IActivityManager activityManager,
+            @NonNull ActivityManagerInternal activityManagerInternal,
             @NonNull IActivityTaskManager activityTaskManager,
             @NonNull WindowManagerService windowManagerService,
             @NonNull WindowManagerInternal windowManagerInternal,
             @NonNull ServiceConnector<IGameService> gameServiceConnector,
-            @NonNull ServiceConnector<IGameSessionService> gameSessionServiceConnector) {
+            @NonNull ServiceConnector<IGameSessionService> gameSessionServiceConnector,
+            @NonNull ScreenshotHelper screenshotHelper) {
         mUserHandle = userHandle;
         mBackgroundExecutor = backgroundExecutor;
+        mContext = context;
         mGameClassifier = gameClassifier;
+        mActivityManager = activityManager;
+        mActivityManagerInternal = activityManagerInternal;
         mActivityTaskManager = activityTaskManager;
         mWindowManagerService = windowManagerService;
         mWindowManagerInternal = windowManagerInternal;
         mGameServiceConnector = gameServiceConnector;
         mGameSessionServiceConnector = gameSessionServiceConnector;
+        mScreenshotHelper = screenshotHelper;
     }
 
     @Override
@@ -168,17 +288,25 @@ final class GameServiceProviderInstanceImpl implements GameServiceProviderInstan
         }
         mIsRunning = true;
 
-        // TODO(b/204503192): In cases where the connection to the game service fails retry with
-        //  back off mechanism.
-        AndroidFuture<Void> unusedPostConnectedFuture = mGameServiceConnector.post(gameService -> {
-            gameService.connected(mGameServiceController);
-        });
+        mGameServiceConnector.setServiceLifecycleCallbacks(mGameServiceLifecycleCallbacks);
+        mGameSessionServiceConnector.setServiceLifecycleCallbacks(
+                mGameSessionServiceLifecycleCallbacks);
+
+        AndroidFuture<?> unusedConnectFuture = mGameServiceConnector.connect();
 
         try {
             mActivityTaskManager.registerTaskStackListener(mTaskStackListener);
         } catch (RemoteException e) {
             Slog.w(TAG, "Failed to register task stack listener", e);
         }
+
+        try {
+            mActivityManager.registerProcessObserver(mProcessObserver);
+        } catch (RemoteException e) {
+            Slog.w(TAG, "Failed to register process observer", e);
+        }
+
+        mWindowManagerInternal.registerTaskSystemBarsListener(mTaskSystemBarsVisibilityListener);
     }
 
     @GuardedBy("mLock")
@@ -189,24 +317,30 @@ final class GameServiceProviderInstanceImpl implements GameServiceProviderInstan
         mIsRunning = false;
 
         try {
+            mActivityManager.unregisterProcessObserver(mProcessObserver);
+        } catch (RemoteException e) {
+            Slog.w(TAG, "Failed to unregister process observer", e);
+        }
+
+        try {
             mActivityTaskManager.unregisterTaskStackListener(mTaskStackListener);
         } catch (RemoteException e) {
             Slog.w(TAG, "Failed to unregister task stack listener", e);
         }
 
-        for (GameSessionRecord gameSessionRecord : mGameSessions.values()) {
-            destroyGameSessionFromRecord(gameSessionRecord);
-        }
-        mGameSessions.clear();
+        mWindowManagerInternal.unregisterTaskSystemBarsListener(
+                mTaskSystemBarsVisibilityListener);
 
-        // TODO(b/204503192): It is possible that the game service is disconnected. In this
-        //  case we should avoid rebinding just to shut it down again.
-        AndroidFuture<Void> unusedPostDisconnectedFuture =
-                mGameServiceConnector.post(gameService -> {
-                    gameService.disconnected();
-                });
-        mGameServiceConnector.unbind();
+        destroyAndClearAllGameSessionsLocked();
+
+        mGameServiceConnector.post(IGameService::disconnected).whenComplete((result, t) -> {
+            mGameServiceConnector.unbind();
+        });
         mGameSessionServiceConnector.unbind();
+
+        mGameServiceConnector.setServiceLifecycleCallbacks(null);
+        mGameSessionServiceConnector.setServiceLifecycleCallbacks(null);
+
     }
 
     private void onTaskCreated(int taskId, @NonNull ComponentName componentName) {
@@ -283,6 +417,37 @@ final class GameServiceProviderInstanceImpl implements GameServiceProviderInstan
         }
     }
 
+    private void onTransientSystemBarsVisibilityChanged(
+            int taskId,
+            boolean visible,
+            boolean wereRevealedFromSwipeOnSystemBar) {
+        if (visible && !wereRevealedFromSwipeOnSystemBar) {
+            return;
+        }
+
+        GameSessionRecord gameSessionRecord;
+        synchronized (mLock) {
+            gameSessionRecord = mGameSessions.get(taskId);
+        }
+
+        if (gameSessionRecord == null) {
+            return;
+        }
+
+        IGameSession gameSession = gameSessionRecord.getGameSession();
+        if (gameSession == null) {
+            return;
+        }
+
+        try {
+            gameSession.onTransientSystemBarVisibilityFromRevealGestureChanged(visible);
+        } catch (RemoteException ex) {
+            Slog.w(TAG,
+                    "Failed to send transient system bars visibility from reveal gesture for task: "
+                            + taskId);
+        }
+    }
+
     private void createGameSession(int taskId) {
         synchronized (mLock) {
             createGameSessionLocked(taskId);
@@ -352,12 +517,12 @@ final class GameServiceProviderInstanceImpl implements GameServiceProviderInstan
                         }, mBackgroundExecutor);
 
         AndroidFuture<Void> unusedPostCreateGameSessionFuture =
-                mGameSessionServiceConnector.post(gameService -> {
+                mGameSessionServiceConnector.post(gameSessionService -> {
                     CreateGameSessionRequest createGameSessionRequest =
                             new CreateGameSessionRequest(
                                     taskId,
                                     existingGameSessionRecord.getComponentName().getPackageName());
-                    gameService.create(
+                    gameSessionService.create(
                             mGameSessionController,
                             createGameSessionRequest,
                             gameSessionViewHostConfiguration,
@@ -399,7 +564,7 @@ final class GameServiceProviderInstanceImpl implements GameServiceProviderInstan
         }
 
         try {
-            mWindowManagerInternal.addTaskOverlay(
+            mWindowManagerInternal.addTrustedTaskOverlay(
                     taskId,
                     createGameSessionResult.getSurfacePackage());
         } catch (IllegalArgumentException ex) {
@@ -412,6 +577,14 @@ final class GameServiceProviderInstanceImpl implements GameServiceProviderInstan
                 gameSessionRecord.withGameSession(
                         createGameSessionResult.getGameSession(),
                         createGameSessionResult.getSurfacePackage()));
+    }
+
+    @GuardedBy("mLock")
+    private void destroyAndClearAllGameSessionsLocked() {
+        for (GameSessionRecord gameSessionRecord : mGameSessions.values()) {
+            destroyGameSessionFromRecordLocked(gameSessionRecord);
+        }
+        mGameSessions.clear();
     }
 
     private void destroyGameSessionDuringAttach(
@@ -437,14 +610,15 @@ final class GameServiceProviderInstanceImpl implements GameServiceProviderInstan
             }
             return;
         }
-        destroyGameSessionFromRecord(gameSessionRecord);
+        destroyGameSessionFromRecordLocked(gameSessionRecord);
     }
 
-    private void destroyGameSessionFromRecord(@NonNull GameSessionRecord gameSessionRecord) {
+    @GuardedBy("mLock")
+    private void destroyGameSessionFromRecordLocked(@NonNull GameSessionRecord gameSessionRecord) {
         SurfacePackage surfacePackage = gameSessionRecord.getSurfacePackage();
         if (surfacePackage != null) {
             try {
-                mWindowManagerInternal.removeTaskOverlay(
+                mWindowManagerInternal.removeTrustedTaskOverlay(
                         gameSessionRecord.getTaskId(),
                         surfacePackage);
             } catch (IllegalArgumentException ex) {
@@ -469,10 +643,128 @@ final class GameServiceProviderInstanceImpl implements GameServiceProviderInstan
                 Slog.d(TAG, "No active game sessions. Disconnecting GameSessionService");
             }
 
-            if (mGameSessionServiceConnector != null) {
-                mGameSessionServiceConnector.unbind();
+            mGameSessionServiceConnector.unbind();
+        }
+    }
+
+    private void onForegroundActivitiesChanged(int pid) {
+        synchronized (mLock) {
+            onForegroundActivitiesChangedLocked(pid);
+        }
+    }
+
+    @GuardedBy("mLock")
+    private void onForegroundActivitiesChangedLocked(int pid) {
+        if (mPidToPackageMap.containsKey(pid)) {
+            // We are already tracking this pid, nothing to do.
+            return;
+        }
+
+        final String packageName = mActivityManagerInternal.getPackageNameByPid(pid);
+        if (TextUtils.isEmpty(packageName)) {
+            // Game processes should always have a package name.
+            return;
+        }
+
+        if (!gameSessionExistsForPackageNameLocked(packageName)) {
+            // We only need to track processes for tasks with game session records.
+            return;
+        }
+
+        mPidToPackageMap.put(pid, packageName);
+        final int processCountForPackage = mPackageNameToProcessCountMap.getOrDefault(packageName,
+                0) + 1;
+        mPackageNameToProcessCountMap.put(packageName, processCountForPackage);
+
+        if (DEBUG) {
+            Slog.d(TAG, "onForegroundActivitiesChangedLocked: tracking pid " + pid + ", for "
+                    + packageName + ". Process count for package: " + processCountForPackage);
+        }
+
+        // If there are processes for the package, we may need to re-create game sessions
+        // that are associated with the package
+        if (processCountForPackage > 0) {
+            recreateEndedGameSessionsLocked(packageName);
+        }
+    }
+
+    @GuardedBy("mLock")
+    private void recreateEndedGameSessionsLocked(String packageName) {
+        for (GameSessionRecord gameSessionRecord : mGameSessions.values()) {
+            if (gameSessionRecord.isGameSessionEndedForProcessDeath() && packageName.equals(
+                    gameSessionRecord.getComponentName().getPackageName())) {
+                if (DEBUG) {
+                    Slog.d(TAG,
+                            "recreateGameSessionsLocked(): re-creating game session for: "
+                                    + packageName + " with taskId: "
+                                    + gameSessionRecord.getTaskId());
+                }
+
+                final int taskId = gameSessionRecord.getTaskId();
+                mGameSessions.put(taskId, GameSessionRecord.awaitingGameSessionRequest(taskId,
+                        gameSessionRecord.getComponentName()));
+                createGameSessionLocked(gameSessionRecord.getTaskId());
             }
         }
+    }
+
+    private void onProcessDied(int pid) {
+        synchronized (mLock) {
+            onProcessDiedLocked(pid);
+        }
+    }
+
+    @GuardedBy("mLock")
+    private void onProcessDiedLocked(int pid) {
+        final String packageName = mPidToPackageMap.remove(pid);
+        if (packageName == null) {
+            // We weren't tracking this process.
+            return;
+        }
+
+        final Integer oldProcessCountForPackage = mPackageNameToProcessCountMap.get(packageName);
+        if (oldProcessCountForPackage == null) {
+            // This should never happen; we should have a process count for all tracked packages.
+            Slog.w(TAG, "onProcessDiedLocked(): Missing process count for package");
+            return;
+        }
+
+        final int processCountForPackage = oldProcessCountForPackage - 1;
+        mPackageNameToProcessCountMap.put(packageName, processCountForPackage);
+
+        // If there are no more processes for the game, then we will terminate any game sessions
+        // running for the package.
+        if (processCountForPackage <= 0) {
+            endGameSessionsForPackageLocked(packageName);
+        }
+    }
+
+    @GuardedBy("mLock")
+    private void endGameSessionsForPackageLocked(String packageName) {
+        for (GameSessionRecord gameSessionRecord : mGameSessions.values()) {
+            if (gameSessionRecord.getGameSession() != null && packageName.equals(
+                    gameSessionRecord.getComponentName().getPackageName())) {
+                if (DEBUG) {
+                    Slog.d(TAG, "endGameSessionsForPackageLocked(): No more processes for "
+                            + packageName + ", ending game session with taskId: "
+                            + gameSessionRecord.getTaskId());
+                }
+                mGameSessions.put(gameSessionRecord.getTaskId(),
+                        gameSessionRecord.withGameSessionEndedOnProcessDeath());
+                destroyGameSessionFromRecordLocked(gameSessionRecord);
+            }
+        }
+    }
+
+    @GuardedBy("mLock")
+    private boolean gameSessionExistsForPackageNameLocked(String packageName) {
+        for (GameSessionRecord gameSessionRecord : mGameSessions.values()) {
+            if (packageName.equals(gameSessionRecord.getComponentName().getPackageName())) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     @Nullable
@@ -513,23 +805,77 @@ final class GameServiceProviderInstanceImpl implements GameServiceProviderInstan
 
     @VisibleForTesting
     void takeScreenshot(int taskId, @NonNull AndroidFuture callback) {
+        GameSessionRecord gameSessionRecord;
         synchronized (mLock) {
-            boolean isTaskAssociatedWithGameSession = mGameSessions.containsKey(taskId);
-            if (!isTaskAssociatedWithGameSession) {
+            gameSessionRecord = mGameSessions.get(taskId);
+            if (gameSessionRecord == null) {
                 Slog.w(TAG, "No game session found for id: " + taskId);
                 callback.complete(GameScreenshotResult.createInternalErrorResult());
                 return;
             }
         }
 
+        final SurfacePackage overlaySurfacePackage = gameSessionRecord.getSurfacePackage();
+        final SurfaceControl overlaySurfaceControl =
+                overlaySurfacePackage != null ? overlaySurfacePackage.getSurfaceControl() : null;
         mBackgroundExecutor.execute(() -> {
-            final Bitmap bitmap = mWindowManagerService.captureTaskBitmap(taskId);
+            final SurfaceControl.LayerCaptureArgs.Builder layerCaptureArgsBuilder =
+                    new SurfaceControl.LayerCaptureArgs.Builder(/* layer */ null);
+            if (overlaySurfaceControl != null) {
+                SurfaceControl[] excludeLayers = new SurfaceControl[1];
+                excludeLayers[0] = overlaySurfaceControl;
+                layerCaptureArgsBuilder.setExcludeLayers(excludeLayers);
+            }
+            final Bitmap bitmap = mWindowManagerService.captureTaskBitmap(taskId,
+                    layerCaptureArgsBuilder);
             if (bitmap == null) {
                 Slog.w(TAG, "Could not get bitmap for id: " + taskId);
                 callback.complete(GameScreenshotResult.createInternalErrorResult());
             } else {
-                callback.complete(GameScreenshotResult.createSuccessResult(bitmap));
+                final Bundle bundle = ScreenshotHelper.HardwareBitmapBundler.hardwareBitmapToBundle(
+                        bitmap);
+                final RunningTaskInfo runningTaskInfo = getRunningTaskInfoForTask(taskId);
+                if (runningTaskInfo == null) {
+                    Slog.w(TAG, "Could not get running task info for id: " + taskId);
+                    callback.complete(GameScreenshotResult.createInternalErrorResult());
+                }
+                final Rect crop = runningTaskInfo.configuration.windowConfiguration.getBounds();
+                final Consumer<Uri> completionConsumer = (uri) -> {
+                    if (uri == null) {
+                        callback.complete(GameScreenshotResult.createInternalErrorResult());
+                    } else {
+                        callback.complete(GameScreenshotResult.createSuccessResult());
+                    }
+                };
+                mScreenshotHelper.provideScreenshot(bundle, crop, Insets.NONE, taskId,
+                        mUserHandle.getIdentifier(), gameSessionRecord.getComponentName(),
+                        WindowManager.ScreenshotSource.SCREENSHOT_OTHER,
+                        BackgroundThread.getHandler(),
+                        completionConsumer);
             }
         });
+    }
+
+    private void restartGame(int taskId) {
+        String packageName;
+
+        synchronized (mLock) {
+            boolean isTaskAssociatedWithGameSession = mGameSessions.containsKey(taskId);
+            if (!isTaskAssociatedWithGameSession) {
+                return;
+            }
+
+            packageName = mGameSessions.get(taskId).getComponentName().getPackageName();
+        }
+
+        try {
+            mActivityManager.forceStopPackage(packageName, UserHandle.USER_CURRENT);
+        } catch (RemoteException e) {
+            e.rethrowFromSystemServer();
+        }
+
+        Intent launchIntent =
+                mContext.getPackageManager().getLaunchIntentForPackage(packageName);
+        mContext.startActivity(launchIntent);
     }
 }

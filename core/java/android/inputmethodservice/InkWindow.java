@@ -27,6 +27,8 @@ import android.content.Context;
 import android.os.IBinder;
 import android.util.Slog;
 import android.view.View;
+import android.view.ViewGroup;
+import android.view.ViewTreeObserver;
 import android.view.WindowManager;
 
 import com.android.internal.policy.PhoneWindow;
@@ -39,6 +41,10 @@ import com.android.internal.policy.PhoneWindow;
 final class InkWindow extends PhoneWindow {
 
     private final WindowManager mWindowManager;
+    private boolean mIsViewAdded;
+    private View mInkView;
+    private InkVisibilityListener mInkViewVisibilityListener;
+    private ViewTreeObserver.OnGlobalLayoutListener mGlobalLayoutListener;
 
     public InkWindow(@NonNull Context context) {
         super(context);
@@ -47,6 +53,7 @@ final class InkWindow extends PhoneWindow {
         final LayoutParams attrs = getAttributes();
         attrs.layoutInDisplayCutoutMode = LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
         attrs.setFitInsetsTypes(0);
+        // TODO(b/210039666): use INPUT_FEATURE_NO_INPUT_CHANNEL once b/216179339 is fixed.
         setAttributes(attrs);
         // Ink window is not touchable with finger.
         addFlags(FLAG_LAYOUT_IN_SCREEN | FLAG_LAYOUT_NO_LIMITS | FLAG_NOT_TOUCHABLE
@@ -57,16 +64,30 @@ final class InkWindow extends PhoneWindow {
     }
 
     /**
+     * Initialize InkWindow if we only want to create and draw surface but not show it.
+     */
+    void initOnly() {
+        show(true /* keepInvisible */);
+    }
+
+    /**
      * Method to show InkWindow on screen.
      * Emulates internal behavior similar to Dialog.show().
      */
     void show() {
+        show(false /* keepInvisible */);
+    }
+
+    private void show(boolean keepInvisible) {
         if (getDecorView() == null) {
             Slog.i(InputMethodService.TAG, "DecorView is not set for InkWindow. show() failed.");
             return;
         }
-        getDecorView().setVisibility(View.VISIBLE);
-        mWindowManager.addView(getDecorView(), getAttributes());
+        getDecorView().setVisibility(keepInvisible ? View.INVISIBLE : View.VISIBLE);
+        if (!mIsViewAdded) {
+            mWindowManager.addView(getDecorView(), getAttributes());
+            mIsViewAdded = true;
+        }
     }
 
     /**
@@ -78,11 +99,85 @@ final class InkWindow extends PhoneWindow {
         if (getDecorView() != null) {
             getDecorView().setVisibility(remove ? View.GONE : View.INVISIBLE);
         }
+        //TODO(b/210039666): remove window from WM after a delay. Delay amount TBD.
     }
 
     void setToken(@NonNull IBinder token) {
         WindowManager.LayoutParams lp = getAttributes();
         lp.token = token;
         setAttributes(lp);
+    }
+
+    @Override
+    public void addContentView(View view, ViewGroup.LayoutParams params) {
+        if (mInkView == null) {
+            mInkView = view;
+        } else if (mInkView != view) {
+            throw new IllegalStateException("Only one Child Inking view is permitted.");
+        }
+        super.addContentView(view, params);
+        initInkViewVisibilityListener();
+    }
+
+    @Override
+    public void setContentView(View view, ViewGroup.LayoutParams params) {
+        mInkView = view;
+        super.setContentView(view, params);
+        initInkViewVisibilityListener();
+    }
+
+    @Override
+    public void setContentView(View view) {
+        mInkView = view;
+        super.setContentView(view);
+        initInkViewVisibilityListener();
+    }
+
+    @Override
+    public void clearContentView() {
+        if (mGlobalLayoutListener != null && mInkView != null) {
+            mInkView.getViewTreeObserver().removeOnGlobalLayoutListener(mGlobalLayoutListener);
+        }
+        mGlobalLayoutListener = null;
+        mInkView = null;
+        super.clearContentView();
+    }
+
+    /**
+    * Listener used by InkWindow to time the dispatching of {@link MotionEvent}s to Ink view, once
+    * it is visible to user.
+    */
+    interface InkVisibilityListener {
+        void onInkViewVisible();
+    }
+
+    void setInkViewVisibilityListener(InkVisibilityListener listener) {
+        mInkViewVisibilityListener = listener;
+        initInkViewVisibilityListener();
+    }
+
+    void initInkViewVisibilityListener() {
+        if (mInkView == null || mInkViewVisibilityListener == null
+                || mGlobalLayoutListener != null) {
+            return;
+        }
+        mGlobalLayoutListener = new ViewTreeObserver.OnGlobalLayoutListener() {
+            @Override
+            public void onGlobalLayout() {
+                if (mInkView.isVisibleToUser()) {
+                    if (mInkViewVisibilityListener != null) {
+                        mInkViewVisibilityListener.onInkViewVisible();
+                    }
+                    mInkView.getViewTreeObserver().removeOnGlobalLayoutListener(this);
+                    mGlobalLayoutListener = null;
+                }
+            }
+        };
+        mInkView.getViewTreeObserver().addOnGlobalLayoutListener(mGlobalLayoutListener);
+    }
+
+    boolean isInkViewVisible() {
+        return getDecorView().getVisibility() == View.VISIBLE
+                && mInkView != null && mInkView.isVisibleToUser();
     }
 }

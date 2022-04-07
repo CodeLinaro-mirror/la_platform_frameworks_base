@@ -18,6 +18,7 @@ package com.android.server.companion;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.annotation.SuppressLint;
 import android.annotation.UserIdInt;
 import android.companion.AssociationInfo;
 import android.net.MacAddress;
@@ -52,9 +53,10 @@ import java.util.StringJoiner;
  * Other system component (both inside and outside if the com.android.server.companion package)
  * should use public {@link AssociationStore} interface.
  */
+@SuppressLint("LongLogTag")
 class AssociationStoreImpl implements AssociationStore {
     private static final boolean DEBUG = false;
-    private static final String TAG = "AssociationStore";
+    private static final String TAG = "CompanionDevice_AssociationStore";
 
     private final Object mLock = new Object();
 
@@ -125,7 +127,7 @@ class AssociationStoreImpl implements AssociationStore {
             // Update the MacAddress-to-List<Association> map if needed.
             final MacAddress updatedAddress = updated.getDeviceMacAddress();
             final MacAddress currentAddress = current.getDeviceMacAddress();
-            macAddressChanged = Objects.equals(currentAddress, updatedAddress);
+            macAddressChanged = !Objects.equals(currentAddress, updatedAddress);
             if (macAddressChanged) {
                 if (currentAddress != null) {
                     mAddressMap.get(currentAddress).remove(id);
@@ -169,12 +171,20 @@ class AssociationStoreImpl implements AssociationStore {
         broadcastChange(CHANGE_TYPE_REMOVED, association);
     }
 
+    /**
+     * @return a "snapshot" of the current state of the existing associations.
+     */
     public @NonNull Collection<AssociationInfo> getAssociations() {
-        final Collection<AssociationInfo> allAssociations;
         synchronized (mLock) {
-            allAssociations = mIdMap.values();
+            // IMPORTANT: make and return a COPY of the mIdMap.values(), NOT a "direct" reference.
+            // The HashMap.values() returns a collection which is backed by the HashMap, so changes
+            // to the HashMap are reflected in this collection.
+            // For us this means that if mIdMap is modified while the iteration over mIdMap.values()
+            // is in progress it may lead to "undefined results" (according to the HashMap's
+            // documentation) or cause ConcurrentModificationExceptions in the iterator (according
+            // to the bugreports...).
+            return List.copyOf(mIdMap.values());
         }
-        return Collections.unmodifiableCollection(allAssociations);
     }
 
     public @NonNull List<AssociationInfo> getAssociationsForUser(@UserIdInt int userId) {

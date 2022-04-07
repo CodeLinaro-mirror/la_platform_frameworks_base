@@ -83,6 +83,7 @@ import com.android.internal.widget.LockPatternUtils;
 import com.android.server.ServiceThread;
 import com.android.server.SystemService;
 import com.android.server.biometrics.Utils;
+import com.android.server.biometrics.log.BiometricContext;
 import com.android.server.biometrics.sensors.ClientMonitorCallbackConverter;
 import com.android.server.biometrics.sensors.LockoutResetDispatcher;
 import com.android.server.biometrics.sensors.LockoutTracker;
@@ -815,7 +816,8 @@ public class FingerprintService extends SystemService {
                         UserHandle.USER_CURRENT) != 0) {
                     fingerprint21 = Fingerprint21UdfpsMock.newInstance(getContext(),
                             mFingerprintStateCallback, hidlSensor,
-                            mLockoutResetDispatcher, mGestureAvailabilityDispatcher);
+                            mLockoutResetDispatcher, mGestureAvailabilityDispatcher,
+                            BiometricContext.getInstance(getContext()));
                 } else {
                     fingerprint21 = Fingerprint21.newInstance(getContext(),
                             mFingerprintStateCallback, hidlSensor, mHandler,
@@ -843,7 +845,8 @@ public class FingerprintService extends SystemService {
                     final FingerprintProvider provider =
                             new FingerprintProvider(getContext(), mFingerprintStateCallback, props,
                                     instance, mLockoutResetDispatcher,
-                                    mGestureAvailabilityDispatcher);
+                                    mGestureAvailabilityDispatcher,
+                                    BiometricContext.getInstance(getContext()));
                     mServiceProviders.add(provider);
                 } catch (RemoteException e) {
                     Slog.e(TAG, "Remote exception in getSensorProps: " + fqName);
@@ -925,7 +928,8 @@ public class FingerprintService extends SystemService {
         }
 
         @Override
-        public void onPointerDown(int sensorId, int x, int y, float minor, float major) {
+        public void onPointerDown(long requestId, int sensorId, int x, int y,
+                float minor, float major) {
             Utils.checkPermission(getContext(), USE_BIOMETRIC_INTERNAL);
 
             final ServiceProvider provider = getProviderForSensor(sensorId);
@@ -933,11 +937,11 @@ public class FingerprintService extends SystemService {
                 Slog.w(TAG, "No matching provider for onFingerDown, sensorId: " + sensorId);
                 return;
             }
-            provider.onPointerDown(sensorId, x, y, minor, major);
+            provider.onPointerDown(requestId, sensorId, x, y, minor, major);
         }
 
         @Override
-        public void onPointerUp(int sensorId) {
+        public void onPointerUp(long requestId, int sensorId) {
             Utils.checkPermission(getContext(), USE_BIOMETRIC_INTERNAL);
 
             final ServiceProvider provider = getProviderForSensor(sensorId);
@@ -945,11 +949,11 @@ public class FingerprintService extends SystemService {
                 Slog.w(TAG, "No matching provider for onFingerUp, sensorId: " + sensorId);
                 return;
             }
-            provider.onPointerUp(sensorId);
+            provider.onPointerUp(requestId, sensorId);
         }
 
         @Override
-        public void onUiReady(int sensorId) {
+        public void onUiReady(long requestId, int sensorId) {
             Utils.checkPermission(getContext(), USE_BIOMETRIC_INTERNAL);
 
             final ServiceProvider provider = getProviderForSensor(sensorId);
@@ -957,7 +961,7 @@ public class FingerprintService extends SystemService {
                 Slog.w(TAG, "No matching provider for onUiReady, sensorId: " + sensorId);
                 return;
             }
-            provider.onUiReady(sensorId);
+            provider.onUiReady(requestId, sensorId);
         }
 
         @Override

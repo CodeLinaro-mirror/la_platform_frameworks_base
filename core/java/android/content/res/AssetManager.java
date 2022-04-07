@@ -43,6 +43,7 @@ import java.io.FileDescriptor;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.PrintWriter;
 import java.lang.ref.Reference;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -76,6 +77,13 @@ public final class AssetManager implements AutoCloseable {
 
     @GuardedBy("sSync") private static ApkAssets[] sSystemApkAssets = new ApkAssets[0];
     @GuardedBy("sSync") private static ArraySet<ApkAssets> sSystemApkAssetsSet;
+
+    /**
+     * Cookie value to use when the actual cookie is unknown. This value tells the system to search
+     * all the ApkAssets for the asset.
+     * @hide
+     */
+    public static final int COOKIE_UNKNOWN = -1;
 
     /**
      * Mode for {@link #open(String, int)}: no specific information about how
@@ -1528,6 +1536,15 @@ public final class AssetManager implements AutoCloseable {
             nativeDestroy(mObject);
             mObject = 0;
             mApkAssets = sEmptyApkAssets;
+        }
+    }
+
+    synchronized void dump(PrintWriter pw, String prefix) {
+        pw.println(prefix + "class=" + getClass());
+        pw.println(prefix + "apkAssets=");
+        for (int i = 0; i < mApkAssets.length; i++) {
+            pw.println(prefix + i);
+            mApkAssets[i].dump(pw, prefix + "  ");
         }
     }
 

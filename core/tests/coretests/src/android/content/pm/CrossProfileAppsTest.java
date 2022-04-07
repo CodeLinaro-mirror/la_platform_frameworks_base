@@ -27,6 +27,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import android.app.admin.DevicePolicyManager;
+import android.app.admin.DevicePolicyResourcesManager;
 import android.content.Context;
 import android.content.res.Resources;
 import android.graphics.drawable.Drawable;
@@ -66,11 +67,15 @@ public class CrossProfileAppsTest {
     @Mock
     private DevicePolicyManager mDevicePolicyManager;
     @Mock
+    private DevicePolicyResourcesManager mDevicePolicyResourcesManager;
+    @Mock
     private ICrossProfileApps mService;
     @Mock
     private Resources mResources;
     @Mock(answer = Answers.RETURNS_DEEP_STUBS)
     private Drawable mDrawable;
+    @Mock
+    private PackageManager mPackageManager;
     private CrossProfileApps mCrossProfileApps;
 
     @Before
@@ -87,6 +92,8 @@ public class CrossProfileAppsTest {
                 Context.DEVICE_POLICY_SERVICE);
         when(mContext.getSystemService(Context.DEVICE_POLICY_SERVICE)).thenReturn(
                 mDevicePolicyManager);
+        when(mDevicePolicyManager.getResources()).thenReturn(mDevicePolicyResourcesManager);
+        when(mContext.getPackageManager()).thenReturn(mPackageManager);
     }
 
     @Before
@@ -110,7 +117,7 @@ public class CrossProfileAppsTest {
         setValidTargetProfile(MANAGED_PROFILE);
 
         mCrossProfileApps.getProfileSwitchingLabel(MANAGED_PROFILE);
-        verify(mDevicePolicyManager).getString(eq(SWITCH_TO_WORK_LABEL), any());
+        verify(mDevicePolicyResourcesManager).getString(eq(SWITCH_TO_WORK_LABEL), any());
     }
 
     @Test
@@ -118,7 +125,7 @@ public class CrossProfileAppsTest {
         setValidTargetProfile(PERSONAL_PROFILE);
 
         mCrossProfileApps.getProfileSwitchingLabel(PERSONAL_PROFILE);
-        verify(mDevicePolicyManager).getString(eq(SWITCH_TO_PERSONAL_LABEL), any());
+        verify(mDevicePolicyResourcesManager).getString(eq(SWITCH_TO_PERSONAL_LABEL), any());
     }
 
     @Test(expected = SecurityException.class)
@@ -131,7 +138,8 @@ public class CrossProfileAppsTest {
         setValidTargetProfile(MANAGED_PROFILE);
 
         mCrossProfileApps.getProfileSwitchingIconDrawable(MANAGED_PROFILE);
-        verify(mResources).getDrawable(R.drawable.ic_corp_badge, null);
+        verify(mPackageManager).getUserBadgeForDensityNoBackground(
+                MANAGED_PROFILE, /* density= */0);
     }
 
     @Test

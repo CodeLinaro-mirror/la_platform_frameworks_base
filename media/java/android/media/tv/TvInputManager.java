@@ -369,21 +369,13 @@ public final class TvInputManager {
             BROADCAST_INFO_TYPE_COMMAND, BROADCAST_INFO_TYPE_TIMELINE})
     public @interface BroadcastInfoType {}
 
-    /** @hide */
     public static final int BROADCAST_INFO_TYPE_TS = 1;
-    /** @hide */
     public static final int BROADCAST_INFO_TYPE_TABLE = 2;
-    /** @hide */
     public static final int BROADCAST_INFO_TYPE_SECTION = 3;
-    /** @hide */
     public static final int BROADCAST_INFO_TYPE_PES = 4;
-    /** @hide */
     public static final int BROADCAST_INFO_STREAM_EVENT = 5;
-    /** @hide */
     public static final int BROADCAST_INFO_TYPE_DSMCC = 6;
-    /** @hide */
     public static final int BROADCAST_INFO_TYPE_COMMAND = 7;
-    /** @hide */
     public static final int BROADCAST_INFO_TYPE_TIMELINE = 8;
 
     /** @hide */
@@ -394,17 +386,14 @@ public final class TvInputManager {
 
     /**
      * Signal lost.
-     * @hide
      */
     public static final int SIGNAL_STRENGTH_LOST = 1;
     /**
      * Weak signal.
-     * @hide
      */
     public static final int SIGNAL_STRENGTH_WEAK = 2;
     /**
      * Strong signal.
-     * @hide
      */
     public static final int SIGNAL_STRENGTH_STRONG = 3;
 
@@ -691,7 +680,7 @@ public final class TvInputManager {
          * @param session A {@link TvInputManager.Session} associated with this callback.
          * @param strength The current signal strength.
          */
-        public void onSignalStrength(Session session, @SignalStrength int strength) {
+        public void onSignalStrengthUpdated(Session session, @SignalStrength int strength) {
         }
 
         /**
@@ -909,7 +898,7 @@ public final class TvInputManager {
             mHandler.post(new Runnable() {
                 @Override
                 public void run() {
-                    mSessionCallback.onSignalStrength(mSession, strength);
+                    mSessionCallback.onSignalStrengthUpdated(mSession, strength);
                     if (mSession.mIAppNotificationEnabled
                             && mSession.getInteractiveAppSession() != null) {
                         mSession.getInteractiveAppSession().notifySignalStrength(strength);
@@ -1595,6 +1584,7 @@ public final class TvInputManager {
      * @hide
      */
     @SystemApi
+    @RequiresPermission(android.Manifest.permission.TIS_EXTENSION_INTERFACE)
     @NonNull
     public List<String> getAvailableExtensionInterfaceNames(@NonNull String inputId) {
         Preconditions.checkNotNull(inputId);
@@ -1620,6 +1610,7 @@ public final class TvInputManager {
      * @hide
      */
     @SystemApi
+    @RequiresPermission(android.Manifest.permission.TIS_EXTENSION_INTERFACE)
     @Nullable
     public IBinder getExtensionInterface(@NonNull String inputId, @NonNull String name) {
         Preconditions.checkNotNull(inputId);
@@ -1862,6 +1853,7 @@ public final class TvInputManager {
      *
      * @hide
      */
+    @SystemApi
     @RequiresPermission(android.Manifest.permission.TUNER_RESOURCE_ACCESS)
     public int getClientPid(@NonNull String sessionId) {
         return getClientPidInternal(sessionId);
@@ -1871,12 +1863,9 @@ public final class TvInputManager {
      * Returns a priority for the given use case type and the client's foreground or background
      * status.
      *
-     * @param useCase the use case type of the client. When the given use case type is invalid,
-     *        the default use case type will be used. {@see TvInputService#PriorityHintUseCaseType}.
-     * @param sessionId the unique id of the session owned by the client. When {@code null},
-     *        the caller will be used as a client. When the session is invalid, background status
-     *        will be used as a client's status. Otherwise, TV app corresponding to the given
-     *        session id will be used as a client.
+     * @param useCase the use case type of the client.
+     *        {@see TvInputService#PriorityHintUseCaseType}.
+     * @param sessionId the unique id of the session owned by the client.
      *        {@see TvInputService#onCreateSession(String, String)}.
      *
      * @return the use case priority value for the given use case type and the client's foreground
@@ -1885,11 +1874,36 @@ public final class TvInputManager {
      * @hide
      */
     @SystemApi
+    @RequiresPermission(android.Manifest.permission.TUNER_RESOURCE_ACCESS)
     public int getClientPriority(@TvInputService.PriorityHintUseCaseType int useCase,
-            @Nullable String sessionId) {
+            @NonNull String sessionId) {
+        Preconditions.checkNotNull(sessionId);
+        if (!isValidUseCase(useCase)) {
+            throw new IllegalArgumentException("Invalid use case: " + useCase);
+        }
         return getClientPriorityInternal(useCase, sessionId);
     };
 
+    /**
+     * Returns a priority for the given use case type and the caller's foreground or background
+     * status.
+     *
+     * @param useCase the use case type of the caller.
+     *        {@see TvInputService#PriorityHintUseCaseType}.
+     *
+     * @return the use case priority value for the given use case type and the caller's foreground
+     *         or background status.
+     *
+     * @hide
+     */
+    @SystemApi
+    @RequiresPermission(android.Manifest.permission.TUNER_RESOURCE_ACCESS)
+    public int getClientPriority(@TvInputService.PriorityHintUseCaseType int useCase) {
+        if (!isValidUseCase(useCase)) {
+            throw new IllegalArgumentException("Invalid use case: " + useCase);
+        }
+        return getClientPriorityInternal(useCase, null);
+    };
     /**
      * Creates a recording {@link Session} for a given TV input.
      *
@@ -1940,6 +1954,14 @@ public final class TvInputManager {
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
+    }
+
+    private boolean isValidUseCase(int useCase) {
+        return useCase == TvInputService.PRIORITY_HINT_USE_CASE_TYPE_BACKGROUND
+            || useCase == TvInputService.PRIORITY_HINT_USE_CASE_TYPE_SCAN
+            || useCase == TvInputService.PRIORITY_HINT_USE_CASE_TYPE_PLAYBACK
+            || useCase == TvInputService.PRIORITY_HINT_USE_CASE_TYPE_LIVE
+            || useCase == TvInputService.PRIORITY_HINT_USE_CASE_TYPE_RECORD;
     }
 
     /**

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021 The Android Open Source Project
+ * Copyright 2021 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -46,6 +46,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewRootImpl;
 
+import java.security.KeyStore;
 import java.util.List;
 import java.util.concurrent.Executor;
 
@@ -60,6 +61,41 @@ public class TvInteractiveAppView extends ViewGroup {
     private static final int SET_TVVIEW_FAIL = 2;
     private static final int UNSET_TVVIEW_SUCCESS = 3;
     private static final int UNSET_TVVIEW_FAIL = 4;
+
+    /**
+     * Used to share client {@link java.security.cert.Certificate} with
+     * {@link TvInteractiveAppService}.
+     * @see #createBiInteractiveApp(Uri, Bundle)
+     * @see java.security.cert.Certificate
+     */
+    public static final String BI_INTERACTIVE_APP_KEY_CERTIFICATE = "certificate";
+    /**
+     * Used to share the {@link KeyStore} alias with {@link TvInteractiveAppService}.
+     * @see #createBiInteractiveApp(Uri, Bundle)
+     * @see KeyStore#aliases()
+     */
+    public static final String BI_INTERACTIVE_APP_KEY_ALIAS = "alias";
+    /**
+     * Used to share the {@link java.security.PrivateKey} with {@link TvInteractiveAppService}.
+     * <p>The private key is optional. It is used to encrypt data when necessary.
+     *
+     * @see #createBiInteractiveApp(Uri, Bundle)
+     * @see java.security.PrivateKey
+     */
+    public static final String BI_INTERACTIVE_APP_KEY_PRIVATE_KEY = "private_key";
+    /**
+     * Additional HTTP headers to be used by {@link TvInteractiveAppService} to load the
+     * broadcast-independent interactive application.
+     * @see #createBiInteractiveApp(Uri, Bundle)
+     */
+    public static final String BI_INTERACTIVE_APP_KEY_HTTP_ADDITIONAL_HEADERS =
+            "http_additional_headers";
+    /**
+     * HTTP user agent to be used by {@link TvInteractiveAppService} for broadcast-independent
+     * interactive application.
+     * @see #createBiInteractiveApp(Uri, Bundle)
+     */
+    public static final String BI_INTERACTIVE_APP_KEY_HTTP_USER_AGENT = "http_user_agent";
 
     private final TvInteractiveAppManager mTvInteractiveAppManager;
     private final Handler mHandler = new Handler();
@@ -148,12 +184,14 @@ public class TvInteractiveAppView extends ViewGroup {
     /**
      * Sets the callback to be invoked when an event is dispatched to this TvInteractiveAppView.
      *
-     * @param callback The callback to receive events. A value of {@code null} removes the existing
-     *                 callback.
+     * @param callback the callback to receive events. MUST NOT be {@code null}.
+     *
+     * @see #clearCallback()
      */
     public void setCallback(
             @NonNull @CallbackExecutor Executor executor,
             @NonNull TvInteractiveAppCallback callback) {
+        com.android.internal.util.AnnotationValidations.validate(NonNull.class, null, callback);
         synchronized (mCallbackLock) {
             mCallbackExecutor = executor;
             mCallback = callback;
@@ -162,6 +200,8 @@ public class TvInteractiveAppView extends ViewGroup {
 
     /**
      * Clears the callback.
+     *
+     * @see #setCallback(Executor, TvInteractiveAppCallback)
      */
     public void clearCallback() {
         synchronized (mCallbackLock) {
@@ -170,23 +210,20 @@ public class TvInteractiveAppView extends ViewGroup {
         }
     }
 
-    /** @hide */
     @Override
-    protected void onAttachedToWindow() {
+    public void onAttachedToWindow() {
         super.onAttachedToWindow();
         createSessionMediaView();
     }
 
-    /** @hide */
     @Override
-    protected void onDetachedFromWindow() {
+    public void onDetachedFromWindow() {
         removeSessionMediaView();
         super.onDetachedFromWindow();
     }
 
-    /** @hide */
     @Override
-    protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
+    public void onLayout(boolean changed, int left, int top, int right, int bottom) {
         if (DEBUG) {
             Log.d(TAG, "onLayout (left=" + left + ", top=" + top + ", right=" + right
                     + ", bottom=" + bottom + ",)");
@@ -199,9 +236,8 @@ public class TvInteractiveAppView extends ViewGroup {
         }
     }
 
-    /** @hide */
     @Override
-    protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+    public void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
         mSurfaceView.measure(widthMeasureSpec, heightMeasureSpec);
         int width = mSurfaceView.getMeasuredWidth();
         int height = mSurfaceView.getMeasuredHeight();
@@ -211,9 +247,8 @@ public class TvInteractiveAppView extends ViewGroup {
                         childState << MEASURED_HEIGHT_STATE_SHIFT));
     }
 
-    /** @hide */
     @Override
-    protected void onVisibilityChanged(View changedView, int visibility) {
+    public void onVisibilityChanged(@NonNull View changedView, int visibility) {
         super.onVisibilityChanged(changedView, visibility);
         mSurfaceView.setVisibility(visibility);
         if (visibility == View.VISIBLE) {
@@ -243,8 +278,9 @@ public class TvInteractiveAppView extends ViewGroup {
     }
 
     /**
-     * Resets this TvInteractiveAppView.
-     * @hide
+     * Resets this TvInteractiveAppView to release its resources.
+     *
+     * <p>It can be reused by call {@link #prepareInteractiveApp(String, int)}.
      */
     public void reset() {
         if (DEBUG) Log.d(TAG, "reset()");
@@ -330,7 +366,11 @@ public class TvInteractiveAppView extends ViewGroup {
 
     /**
      * Dispatches an unhandled input event to the next receiver.
-     * @hide
+     *
+     * It gives the host application a chance to dispatch the unhandled input events.
+     *
+     * @param event The input event.
+     * @return {@code true} if the event was handled by the view, {@code false} otherwise.
      */
     public boolean dispatchUnhandledInputEvent(@NonNull InputEvent event) {
         if (mOnUnhandledInputEventListener != null) {
@@ -349,21 +389,41 @@ public class TvInteractiveAppView extends ViewGroup {
      * @param event The input event.
      * @return If you handled the event, return {@code true}. If you want to allow the event to be
      *         handled by the next receiver, return {@code false}.
-     * @hide
      */
     public boolean onUnhandledInputEvent(@NonNull InputEvent event) {
         return false;
     }
 
     /**
-     * Registers a callback to be invoked when an input event is not handled
+     * Sets a listener to be invoked when an input event is not handled
      * by the TV Interactive App.
      *
      * @param listener The callback to be invoked when the unhandled input event is received.
-     * @hide
      */
-    public void setOnUnhandledInputEventListener(@NonNull OnUnhandledInputEventListener listener) {
+    public void setOnUnhandledInputEventListener(
+            @NonNull @CallbackExecutor Executor executor,
+            @NonNull OnUnhandledInputEventListener listener) {
         mOnUnhandledInputEventListener = listener;
+        // TODO: handle CallbackExecutor
+    }
+
+    /**
+     * Gets the {@link OnUnhandledInputEventListener}.
+     * <p>Returns {@code null} if the listener is not set or is cleared.
+     *
+     * @see #setOnUnhandledInputEventListener(Executor, OnUnhandledInputEventListener)
+     * @see #clearOnUnhandledInputEventListener()
+     */
+    @Nullable
+    public OnUnhandledInputEventListener getOnUnhandledInputEventListener() {
+        return mOnUnhandledInputEventListener;
+    }
+
+    /**
+     * Clears the {@link OnUnhandledInputEventListener}.
+     */
+    public void clearOnUnhandledInputEventListener() {
+        mOnUnhandledInputEventListener = null;
     }
 
     @Override
@@ -381,16 +441,17 @@ public class TvInteractiveAppView extends ViewGroup {
     }
 
     /**
-     * Prepares the interactive application.
+     * Prepares the interactive application runtime environment of corresponding
+     * {@link TvInteractiveAppService}.
      *
      * @param iAppServiceId the interactive app service ID, which can be found in
-     *                      {@link TvInteractiveAppInfo#getId()}.
+     *                      {@link TvInteractiveAppServiceInfo#getId()}.
      *
      * @see android.media.tv.interactive.TvInteractiveAppManager#getTvInteractiveAppServiceList()
      */
     public void prepareInteractiveApp(
             @NonNull String iAppServiceId,
-            @TvInteractiveAppInfo.InteractiveAppType int type) {
+            @TvInteractiveAppServiceInfo.InteractiveAppType int type) {
         // TODO: document and handle the cases that this method is called multiple times.
         if (DEBUG) {
             Log.d(TAG, "prepareInteractiveApp");
@@ -427,7 +488,8 @@ public class TvInteractiveAppView extends ViewGroup {
 
     /**
      * Resets the interactive application.
-     * @hide
+     *
+     * <p>This releases the resources of the corresponding {@link TvInteractiveAppService.Session}.
      */
     public void resetInteractiveApp() {
         if (DEBUG) {
@@ -440,9 +502,11 @@ public class TvInteractiveAppView extends ViewGroup {
 
     /**
      * Sends current channel URI to related TV interactive app.
-     * @hide
+     *
+     * @param channelUri The current channel URI; {@code null} if there is no currently tuned
+     *                   channel.
      */
-    public void sendCurrentChannelUri(Uri channelUri) {
+    public void sendCurrentChannelUri(@Nullable Uri channelUri) {
         if (DEBUG) {
             Log.d(TAG, "sendCurrentChannelUri");
         }
@@ -453,7 +517,6 @@ public class TvInteractiveAppView extends ViewGroup {
 
     /**
      * Sends current channel logical channel number (LCN) to related TV interactive app.
-     * @hide
      */
     public void sendCurrentChannelLcn(int lcn) {
         if (DEBUG) {
@@ -466,7 +529,8 @@ public class TvInteractiveAppView extends ViewGroup {
 
     /**
      * Sends stream volume to related TV interactive app.
-     * @hide
+     *
+     * @param volume a volume value between {@code 0.0f} and {@code 1.0f}, inclusive.
      */
     public void sendStreamVolume(float volume) {
         if (DEBUG) {
@@ -479,9 +543,8 @@ public class TvInteractiveAppView extends ViewGroup {
 
     /**
      * Sends track info list to related TV interactive app.
-     * @hide
      */
-    public void sendTrackInfoList(List<TvTrackInfo> tracks) {
+    public void sendTrackInfoList(@Nullable List<TvTrackInfo> tracks) {
         if (DEBUG) {
             Log.d(TAG, "sendTrackInfoList");
         }
@@ -496,7 +559,6 @@ public class TvInteractiveAppView extends ViewGroup {
      * @param inputId The current TV input ID whose channel is tuned. {@code null} if no channel is
      *                tuned.
      * @see android.media.tv.TvInputInfo
-     * @hide
      */
     public void sendCurrentTvInputId(@Nullable String inputId) {
         if (DEBUG) {
@@ -504,6 +566,27 @@ public class TvInteractiveAppView extends ViewGroup {
         }
         if (mSession != null) {
             mSession.sendCurrentTvInputId(inputId);
+        }
+    }
+
+    /**
+     * Sends signing result to related TV interactive app.
+     *
+     * <p>This is used when the corresponding server of the broadcast-independent interactive
+     * app requires signing during handshaking, and the interactive app service doesn't have
+     * the built-in private key. The private key is provided by the content providers and
+     * pre-built in the related app, such as TV app.
+     *
+     * @param signingId the ID to identify the request. It's the same as the corresponding ID in
+     *        {@link TvInteractiveAppService.Session#requestSigning(String, String, String, byte[])}
+     * @param result the signed result.
+     */
+    public void sendSigningResult(@NonNull String signingId, @NonNull byte[] result) {
+        if (DEBUG) {
+            Log.d(TAG, "sendSigningResult");
+        }
+        if (mSession != null) {
+            mSession.sendSigningResult(signingId, result);
         }
     }
 
@@ -525,7 +608,14 @@ public class TvInteractiveAppView extends ViewGroup {
      * <p>{@link TvInteractiveAppCallback#onBiInteractiveAppCreated(String, Uri, String)} will be
      * called for the result.
      *
+     * @param biIAppUri URI associated this BI interactive app.
+     * @param params optional parameters for broadcast-independent interactive application, such as
+     *               {@link #BI_INTERACTIVE_APP_KEY_CERTIFICATE}.
+     *
      * @see TvInteractiveAppCallback#onBiInteractiveAppCreated(String, Uri, String)
+     * @see #BI_INTERACTIVE_APP_KEY_CERTIFICATE
+     * @see #BI_INTERACTIVE_APP_KEY_HTTP_ADDITIONAL_HEADERS
+     * @see #BI_INTERACTIVE_APP_KEY_HTTP_USER_AGENT
      */
     public void createBiInteractiveApp(@NonNull Uri biIAppUri, @Nullable Bundle params) {
         if (DEBUG) {
@@ -588,8 +678,11 @@ public class TvInteractiveAppView extends ViewGroup {
 
     /**
      * To toggle Digital Teletext Application if there is one in AIT app list.
-     * @param enable
-     * @hide
+     *
+     * <p>A Teletext Application is a broadcast-related application to display text and basic
+     * graphics.
+     *
+     * @param enable {@code true} to enable Teletext app; {@code false} to disable it.
      */
     public void setTeletextAppEnabled(boolean enable) {
         if (DEBUG) {
@@ -607,17 +700,17 @@ public class TvInteractiveAppView extends ViewGroup {
         // TODO: unhide the following public APIs
 
         /**
-         * This is called when a command is requested to be processed by the related TV input.
+         * This is called when a playback command is requested to be processed by the related TV
+         * input.
          *
          * @param iAppServiceId The ID of the TV interactive app service bound to this view.
          * @param cmdType type of the command
          * @param parameters parameters of the command
-         * @hide
          */
-        public void onCommandRequest(
+        public void onPlaybackCommandRequest(
                 @NonNull String iAppServiceId,
-                @NonNull @TvInteractiveAppService.InteractiveAppServiceCommandType String cmdType,
-                @Nullable Bundle parameters) {
+                @NonNull @TvInteractiveAppService.PlaybackCommandType String cmdType,
+                @NonNull Bundle parameters) {
         }
 
         /**
@@ -656,7 +749,6 @@ public class TvInteractiveAppView extends ViewGroup {
          *
          * @param iAppServiceId The ID of the TV interactive app service bound to this view.
          * @param state digital teletext app current state.
-         * @hide
          */
         public void onTeletextAppStateChanged(
                 @NonNull String iAppServiceId,
@@ -664,68 +756,79 @@ public class TvInteractiveAppView extends ViewGroup {
         }
 
         /**
-         * This is called when {@link TvInteractiveAppService.Session#SetVideoBounds} is called.
+         * This is called when {@link TvInteractiveAppService.Session#setVideoBounds(Rect)} is
+         * called.
          *
          * @param iAppServiceId The ID of the TV interactive app service bound to this view.
-         * @hide
          */
         public void onSetVideoBounds(@NonNull String iAppServiceId, @NonNull Rect rect) {
         }
 
         /**
-         * This is called when {@link TvInteractiveAppService.Session#RequestCurrentChannelUri} is
+         * This is called when {@link TvInteractiveAppService.Session#requestCurrentChannelUri()} is
          * called.
          *
          * @param iAppServiceId The ID of the TV interactive app service bound to this view.
-         * @hide
          */
         public void onRequestCurrentChannelUri(@NonNull String iAppServiceId) {
         }
 
         /**
-         * This is called when {@link TvInteractiveAppService.Session#RequestCurrentChannelLcn} is
+         * This is called when {@link TvInteractiveAppService.Session#requestCurrentChannelLcn()} is
          * called.
          *
          * @param iAppServiceId The ID of the TV interactive app service bound to this view.
-         * @hide
          */
         public void onRequestCurrentChannelLcn(@NonNull String iAppServiceId) {
         }
 
         /**
-         * This is called when {@link TvInteractiveAppService.Session#RequestStreamVolume} is
+         * This is called when {@link TvInteractiveAppService.Session#requestStreamVolume()} is
          * called.
          *
          * @param iAppServiceId The ID of the TV interactive app service bound to this view.
-         * @hide
          */
         public void onRequestStreamVolume(@NonNull String iAppServiceId) {
         }
 
         /**
-         * This is called when {@link TvInteractiveAppService.Session#RequestTrackInfoList} is
+         * This is called when {@link TvInteractiveAppService.Session#requestTrackInfoList()} is
          * called.
          *
          * @param iAppServiceId The ID of the TV interactive app service bound to this view.
-         * @hide
          */
         public void onRequestTrackInfoList(@NonNull String iAppServiceId) {
         }
 
         /**
-         * This is called when {@link TvIAppService.Session#RequestCurrentTvInputId} is called.
+         * This is called when {@link TvInteractiveAppService.Session#requestCurrentTvInputId()} is
+         * called.
          *
          * @param iAppServiceId The ID of the TV interactive app service bound to this view.
-         * @hide
          */
         public void onRequestCurrentTvInputId(@NonNull String iAppServiceId) {
+        }
+
+        /**
+         * This is called when
+         * {@link TvInteractiveAppService.Session#requestSigning(String, String, String, byte[])} is
+         * called.
+         *
+         * @param iAppServiceId The ID of the TV interactive app service bound to this view.
+         * @param signingId the ID to identify the request.
+         * @param algorithm the standard name of the signature algorithm requested, such as
+         *                  MD5withRSA, SHA256withDSA, etc.
+         * @param alias the alias of the corresponding {@link java.security.KeyStore}.
+         * @param data the original bytes to be signed.
+         */
+        public void onRequestSigning(@NonNull String iAppServiceId, @NonNull String signingId,
+                @NonNull String algorithm, @NonNull String alias, @NonNull byte[] data) {
         }
 
     }
 
     /**
      * Interface definition for a callback to be invoked when the unhandled input event is received.
-     * @hide
      */
     public interface OnUnhandledInputEventListener {
         /**
@@ -818,7 +921,7 @@ public class TvInteractiveAppView extends ViewGroup {
         @Override
         public void onCommandRequest(
                 Session session,
-                @TvInteractiveAppService.InteractiveAppServiceCommandType String cmdType,
+                @TvInteractiveAppService.PlaybackCommandType String cmdType,
                 Bundle parameters) {
             if (DEBUG) {
                 Log.d(TAG, "onCommandRequest (cmdType=" + cmdType + ", parameters="
@@ -833,7 +936,8 @@ public class TvInteractiveAppView extends ViewGroup {
                     mCallbackExecutor.execute(() -> {
                         synchronized (mCallbackLock) {
                             if (mCallback != null) {
-                                mCallback.onCommandRequest(mIAppServiceId, cmdType, parameters);
+                                mCallback.onPlaybackCommandRequest(
+                                        mIAppServiceId, cmdType, parameters);
                             }
                         }
                     });
@@ -1025,6 +1129,21 @@ public class TvInteractiveAppView extends ViewGroup {
             }
             if (mCallback != null) {
                 mCallback.onRequestCurrentTvInputId(mIAppServiceId);
+            }
+        }
+
+        @Override
+        public void onRequestSigning(
+                Session session, String id, String algorithm, String alias, byte[] data) {
+            if (DEBUG) {
+                Log.d(TAG, "onRequestSigning");
+            }
+            if (this != mSessionCallback) {
+                Log.w(TAG, "onRequestSigning - session not created");
+                return;
+            }
+            if (mCallback != null) {
+                mCallback.onRequestSigning(mIAppServiceId, id, algorithm, alias, data);
             }
         }
     }

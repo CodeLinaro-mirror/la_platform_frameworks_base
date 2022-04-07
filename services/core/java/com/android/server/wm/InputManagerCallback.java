@@ -24,6 +24,7 @@ import static com.android.server.wm.WindowManagerDebugConfig.TAG_WM;
 import static com.android.server.wm.WindowManagerService.H.ON_POINTER_DOWN_OUTSIDE_FOCUS;
 
 import android.annotation.NonNull;
+import android.annotation.Nullable;
 import android.graphics.PointF;
 import android.os.Debug;
 import android.os.IBinder;
@@ -38,6 +39,7 @@ import com.android.internal.util.function.pooled.PooledLambda;
 import com.android.server.input.InputManagerService;
 
 import java.io.PrintWriter;
+import java.util.OptionalInt;
 
 final class InputManagerCallback implements InputManagerService.WindowManagerCallbacks {
     private static final String TAG = TAG_WITH_CLASS_NAME ? "InputManagerCallback" : TAG_WM;
@@ -97,23 +99,14 @@ final class InputManagerCallback implements InputManagerService.WindowManagerCal
     }
 
     @Override
-    public void notifyGestureMonitorUnresponsive(int pid, @NonNull String reason) {
-        mService.mAnrController.notifyGestureMonitorUnresponsive(pid, reason);
+    public void notifyWindowUnresponsive(@NonNull IBinder token, @NonNull OptionalInt pid,
+            @NonNull String reason) {
+        mService.mAnrController.notifyWindowUnresponsive(token, pid, reason);
     }
 
     @Override
-    public void notifyWindowUnresponsive(@NonNull IBinder token, String reason) {
-        mService.mAnrController.notifyWindowUnresponsive(token, reason);
-    }
-
-    @Override
-    public void notifyGestureMonitorResponsive(int pid) {
-        mService.mAnrController.notifyGestureMonitorResponsive(pid);
-    }
-
-    @Override
-    public void notifyWindowResponsive(@NonNull IBinder token) {
-        mService.mAnrController.notifyWindowResponsive(token);
+    public void notifyWindowResponsive(@NonNull IBinder token, @NonNull OptionalInt pid) {
+        mService.mAnrController.notifyWindowResponsive(token, pid);
     }
 
     /** Notifies that the input device configuration has changed. */
@@ -251,6 +244,25 @@ final class InputManagerCallback implements InputManagerService.WindowManagerCal
                 return null;
             }
             return dc.getOverlayLayer();
+        }
+    }
+
+    @Override
+    @Nullable
+    public SurfaceControl createSurfaceForGestureMonitor(String name, int displayId) {
+        synchronized (mService.mGlobalLock) {
+            final DisplayContent dc = mService.mRoot.getDisplayContent(displayId);
+            if (dc == null) {
+                Slog.e(TAG, "Failed to create a gesture monitor on display: " + displayId
+                        + " - DisplayContent not found.");
+                return null;
+            }
+            return mService.makeSurfaceBuilder(dc.getSession())
+                    .setContainerLayer()
+                    .setName(name)
+                    .setCallsite("createSurfaceForGestureMonitor")
+                    .setParent(dc.getSurfaceControl())
+                    .build();
         }
     }
 

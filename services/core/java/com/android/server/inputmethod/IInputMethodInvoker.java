@@ -32,6 +32,7 @@ import android.view.inputmethod.InputBinding;
 import android.view.inputmethod.InputMethodSubtype;
 
 import com.android.internal.inputmethod.IInputMethodPrivilegedOperations;
+import com.android.internal.inputmethod.InputMethodNavButtonFlags;
 import com.android.internal.view.IInlineSuggestionsRequestCallback;
 import com.android.internal.view.IInputContext;
 import com.android.internal.view.IInputMethod;
@@ -107,9 +108,11 @@ final class IInputMethodInvoker {
 
     @AnyThread
     void initializeInternal(IBinder token, IInputMethodPrivilegedOperations privOps,
-            int configChanges, boolean stylusHwSupported) {
+            int configChanges, boolean stylusHwSupported,
+            @InputMethodNavButtonFlags int navButtonFlags) {
         try {
-            mTarget.initializeInternal(token, privOps, configChanges, stylusHwSupported);
+            mTarget.initializeInternal(token, privOps, configChanges, stylusHwSupported,
+                    navButtonFlags);
         } catch (RemoteException e) {
             logRemoteException(e);
         }
@@ -145,9 +148,19 @@ final class IInputMethodInvoker {
 
     @AnyThread
     void startInput(IBinder startInputToken, IInputContext inputContext, EditorInfo attribute,
-            boolean restarting) {
+            boolean restarting, @InputMethodNavButtonFlags int navButtonFlags) {
         try {
-            mTarget.startInput(startInputToken, inputContext, attribute, restarting);
+            mTarget.startInput(startInputToken, inputContext, attribute, restarting,
+                    navButtonFlags);
+        } catch (RemoteException e) {
+            logRemoteException(e);
+        }
+    }
+
+    @AnyThread
+    void onNavButtonFlagsChanged(@InputMethodNavButtonFlags int navButtonFlags) {
+        try {
+            mTarget.onNavButtonFlagsChanged(navButtonFlags);
         } catch (RemoteException e) {
             logRemoteException(e);
         }
@@ -214,9 +227,29 @@ final class IInputMethodInvoker {
     }
 
     @AnyThread
-    void startStylusHandwriting(InputChannel channel, List<MotionEvent> events) {
+    boolean startStylusHandwriting(int requestId, InputChannel channel, List<MotionEvent> events) {
         try {
-            mTarget.startStylusHandwriting(channel, events);
+            mTarget.startStylusHandwriting(requestId, channel, events);
+        } catch (RemoteException e) {
+            logRemoteException(e);
+            return false;
+        }
+        return true;
+    }
+
+    @AnyThread
+    void initInkWindow() {
+        try {
+            mTarget.initInkWindow();
+        } catch (RemoteException e) {
+            logRemoteException(e);
+        }
+    }
+
+    @AnyThread
+    void finishStylusHandwriting() {
+        try {
+            mTarget.finishStylusHandwriting();
         } catch (RemoteException e) {
             logRemoteException(e);
         }

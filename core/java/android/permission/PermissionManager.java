@@ -16,10 +16,17 @@
 
 package android.permission;
 
+import static android.content.pm.PackageManager.FLAG_PERMISSION_GRANTED_BY_DEFAULT;
+import static android.content.pm.PackageManager.FLAG_PERMISSION_GRANTED_BY_ROLE;
+import static android.content.pm.PackageManager.FLAG_PERMISSION_POLICY_FIXED;
+import static android.content.pm.PackageManager.FLAG_PERMISSION_SYSTEM_FIXED;
+import static android.content.pm.PackageManager.FLAG_PERMISSION_USER_FIXED;
+import static android.content.pm.PackageManager.FLAG_PERMISSION_USER_SET;
 import static android.os.Build.VERSION_CODES.S;
 
 import android.Manifest;
 import android.annotation.CheckResult;
+import android.annotation.DurationMillisLong;
 import android.annotation.IntRange;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -33,6 +40,7 @@ import android.annotation.UserIdInt;
 import android.app.ActivityManager;
 import android.app.ActivityThread;
 import android.app.AppGlobals;
+import android.app.AppOpsManager;
 import android.app.IActivityManager;
 import android.app.PropertyInvalidatedCache;
 import android.compat.annotation.ChangeId;
@@ -68,7 +76,6 @@ import com.android.internal.annotations.Immutable;
 import com.android.internal.util.CollectionUtils;
 
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
@@ -103,6 +110,16 @@ public final class PermissionManager {
      * The app should receive a {@code SecurityException}, or an error through a relevant callback.
      */
     public static final int PERMISSION_HARD_DENIED = 2;
+
+    /**
+     * The set of flags that indicate that a permission state has been explicitly set
+     *
+     * @hide
+     */
+    public static final int EXPLICIT_SET_FLAGS = FLAG_PERMISSION_USER_SET
+            | FLAG_PERMISSION_USER_FIXED | FLAG_PERMISSION_POLICY_FIXED
+            | FLAG_PERMISSION_SYSTEM_FIXED | FLAG_PERMISSION_GRANTED_BY_DEFAULT
+            | FLAG_PERMISSION_GRANTED_BY_ROLE;
 
     /**
      * Activity action: Launch UI to review permission decisions.
@@ -175,6 +192,17 @@ public final class PermissionManager {
      */
     public static final boolean DEBUG_TRACE_PERMISSION_UPDATES = false;
 
+    /**
+     * Intent extra: List of PermissionGroupUsages
+     * <p>
+     * Type: {@code List<PermissionGroupUsage>}
+     * </p>
+     * @hide
+     */
+    @SystemApi
+    public static final String EXTRA_PERMISSION_USAGES =
+            "android.permission.extra.PERMISSION_USAGES";
+
     private final @NonNull Context mContext;
 
     private final IPackageManager mPackageManager;
@@ -222,6 +250,10 @@ public final class PermissionManager {
      * will evaluate the permission access based on the current fg/bg state of the app and
      * leave a record that the data was accessed.
      *
+     * <p>Requires the start of the AttributionSource chain to have the UPDATE_APP_OPS_STATS
+     * permission for the app op accesses to be given the TRUSTED_PROXY/PROXIED flags, otherwise the
+     * accesses will have the UNTRUSTED flags.
+     *
      * @param permission The permission to check.
      * @param attributionSource the permission identity
      * @param message A message describing the reason the permission was checked
@@ -231,11 +263,52 @@ public final class PermissionManager {
      * @see #checkPermissionForPreflight(String, AttributionSource)
      */
     @PermissionCheckerManager.PermissionResult
+    @RequiresPermission(value = Manifest.permission.UPDATE_APP_OPS_STATS, conditional = true)
     public int checkPermissionForDataDelivery(@NonNull String permission,
             @NonNull AttributionSource attributionSource, @Nullable String message) {
         return PermissionChecker.checkPermissionForDataDelivery(mContext, permission,
                 // FIXME(b/199526514): PID should be passed inside AttributionSource.
                 PermissionChecker.PID_UNKNOWN, attributionSource, message);
+    }
+
+    /**
+     *
+     * Similar to checkPermissionForDataDelivery, except it results in an app op start, rather than
+     * a note. If this method is used, then {@link #finishDataDelivery(String, AttributionSource)}
+     * must be used when access is finished.
+     *
+     * @param permission The permission to check.
+     * @param attributionSource the permission identity
+     * @param message A message describing the reason the permission was checked
+     * @return The permission check result which is either {@link #PERMISSION_GRANTED}
+     *     or {@link #PERMISSION_SOFT_DENIED} or {@link #PERMISSION_HARD_DENIED}.
+     *
+     * <p>Requires the start of the AttributionSource chain to have the UPDATE_APP_OPS_STATS
+     * permission for the app op accesses to be given the TRUSTED_PROXY/PROXIED flags, otherwise the
+     * accesses will have the UNTRUSTED flags.
+     *
+     * @see #checkPermissionForDataDelivery(String, AttributionSource, String)
+     */
+    @PermissionCheckerManager.PermissionResult
+    @RequiresPermission(value = Manifest.permission.UPDATE_APP_OPS_STATS, conditional = true)
+    public int checkPermissionForStartDataDelivery(@NonNull String permission,
+            @NonNull AttributionSource attributionSource, @Nullable String message) {
+        return PermissionChecker.checkPermissionForDataDelivery(mContext, permission,
+                // FIXME(b/199526514): PID should be passed inside AttributionSource.
+                PermissionChecker.PID_UNKNOWN, attributionSource, message, true);
+    }
+
+    /**
+     * Indicate that usage has finished for an {@link AttributionSource} started with
+     * {@link #checkPermissionForStartDataDelivery(String, AttributionSource, String)}
+     *
+     * @param permission The permission to check.
+     * @param attributionSource the permission identity to finish
+     */
+    public void finishDataDelivery(@NonNull String permission,
+            @NonNull AttributionSource attributionSource) {
+        PermissionChecker.finishDataDelivery(mContext, AppOpsManager.permissionToOp(permission),
+                attributionSource);
     }
 
     /**
@@ -257,6 +330,10 @@ public final class PermissionManager {
      * will evaluate the permission access based on the current fg/bg state of the app and
      * leave a record that the data was accessed.
      *
+     * <p>Requires the start of the AttributionSource chain to have the UPDATE_APP_OPS_STATS
+     * permission for the app op accesses to be given the TRUSTED_PROXY/PROXIED flags, otherwise the
+     * accesses will have the UNTRUSTED flags.
+     *
      * @param permission The permission to check.
      * @param attributionSource the permission identity
      * @param message A message describing the reason the permission was checked
@@ -266,6 +343,7 @@ public final class PermissionManager {
      * @see #checkPermissionForPreflight(String, AttributionSource)
      */
     @PermissionCheckerManager.PermissionResult
+    @RequiresPermission(value = Manifest.permission.UPDATE_APP_OPS_STATS, conditional = true)
     public int checkPermissionForDataDeliveryFromDataSource(@NonNull String permission,
             @NonNull AttributionSource attributionSource, @Nullable String message) {
         return PermissionChecker.checkPermissionForDataDeliveryFromDataSource(mContext, permission,
@@ -556,19 +634,6 @@ public final class PermissionManager {
         try {
             mPermissionManager
                     .revokeRuntimePermission(packageName, permName, user.getIdentifier(), reason);
-        } catch (RemoteException e) {
-            throw e.rethrowFromSystemServer();
-        }
-    }
-
-    /**
-     * @see Context#revokeOwnPermissionsOnKill(Collection)
-     * @hide
-     */
-    public void revokeOwnPermissionsOnKill(@NonNull Collection<String> permissions) {
-        try {
-            mPermissionManager.revokeOwnPermissionsOnKill(mContext.getPackageName(),
-                    new ArrayList<String>(permissions));
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -1055,7 +1120,7 @@ public final class PermissionManager {
     @TestApi
     @NonNull
     @RequiresPermission(Manifest.permission.GET_APP_OPS_STATS)
-    public List<PermGroupUsage> getIndicatorAppOpUsageData() {
+    public List<PermissionGroupUsage> getIndicatorAppOpUsageData() {
         return getIndicatorAppOpUsageData(new AudioManager().isMicrophoneMute());
     }
 
@@ -1069,7 +1134,7 @@ public final class PermissionManager {
     @TestApi
     @NonNull
     @RequiresPermission(Manifest.permission.GET_APP_OPS_STATS)
-    public List<PermGroupUsage> getIndicatorAppOpUsageData(boolean micMuted) {
+    public List<PermissionGroupUsage> getIndicatorAppOpUsageData(boolean micMuted) {
         // Lazily initialize the usage helper
         initializeUsageHelper();
         return mUsageHelper.getOpUsageData(micMuted);
@@ -1246,6 +1311,22 @@ public final class PermissionManager {
     }
 
     /**
+     * Starts a one-time permission session for a given package.
+     * @see #startOneTimePermissionSession(String, long, long, int, int)
+     * @hide
+     * @deprecated Use {@link #startOneTimePermissionSession(String, long, long, int, int)} instead
+     */
+    @Deprecated
+    @SystemApi
+    @RequiresPermission(Manifest.permission.MANAGE_ONE_TIME_PERMISSION_SESSIONS)
+    public void startOneTimePermissionSession(@NonNull String packageName, long timeoutMillis,
+            @ActivityManager.RunningAppProcessInfo.Importance int importanceToResetTimer,
+            @ActivityManager.RunningAppProcessInfo.Importance int importanceToKeepSessionAlive) {
+        startOneTimePermissionSession(packageName, timeoutMillis, -1,
+                importanceToResetTimer, importanceToKeepSessionAlive);
+    }
+
+    /**
      * Starts a one-time permission session for a given package. A one-time permission session is
      * ended if app becomes inactive. Inactivity is defined as the package's uid importance level
      * staying > importanceToResetTimer for timeoutMillis milliseconds. If the package's uid
@@ -1265,25 +1346,33 @@ public final class PermissionManager {
      * {@link PermissionControllerService#onOneTimePermissionSessionTimeout(String)} is invoked.
      * </p>
      * <p>
-     * Note that if there is currently an active session for a package a new one isn't created and
-     * the existing one isn't changed.
+     * Note that if there is currently an active session for a package a new one isn't created but
+     * each parameter of the existing one will be updated to the more aggressive of both sessions.
+     * This means that durations will be set to the shortest parameter and importances will be set
+     * to the lowest one.
      * </p>
      * @param packageName The package to start a one-time permission session for
      * @param timeoutMillis Number of milliseconds for an app to be in an inactive state
+     * @param revokeAfterKilledDelayMillis Number of milliseconds to wait before revoking on the
+     *                                     event an app is terminated. Set to -1 to use default
+     *                                     value for the device.
      * @param importanceToResetTimer The least important level to uid must be to reset the timer
      * @param importanceToKeepSessionAlive The least important level the uid must be to keep the
-     *                                    session alive
+     *                                     session alive
      *
      * @hide
      */
     @SystemApi
     @RequiresPermission(Manifest.permission.MANAGE_ONE_TIME_PERMISSION_SESSIONS)
-    public void startOneTimePermissionSession(@NonNull String packageName, long timeoutMillis,
+    public void startOneTimePermissionSession(@NonNull String packageName,
+            @DurationMillisLong long timeoutMillis,
+            @DurationMillisLong long revokeAfterKilledDelayMillis,
             @ActivityManager.RunningAppProcessInfo.Importance int importanceToResetTimer,
             @ActivityManager.RunningAppProcessInfo.Importance int importanceToKeepSessionAlive) {
         try {
             mPermissionManager.startOneTimePermissionSession(packageName, mContext.getUserId(),
-                    timeoutMillis, importanceToResetTimer, importanceToKeepSessionAlive);
+                    timeoutMillis, revokeAfterKilledDelayMillis, importanceToResetTimer,
+                    importanceToKeepSessionAlive);
         } catch (RemoteException e) {
             e.rethrowFromSystemServer();
         }
@@ -1386,6 +1475,7 @@ public final class PermissionManager {
      * @hide
      */
     @TestApi
+    @RequiresPermission(Manifest.permission.REVOKE_POST_NOTIFICATIONS_WITHOUT_KILL)
     public void revokePostNotificationPermissionWithoutKillForTest(@NonNull String packageName,
             int userId) {
         try {

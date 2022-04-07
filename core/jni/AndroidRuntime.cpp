@@ -82,6 +82,7 @@ extern int register_android_hardware_display_DisplayManagerGlobal(JNIEnv* env);
 extern int register_android_hardware_HardwareBuffer(JNIEnv *env);
 extern int register_android_hardware_SensorManager(JNIEnv *env);
 extern int register_android_hardware_SerialPort(JNIEnv *env);
+extern int register_android_hardware_SyncFence(JNIEnv* env);
 extern int register_android_hardware_UsbDevice(JNIEnv *env);
 extern int register_android_hardware_UsbDeviceConnection(JNIEnv *env);
 extern int register_android_hardware_UsbRequest(JNIEnv *env);
@@ -164,7 +165,6 @@ extern int register_android_text_AndroidCharacter(JNIEnv *env);
 extern int register_android_text_Hyphenator(JNIEnv *env);
 extern int register_android_opengl_classes(JNIEnv *env);
 extern int register_android_ddm_DdmHandleNativeHeap(JNIEnv *env);
-extern int register_android_server_NetworkManagementSocketTagger(JNIEnv* env);
 extern int register_android_backup_BackupDataInput(JNIEnv *env);
 extern int register_android_backup_BackupDataOutput(JNIEnv *env);
 extern int register_android_backup_FileBackupHelperBase(JNIEnv *env);
@@ -1567,6 +1567,7 @@ static const RegJNIRec gRegJNI[] = {
         REG_JNI(register_android_graphics_classes),
         REG_JNI(register_android_graphics_BLASTBufferQueue),
         REG_JNI(register_android_graphics_GraphicBuffer),
+        REG_JNI(register_android_graphics_GraphicsStatsService),
         REG_JNI(register_android_graphics_SurfaceTexture),
         REG_JNI(register_android_database_CursorWindow),
         REG_JNI(register_android_database_SQLiteConnection),
@@ -1602,6 +1603,7 @@ static const RegJNIRec gRegJNI[] = {
         REG_JNI(register_android_hardware_HardwareBuffer),
         REG_JNI(register_android_hardware_SensorManager),
         REG_JNI(register_android_hardware_SerialPort),
+        REG_JNI(register_android_hardware_SyncFence),
         REG_JNI(register_android_hardware_UsbDevice),
         REG_JNI(register_android_hardware_UsbDeviceConnection),
         REG_JNI(register_android_hardware_UsbRequest),
@@ -1623,7 +1625,6 @@ static const RegJNIRec gRegJNI[] = {
         REG_JNI(register_android_media_midi),
 
         REG_JNI(register_android_opengl_classes),
-        REG_JNI(register_android_server_NetworkManagementSocketTagger),
         REG_JNI(register_android_ddm_DdmHandleNativeHeap),
         REG_JNI(register_android_backup_BackupDataInput),
         REG_JNI(register_android_backup_BackupDataOutput),

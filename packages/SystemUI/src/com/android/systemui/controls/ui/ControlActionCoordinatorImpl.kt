@@ -16,15 +16,18 @@
 
 package com.android.systemui.controls.ui
 
+import android.annotation.AnyThread
 import android.annotation.MainThread
 import android.app.Dialog
 import android.app.PendingIntent
 import android.content.Context
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
+import android.database.ContentObserver
+import android.net.Uri
+import android.os.Handler
 import android.os.VibrationEffect
-import android.os.Vibrator
+import android.provider.Settings
 import android.service.controls.Control
 import android.service.controls.actions.BooleanAction
 import android.service.controls.actions.CommandAction
@@ -32,16 +35,16 @@ import android.service.controls.actions.FloatAction
 import android.util.Log
 import android.view.HapticFeedbackConstants
 import com.android.internal.annotations.VisibleForTesting
-import com.android.systemui.broadcast.BroadcastDispatcher
+import com.android.systemui.broadcast.BroadcastSender
 import com.android.systemui.controls.ControlsMetricsLogger
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Main
-import com.android.systemui.globalactions.GlobalActionsComponent
 import com.android.systemui.plugins.ActivityStarter
+import com.android.systemui.statusbar.VibratorHelper
 import com.android.systemui.statusbar.policy.KeyguardStateController
 import com.android.systemui.util.concurrency.DelayableExecutor
+import com.android.systemui.util.settings.SecureSettings
 import com.android.wm.shell.TaskViewFactory
-import dagger.Lazy
 import java.util.Optional
 import javax.inject.Inject
 
@@ -51,23 +54,43 @@ class ControlActionCoordinatorImpl @Inject constructor(
     private val bgExecutor: DelayableExecutor,
     @Main private val uiExecutor: DelayableExecutor,
     private val activityStarter: ActivityStarter,
+    private val broadcastSender: BroadcastSender,
     private val keyguardStateController: KeyguardStateController,
-    private val globalActionsComponent: GlobalActionsComponent,
     private val taskViewFactory: Optional<TaskViewFactory>,
-    private val broadcastDispatcher: BroadcastDispatcher,
-    private val lazyUiController: Lazy<ControlsUiController>,
-    private val controlsMetricsLogger: ControlsMetricsLogger
+    private val controlsMetricsLogger: ControlsMetricsLogger,
+    private val vibrator: VibratorHelper,
+    private val secureSettings: SecureSettings,
+    @Main mainHandler: Handler
 ) : ControlActionCoordinator {
     private var dialog: Dialog? = null
-    private val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
     private var pendingAction: Action? = null
     private var actionsInProgress = mutableSetOf<String>()
     private val isLocked: Boolean
         get() = !keyguardStateController.isUnlocked()
+    private var mAllowTrivialControls: Boolean = secureSettings.getInt(
+            Settings.Secure.LOCKSCREEN_ALLOW_TRIVIAL_CONTROLS, 0) != 0
     override lateinit var activityContext: Context
 
     companion object {
         private const val RESPONSE_TIMEOUT_IN_MILLIS = 3000L
+    }
+
+    init {
+        val lockScreenShowControlsUri =
+            secureSettings.getUriFor(Settings.Secure.LOCKSCREEN_ALLOW_TRIVIAL_CONTROLS)
+        val controlsContentObserver = object : ContentObserver(mainHandler) {
+            override fun onChange(selfChange: Boolean, uri: Uri?) {
+                super.onChange(selfChange, uri)
+                if (uri == lockScreenShowControlsUri) {
+                    mAllowTrivialControls = secureSettings.getInt(
+                            Settings.Secure.LOCKSCREEN_ALLOW_TRIVIAL_CONTROLS, 0) != 0
+                }
+            }
+        }
+        secureSettings.registerContentObserver(
+            lockScreenShowControlsUri,
+            false /* notifyForDescendants */, controlsContentObserver
+        )
     }
 
     override fun closeDialogs() {
@@ -86,7 +109,7 @@ class ControlActionCoordinatorImpl @Inject constructor(
                 },
                 true /* blockable */
             ),
-            isAuthRequired(cvh)
+            isAuthRequired(cvh, mAllowTrivialControls)
         )
     }
 
@@ -106,7 +129,7 @@ class ControlActionCoordinatorImpl @Inject constructor(
                 },
                 blockable
             ),
-            isAuthRequired(cvh)
+            isAuthRequired(cvh, mAllowTrivialControls)
         )
     }
 
@@ -126,7 +149,7 @@ class ControlActionCoordinatorImpl @Inject constructor(
                 { cvh.action(FloatAction(templateId, newValue)) },
                 false /* blockable */
             ),
-            isAuthRequired(cvh)
+            isAuthRequired(cvh, mAllowTrivialControls)
         )
     }
 
@@ -145,7 +168,7 @@ class ControlActionCoordinatorImpl @Inject constructor(
                 },
                 false /* blockable */
             ),
-            isAuthRequired(cvh)
+            isAuthRequired(cvh, mAllowTrivialControls)
         )
     }
 
@@ -162,7 +185,11 @@ class ControlActionCoordinatorImpl @Inject constructor(
         actionsInProgress.remove(controlId)
     }
 
-    private fun isAuthRequired(cvh: ControlViewHolder) = cvh.cws.control?.isAuthRequired() ?: true
+    @VisibleForTesting()
+    fun isAuthRequired(cvh: ControlViewHolder, allowTrivialControls: Boolean): Boolean {
+        val isAuthRequired = cvh.cws.control?.isAuthRequired ?: true
+        return isAuthRequired || !allowTrivialControls
+    }
 
     private fun shouldRunAction(controlId: String) =
         if (actionsInProgress.add(controlId)) {
@@ -174,11 +201,12 @@ class ControlActionCoordinatorImpl @Inject constructor(
             false
         }
 
+    @AnyThread
     @VisibleForTesting
     fun bouncerOrRun(action: Action, authRequired: Boolean) {
         if (keyguardStateController.isShowing() && authRequired) {
             if (isLocked) {
-                context.sendBroadcast(Intent(Intent.ACTION_CLOSE_SYSTEM_DIALOGS))
+                broadcastSender.closeSystemDialogs()
 
                 // pending actions will only run after the control state has been refreshed
                 pendingAction = action
@@ -194,7 +222,7 @@ class ControlActionCoordinatorImpl @Inject constructor(
     }
 
     private fun vibrate(effect: VibrationEffect) {
-        bgExecutor.execute { vibrator.vibrate(effect) }
+        vibrator.vibrate(effect)
     }
 
     private fun showDetail(cvh: ControlViewHolder, pendingIntent: PendingIntent) {
@@ -208,7 +236,10 @@ class ControlActionCoordinatorImpl @Inject constructor(
                 // make sure the intent is valid before attempting to open the dialog
                 if (activities.isNotEmpty() && taskViewFactory.isPresent) {
                     taskViewFactory.get().create(context, uiExecutor, {
-                        dialog = DetailDialog(activityContext, it, pendingIntent, cvh).also {
+                        dialog = DetailDialog(
+                            activityContext, broadcastSender,
+                            it, pendingIntent, cvh
+                        ).also {
                             it.setOnDismissListener { _ -> dialog = null }
                             it.show()
                         }

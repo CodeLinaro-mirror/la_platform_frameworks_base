@@ -20,6 +20,8 @@ import static android.view.WindowInsets.Type.systemBars;
 import static android.view.WindowInsetsAnimation.Callback.DISPATCH_MODE_STOP;
 
 import static com.android.systemui.plugins.FalsingManager.LOW_PENALTY;
+import static com.android.systemui.statusbar.policy.UserSwitcherController.USER_SWITCH_DISABLED_ALPHA;
+import static com.android.systemui.statusbar.policy.UserSwitcherController.USER_SWITCH_ENABLED_ALPHA;
 
 import static java.lang.Integer.max;
 
@@ -150,6 +152,7 @@ public class KeyguardSecurityContainer extends FrameLayout {
     private SwipeListener mSwipeListener;
     private ViewMode mViewMode = new DefaultViewMode();
     private @Mode int mCurrentMode = MODE_DEFAULT;
+    private int mWidth = -1;
 
     private final WindowInsetsAnimation.Callback mWindowInsetsAnimationCallback =
             new WindowInsetsAnimation.Callback(DISPATCH_MODE_STOP) {
@@ -304,8 +307,6 @@ public class KeyguardSecurityContainer extends FrameLayout {
     void onResume(SecurityMode securityMode, boolean faceAuthEnabled) {
         mSecurityViewFlipper.setWindowInsetsAnimationCallback(mWindowInsetsAnimationCallback);
         updateBiometricRetry(securityMode, faceAuthEnabled);
-
-        setupViewMode();
     }
 
     void initMode(@Mode int mode, GlobalSettings globalSettings, FalsingManager falsingManager,
@@ -647,9 +648,11 @@ public class KeyguardSecurityContainer extends FrameLayout {
     protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
         super.onLayout(changed, left, top, right, bottom);
 
-        // After a layout pass, we need to re-place the inner bouncer, as our bounds may have
-        // changed.
-        mViewMode.updateSecurityViewLocation();
+        int width = right - left;
+        if (changed && mWidth != width) {
+            mWidth = width;
+            mViewMode.updateSecurityViewLocation();
+        }
     }
 
     @Override
@@ -854,10 +857,9 @@ public class KeyguardSecurityContainer extends FrameLayout {
         }
 
         private void setupUserSwitcher() {
-            String currentUserName = mUserSwitcherController.getCurrentUserName();
-            mUserSwitcher.setText(currentUserName);
+            final UserRecord currentUser = mUserSwitcherController.getCurrentUserRecord();
+            mUserSwitcher.setText(mUserSwitcherController.getCurrentUserName());
 
-            final UserRecord currentUser = getCurrentUser();
             ViewGroup anchor = mView.findViewById(R.id.user_switcher_anchor);
             BaseUserAdapter adapter = new BaseUserAdapter(mUserSwitcherController) {
                 @Override
@@ -892,6 +894,9 @@ public class KeyguardSecurityContainer extends FrameLayout {
                     } else {
                         textView.setBackground(null);
                     }
+                    view.setEnabled(item.isSwitchToEnabled);
+                    view.setAlpha(view.isEnabled() ? USER_SWITCH_ENABLED_ALPHA :
+                            USER_SWITCH_DISABLED_ALPHA);
                     return view;
                 }
 
@@ -914,7 +919,7 @@ public class KeyguardSecurityContainer extends FrameLayout {
                     }
                     drawable.setTint(iconColor);
 
-                    Drawable bg = context.getDrawable(R.drawable.kg_bg_avatar);
+                    Drawable bg = context.getDrawable(R.drawable.user_avatar_bg);
                     bg.setTintBlendMode(BlendMode.DST);
                     bg.setTint(Utils.getColorAttrDefaultColor(context,
                                 com.android.internal.R.attr.colorSurfaceVariant));
@@ -941,6 +946,7 @@ public class KeyguardSecurityContainer extends FrameLayout {
                 mPopup.setOnItemClickListener(new AdapterView.OnItemClickListener() {
                         public void onItemClick(AdapterView parent, View view, int pos, long id) {
                             if (mFalsingManager.isFalseTap(LOW_PENALTY)) return;
+                            if (!view.isEnabled()) return;
 
                             // Subtract one for the header
                             UserRecord user = adapter.getItem(pos - 1);
@@ -953,16 +959,6 @@ public class KeyguardSecurityContainer extends FrameLayout {
                     });
                 mPopup.show();
             });
-        }
-
-        private UserRecord getCurrentUser() {
-            for (int i = 0; i < mUserSwitcherController.getUsers().size(); ++i) {
-                UserRecord userRecord = mUserSwitcherController.getUsers().get(i);
-                if (userRecord.isCurrent) {
-                    return userRecord;
-                }
-            }
-            return null;
         }
 
         /**
@@ -978,18 +974,22 @@ public class KeyguardSecurityContainer extends FrameLayout {
 
         @Override
         public void updateSecurityViewLocation() {
+            int yTrans = mResources.getDimensionPixelSize(R.dimen.bouncer_user_switcher_y_trans);
+
             if (mResources.getConfiguration().orientation == Configuration.ORIENTATION_PORTRAIT) {
                 updateViewGravity(mViewFlipper, Gravity.CENTER_HORIZONTAL);
                 updateViewGravity(mUserSwitcherViewGroup, Gravity.CENTER_HORIZONTAL);
-                mUserSwitcherViewGroup.setTranslationY(0);
+
+                mUserSwitcherViewGroup.setTranslationY(yTrans);
+                mViewFlipper.setTranslationY(-yTrans);
             } else {
                 updateViewGravity(mViewFlipper, Gravity.RIGHT | Gravity.BOTTOM);
                 updateViewGravity(mUserSwitcherViewGroup, Gravity.LEFT | Gravity.CENTER_VERTICAL);
 
                 // Attempt to reposition a bit higher to make up for this frame being a bit lower
                 // on the device
-                int yTrans = mResources.getDimensionPixelSize(R.dimen.status_bar_height);
                 mUserSwitcherViewGroup.setTranslationY(-yTrans);
+                mViewFlipper.setTranslationY(0);
             }
         }
 
@@ -1042,17 +1042,26 @@ public class KeyguardSecurityContainer extends FrameLayout {
 
         /**
          * Moves the bouncer to align with a tap (most likely in the shade), so the bouncer
-         * appears on the same side as a touch. Will not update the user-preference.
+         * appears on the same side as a touch.
          */
         @Override
         public void updatePositionByTouchX(float x) {
-            updateSecurityViewLocation(x <= mView.getWidth() / 2f, /* animate= */false);
+            boolean isTouchOnLeft = x <= mView.getWidth() / 2f;
+            updateSideSetting(isTouchOnLeft);
+            updateSecurityViewLocation(isTouchOnLeft, /* animate= */false);
         }
 
         boolean isLeftAligned() {
             return mGlobalSettings.getInt(Settings.Global.ONE_HANDED_KEYGUARD_SIDE,
                     Settings.Global.ONE_HANDED_KEYGUARD_SIDE_LEFT)
                 == Settings.Global.ONE_HANDED_KEYGUARD_SIDE_LEFT;
+        }
+
+        private void updateSideSetting(boolean leftAligned) {
+            mGlobalSettings.putInt(
+                    Settings.Global.ONE_HANDED_KEYGUARD_SIDE,
+                    leftAligned ? Settings.Global.ONE_HANDED_KEYGUARD_SIDE_LEFT
+                    : Settings.Global.ONE_HANDED_KEYGUARD_SIDE_RIGHT);
         }
 
         /**
@@ -1068,10 +1077,7 @@ public class KeyguardSecurityContainer extends FrameLayout {
                     || (!currentlyLeftAligned && (x < mView.getWidth() / 2f))) {
 
                 boolean willBeLeftAligned = !currentlyLeftAligned;
-                mGlobalSettings.putInt(
-                        Settings.Global.ONE_HANDED_KEYGUARD_SIDE,
-                        willBeLeftAligned ? Settings.Global.ONE_HANDED_KEYGUARD_SIDE_LEFT
-                        : Settings.Global.ONE_HANDED_KEYGUARD_SIDE_RIGHT);
+                updateSideSetting(willBeLeftAligned);
 
                 int keyguardState = willBeLeftAligned
                         ? SysUiStatsLog.KEYGUARD_BOUNCER_STATE_CHANGED__STATE__SWITCH_LEFT

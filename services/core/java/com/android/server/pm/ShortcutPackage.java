@@ -19,11 +19,13 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.UserIdInt;
 import android.app.Person;
+import android.app.appsearch.AppSearchBatchResult;
 import android.app.appsearch.AppSearchManager;
 import android.app.appsearch.AppSearchResult;
 import android.app.appsearch.AppSearchSession;
+import android.app.appsearch.BatchResultCallback;
+import android.app.appsearch.GenericDocument;
 import android.app.appsearch.GetByDocumentIdRequest;
-import android.app.appsearch.PackageIdentifier;
 import android.app.appsearch.PutDocumentsRequest;
 import android.app.appsearch.RemoveByDocumentIdRequest;
 import android.app.appsearch.ReportUsageRequest;
@@ -35,8 +37,8 @@ import android.content.ComponentName;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.LocusId;
-import android.content.pm.AppSearchPerson;
 import android.content.pm.AppSearchShortcutInfo;
+import android.content.pm.AppSearchShortcutPerson;
 import android.content.pm.PackageInfo;
 import android.content.pm.ShortcutInfo;
 import android.content.pm.ShortcutManager;
@@ -179,11 +181,6 @@ class ShortcutPackage extends ShortcutPackageItem {
      * All the share targets from the package
      */
     private final ArrayList<ShareTargetInfo> mShareTargets = new ArrayList<>(0);
-
-    /**
-     * All external packages that have gained access to the shortcuts from this package
-     */
-    private final Map<String, PackageIdentifier> mPackageIdentifiers = new ArrayMap<>(0);
 
     /**
      * # of times the package has called rate-limited APIs.
@@ -341,7 +338,7 @@ class ShortcutPackage extends ShortcutPackageItem {
 
     public void ensureAllShortcutsVisibleToLauncher(@NonNull List<ShortcutInfo> shortcuts) {
         for (ShortcutInfo shortcut : shortcuts) {
-            if (!shortcut.isIncludedIn(ShortcutInfo.SURFACE_LAUNCHER)) {
+            if (shortcut.isExcludedFromSurfaces(ShortcutInfo.SURFACE_LAUNCHER)) {
                 throw new IllegalArgumentException("Shortcut ID=" + shortcut.getId()
                         + " is hidden from launcher and may not be manipulated via APIs");
             }
@@ -402,7 +399,7 @@ class ShortcutPackage extends ShortcutPackageItem {
                     & (ShortcutInfo.FLAG_PINNED | ShortcutInfo.FLAG_CACHED_ALL));
         }
 
-        if (!newShortcut.isIncludedIn(ShortcutInfo.SURFACE_LAUNCHER)) {
+        if (newShortcut.isExcludedFromSurfaces(ShortcutInfo.SURFACE_LAUNCHER)) {
             if (isAppSearchEnabled()) {
                 synchronized (mLock) {
                     mTransientShortcuts.put(newShortcut.getId(), newShortcut);
@@ -442,6 +439,16 @@ class ShortcutPackage extends ShortcutPackageItem {
                     sortShortcutsToActivities();
             final ArrayList<ShortcutInfo> activityShortcuts = all.get(newShortcut.getActivity());
 
+            if (activityShortcuts != null && activityShortcuts.size() > maxShortcuts) {
+                Slog.e(TAG, "Error pushing shortcut. There are already "
+                        + activityShortcuts.size() + " shortcuts, exceeding the " + maxShortcuts
+                        + " shortcuts limit when pushing the new shortcut " + newShortcut
+                        + ". Id of shortcuts currently available in system memory are "
+                        + activityShortcuts.stream().map(ShortcutInfo::getId)
+                        .collect(Collectors.joining(",", "[", "]")));
+                // TODO: This should not have happened. If it does, identify the root cause where
+                //  possible, otherwise bail-out early to prevent memory issue.
+            }
             if (activityShortcuts != null && activityShortcuts.size() == maxShortcuts) {
                 // Max has reached. Delete the shortcut with lowest rank.
 
@@ -470,7 +477,7 @@ class ShortcutPackage extends ShortcutPackageItem {
                     & (ShortcutInfo.FLAG_PINNED | ShortcutInfo.FLAG_CACHED_ALL));
         }
 
-        if (!newShortcut.isIncludedIn(ShortcutInfo.SURFACE_LAUNCHER)) {
+        if (newShortcut.isExcludedFromSurfaces(ShortcutInfo.SURFACE_LAUNCHER)) {
             if (isAppSearchEnabled()) {
                 synchronized (mLock) {
                     mTransientShortcuts.put(newShortcut.getId(), newShortcut);
@@ -965,7 +972,7 @@ class ShortcutPackage extends ShortcutPackageItem {
      */
     public ArraySet<String> getUsedBitmapFiles() {
         final ArraySet<String> usedFiles = new ArraySet<>(1);
-        forEachShortcut(AppSearchShortcutInfo.QUERY_HAS_BITMAP_PATH, si -> {
+        forEachShortcut(si -> {
             if (si.getBitmapPath() != null) {
                 usedFiles.add(getFileName(si.getBitmapPath()));
             }
@@ -1176,7 +1183,7 @@ class ShortcutPackage extends ShortcutPackageItem {
 
         // Keep the previous IDs.
         final ArraySet<String> toDisableList = new ArraySet<>(1);
-        forEachShortcut(AppSearchShortcutInfo.QUERY_IS_MANIFEST, si -> {
+        forEachShortcut(si -> {
             if (si.isManifestShortcut()) {
                 toDisableList.add(si.getId());
             }
@@ -1319,7 +1326,7 @@ class ShortcutPackage extends ShortcutPackageItem {
     private ArrayMap<ComponentName, ArrayList<ShortcutInfo>> sortShortcutsToActivities() {
         final ArrayMap<ComponentName, ArrayList<ShortcutInfo>> activitiesToShortcuts
                 = new ArrayMap<>();
-        forEachShortcut(AppSearchShortcutInfo.QUERY_IS_NOT_FLOATING, si -> {
+        forEachShortcut(si -> {
             if (si.isFloating()) {
                 return; // Ignore floating shortcuts, which are not tied to any activities.
             }
@@ -1369,14 +1376,7 @@ class ShortcutPackage extends ShortcutPackageItem {
         // (If it's for update, then don't count dynamic shortcuts, since they'll be replaced
         // anyway.)
         final ArrayMap<ComponentName, Integer> counts = new ArrayMap<>(4);
-        final String query;
-        if (operation != ShortcutService.OPERATION_SET) {
-            query = AppSearchShortcutInfo.QUERY_IS_MANIFEST + " OR "
-                    + AppSearchShortcutInfo.QUERY_IS_DYNAMIC;
-        } else {
-            query = AppSearchShortcutInfo.QUERY_IS_MANIFEST;
-        }
-        forEachShortcut(query, shortcut -> {
+        forEachShortcut(shortcut -> {
             if (shortcut.isManifestShortcut()) {
                 incrementCountForActivity(counts, shortcut.getActivity(), 1);
             } else if (shortcut.isDynamic() && (operation != ShortcutService.OPERATION_SET)) {
@@ -1539,7 +1539,7 @@ class ShortcutPackage extends ShortcutPackageItem {
     /** @return true if there's any shortcuts that are not manifest shortcuts. */
     public boolean hasNonManifestShortcuts() {
         final boolean[] condition = new boolean[1];
-        forEachShortcutStopWhen(AppSearchShortcutInfo.QUERY_IS_NOT_MANIFEST, si -> {
+        forEachShortcutStopWhen(si -> {
             if (!si.isDeclaredInManifest()) {
                 condition[0] = true;
                 return true;
@@ -1701,15 +1701,6 @@ class ShortcutPackage extends ShortcutPackageItem {
             for (int j = 0; j < shareTargetSize; j++) {
                 mShareTargets.get(j).saveToXml(out);
             }
-            synchronized (mLock) {
-                final Map<String, ShortcutInfo> copy = mShortcuts;
-                if (!mTransientShortcuts.isEmpty()) {
-                    copy.putAll(mTransientShortcuts);
-                    mTransientShortcuts.clear();
-                }
-                saveShortcutsAsync(copy.values().stream().filter(ShortcutInfo::usesQuota).collect(
-                        Collectors.toList()));
-            }
         }
 
         out.endTag(null, TAG_ROOT);
@@ -1833,9 +1824,9 @@ class ShortcutPackage extends ShortcutPackageItem {
             ShortcutService.writeTagExtra(out, TAG_EXTRAS, si.getExtras());
 
             final Map<String, Map<String, List<String>>> capabilityBindings =
-                    si.getCapabilityBindings();
+                    si.getCapabilityBindingsInternal();
             if (capabilityBindings != null && !capabilityBindings.isEmpty()) {
-                XmlUtils.writeMapXml(si.getCapabilityBindings(), NAME_CAPABILITY, out);
+                XmlUtils.writeMapXml(capabilityBindings, NAME_CAPABILITY, out);
             }
         }
 
@@ -2287,12 +2278,7 @@ class ShortcutPackage extends ShortcutPackageItem {
     }
 
     private void forEachShortcut(@NonNull final Consumer<ShortcutInfo> cb) {
-        forEachShortcut("", cb);
-    }
-
-    private void forEachShortcut(
-            @NonNull final String query, @NonNull final Consumer<ShortcutInfo> cb) {
-        forEachShortcutStopWhen(query, si -> {
+        forEachShortcutStopWhen(si -> {
             cb.accept(si);
             return false;
         });
@@ -2307,11 +2293,6 @@ class ShortcutPackage extends ShortcutPackageItem {
 
     private void forEachShortcutStopWhen(
             @NonNull final Function<ShortcutInfo, Boolean> cb) {
-        forEachShortcutStopWhen("", cb);
-    }
-
-    private void forEachShortcutStopWhen(
-            @NonNull final String query, @NonNull final Function<ShortcutInfo, Boolean> cb) {
         for (int i = mShortcuts.size() - 1; i >= 0; i--) {
             final ShortcutInfo si = mShortcuts.valueAt(i);
             if (cb.apply(si)) {
@@ -2328,15 +2309,16 @@ class ShortcutPackage extends ShortcutPackageItem {
                     + " pkg=" + getPackageName());
         }
         SetSchemaRequest.Builder schemaBuilder = new SetSchemaRequest.Builder()
-                .addSchemas(AppSearchPerson.SCHEMA, AppSearchShortcutInfo.SCHEMA)
-                .setForceOverride(true);
-        for (PackageIdentifier pi : mPackageIdentifiers.values()) {
-            schemaBuilder = schemaBuilder
-                    .setSchemaTypeVisibilityForPackage(
-                            AppSearchPerson.SCHEMA_TYPE, true, pi)
-                    .setSchemaTypeVisibilityForPackage(
-                            AppSearchShortcutInfo.SCHEMA_TYPE, true, pi);
-        }
+                .addSchemas(AppSearchShortcutPerson.SCHEMA, AppSearchShortcutInfo.SCHEMA)
+                .setForceOverride(true)
+                .addRequiredPermissionsForSchemaTypeVisibility(AppSearchShortcutInfo.SCHEMA_TYPE,
+                        Collections.singleton(SetSchemaRequest.READ_HOME_APP_SEARCH_DATA))
+                .addRequiredPermissionsForSchemaTypeVisibility(AppSearchShortcutInfo.SCHEMA_TYPE,
+                        Collections.singleton(SetSchemaRequest.READ_ASSISTANT_APP_SEARCH_DATA))
+                .addRequiredPermissionsForSchemaTypeVisibility(AppSearchShortcutPerson.SCHEMA_TYPE,
+                        Collections.singleton(SetSchemaRequest.READ_HOME_APP_SEARCH_DATA))
+                .addRequiredPermissionsForSchemaTypeVisibility(AppSearchShortcutPerson.SCHEMA_TYPE,
+                        Collections.singleton(SetSchemaRequest.READ_ASSISTANT_APP_SEARCH_DATA));
         final AndroidFuture<AppSearchSession> future = new AndroidFuture<>();
         session.setSchema(
                 schemaBuilder.build(), mExecutor, mShortcutUser.mExecutor, result -> {
@@ -2400,14 +2382,24 @@ class ShortcutPackage extends ShortcutPackageItem {
         }
         runAsSystem(() -> fromAppSearch().thenAccept(session -> {
             session.getByDocumentId(new GetByDocumentIdRequest.Builder(getPackageName())
-                    .addIds(ids).build(), mShortcutUser.mExecutor, result -> {
-                    final List<ShortcutInfo> ret = result.getSuccesses().values()
-                            .stream().map(doc ->
-                                    new AppSearchShortcutInfo(doc)
-                                            .toShortcutInfo(mShortcutUser.getUserId()))
-                            .collect(Collectors.toList());
-                    cb.accept(ret);
-                });
+                            .addIds(ids).build(), mShortcutUser.mExecutor,
+                    new BatchResultCallback<String, GenericDocument>() {
+                        @Override
+                        public void onResult(
+                                @NonNull AppSearchBatchResult<String, GenericDocument> result) {
+                            final List<ShortcutInfo> ret = result.getSuccesses().values()
+                                    .stream().map(doc ->
+                                            ShortcutInfo.createFromGenericDocument(
+                                                    mShortcutUser.getUserId(), doc))
+                                    .collect(Collectors.toList());
+                            cb.accept(ret);
+                        }
+                        @Override
+                        public void onSystemError(
+                                @Nullable Throwable throwable) {
+                            Slog.d(TAG, "Error retrieving shortcuts", throwable);
+                        }
+                    });
         }));
     }
 
@@ -2423,16 +2415,37 @@ class ShortcutPackage extends ShortcutPackageItem {
         runAsSystem(() -> fromAppSearch().thenAccept(session ->
                 session.remove(
                         new RemoveByDocumentIdRequest.Builder(getPackageName()).addIds(ids).build(),
-                        mShortcutUser.mExecutor, result -> {
-                            if (!result.isSuccess()) {
-                                final Map<String, AppSearchResult<Void>> failures =
-                                        result.getFailures();
-                                for (String key : failures.keySet()) {
-                                    Slog.e(TAG, "Failed deleting " + key + ", error message:"
-                                            + failures.get(key).getErrorMessage());
+                        mShortcutUser.mExecutor,
+                        new BatchResultCallback<String, Void>() {
+                            @Override
+                            public void onResult(
+                                    @NonNull AppSearchBatchResult<String, Void> result) {
+                                if (!result.isSuccess()) {
+                                    final Map<String, AppSearchResult<Void>> failures =
+                                            result.getFailures();
+                                    for (String key : failures.keySet()) {
+                                        Slog.e(TAG, "Failed deleting " + key + ", error message:"
+                                                + failures.get(key).getErrorMessage());
+                                    }
                                 }
                             }
+                            @Override
+                            public void onSystemError(@Nullable Throwable throwable) {
+                                Slog.e(TAG, "Error removing shortcuts", throwable);
+                            }
                         })));
+    }
+
+    void persistsAllShortcutsAsync() {
+        synchronized (mLock) {
+            final Map<String, ShortcutInfo> copy = mShortcuts;
+            if (!mTransientShortcuts.isEmpty()) {
+                copy.putAll(mTransientShortcuts);
+                mTransientShortcuts.clear();
+            }
+            saveShortcutsAsync(copy.values().stream().filter(ShortcutInfo::usesQuota).collect(
+                    Collectors.toList()));
+        }
     }
 
     private void saveShortcutsAsync(
@@ -2456,11 +2469,19 @@ class ShortcutPackage extends ShortcutPackageItem {
                                     AppSearchShortcutInfo.toGenericDocuments(shortcuts))
                             .build(),
                     mShortcutUser.mExecutor,
-                    result -> {
-                        if (!result.isSuccess()) {
-                            for (AppSearchResult<Void> k : result.getFailures().values()) {
-                                Slog.e(TAG, k.getErrorMessage());
+                    new BatchResultCallback<String, Void>() {
+                        @Override
+                        public void onResult(
+                                @NonNull AppSearchBatchResult<String, Void> result) {
+                            if (!result.isSuccess()) {
+                                for (AppSearchResult<Void> k : result.getFailures().values()) {
+                                    Slog.e(TAG, k.getErrorMessage());
+                                }
                             }
+                        }
+                        @Override
+                        public void onSystemError(@Nullable Throwable throwable) {
+                            Slog.d(TAG, "Error persisting shortcuts", throwable);
                         }
                     });
         }));
@@ -2480,8 +2501,8 @@ class ShortcutPackage extends ShortcutPackageItem {
                 }
                 cb.complete(results.getResultValue().stream()
                         .map(SearchResult::getGenericDocument)
-                        .map(AppSearchShortcutInfo::new)
-                        .map(si -> si.toShortcutInfo(mShortcutUser.getUserId()))
+                        .map(doc -> ShortcutInfo.createFromGenericDocument(
+                                mShortcutUser.getUserId(), doc))
                         .collect(Collectors.toList()));
             });
         }));
@@ -2506,7 +2527,7 @@ class ShortcutPackage extends ShortcutPackageItem {
                 mIsAppSearchSchemaUpToDate = true;
             }
         } catch (Exception e) {
-            Slog.e(TAG, "Failed to invoke app search pkg="
+            Slog.e(TAG, "Failed to create app search session. pkg="
                     + getPackageName() + " user=" + mShortcutUser.getUserId(), e);
             Objects.requireNonNull(future).completeExceptionally(e);
         } finally {

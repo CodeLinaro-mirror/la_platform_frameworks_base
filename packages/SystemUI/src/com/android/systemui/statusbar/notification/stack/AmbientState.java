@@ -76,7 +76,10 @@ public class AmbientState {
     private float mHideAmount;
     private boolean mAppearing;
     private float mPulseHeight = MAX_PULSE_HEIGHT;
+
+    /** How we much we are sleeping. 1f fully dozing (AOD), 0f fully awake (for all other states) */
     private float mDozeAmount = 0.0f;
+
     private Runnable mOnPulseHeightChangedListener;
     private ExpandableNotificationRow mTrackedHeadsUpRow;
     private float mAppearFraction;
@@ -95,6 +98,19 @@ public class AmbientState {
 
     /** Height of the notifications panel without top padding when expansion completes. */
     private float mStackEndHeight;
+
+    /** Whether we are swiping up. */
+    private boolean mIsSwipingUp;
+
+    /** Whether we are flinging the shade open or closed. */
+    private boolean mIsFlinging;
+
+    /**
+     * Whether we need to do a fling down after swiping up on lockscreen.
+     * True right after we swipe up on lockscreen and have not finished the fling down that follows.
+     * False when we stop flinging or leave lockscreen.
+     */
+    private boolean mNeedFlingAfterLockscreenSwipeUp = false;
 
     /**
      * @return Height of the notifications panel without top padding when expansion completes.
@@ -130,6 +146,35 @@ public class AmbientState {
      */
     public void setExpansionFraction(float expansionFraction) {
         mExpansionFraction = expansionFraction;
+    }
+
+    /**
+     * @param isSwipingUp Whether we are swiping up.
+     */
+    public void setSwipingUp(boolean isSwipingUp) {
+        if (!isSwipingUp && mIsSwipingUp) {
+            // Just stopped swiping up.
+            mNeedFlingAfterLockscreenSwipeUp = true;
+        }
+        mIsSwipingUp = isSwipingUp;
+    }
+
+    /**
+     * @return Whether we are swiping up.
+     */
+    public boolean isSwipingUp() {
+        return mIsSwipingUp;
+    }
+
+    /**
+     * @param isFlinging Whether we are flinging the shade open or closed.
+     */
+    public void setIsFlinging(boolean isFlinging) {
+        if (isOnKeyguard() && !isFlinging && mIsFlinging) {
+            // Just stopped flinging.
+            mNeedFlingAfterLockscreenSwipeUp = false;
+        }
+        mIsFlinging = isFlinging;
     }
 
     /**
@@ -439,6 +484,9 @@ public class AmbientState {
     }
 
     public void setStatusBarState(int statusBarState) {
+        if (mStatusBarState != StatusBarState.KEYGUARD) {
+            mNeedFlingAfterLockscreenSwipeUp = false;
+        }
         mStatusBarState = statusBarState;
     }
 
@@ -499,6 +547,13 @@ public class AmbientState {
 
     public boolean isUnlockHintRunning() {
         return mUnlockHintRunning;
+    }
+
+    /**
+     * @return Whether we need to do a fling down after swiping up on lockscreen.
+     */
+    public boolean isFlingingAfterSwipeUpOnLockscreen() {
+        return mIsFlinging && mNeedFlingAfterLockscreenSwipeUp;
     }
 
     /**
@@ -563,6 +618,10 @@ public class AmbientState {
                 setPulseHeight(MAX_PULSE_HEIGHT);
             }
         }
+    }
+
+    public float getDozeAmount() {
+        return mDozeAmount;
     }
 
     /**

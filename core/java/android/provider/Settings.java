@@ -24,7 +24,6 @@ import android.annotation.Nullable;
 import android.annotation.RequiresPermission;
 import android.annotation.SdkConstant;
 import android.annotation.SdkConstant.SdkConstantType;
-import android.annotation.StringDef;
 import android.annotation.SuppressLint;
 import android.annotation.SystemApi;
 import android.annotation.TestApi;
@@ -79,6 +78,7 @@ import android.os.ResultReceiver;
 import android.os.ServiceManager;
 import android.os.UserHandle;
 import android.speech.tts.TextToSpeech;
+import android.telephony.TelephonyManager;
 import android.text.TextUtils;
 import android.util.AndroidException;
 import android.util.ArrayMap;
@@ -86,8 +86,11 @@ import android.util.ArraySet;
 import android.util.Log;
 import android.util.MemoryIntArray;
 import android.view.Display;
+import android.view.MotionEvent;
+import android.view.ViewConfiguration;
 import android.view.Window;
 import android.view.WindowManager.LayoutParams;
+import android.widget.Editor;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.util.Preconditions;
@@ -239,6 +242,20 @@ public final class Settings {
     @SystemApi
     public static final String ACTION_TETHER_PROVISIONING_UI =
             "android.settings.TETHER_PROVISIONING_UI";
+
+    /**
+     * Activity Action: Show a dialog activity to notify tethering is NOT supported by carrier.
+     *
+     * When {@link android.telephony.CarrierConfigManager#KEY_CARRIER_SUPPORTS_TETHERING_BOOL}
+     * is false, and tethering is started by Settings, this dialog activity will be started to
+     * tell the user that tethering is not supported by carrier.
+     *
+     * @hide
+     */
+    @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
+    @SystemApi
+    public static final String ACTION_TETHER_UNSUPPORTED_CARRIER_UI =
+            "android.settings.TETHER_UNSUPPORTED_CARRIER_UI";
 
     /**
      * Activity Action: Show settings to allow entering/exiting airplane mode.
@@ -2128,10 +2145,10 @@ public final class Settings {
     /**
      * Intent extra: The id of a setting restricted by supervisors.
      * <p>
-     * Type: String with a value from the SupervisorVerificationSetting annotation below.
+     * Type: Integer with a value from the one of the SUPERVISOR_VERIFICATION_* constants below.
      * <ul>
-     * <li>{@link #SUPERVISOR_VERIFICATION_SETTING_UNKNOWN}
-     * <li>{@link #SUPERVISOR_VERIFICATION_SETTING_BIOMETRICS}
+     * <li>{@see #SUPERVISOR_VERIFICATION_SETTING_UNKNOWN}
+     * <li>{@see #SUPERVISOR_VERIFICATION_SETTING_BIOMETRICS}
      * </ul>
      * </p>
      */
@@ -2139,22 +2156,23 @@ public final class Settings {
             "android.provider.extra.SUPERVISOR_RESTRICTED_SETTING_KEY";
 
     /**
-     * Unknown setting.
+     * The unknown setting can usually be ignored and is used for compatibility with future
+     * supervisor settings.
      */
-    public static final String SUPERVISOR_VERIFICATION_SETTING_UNKNOWN = "";
+    public static final int SUPERVISOR_VERIFICATION_SETTING_UNKNOWN = 0;
 
     /**
-     * Biometric settings for supervisors.
+     * Settings for supervisors to control what kinds of biometric sensors, such a face and
+     * fingerprint scanners, can be used on the device.
      */
-    public static final String SUPERVISOR_VERIFICATION_SETTING_BIOMETRICS =
-            "supervisor_restricted_biometrics_controller";
+    public static final int SUPERVISOR_VERIFICATION_SETTING_BIOMETRICS = 1;
 
     /**
      * Keys for {@link #EXTRA_SUPERVISOR_RESTRICTED_SETTING_KEY}.
      * @hide
      */
     @Retention(RetentionPolicy.SOURCE)
-    @StringDef(prefix = { "SUPERVISOR_VERIFICATION_SETTING_" }, value = {
+    @IntDef(prefix = { "SUPERVISOR_VERIFICATION_SETTING_" }, value = {
             SUPERVISOR_VERIFICATION_SETTING_UNKNOWN,
             SUPERVISOR_VERIFICATION_SETTING_BIOMETRICS,
     })
@@ -2386,6 +2404,15 @@ public final class Settings {
             "android.settings.ENABLE_MMS_DATA_REQUEST";
 
     /**
+     * Shows restrict settings dialog when settings is blocked.
+     *
+     * @hide
+     */
+    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+    public static final String ACTION_SHOW_RESTRICTED_SETTING_DIALOG =
+            "android.settings.SHOW_RESTRICTED_SETTING_DIALOG";
+
+    /**
      * Integer value that specifies the reason triggering enable MMS data notification.
      * This must be passed as an extra field to the {@link #ACTION_ENABLE_MMS_DATA_REQUEST}.
      * Extra with value of EnableMmsDataReason interface.
@@ -2426,6 +2453,23 @@ public final class Settings {
      */
     @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
     public static final String ACTION_MMS_MESSAGE_SETTING = "android.settings.MMS_MESSAGE_SETTING";
+
+    /**
+     * Activity Action: Show a screen of bedtime settings, which is provided by the wellbeing app.
+     * <p>
+     * The handler of this intent action may not exist.
+     * <p>
+     * To start an activity with this intent, apps should set the wellbeing package explicitly in
+     * the intent together with this action. The wellbeing package is defined in
+     * {@code com.android.internal.R.string.config_defaultWellbeingPackage}.
+     * <p>
+     * Output: Nothing
+     *
+     * @hide
+     */
+    @SystemApi
+    @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
+    public static final String ACTION_BEDTIME_SETTINGS = "android.settings.BEDTIME_SETTINGS";
 
     // End of Intent actions for Settings
 
@@ -4473,6 +4517,13 @@ public final class Settings {
          */
         @Readable
         public static final String SCREEN_OFF_TIMEOUT = "screen_off_timeout";
+
+        /**
+         * The amount of time in milliseconds before the device goes to sleep or begins to dream
+         * after a period of inactivity while it is docked.
+         * @hide
+         */
+        public static final String SCREEN_OFF_TIMEOUT_DOCKED = "screen_off_timeout_docked";
 
         /**
          * The screen backlight brightness between 0 and 255.
@@ -6574,6 +6625,8 @@ public final class Settings {
          * @hide
          */
         @Readable(maxTargetSdk = Build.VERSION_CODES.S)
+        @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
+        @SuppressLint("NoSettingsProvider")
         public static final String BLUETOOTH_NAME = "bluetooth_name";
 
         /**
@@ -6581,6 +6634,8 @@ public final class Settings {
          * @hide
          */
         @Readable(maxTargetSdk = Build.VERSION_CODES.S)
+        @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
+        @SuppressLint("NoSettingsProvider")
         public static final String BLUETOOTH_ADDRESS = "bluetooth_address";
 
         /**
@@ -6588,6 +6643,8 @@ public final class Settings {
          * @hide
          */
         @Readable(maxTargetSdk = Build.VERSION_CODES.S)
+        @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
+        @SuppressLint("NoSettingsProvider")
         public static final String BLUETOOTH_ADDR_VALID = "bluetooth_addr_valid";
 
         /**
@@ -7420,6 +7477,16 @@ public final class Settings {
         @Readable
         public static final String ACCESSIBILITY_SHORTCUT_DIALOG_SHOWN =
                 "accessibility_shortcut_dialog_shown";
+
+        /**
+         * Setting specifying if the timeout restriction
+         * {@link ViewConfiguration#getAccessibilityShortcutKeyTimeout()}
+         * of the accessibility shortcut dialog is skipped.
+         *
+         * @hide
+         */
+        public static final String SKIP_ACCESSIBILITY_SHORTCUT_DIALOG_TIMEOUT_RESTRICTION =
+                "skip_accessibility_shortcut_dialog_timeout_restriction";
 
         /**
          * Setting specifying the accessibility services, accessibility shortcut targets,
@@ -9911,6 +9978,14 @@ public final class Settings {
         public static final String LOCKSCREEN_SHOW_CONTROLS = "lockscreen_show_controls";
 
         /**
+         * Whether trivial home controls can be used without authentication
+         *
+         * @hide
+         */
+        public static final String LOCKSCREEN_ALLOW_TRIVIAL_CONTROLS =
+                "lockscreen_allow_trivial_controls";
+
+        /**
          * Whether wallet should be accessible from the lockscreen
          *
          * @hide
@@ -9924,6 +9999,13 @@ public final class Settings {
          */
         public static final String LOCKSCREEN_USE_DOUBLE_LINE_CLOCK =
                 "lockscreen_use_double_line_clock";
+
+        /**
+         * Whether to show the vibrate icon in the Status Bar (default off)
+         *
+         * @hide
+         */
+        public static final String STATUS_BAR_SHOW_VIBRATE_ICON = "status_bar_show_vibrate_icon";
 
         /**
          * Specifies whether the web action API is enabled.
@@ -10031,6 +10113,13 @@ public final class Settings {
          */
         @Readable
         public static final String QS_AUTO_ADDED_TILES = "qs_auto_tiles";
+
+        /**
+         * The duration of timeout, in milliseconds, to switch from a non-primary user to the
+         * primary user when the device is docked.
+         * @hide
+         */
+        public static final String TIMEOUT_TO_USER_ZERO = "timeout_to_user_zero";
 
         /**
          * Backup manager behavioral parameters.
@@ -10215,6 +10304,14 @@ public final class Settings {
                 "theme_customization_overlay_packages";
 
         /**
+         * Indicates whether the nav bar is forced to always be visible, even in immersive mode.
+         * <p>Type: int (0 for false, 1 for true)
+         *
+         * @hide
+         */
+        public static final String NAV_BAR_FORCE_VISIBLE = "nav_bar_force_visible";
+
+        /**
          * Indicates whether the device is in kids nav mode.
          * <p>Type: int (0 for false, 1 for true)
          *
@@ -10257,6 +10354,50 @@ public final class Settings {
          */
         @Readable
         public static final String NEARBY_SHARING_COMPONENT = "nearby_sharing_component";
+
+        /**
+         * Nearby Sharing Slice URI for the SliceProvider to
+         * read Nearby Sharing scan results and then draw the UI.
+         * @hide
+         */
+        public static final String NEARBY_SHARING_SLICE_URI = "nearby_sharing_slice_uri";
+
+        /**
+         * Current provider of Fast Pair saved devices page.
+         * Default value in @string/config_defaultNearbyFastPairSettingsDevicesComponent.
+         * No VALIDATOR as this setting will not be backed up.
+         * @hide
+         */
+        public static final String NEARBY_FAST_PAIR_SETTINGS_DEVICES_COMPONENT =
+                "nearby_fast_pair_settings_devices_component";
+
+        /**
+         * Current provider of the component for requesting ambient context consent.
+         * Default value in @string/config_defaultAmbientContextConsentComponent.
+         * No VALIDATOR as this setting will not be backed up.
+         * @hide
+         */
+        public static final String AMBIENT_CONTEXT_CONSENT_COMPONENT =
+                "ambient_context_consent_component";
+
+        /**
+         * Current provider of the intent extra key for the caller's package name while
+         * requesting ambient context consent.
+         * No VALIDATOR as this setting will not be backed up.
+         * @hide
+         */
+        public static final String AMBIENT_CONTEXT_PACKAGE_NAME_EXTRA_KEY =
+                "ambient_context_package_name_key";
+
+        /**
+         * Current provider of the intent extra key for the event code int array while
+         * requesting ambient context consent.
+         * Default value in @string/config_ambientContextEventArrayExtraKey.
+         * No VALIDATOR as this setting will not be backed up.
+         * @hide
+         */
+        public static final String AMBIENT_CONTEXT_EVENT_ARRAY_EXTRA_KEY =
+                "ambient_context_event_array_key";
 
         /**
          * Controls whether aware is enabled.
@@ -10602,12 +10743,26 @@ public final class Settings {
                 "communal_mode_trusted_networks";
 
         /**
-         * Setting to allow Fast Pair scans to be enabled.
+         * Setting to store denylisted system languages by the CEC {@code <Set Menu Language>}
+         * confirmation dialog.
+         *
          * @hide
          */
-        @SystemApi
-        @Readable
-        public static final String FAST_PAIR_SCAN_ENABLED = "fast_pair_scan_enabled";
+        public static final String HDMI_CEC_SET_MENU_LANGUAGE_DENYLIST =
+                "hdmi_cec_set_menu_language_denylist";
+
+        /**
+         * Whether the Taskbar Education is about to be shown or is currently showing.
+         *
+         * <p>1 if true, 0 or unset otherwise.
+         *
+         * <p>This setting is used to inform other components that the Taskbar Education is
+         * currently showing, which can prevent them from showing something else to the user.
+         *
+         * @hide
+         */
+        public static final String LAUNCHER_TASKBAR_EDUCATION_SHOWING =
+                "launcher_taskbar_education_showing";
 
         /**
          * These entries are considered common between the personal and the managed profile,
@@ -10826,6 +10981,8 @@ public final class Settings {
          * @hide
          */
         @Readable
+        @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
+        @SuppressLint("NoSettingsProvider")
         public static final String BLUETOOTH_CLASS_OF_DEVICE = "bluetooth_class_of_device";
 
         /**
@@ -10834,6 +10991,8 @@ public final class Settings {
          * {@hide}
          */
         @Readable
+        @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
+        @SuppressLint("NoSettingsProvider")
         public static final String BLUETOOTH_DISABLED_PROFILES = "bluetooth_disabled_profiles";
 
         /**
@@ -11158,8 +11317,9 @@ public final class Settings {
 
         /**
          * Whether or not data roaming is enabled. (0 = false, 1 = true)
+         * Use {@link TelephonyManager#isDataRoamingEnabled} instead of calling via settings.
          */
-        @Readable
+        @Readable(maxTargetSdk = Build.VERSION_CODES.S)
         public static final String DATA_ROAMING = "data_roaming";
 
         /**
@@ -11296,15 +11456,6 @@ public final class Settings {
         @Readable
         public static final String DEVELOPMENT_USE_BLAST_ADAPTER_VR =
                 "use_blast_adapter_vr";
-
-        /**
-         * If true, submit buffers using blast in SurfaceView.
-         * (0 = false, 1 = true)
-         * @hide
-         */
-        @Readable
-        public static final String DEVELOPMENT_USE_BLAST_ADAPTER_SV =
-                "use_blast_adapter_sv";
 
         /**
          * Path to the WindowManager display settings file. If unset, the default file path will
@@ -11613,8 +11764,8 @@ public final class Settings {
                 "night_display_forced_auto_mode_available";
 
         /**
-         * If UTC time between two NITZ signals is greater than this value then the second signal
-         * cannot be ignored.
+         * If Unix epoch time between two NITZ signals is greater than this value then the second
+         * signal cannot be ignored.
          *
          * <p>This value is in milliseconds. It is used for telephony-based time and time zone
          * detection.
@@ -12371,6 +12522,8 @@ public final class Settings {
         * @hide
         */
         @Readable
+        @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
+        @SuppressLint("NoSettingsProvider")
         public static final String BLE_SCAN_ALWAYS_AVAILABLE = "ble_scan_always_enabled";
 
         /**
@@ -12378,6 +12531,8 @@ public final class Settings {
          * @hide
          */
         @Readable
+        @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
+        @SuppressLint("NoSettingsProvider")
         public static final String BLE_SCAN_LOW_POWER_WINDOW_MS = "ble_scan_low_power_window_ms";
 
         /**
@@ -12385,6 +12540,8 @@ public final class Settings {
          * @hide
          */
         @Readable
+        @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
+        @SuppressLint("NoSettingsProvider")
         public static final String BLE_SCAN_BALANCED_WINDOW_MS = "ble_scan_balanced_window_ms";
 
         /**
@@ -12392,6 +12549,8 @@ public final class Settings {
          * @hide
          */
         @Readable
+        @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
+        @SuppressLint("NoSettingsProvider")
         public static final String BLE_SCAN_LOW_LATENCY_WINDOW_MS =
                 "ble_scan_low_latency_window_ms";
 
@@ -12400,6 +12559,8 @@ public final class Settings {
          * @hide
          */
         @Readable
+        @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
+        @SuppressLint("NoSettingsProvider")
         public static final String BLE_SCAN_LOW_POWER_INTERVAL_MS =
                 "ble_scan_low_power_interval_ms";
 
@@ -12408,6 +12569,8 @@ public final class Settings {
          * @hide
          */
         @Readable
+        @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
+        @SuppressLint("NoSettingsProvider")
         public static final String BLE_SCAN_BALANCED_INTERVAL_MS =
                 "ble_scan_balanced_interval_ms";
 
@@ -12416,6 +12579,8 @@ public final class Settings {
          * @hide
          */
         @Readable
+        @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
+        @SuppressLint("NoSettingsProvider")
         public static final String BLE_SCAN_LOW_LATENCY_INTERVAL_MS =
                 "ble_scan_low_latency_interval_ms";
 
@@ -12424,6 +12589,8 @@ public final class Settings {
          * @hide
          */
         @Readable
+        @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
+        @SuppressLint("NoSettingsProvider")
         public static final String BLE_SCAN_BACKGROUND_MODE = "ble_scan_background_mode";
 
         /**
@@ -13156,6 +13323,8 @@ public final class Settings {
 
         /** {@hide} */
         @Readable
+        @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
+        @SuppressLint("NoSettingsProvider")
         public static final String
                 BLUETOOTH_BTSNOOP_DEFAULT_MODE = "bluetooth_btsnoop_default_mode";
         /** {@hide} */
@@ -15358,6 +15527,17 @@ public final class Settings {
         public static final String AUTOFILL_MAX_VISIBLE_DATASETS = "autofill_max_visible_datasets";
 
         /**
+         * Toggle for enabling stylus handwriting. When enabled, current Input method receives
+         * stylus {@link MotionEvent}s if an {@link Editor} is focused.
+         *
+         * @hide
+         */
+        @TestApi
+        @Readable
+        @SuppressLint("NoSettingsProvider")
+        public static final String STYLUS_HANDWRITING_ENABLED = "stylus_handwriting_enabled";
+
+        /**
          * Exemptions to the hidden API blacklist.
          *
          * @hide
@@ -16706,6 +16886,48 @@ public final class Settings {
         public static final String RESTRICTED_NETWORKING_MODE = "restricted_networking_mode";
 
         /**
+         * Setting indicating whether Low Power Standby is enabled, if supported.
+         *
+         * Values are:
+         * 0: disabled
+         * 1: enabled
+         *
+         * @hide
+         */
+        public static final String LOW_POWER_STANDBY_ENABLED = "low_power_standby_enabled";
+
+        /**
+         * Setting indicating whether Low Power Standby is allowed to be active during doze
+         * maintenance mode.
+         *
+         * Values are:
+         * 0: Low Power Standby will be disabled during doze maintenance mode
+         * 1: Low Power Standby can be active during doze maintenance mode
+         *
+         * @hide
+         */
+        public static final String LOW_POWER_STANDBY_ACTIVE_DURING_MAINTENANCE =
+                "low_power_standby_active_during_maintenance";
+
+        /**
+         * Timeout for the system server watchdog.
+         *
+         * @see {@link com.android.server.Watchdog}.
+         *
+         * @hide
+         */
+        public static final String WATCHDOG_TIMEOUT_MILLIS =
+                "system_server_watchdog_timeout_ms";
+
+        /**
+         * Whether to enable managed device provisioning via the role holder.
+         *
+         * @hide
+         */
+        public static final String MANAGED_PROVISIONING_DEFER_PROVISIONING_TO_ROLE_HOLDER =
+                "managed_provisioning_defer_provisioning_to_role_holder";
+
+        /**
          * Settings migrated from Wear OS settings provider.
          * @hide
          */
@@ -17210,6 +17432,18 @@ public final class Settings {
              */
             public static final String CLOCKWORK_LONG_PRESS_TO_ASSISTANT_ENABLED =
                     "clockwork_long_press_to_assistant_enabled";
+
+            /*
+             * Whether the device has Cooldown Mode enabled.
+             * @hide
+             */
+            public static final String COOLDOWN_MODE_ON = "cooldown_mode_on";
+
+            /*
+             * Whether the device has Wet Mode/ Touch Lock Mode enabled.
+             * @hide
+             */
+            public static final String WET_MODE_ON = "wet_mode_on";
         }
     }
 

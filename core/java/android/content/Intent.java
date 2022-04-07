@@ -1458,6 +1458,18 @@ public class Intent implements Parcelable, Cloneable {
      */
     @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
     public static final String ACTION_ALL_APPS = "android.intent.action.ALL_APPS";
+
+    /**
+     * Activity Action: Action to show the list of all work apps in the launcher. For example,
+     * shows the work apps folder or tab.
+     *
+     * <p>Input: Nothing.
+     * <p>Output: nothing.
+     */
+    @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
+    public static final String ACTION_SHOW_WORK_APPS =
+            "android.intent.action.SHOW_WORK_APPS";
+
     /**
      * Activity Action: Show settings for choosing wallpaper.
      * <p>Input: Nothing.
@@ -2042,7 +2054,7 @@ public class Intent implements Parcelable, Cloneable {
             "android.intent.action.VIEW_PERMISSION_USAGE_FOR_PERIOD";
 
     /**
-     * Activity action: Launch the Safety Hub UI.
+     * Activity action: Launch the Safety Center Quick Settings UI.
      *
      * <p>
      * Input: Nothing.
@@ -2050,11 +2062,14 @@ public class Intent implements Parcelable, Cloneable {
      * <p>
      * Output: Nothing.
      * </p>
+     *
+     * @hide
      */
+    @SystemApi
     @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
     @RequiresPermission(Manifest.permission.MANAGE_SENSOR_PRIVACY)
-    public static final String ACTION_VIEW_SAFETY_HUB =
-            "android.intent.action.VIEW_SAFETY_HUB";
+    public static final String ACTION_VIEW_SAFETY_CENTER_QS =
+            "android.intent.action.VIEW_SAFETY_CENTER_QS";
 
     /**
      * Activity action: Launch UI to manage a default app.
@@ -2385,6 +2400,10 @@ public class Intent implements Parcelable, Cloneable {
      * {@link android.Manifest.permission#START_VIEW_APP_FEATURES} permission to ensure that
      * only the system can launch this activity. The system will not launch activities
      * that are not properly protected.
+     *
+     * An optional <meta-data> tag in the activity's manifest with
+     * android:name=app_features_preference_summary and android:resource=@string/<string name> will
+     * be used to add a summary line for the "All Services" preference in settings.
      * </p>
      * @hide
      */
@@ -3797,47 +3816,6 @@ public class Intent implements Parcelable, Cloneable {
             "android.intent.action.ACTION_IDLE_MAINTENANCE_END";
 
     /**
-     * Broadcast Action: A broadcast sent by the system to indicate that
-     * {@link android.safetycenter.SafetyCenterManager} is requesting data from safety sources
-     * regarding their safety state.
-     *
-     * This broadcast is sent when a user triggers a data refresh from the Safety Center UI or when
-     * Safety Center detects that its stored safety information is stale and needs to be updated.
-     *
-     * This broadcast is sent explicitly to safety sources by targeting intents to a specified set
-     * of components provided by the safety sources in the safety source configuration.
-     * The receiving components should be manifest-declared receivers so that safety sources can be
-     * requested to send data even if they are not running.
-     *
-     * On receiving this broadcast, safety sources should determine their safety state
-     * according to the parameters specified in the intent extras (see below) and send Safety Center
-     * data about their safety state using
-     * {@link android.safetycenter.SafetyCenterManager#sendSafetyCenterUpdate(android.safetycenter.SafetySourceData)}.
-     *
-     * <p class="note">This is a protected intent that can only be sent by the system.
-     *
-     * <p>Includes the following extras:
-     * <ul>
-     * <li>{@link #EXTRA_REFRESH_SAFETY_SOURCES_REQUEST_TYPE}: An int representing the type of data
-     * being requested. Possible values are all values in {@link RefreshRequestType}.
-     * <li>{@link #EXTRA_REFRESH_SAFETY_SOURCE_IDS}: A {@code String[]} of ids
-     * representing the safety sources being requested for data. This extra exists for
-     * disambiguation in the case that a single component is responsible for receiving refresh
-     * requests for multiple safety sources.
-     * </ul>
-     *
-     * @hide
-     */
-    // TODO(b/210805082): Define the term "safety sources" more concretely here once safety sources
-    //  are configured in xml config.
-    // TODO(b/210979035): Determine recommendation for sources if they are requested for fresh data
-    //  but cannot provide it.
-    @SystemApi
-    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
-    public static final String ACTION_REFRESH_SAFETY_SOURCES =
-            "android.intent.action.REFRESH_SAFETY_SOURCES";
-
-    /**
      * Broadcast Action: a remote intent is to be broadcasted.
      *
      * A remote intent is used for remote RPC between devices. The remote intent
@@ -4023,7 +4001,7 @@ public class Intent implements Parcelable, Cloneable {
      * {@link android.Manifest.permission#MANAGE_USERS} to receive this broadcast.
      * @hide
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @SystemApi
     public static final String ACTION_USER_SWITCHED =
             "android.intent.action.USER_SWITCHED";
 
@@ -5053,6 +5031,17 @@ public class Intent implements Parcelable, Cloneable {
     public static final String ACTION_PACKAGE_NEEDS_INTEGRITY_VERIFICATION =
             "android.intent.action.PACKAGE_NEEDS_INTEGRITY_VERIFICATION";
 
+    /**
+     * Broadcast Action: Start the foreground service manager.
+     *
+     * <p class="note">
+     * This is a protected intent that can only be sent by the system.
+     * </p>
+     *
+     * @hide
+     */
+    public static final String ACTION_SHOW_FOREGROUND_SERVICE_MANAGER =
+            "android.intent.action.SHOW_FOREGROUND_SERVICE_MANAGER";
 
     // ---------------------------------------------------------------------
     // ---------------------------------------------------------------------
@@ -5602,6 +5591,7 @@ public class Intent implements Parcelable, Cloneable {
     /**
      * A String[] holding attribution tags when used with
      * {@link #ACTION_VIEW_PERMISSION_USAGE_FOR_PERIOD}
+     * and ACTION_MANAGE_PERMISSION_USAGE
      *
      * E.g. an attribution tag could be location_provider, com.google.android.gms.*, etc.
      */
@@ -5610,17 +5600,20 @@ public class Intent implements Parcelable, Cloneable {
     /**
      * A long representing the start timestamp (epoch time in millis) of the permission usage
      * when used with {@link #ACTION_VIEW_PERMISSION_USAGE_FOR_PERIOD}
+     * and ACTION_MANAGE_PERMISSION_USAGE
      */
     public static final String EXTRA_START_TIME = "android.intent.extra.START_TIME";
 
     /**
      * A long representing the end timestamp (epoch time in millis) of the permission usage when
      * used with {@link #ACTION_VIEW_PERMISSION_USAGE_FOR_PERIOD}
+     * and ACTION_MANAGE_PERMISSION_USAGE
      */
     public static final String EXTRA_END_TIME = "android.intent.extra.END_TIME";
 
     /**
-     * A boolean extra, when used with {@link #ACTION_VIEW_PERMISSION_USAGE_FOR_PERIOD},
+     * A boolean extra, when used with {@link #ACTION_VIEW_PERMISSION_USAGE_FOR_PERIOD}
+     * and {@link #ACTION_MANAGE_PERMISSION_USAGE},
      * that specifies whether the permission usage system UI is showing attribution information
      * for the chosen entry.
      *
@@ -5994,14 +5987,6 @@ public class Intent implements Parcelable, Cloneable {
     public static final String EXTRA_UID = "android.intent.extra.UID";
 
     /**
-     * Used as an optional int extra field in {@link android.content.Intent#ACTION_PACKAGE_ADDED}
-     * intents to supply the previous uid the package had been assigned.
-     * This would only be set when a package is leaving sharedUserId in an upgrade, or when a
-     * system app upgrade that had left sharedUserId is getting uninstalled.
-     */
-    public static final String EXTRA_PREVIOUS_UID = "android.intent.extra.PREVIOUS_UID";
-
-    /**
      * @hide String array of package names.
      */
     @SystemApi
@@ -6031,16 +6016,6 @@ public class Intent implements Parcelable, Cloneable {
      * different version of the same package.
      */
     public static final String EXTRA_REPLACING = "android.intent.extra.REPLACING";
-
-    /**
-     * Used as a boolean extra field in {@link android.content.Intent#ACTION_PACKAGE_REMOVED},
-     * {@link android.content.Intent#ACTION_UID_REMOVED}, and
-     * {@link android.content.Intent#ACTION_PACKAGE_ADDED}
-     * intents to indicate that this package is changing its UID.
-     * This would only be set when a package is leaving sharedUserId in an upgrade, or when a
-     * system app upgrade that had left sharedUserId is getting uninstalled.
-     */
-    public static final String EXTRA_UID_CHANGING = "android.intent.extra.UID_CHANGING";
 
     /**
      * Used as an int extra field in {@link android.app.AlarmManager} pending intents
@@ -6222,6 +6197,8 @@ public class Intent implements Parcelable, Cloneable {
      *
      * @hide
      */
+    @SystemApi
+    @SuppressLint("ActionValue")
     public static final String EXTRA_USER_HANDLE =
             "android.intent.extra.user_handle";
 
@@ -6460,77 +6437,6 @@ public class Intent implements Parcelable, Cloneable {
      */
     public static final String EXTRA_VISIBILITY_ALLOW_LIST =
             "android.intent.extra.VISIBILITY_ALLOW_LIST";
-
-
-    /**
-     * Used as a {@code String[]} extra field in
-     * {@link android.content.Intent#ACTION_REFRESH_SAFETY_SOURCES} intents to specify the safety
-     * source ids of the safety sources being requested for data by Safety Center.
-     *
-     * When this extra field is not specified in the intent, it is assumed that Safety Center is
-     * requesting data from all safety sources supported by the component receiving the broadcast.
-     * @hide
-     */
-    @SystemApi
-    public static final String EXTRA_REFRESH_SAFETY_SOURCE_IDS =
-            "android.intent.extra.REFRESH_SAFETY_SOURCE_IDS";
-
-    /**
-     * Used as an {@code int} extra field in
-     * {@link android.content.Intent#ACTION_REFRESH_SAFETY_SOURCES} intents to specify the type of
-     * data request from Safety Center.
-     *
-     * Possible values are all values in {@link RefreshRequestType}.
-     *
-     * @hide
-     */
-    @SystemApi
-    public static final String EXTRA_REFRESH_SAFETY_SOURCES_REQUEST_TYPE =
-            "android.intent.extra.REFRESH_SAFETY_SOURCES_REQUEST_TYPE";
-
-    /**
-     * All possible types of data refresh requests in broadcasts with intent action
-     * {@link android.content.Intent#ACTION_REFRESH_SAFETY_SOURCES}.
-     *
-     * @hide
-     */
-    @IntDef(prefix = { "EXTRA_REFRESH_REQUEST_TYPE_" }, value = {
-            EXTRA_REFRESH_REQUEST_TYPE_FETCH_FRESH_DATA,
-            EXTRA_REFRESH_REQUEST_TYPE_GET_DATA,
-    })
-    @Retention(RetentionPolicy.SOURCE)
-    public @interface RefreshRequestType {}
-
-    /**
-     * Used as an int value for
-     * {@link android.content.Intent#EXTRA_REFRESH_SAFETY_SOURCES_REQUEST_TYPE}
-     * to indicate that the safety source should fetch fresh data relating to their safety state
-     * upon receiving a broadcast with intent action
-     * {@link android.content.Intent#ACTION_REFRESH_SAFETY_SOURCES} and provide it to Safety Center.
-     *
-     * The term "fresh" here means that the sources should ensure that the safety data is accurate
-     * as possible at the time of providing it to Safety Center, even if it involves performing an
-     * expensive and/or slow process.
-     *
-     * @hide
-     */
-    @SystemApi
-    public static final int EXTRA_REFRESH_REQUEST_TYPE_FETCH_FRESH_DATA = 0;
-
-    /**
-     * Used as an int value for
-     * {@link android.content.Intent#EXTRA_REFRESH_SAFETY_SOURCES_REQUEST_TYPE}
-     * to indicate that upon receiving a broadcasts with intent action
-     * {@link android.content.Intent#ACTION_REFRESH_SAFETY_SOURCES}, the safety source should
-     * provide data relating to their safety state to Safety Center.
-     *
-     * If the source already has its safety data cached, it may provide it without triggering a
-     * process to fetch state which may be expensive and/or slow.
-     *
-     * @hide
-     */
-    @SystemApi
-    public static final int EXTRA_REFRESH_REQUEST_TYPE_GET_DATA = 1;
 
     // ---------------------------------------------------------------------
     // ---------------------------------------------------------------------
@@ -7156,6 +7062,7 @@ public class Intent implements Parcelable, Cloneable {
      *
      * @hide
      */
+    @SystemApi
     public static final int FLAG_RECEIVER_INCLUDE_BACKGROUND = 0x01000000;
     /**
      * If set, the broadcast will never go to manifest receivers in background (cached
@@ -8970,10 +8877,29 @@ public class Intent implements Parcelable, Cloneable {
      * @return the value of an item previously added with putExtra(),
      * or null if no Parcelable value was found.
      *
+     * @deprecated Use the type-safer {@link #getParcelableExtra(String, Class)} starting from
+     *      Android {@link Build.VERSION_CODES#TIRAMISU}.
+     *
      * @see #putExtra(String, Parcelable)
      */
+    @Deprecated
     public @Nullable <T extends Parcelable> T getParcelableExtra(String name) {
         return mExtras == null ? null : mExtras.<T>getParcelable(name);
+    }
+
+    /**
+     * Retrieve extended data from the intent.
+     *
+     * @param name The name of the desired item.
+     * @param clazz The type of the object expected.
+     *
+     * @return the value of an item previously added with putExtra(),
+     * or null if no Parcelable value was found.
+     *
+     * @see #putExtra(String, Parcelable)
+     */
+    public @Nullable <T> T getParcelableExtra(@Nullable String name, @NonNull Class<T> clazz) {
+        return mExtras == null ? null : mExtras.getParcelable(name, clazz);
     }
 
     /**
@@ -8984,10 +8910,31 @@ public class Intent implements Parcelable, Cloneable {
      * @return the value of an item previously added with putExtra(),
      * or null if no Parcelable[] value was found.
      *
+     * @deprecated Use the type-safer {@link #getParcelableArrayExtra(String, Class)} starting from
+     *      Android {@link Build.VERSION_CODES#TIRAMISU}.
+     *
      * @see #putExtra(String, Parcelable[])
      */
+    @Deprecated
     public @Nullable Parcelable[] getParcelableArrayExtra(String name) {
         return mExtras == null ? null : mExtras.getParcelableArray(name);
+    }
+
+    /**
+     * Retrieve extended data from the intent.
+     *
+     * @param name The name of the desired item.
+     * @param clazz The type of the items inside the array. This is only verified when unparceling.
+     *
+     * @return the value of an item previously added with putExtra(),
+     * or null if no Parcelable[] value was found.
+     *
+     * @see #putExtra(String, Parcelable[])
+     */
+    @SuppressLint({"ArrayReturn", "NullableCollection"})
+    public @Nullable <T> T[] getParcelableArrayExtra(@Nullable String name,
+            @NonNull Class<T> clazz) {
+        return mExtras == null ? null : mExtras.getParcelableArray(name, clazz);
     }
 
     /**
@@ -8999,10 +8946,33 @@ public class Intent implements Parcelable, Cloneable {
      * putParcelableArrayListExtra(), or null if no
      * ArrayList<Parcelable> value was found.
      *
+     * @deprecated Use the type-safer {@link #getParcelableArrayListExtra(String, Class)} starting
+     *      from Android {@link Build.VERSION_CODES#TIRAMISU}.
+     *
      * @see #putParcelableArrayListExtra(String, ArrayList)
      */
+    @Deprecated
     public @Nullable <T extends Parcelable> ArrayList<T> getParcelableArrayListExtra(String name) {
         return mExtras == null ? null : mExtras.<T>getParcelableArrayList(name);
+    }
+
+    /**
+     * Retrieve extended data from the intent.
+     *
+     * @param name The name of the desired item.
+     * @param clazz The type of the items inside the array list. This is only verified when
+     *     unparceling.
+     *
+     * @return the value of an item previously added with
+     * putParcelableArrayListExtra(), or null if no
+     * ArrayList<Parcelable> value was found.
+     *
+     * @see #putParcelableArrayListExtra(String, ArrayList)
+     */
+    @SuppressLint({"ConcreteCollection", "NullableCollection"})
+    public @Nullable <T> ArrayList<T> getParcelableArrayListExtra(@Nullable String name,
+            @NonNull Class<? extends T> clazz) {
+        return mExtras == null ? null : mExtras.<T>getParcelableArrayList(name, clazz);
     }
 
     /**
@@ -9013,10 +8983,29 @@ public class Intent implements Parcelable, Cloneable {
      * @return the value of an item previously added with putExtra(),
      * or null if no Serializable value was found.
      *
+     * @deprecated Use the type-safer {@link #getSerializableExtra(String, Class)} starting from
+     *      Android {@link Build.VERSION_CODES#TIRAMISU}.
+     *
      * @see #putExtra(String, Serializable)
      */
     public @Nullable Serializable getSerializableExtra(String name) {
         return mExtras == null ? null : mExtras.getSerializable(name);
+    }
+
+    /**
+     * Retrieve extended data from the intent.
+     *
+     * @param name The name of the desired item.
+     * @param clazz The type of the object expected.
+     *
+     * @return the value of an item previously added with putExtra(),
+     * or null if no Serializable value was found.
+     *
+     * @see #putExtra(String, Serializable)
+     */
+    public @Nullable <T extends Serializable> T getSerializableExtra(@Nullable String name,
+            @NonNull Class<T> clazz) {
+        return mExtras == null ? null : mExtras.getSerializable(name, clazz);
     }
 
     /**
@@ -9276,6 +9265,16 @@ public class Intent implements Parcelable, Cloneable {
         return (mExtras != null)
                 ? new Bundle(mExtras)
                 : null;
+    }
+
+    /**
+     * Returns the total size of the extras in bytes, or 0 if no extras are present.
+     * @hide
+     */
+    public int getExtrasTotalSize() {
+        return (mExtras != null)
+                ? mExtras.getSize()
+                : 0;
     }
 
     /**

@@ -24,6 +24,7 @@ import static android.app.WindowConfiguration.WINDOWING_MODE_MULTI_WINDOW;
 import static android.app.WindowConfiguration.WINDOWING_MODE_UNDEFINED;
 import static android.content.pm.ActivityInfo.RESIZE_MODE_RESIZEABLE;
 import static android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
+import static android.content.res.Configuration.ORIENTATION_LANDSCAPE;
 import static android.os.Process.SYSTEM_UID;
 import static android.view.View.VISIBLE;
 import static android.view.WindowManager.DISPLAY_IME_POLICY_FALLBACK_DISPLAY;
@@ -902,7 +903,7 @@ class WindowTestsBase extends SystemServiceTestsBase {
         doReturn(100).when(hardwareBuffer).getHeight();
     }
 
-    private static ComponentName getUniqueComponentName() {
+    static ComponentName getUniqueComponentName() {
         return ComponentName.createRelative(DEFAULT_COMPONENT_PACKAGE_NAME,
                 DEFAULT_COMPONENT_CLASS_NAME + sCurrentActivityId++);
     }
@@ -940,6 +941,7 @@ class WindowTestsBase extends SystemServiceTestsBase {
         private boolean mOnTop = false;
         private ActivityInfo.WindowLayout mWindowLayout;
         private boolean mVisible = true;
+        private ActivityOptions mLaunchIntoPipOpts;
 
         ActivityBuilder(ActivityTaskManagerService service) {
             mService = service;
@@ -1075,6 +1077,11 @@ class WindowTestsBase extends SystemServiceTestsBase {
             return this;
         }
 
+        ActivityBuilder setLaunchIntoPipActivityOptions(ActivityOptions opts) {
+            mLaunchIntoPipOpts = opts;
+            return this;
+        }
+
         ActivityRecord build() {
             SystemServicesTestRule.checkHoldsLock(mService.mGlobalLock);
             try {
@@ -1131,7 +1138,9 @@ class WindowTestsBase extends SystemServiceTestsBase {
             }
 
             ActivityOptions options = null;
-            if (mLaunchTaskBehind) {
+            if (mLaunchIntoPipOpts != null) {
+                options = mLaunchIntoPipOpts;
+            } else if (mLaunchTaskBehind) {
                 options = ActivityOptions.makeTaskLaunchBehind();
             }
             final ActivityRecord activity = new ActivityRecord.Builder(mService)
@@ -1255,6 +1264,7 @@ class WindowTestsBase extends SystemServiceTestsBase {
                         mOrganizer.getOrganizerToken(), DEFAULT_TASK_FRAGMENT_ORGANIZER_UID,
                         DEFAULT_TASK_FRAGMENT_ORGANIZER_PROCESS_NAME);
             }
+            spyOn(taskFragment);
             return taskFragment;
         }
     }
@@ -1531,9 +1541,16 @@ class WindowTestsBase extends SystemServiceTestsBase {
 
             final Rect primaryBounds = new Rect();
             final Rect secondaryBounds = new Rect();
-            display.getBounds().splitVertically(primaryBounds, secondaryBounds);
+            if (display.getConfiguration().orientation == ORIENTATION_LANDSCAPE) {
+                display.getBounds().splitVertically(primaryBounds, secondaryBounds);
+            } else {
+                display.getBounds().splitHorizontally(primaryBounds, secondaryBounds);
+            }
             mPrimary.setBounds(primaryBounds);
             mSecondary.setBounds(secondaryBounds);
+
+            spyOn(mPrimary);
+            spyOn(mSecondary);
         }
 
         TestSplitOrganizer(ActivityTaskManagerService service) {

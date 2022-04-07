@@ -60,6 +60,7 @@ import android.widget.LinearLayout;
 
 import androidx.annotation.Nullable;
 
+import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.policy.ScreenDecorationsUtils;
 import com.android.wm.shell.R;
 import com.android.wm.shell.TaskView;
@@ -418,8 +419,9 @@ public class BubbleExpandedView extends LinearLayout {
         mPointerView.setBackground(mCurrentPointer);
     }
 
-    private String getBubbleKey() {
-        return mBubble != null ? mBubble.getKey() : "null";
+    @VisibleForTesting
+    public String getBubbleKey() {
+        return mBubble != null ? mBubble.getKey() : mIsOverflow ? BubbleOverflow.KEY : null;
     }
 
     /**
@@ -690,6 +692,7 @@ public class BubbleExpandedView extends LinearLayout {
      * @param bubblePosition the x position of the bubble if showing on top, the y position of
      *                       the bubble if showing vertically.
      * @param onLeft whether the stack was on the left side of the screen when expanded.
+     * @param animate whether the pointer should animate to this position.
      */
     public void setPointerPosition(float bubblePosition, boolean onLeft, boolean animate) {
         // Pointer gets drawn in the padding

@@ -61,7 +61,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.util.Map;
+import java.util.List;
 
 @SmallTest
 @Presubmit
@@ -132,13 +132,19 @@ public class ApexManagerTest {
 
     @Test
     public void testGetApexSystemServices() throws RemoteException {
-        when(mApexService.getAllPackages()).thenReturn(createApexInfoForTestPkg(true, false));
+        when(mApexService.getAllPackages()).thenReturn(new ApexInfo[] {
+                createApexInfoForTestPkg(false, true, 1),
+                // only active apex reports apex-system-service
+                createApexInfoForTestPkg(true, false, 2),
+        });
+
         mApexManager.scanApexPackagesTraced(mPackageParser2,
                 ParallelPackageParser.makeExecutorService());
 
-        Map<String, String> services = mApexManager.getApexSystemServices();
+        List<ApexSystemServiceInfo> services = mApexManager.getApexSystemServices();
         assertThat(services).hasSize(1);
-        assertThat(services).containsKey("com.android.apex.test.ApexSystemService");
+        assertThat(services.stream().map(ApexSystemServiceInfo::getName).findFirst().orElse(null))
+                .matches("com.android.apex.test.ApexSystemService");
     }
 
     @Test
@@ -483,17 +489,34 @@ public class ApexManagerTest {
         assertThat(e).hasMessageThat().contains("Failed to collect certificates from ");
     }
 
-    private ApexInfo[] createApexInfoForTestPkg(boolean isActive, boolean isFactory) {
+    @Test
+    public void testGetActivePackageNameForApexModuleName() throws Exception {
+        final String moduleName = "com.android.module_name";
+
+        ApexInfo[] apexInfo = createApexInfoForTestPkg(true, false);
+        apexInfo[0].moduleName = moduleName;
+        when(mApexService.getAllPackages()).thenReturn(apexInfo);
+        mApexManager.scanApexPackagesTraced(mPackageParser2,
+                ParallelPackageParser.makeExecutorService());
+
+        assertThat(mApexManager.getActivePackageNameForApexModuleName(moduleName))
+                .isEqualTo(TEST_APEX_PKG);
+    }
+
+    private ApexInfo createApexInfoForTestPkg(boolean isActive, boolean isFactory, int version) {
         File apexFile = extractResource(TEST_APEX_PKG,  TEST_APEX_FILE_NAME);
         ApexInfo apexInfo = new ApexInfo();
         apexInfo.isActive = isActive;
         apexInfo.isFactory = isFactory;
         apexInfo.moduleName = TEST_APEX_PKG;
         apexInfo.modulePath = apexFile.getPath();
-        apexInfo.versionCode = 191000070;
+        apexInfo.versionCode = version;
         apexInfo.preinstalledModulePath = apexFile.getPath();
+        return apexInfo;
+    }
 
-        return new ApexInfo[]{apexInfo};
+    private ApexInfo[] createApexInfoForTestPkg(boolean isActive, boolean isFactory) {
+        return new ApexInfo[]{createApexInfoForTestPkg(isActive, isFactory, 191000070)};
     }
 
     private ApexInfo createApexInfo(String moduleName, int versionCode, boolean isActive,

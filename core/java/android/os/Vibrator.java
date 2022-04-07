@@ -83,7 +83,7 @@ public abstract class Vibrator {
     /**
      * Vibration effect support: unknown
      *
-     * The hardware doesn't report it's supported effects, so we can't determine whether the
+     * <p>The hardware doesn't report its supported effects, so we can't determine whether the
      * effect is supported or not.
      */
     public static final int VIBRATION_EFFECT_SUPPORT_UNKNOWN = 0;
@@ -91,14 +91,15 @@ public abstract class Vibrator {
     /**
      * Vibration effect support: supported
      *
-     * This effect is supported by the underlying hardware.
+     * <p>This effect is supported by the underlying hardware.
      */
     public static final int VIBRATION_EFFECT_SUPPORT_YES = 1;
 
     /**
      * Vibration effect support: unsupported
      *
-     * This effect is <b>not</b> supported by the underlying hardware.
+     * <p>This effect is <b>not</b> natively supported by the underlying hardware, although
+     * the system may still play a fallback vibration.
      */
     public static final int VIBRATION_EFFECT_SUPPORT_NO = 2;
 
@@ -316,7 +317,7 @@ public abstract class Vibrator {
     /**
      * Vibrate constantly for the specified period of time.
      *
-     * <p>The app should be in foreground for the vibration to happen.</p>
+     * <p>The app should be in the foreground for the vibration to happen.</p>
      *
      * @param milliseconds The number of milliseconds to vibrate.
      * @deprecated Use {@link #vibrate(VibrationEffect)} instead.
@@ -330,7 +331,7 @@ public abstract class Vibrator {
     /**
      * Vibrate constantly for the specified period of time.
      *
-     * <p>The app should be in foreground for the vibration to happen. Background apps should
+     * <p>The app should be in the foreground for the vibration to happen. Background apps should
      * specify a ringtone, notification or alarm usage in order to vibrate.</p>
      *
      * @param milliseconds The number of milliseconds to vibrate.
@@ -367,7 +368,7 @@ public abstract class Vibrator {
      * to start the repeat, or -1 to disable repeating.
      * </p>
      *
-     * <p>The app should be in foreground for the vibration to happen.</p>
+     * <p>The app should be in the foreground for the vibration to happen.</p>
      *
      * @param pattern an array of longs of times for which to turn the vibrator on or off.
      * @param repeat  the index into pattern at which to repeat, or -1 if
@@ -394,7 +395,7 @@ public abstract class Vibrator {
      * to start the repeat, or -1 to disable repeating.
      * </p>
      *
-     * <p>The app should be in foreground for the vibration to happen. Background apps should
+     * <p>The app should be in the foreground for the vibration to happen. Background apps should
      * specify a ringtone, notification or alarm usage in order to vibrate.</p>
      *
      * @param pattern    an array of longs of times for which to turn the vibrator on or off.
@@ -427,7 +428,7 @@ public abstract class Vibrator {
     /**
      * Vibrate with a given effect.
      *
-     * <p>The app should be in foreground for the vibration to happen.</p>
+     * <p>The app should be in the foreground for the vibration to happen.</p>
      *
      * @param vibe {@link VibrationEffect} describing the vibration to be performed.
      */
@@ -439,7 +440,7 @@ public abstract class Vibrator {
     /**
      * Vibrate with a given effect.
      *
-     * <p>The app should be in foreground for the vibration to happen. Background apps should
+     * <p>The app should be in the foreground for the vibration to happen. Background apps should
      * specify a ringtone, notification or alarm usage in order to vibrate.</p>
      *
      * @param vibe       {@link VibrationEffect} describing the vibration to be performed.
@@ -460,7 +461,7 @@ public abstract class Vibrator {
     /**
      * Vibrate with a given effect.
      *
-     * <p>The app should be in foreground for the vibration to happen. Background apps should
+     * <p>The app should be in the foreground for the vibration to happen. Background apps should
      * specify a ringtone, notification or alarm usage in order to vibrate.</p>
      *
      * @param vibe       {@link VibrationEffect} describing the vibration to be performed.
@@ -476,7 +477,7 @@ public abstract class Vibrator {
 
     /**
      * Like {@link #vibrate(VibrationEffect, VibrationAttributes)}, but allows the
-     * caller to specify the vibration is owned by someone else and set reason for vibration.
+     * caller to specify the vibration is owned by someone else and set a reason for vibration.
      *
      * @hide
      */
@@ -485,20 +486,25 @@ public abstract class Vibrator {
             String reason, @NonNull VibrationAttributes attributes);
 
     /**
-     * Query whether the vibrator supports the given effects.
+     * Query whether the vibrator natively supports the given effects.
      *
-     * Not all hardware reports its effect capabilities, so the system may not necessarily know
-     * whether an effect is supported or not.
+     * <p>If an effect is not supported, the system may still automatically fall back to playing
+     * a simpler vibration instead, which is not optimised for the specific device. This includes
+     * the unknown case, which can't be determined in advance, that will dynamically attempt to
+     * fall back if the optimised effect fails to play.
      *
-     * The returned array will be the same length as the query array and the value at a given index
-     * will contain {@link #VIBRATION_EFFECT_SUPPORT_YES} if the effect at that same index in the
-     * querying array is supported, {@link #VIBRATION_EFFECT_SUPPORT_NO} if it isn't supported, or
-     * {@link #VIBRATION_EFFECT_SUPPORT_UNKNOWN} if the system can't determine whether it's
-     * supported or not.
+     * <p>The returned array will be the same length as the query array and the value at a given
+     * index will contain {@link #VIBRATION_EFFECT_SUPPORT_YES} if the effect at that same index
+     * in the querying array is supported, {@link #VIBRATION_EFFECT_SUPPORT_NO} if it isn't
+     * supported, or {@link #VIBRATION_EFFECT_SUPPORT_UNKNOWN} if the system can't determine whether
+     * it's supported or not, as some hardware doesn't report its effect capabilities.
+     *
+     * <p>Use {@link #areAllEffectsSupported(int...)} to get a single combined result,
+     * or for convenience when querying exactly one effect.
      *
      * @param effectIds Which effects to query for.
      * @return An array containing the systems current knowledge about whether the given effects
-     * are supported or not.
+     * are natively supported by the device, or not.
      */
     @NonNull
     @VibrationEffectSupport
@@ -513,40 +519,48 @@ public abstract class Vibrator {
     }
 
     /**
-     * Query whether the vibrator supports all of the given effects.
+     * Query whether the vibrator supports all the given effects.
      *
-     * Not all hardware reports its effect capabilities, so the system may not necessarily know
-     * whether an effect is supported or not.
+     * <p>If an effect is not supported, the system may still automatically fall back to a simpler
+     * vibration instead, which is not optimised for the specific device, however vibration isn't
+     * guaranteed in this case.
      *
-     * If the result is {@link #VIBRATION_EFFECT_SUPPORT_YES}, all effects in the query are
+     * <p>If the result is {@link #VIBRATION_EFFECT_SUPPORT_YES}, all effects in the query are
      * supported by the hardware.
      *
-     * If the result is {@link #VIBRATION_EFFECT_SUPPORT_NO}, at least one of the effects in the
-     * query is not supported.
+     * <p>If the result is {@link #VIBRATION_EFFECT_SUPPORT_NO}, at least one of the effects in the
+     * query is not supported, and using them may fall back to an un-optimized vibration or no
+     * vibration.
      *
-     * If the result is {@link #VIBRATION_EFFECT_SUPPORT_UNKNOWN}, the system doesn't know whether
-     * all of the effects are supported. It may support any or all of the queried effects,
+     * <p>If the result is {@link #VIBRATION_EFFECT_SUPPORT_UNKNOWN}, the system doesn't know
+     * whether all the effects are supported. It may support any or all of the queried effects,
      * but there's no way to programmatically know whether a {@link #vibrate} call will successfully
      * cause a vibration. It's guaranteed, however, that none of the queried effects are
      * definitively unsupported by the hardware.
      *
+     * <p>Use {@link #areEffectsSupported(int...)} to get individual results for each effect.
+     *
      * @param effectIds Which effects to query for.
-     * @return Whether all of the effects are supported.
+     * @return Whether all the effects are natively supported by the device.
      */
     @VibrationEffectSupport
     public final int areAllEffectsSupported(
             @NonNull @VibrationEffect.EffectType int... effectIds) {
-        int support = VIBRATION_EFFECT_SUPPORT_YES;
-        for (int supported : areEffectsSupported(effectIds)) {
-            if (supported == VIBRATION_EFFECT_SUPPORT_NO) {
-                return VIBRATION_EFFECT_SUPPORT_NO;
-            } else if (supported == VIBRATION_EFFECT_SUPPORT_UNKNOWN) {
-                support = VIBRATION_EFFECT_SUPPORT_UNKNOWN;
+        VibratorInfo info = getInfo();
+        int allSupported = VIBRATION_EFFECT_SUPPORT_YES;
+        for (int effectId : effectIds) {
+            switch (info.isEffectSupported(effectId)) {
+                case VIBRATION_EFFECT_SUPPORT_NO:
+                    return VIBRATION_EFFECT_SUPPORT_NO;
+                case VIBRATION_EFFECT_SUPPORT_YES:
+                    continue;
+                default: // VIBRATION_EFFECT_SUPPORT_UNKNOWN
+                    allSupported = VIBRATION_EFFECT_SUPPORT_UNKNOWN;
+                    break;
             }
         }
-        return support;
+        return allSupported;
     }
-
 
     /**
      * Query whether the vibrator supports the given primitives.
@@ -554,6 +568,12 @@ public abstract class Vibrator {
      * The returned array will be the same length as the query array and the value at a given index
      * will contain whether the effect at that same index in the querying array is supported or
      * not.
+     *
+     * <p>If a primitive is not supported by the device, then <em>no vibration</em> will occur if
+     * it is played.
+     *
+     * <p>Use {@link #areAllPrimitivesSupported(int...)} to get a single combined result,
+     * or for convenience when querying exactly one primitive.
      *
      * @param primitiveIds Which primitives to query for.
      * @return Whether the primitives are supported.
@@ -572,13 +592,19 @@ public abstract class Vibrator {
     /**
      * Query whether the vibrator supports all of the given primitives.
      *
+     * <p>If a primitive is not supported by the device, then <em>no vibration</em> will occur if
+     * it is played.
+     *
+     * <p>Use {@link #arePrimitivesSupported(int...)} to get individual results for each primitive.
+     *
      * @param primitiveIds Which primitives to query for.
-     * @return Whether primitives effects are supported.
+     * @return Whether all specified primitives are supported.
      */
     public final boolean areAllPrimitivesSupported(
             @NonNull @VibrationEffect.Composition.PrimitiveType int... primitiveIds) {
-        for (boolean supported : arePrimitivesSupported(primitiveIds)) {
-            if (!supported) {
+        VibratorInfo info = getInfo();
+        for (int primitiveId : primitiveIds) {
+            if (!info.isPrimitiveSupported(primitiveId)) {
                 return false;
             }
         }

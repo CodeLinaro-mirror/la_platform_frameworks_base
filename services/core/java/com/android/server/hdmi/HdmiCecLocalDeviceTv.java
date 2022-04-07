@@ -41,7 +41,10 @@ import android.hardware.hdmi.HdmiRecordSources;
 import android.hardware.hdmi.HdmiTimerRecordSources;
 import android.hardware.hdmi.IHdmiControlCallback;
 import android.hardware.tv.cec.V1_0.SendMessageResult;
-import android.media.AudioSystem;
+import android.media.AudioDescriptor;
+import android.media.AudioDeviceAttributes;
+import android.media.AudioDeviceInfo;
+import android.media.AudioProfile;
 import android.media.tv.TvInputInfo;
 import android.media.tv.TvInputManager.TvInputCallback;
 import android.util.Slog;
@@ -58,6 +61,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * Represent a logical device of type TV residing in Android system.
@@ -91,8 +95,6 @@ final class HdmiCecLocalDeviceTv extends HdmiCecLocalDevice {
 
     @GuardedBy("mLock")
     private boolean mSystemAudioMute = false;
-
-    private final HdmiCecStandbyModeHandler mStandbyHandler;
 
     // If true, do not do routing control/send active source for internal source.
     // Set to true when the device was woken up by <Text/Image View On>.
@@ -652,14 +654,17 @@ final class HdmiCecLocalDeviceTv extends HdmiCecLocalDevice {
     protected int handleTextViewOn(HdmiCecMessage message) {
         assertRunOnServiceThread();
 
-        // Note that <Text View On> (and <Image View On>) command won't be handled here in
-        // most cases. A dedicated microcontroller should be in charge while Android system
-        // is in sleep mode, and the command need not be passed up to this service.
-        // The only situation where the command reaches this handler is that sleep mode is
-        // implemented in such a way that Android system is not really put to standby mode
-        // but only the display is set to blank. Then the command leads to the effect of
+        // Note that if the device is in sleep mode, the <Text View On> (and <Image View On>)
+        // command won't be handled here in most cases. A dedicated microcontroller should be in
+        // charge while the Android system is in sleep mode, and the command doesn't need to be
+        // passed up to this service.
+        // The only situations where the command reaches this handler are
+        // 1. if sleep mode is implemented in such a way that Android system is not really put to
+        // standby mode but only the display is set to blank. Then the command leads to
         // turning on the display by the invocation of PowerManager.wakeUp().
-        if (mService.isPowerStandbyOrTransient() && getAutoWakeup()) {
+        // 2. if the device is in dream mode, not sleep mode. Then this command leads to
+        // waking up the device from dream mode by the invocation of PowerManager.wakeUp().
+        if (getAutoWakeup()) {
             mService.wakeUp();
         }
         return Constants.HANDLED;
@@ -816,12 +821,23 @@ final class HdmiCecLocalDeviceTv extends HdmiCecLocalDevice {
 
         HdmiLogger.debug("Set Arc Status[old:%b new:%b]", mArcEstablished, enabled);
         boolean oldStatus = mArcEstablished;
-        // 1. Enable/disable ARC circuit.
-        enableAudioReturnChannel(enabled);
-        // 2. Notify arc status to audio service.
-        notifyArcStatusToAudioService(enabled);
-        // 3. Update arc status;
-        mArcEstablished = enabled;
+        if (enabled) {
+            RequestSadAction action = new RequestSadAction(
+                    this, Constants.ADDR_AUDIO_SYSTEM,
+                    new RequestSadAction.RequestSadCallback() {
+                        @Override
+                        public void onRequestSadDone(List<byte[]> supportedSads) {
+                            enableAudioReturnChannel(enabled);
+                            notifyArcStatusToAudioService(enabled, supportedSads);
+                            mArcEstablished = enabled;
+                        }
+                    });
+            addAndStartAction(action);
+        } else {
+            enableAudioReturnChannel(enabled);
+            notifyArcStatusToAudioService(enabled, new ArrayList<>());
+            mArcEstablished = enabled;
+        }
         return oldStatus;
     }
 
@@ -843,11 +859,15 @@ final class HdmiCecLocalDeviceTv extends HdmiCecLocalDevice {
         return mService.isConnected(portId);
     }
 
-    private void notifyArcStatusToAudioService(boolean enabled) {
+    private void notifyArcStatusToAudioService(boolean enabled, List<byte[]> supportedSads) {
         // Note that we don't set any name to ARC.
-        mService.getAudioManager().setWiredDeviceConnectionState(
-                AudioSystem.DEVICE_OUT_HDMI_ARC,
-                enabled ? 1 : 0, "", "");
+        AudioDeviceAttributes attributes = new AudioDeviceAttributes(
+                AudioDeviceAttributes.ROLE_OUTPUT, AudioDeviceInfo.TYPE_HDMI_ARC, "", "",
+                new ArrayList<AudioProfile>(), supportedSads.stream()
+                .map(sad -> new AudioDescriptor(AudioDescriptor.STANDARD_EDID,
+                        AudioProfile.AUDIO_ENCAPSULATION_TYPE_NONE, sad))
+                .collect(Collectors.toList()));
+        mService.getAudioManager().setWiredDeviceConnectionState(attributes, enabled ? 1 : 0);
     }
 
     /**

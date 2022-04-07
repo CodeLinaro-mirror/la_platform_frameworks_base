@@ -40,6 +40,7 @@ import android.view.inputmethod.InputMethodSubtype;
 
 import com.android.internal.inputmethod.CancellationGroup;
 import com.android.internal.inputmethod.IInputMethodPrivilegedOperations;
+import com.android.internal.inputmethod.InputMethodNavButtonFlags;
 import com.android.internal.os.HandlerCaller;
 import com.android.internal.os.SomeArgs;
 import com.android.internal.view.IInlineSuggestionsRequestCallback;
@@ -70,6 +71,7 @@ class IInputMethodWrapper extends IInputMethod.Stub
     private static final int DO_SET_INPUT_CONTEXT = 20;
     private static final int DO_UNSET_INPUT_CONTEXT = 30;
     private static final int DO_START_INPUT = 32;
+    private static final int DO_ON_NAV_BUTTON_FLAGS_CHANGED = 35;
     private static final int DO_CREATE_SESSION = 40;
     private static final int DO_SET_SESSION_ENABLED = 45;
     private static final int DO_SHOW_SOFT_INPUT = 60;
@@ -78,6 +80,8 @@ class IInputMethodWrapper extends IInputMethod.Stub
     private static final int DO_CREATE_INLINE_SUGGESTIONS_REQUEST = 90;
     private static final int DO_CAN_START_STYLUS_HANDWRITING = 100;
     private static final int DO_START_STYLUS_HANDWRITING = 110;
+    private static final int DO_INIT_INK_WINDOW = 120;
+    private static final int DO_FINISH_STYLUS_HANDWRITING = 130;
 
     final WeakReference<InputMethodServiceInternal> mTarget;
     final Context mContext;
@@ -174,7 +178,7 @@ class IInputMethodWrapper extends IInputMethod.Stub
                 try {
                     inputMethod.initializeInternal((IBinder) args.arg1,
                             (IInputMethodPrivilegedOperations) args.arg2, msg.arg1,
-                            (boolean) args.arg3);
+                            (boolean) args.arg3, msg.arg2);
                 } finally {
                     args.recycle();
                 }
@@ -194,14 +198,20 @@ class IInputMethodWrapper extends IInputMethod.Stub
                 final EditorInfo info = (EditorInfo) args.arg3;
                 final CancellationGroup cancellationGroup = (CancellationGroup) args.arg4;
                 final boolean restarting = args.argi5 == 1;
+                @InputMethodNavButtonFlags
+                final int navButtonFlags = args.argi6;
                 final InputConnection ic = inputContext != null
                         ? new RemoteInputConnection(mTarget, inputContext, cancellationGroup)
                         : null;
                 info.makeCompatible(mTargetSdkVersion);
-                inputMethod.dispatchStartInputWithToken(ic, info, restarting, startInputToken);
+                inputMethod.dispatchStartInputWithToken(ic, info, restarting, startInputToken,
+                        navButtonFlags);
                 args.recycle();
                 return;
             }
+            case DO_ON_NAV_BUTTON_FLAGS_CHANGED:
+                inputMethod.onNavButtonFlagsChanged(msg.arg1);
+                return;
             case DO_CREATE_SESSION: {
                 SomeArgs args = (SomeArgs)msg.obj;
                 inputMethod.createSession(new InputMethodSessionCallbackWrapper(
@@ -245,9 +255,17 @@ class IInputMethodWrapper extends IInputMethod.Stub
             }
             case DO_START_STYLUS_HANDWRITING: {
                 final SomeArgs args = (SomeArgs) msg.obj;
-                inputMethod.startStylusHandwriting((InputChannel) args.arg1,
+                inputMethod.startStylusHandwriting(msg.arg1, (InputChannel) args.arg1,
                         (List<MotionEvent>) args.arg2);
                 args.recycle();
+                return;
+            }
+            case DO_INIT_INK_WINDOW: {
+                inputMethod.initInkWindow();
+                return;
+            }
+            case DO_FINISH_STYLUS_HANDWRITING: {
+                inputMethod.finishStylusHandwriting();
                 return;
             }
 
@@ -286,10 +304,10 @@ class IInputMethodWrapper extends IInputMethod.Stub
     @BinderThread
     @Override
     public void initializeInternal(IBinder token, IInputMethodPrivilegedOperations privOps,
-            int configChanges, boolean stylusHwSupported) {
-        mCaller.executeOrSendMessage(
-                mCaller.obtainMessageIOOO(
-                        DO_INITIALIZE_INTERNAL, configChanges, token, privOps, stylusHwSupported));
+            int configChanges, boolean stylusHwSupported,
+            @InputMethodNavButtonFlags int navButtonFlags) {
+        mCaller.executeOrSendMessage(mCaller.obtainMessageIIOOO(DO_INITIALIZE_INTERNAL,
+                configChanges, navButtonFlags, token, privOps, stylusHwSupported));
     }
 
     @BinderThread
@@ -329,13 +347,21 @@ class IInputMethodWrapper extends IInputMethod.Stub
     @BinderThread
     @Override
     public void startInput(IBinder startInputToken, IInputContext inputContext,
-            EditorInfo attribute, boolean restarting) {
+            EditorInfo attribute, boolean restarting,
+            @InputMethodNavButtonFlags int navButtonFlags) {
         if (mCancellationGroup == null) {
             Log.e(TAG, "startInput must be called after bindInput.");
             mCancellationGroup = new CancellationGroup();
         }
         mCaller.executeOrSendMessage(mCaller.obtainMessageOOOOII(DO_START_INPUT, startInputToken,
-                inputContext, attribute, mCancellationGroup, restarting ? 1 : 0, 0 /* unused */));
+                inputContext, attribute, mCancellationGroup, restarting ? 1 : 0, navButtonFlags));
+    }
+
+    @BinderThread
+    @Override
+    public void onNavButtonFlagsChanged(@InputMethodNavButtonFlags int navButtonFlags) {
+        mCaller.executeOrSendMessage(
+                mCaller.obtainMessageI(DO_ON_NAV_BUTTON_FLAGS_CHANGED, navButtonFlags));
     }
 
     @BinderThread
@@ -393,10 +419,23 @@ class IInputMethodWrapper extends IInputMethod.Stub
 
     @BinderThread
     @Override
-    public void startStylusHandwriting(@NonNull InputChannel channel,
+    public void startStylusHandwriting(int requestId, @NonNull InputChannel channel,
             @Nullable List<MotionEvent> stylusEvents)
             throws RemoteException {
         mCaller.executeOrSendMessage(
-                mCaller.obtainMessageOO(DO_START_STYLUS_HANDWRITING, channel, stylusEvents));
+                mCaller.obtainMessageIOO(DO_START_STYLUS_HANDWRITING, requestId, channel,
+                        stylusEvents));
+    }
+
+    @BinderThread
+    @Override
+    public void initInkWindow() {
+        mCaller.executeOrSendMessage(mCaller.obtainMessage(DO_INIT_INK_WINDOW));
+    }
+
+    @BinderThread
+    @Override
+    public void finishStylusHandwriting() {
+        mCaller.executeOrSendMessage(mCaller.obtainMessage(DO_FINISH_STYLUS_HANDWRITING));
     }
 }

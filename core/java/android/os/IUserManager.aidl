@@ -62,6 +62,8 @@ interface IUserManager {
     int[] getProfileIds(int userId, boolean enabledOnly);
     boolean isUserTypeEnabled(in String userType);
     boolean canAddMoreUsersOfType(in String userType);
+    int getRemainingCreatableUserCount(in String userType);
+    int getRemainingCreatableProfileCount(in String userType, int userId);
     boolean canAddMoreProfilesToUser(in String userType, int userId, boolean allowedToRemoveOne);
     boolean canAddMoreManagedProfiles(int userId, boolean allowedToRemoveOne);
     UserInfo getProfileParent(int userId);
@@ -105,10 +107,9 @@ interface IUserManager {
     void clearSeedAccountData(int userId);
     boolean someUserHasSeedAccount(in String accountName, in String accountType);
     boolean someUserHasAccount(in String accountName, in String accountType);
-    boolean isProfile(int userId);
-    boolean isManagedProfile(int userId);
-    boolean isCloneProfile(int userId);
+    String getProfileType(int userId);
     boolean isMediaSharedWithParent(int userId);
+    boolean isCredentialSharableWithParent(int userId);
     boolean isDemoUser(int userId);
     boolean isPreCreated(int userId);
     UserInfo createProfileForUserEvenWhenDisallowedWithThrow(in String name, in String userType, int flags,

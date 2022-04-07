@@ -68,7 +68,9 @@ import com.android.server.pm.parsing.pkg.ParsedPackage
 import com.android.server.pm.permission.PermissionManagerServiceInternal
 import com.android.server.pm.pkg.parsing.ParsingPackage
 import com.android.server.pm.pkg.parsing.ParsingPackageUtils
+import com.android.server.pm.resolution.ComponentResolver
 import com.android.server.pm.verify.domain.DomainVerificationManagerInternal
+import com.android.server.sdksandbox.SdkSandboxManagerLocal
 import com.android.server.testutils.TestHandler
 import com.android.server.testutils.mock
 import com.android.server.testutils.nullable
@@ -165,27 +167,9 @@ class MockSystem(withSession: (StaticMockitoSessionBuilder) -> Unit = {}) {
         }
         whenever(mocks.settings.packagesLocked).thenReturn(mSettingsMap)
         whenever(mocks.settings.getPackageLPr(anyString())) { mSettingsMap[getArgument<Any>(0)] }
-        whenever(mocks.settings.readLPw(nullable())) {
+        whenever(mocks.settings.readLPw(any(), nullable())) {
             mSettingsMap.putAll(mPreExistingSettings)
             !mPreExistingSettings.isEmpty()
-        }
-        whenever(mocks.settings.setPackageStoppedStateLPw(any(), any(), anyBoolean(), anyInt())) {
-            val pm: PackageManagerService = getArgument(0)
-            val pkgSetting = mSettingsMap[getArgument(1)]!!
-            val stopped: Boolean = getArgument(2)
-            val userId: Int = getArgument(3)
-            return@whenever if (pkgSetting.getStopped(userId) != stopped) {
-                pkgSetting.setStopped(stopped, userId)
-                if (pkgSetting.getNotLaunched(userId)) {
-                    pkgSetting.installSource.installerPackageName?.let {
-                        pm.notifyFirstLaunch(pkgSetting.packageName, it, userId)
-                    }
-                    pkgSetting.setNotLaunched(false, userId)
-                }
-                true
-            } else {
-                false
-            }
         }
     }
 
@@ -210,7 +194,9 @@ class MockSystem(withSession: (StaticMockitoSessionBuilder) -> Unit = {}) {
         val packageParser: PackageParser2 = mock()
         val keySetManagerService: KeySetManagerService = mock()
         val packageAbiHelper: PackageAbiHelper = mock()
-        val appsFilter: AppsFilter = mock()
+        val appsFilter: AppsFilter = mock {
+            whenever(snapshot()) { this@mock }
+        }
         val dexManager: DexManager = mock()
         val installer: Installer = mock()
         val displayMetrics: DisplayMetrics = mock()
@@ -351,6 +337,7 @@ class MockSystem(withSession: (StaticMockitoSessionBuilder) -> Unit = {}) {
         stageServicesExtensionScan()
         stageSystemSharedLibraryScan()
         stagePermissionsControllerScan()
+        stageSupplementalProcessScan()
         stageInstantAppResolverScan()
     }
 
@@ -585,6 +572,22 @@ class MockSystem(withSession: (StaticMockitoSessionBuilder) -> Unit = {}) {
     }
 
     @Throws(Exception::class)
+    private fun stageSupplementalProcessScan() {
+        stageScanNewPackage("com.android.supplemental.process",
+                1L, systemPartitions[0].privAppFolder,
+                withPackage = { pkg: PackageImpl ->
+                    val applicationInfo: ApplicationInfo = createBasicApplicationInfo(pkg)
+                    mockQueryServices(SdkSandboxManagerLocal.SERVICE_INTERFACE,
+                            createBasicServiceInfo(
+                                    pkg, applicationInfo, "SupplementalProcessService"))
+                    pkg
+                },
+                withSetting = { setting: PackageSettingBuilder ->
+                    setting.setPkgFlags(ApplicationInfo.FLAG_SYSTEM)
+                })
+    }
+
+    @Throws(Exception::class)
     private fun stageSystemSharedLibraryScan() {
         stageScanNewPackage("android.ext.shared",
                 1L, systemPartitions[0].appFolder,
@@ -630,7 +633,7 @@ class MockSystem(withSession: (StaticMockitoSessionBuilder) -> Unit = {}) {
     }
 
     private fun mockQueryActivities(action: String, vararg activities: ActivityInfo) {
-        whenever(mocks.componentResolver.queryActivities(
+        whenever(mocks.componentResolver.queryActivities(any(),
                 argThat { intent: Intent? -> intent != null && (action == intent.action) },
                 nullable(), anyLong(), anyInt())) {
             ArrayList(activities.asList().map { info: ActivityInfo? ->
@@ -640,7 +643,7 @@ class MockSystem(withSession: (StaticMockitoSessionBuilder) -> Unit = {}) {
     }
 
     private fun mockQueryServices(action: String, vararg services: ServiceInfo) {
-        whenever(mocks.componentResolver.queryServices(
+        whenever(mocks.componentResolver.queryServices(any(),
                 argThat { intent: Intent? -> intent != null && (action == intent.action) },
                 nullable(), anyLong(), anyInt())) {
             ArrayList(services.asList().map { info ->

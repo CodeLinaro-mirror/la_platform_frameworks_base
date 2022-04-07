@@ -186,6 +186,18 @@ public class TaskInfo {
     public PictureInPictureParams pictureInPictureParams;
 
     /**
+     * @hide
+     */
+    public boolean shouldDockBigOverlays;
+
+    /**
+     * The task id of the host Task of the launch-into-pip Activity, i.e., it points to the Task
+     * the launch-into-pip Activity is originated from.
+     * @hide
+     */
+    public int launchIntoPipHostTaskId;
+
+    /**
      * The {@link Rect} copied from {@link DisplayCutout#getSafeInsets()} if the cutout is not of
      * (LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES, LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS),
      * {@code null} otherwise.
@@ -212,6 +224,12 @@ public class TaskInfo {
      * @hide
      */
     public boolean topActivityInSizeCompat;
+
+    /**
+     * Whether the direct top activity is eligible for letterbox education.
+     * @hide
+     */
+    public boolean topActivityEligibleForLetterboxEducation;
 
     /**
      * Whether this task is resizable. Unlike {@link #resizeMode} (which is what the top activity
@@ -373,6 +391,12 @@ public class TaskInfo {
     }
 
     /** @hide */
+    @TestApi
+    public boolean shouldDockBigOverlays() {
+        return shouldDockBigOverlays;
+    }
+
+    /** @hide */
     @WindowConfiguration.WindowingMode
     public int getWindowingMode() {
         return configuration.windowConfiguration.getWindowingMode();
@@ -398,7 +422,8 @@ public class TaskInfo {
 
     /** @hide */
     public boolean hasCompatUI() {
-        return hasCameraCompatControl() || topActivityInSizeCompat;
+        return hasCameraCompatControl() || topActivityInSizeCompat
+                || topActivityEligibleForLetterboxEducation;
     }
 
     /**
@@ -440,6 +465,7 @@ public class TaskInfo {
                 && displayAreaFeatureId == that.displayAreaFeatureId
                 && Objects.equals(positionInParent, that.positionInParent)
                 && Objects.equals(pictureInPictureParams, that.pictureInPictureParams)
+                && Objects.equals(shouldDockBigOverlays, that.shouldDockBigOverlays)
                 && Objects.equals(displayCutoutInsets, that.displayCutoutInsets)
                 && getWindowingMode() == that.getWindowingMode()
                 && Objects.equals(taskDescription, that.taskDescription)
@@ -460,6 +486,8 @@ public class TaskInfo {
         return displayId == that.displayId
                 && taskId == that.taskId
                 && topActivityInSizeCompat == that.topActivityInSizeCompat
+                && topActivityEligibleForLetterboxEducation
+                    == that.topActivityEligibleForLetterboxEducation
                 && cameraCompatControlState == that.cameraCompatControlState
                 // Bounds are important if top activity has compat controls.
                 && (!hasCompatUI() || configuration.windowConfiguration.getBounds()
@@ -494,6 +522,8 @@ public class TaskInfo {
         token = WindowContainerToken.CREATOR.createFromParcel(source);
         topActivityType = source.readInt();
         pictureInPictureParams = source.readTypedObject(PictureInPictureParams.CREATOR);
+        shouldDockBigOverlays = source.readBoolean();
+        launchIntoPipHostTaskId = source.readInt();
         displayCutoutInsets = source.readTypedObject(Rect.CREATOR);
         topActivityInfo = source.readTypedObject(ActivityInfo.CREATOR);
         isResizeable = source.readBoolean();
@@ -507,6 +537,7 @@ public class TaskInfo {
         isVisible = source.readBoolean();
         isSleeping = source.readBoolean();
         topActivityInSizeCompat = source.readBoolean();
+        topActivityEligibleForLetterboxEducation = source.readBoolean();
         mTopActivityLocusId = source.readTypedObject(LocusId.CREATOR);
         displayAreaFeatureId = source.readInt();
         cameraCompatControlState = source.readInt();
@@ -538,6 +569,8 @@ public class TaskInfo {
         token.writeToParcel(dest, flags);
         dest.writeInt(topActivityType);
         dest.writeTypedObject(pictureInPictureParams, flags);
+        dest.writeBoolean(shouldDockBigOverlays);
+        dest.writeInt(launchIntoPipHostTaskId);
         dest.writeTypedObject(displayCutoutInsets, flags);
         dest.writeTypedObject(topActivityInfo, flags);
         dest.writeBoolean(isResizeable);
@@ -551,6 +584,7 @@ public class TaskInfo {
         dest.writeBoolean(isVisible);
         dest.writeBoolean(isSleeping);
         dest.writeBoolean(topActivityInSizeCompat);
+        dest.writeBoolean(topActivityEligibleForLetterboxEducation);
         dest.writeTypedObject(mTopActivityLocusId, flags);
         dest.writeInt(displayAreaFeatureId);
         dest.writeInt(cameraCompatControlState);
@@ -576,6 +610,8 @@ public class TaskInfo {
                 + " token=" + token
                 + " topActivityType=" + topActivityType
                 + " pictureInPictureParams=" + pictureInPictureParams
+                + " shouldDockBigOverlays=" + shouldDockBigOverlays
+                + " launchIntoPipHostTaskId=" + launchIntoPipHostTaskId
                 + " displayCutoutSafeInsets=" + displayCutoutInsets
                 + " topActivityInfo=" + topActivityInfo
                 + " launchCookies=" + launchCookies
@@ -585,6 +621,8 @@ public class TaskInfo {
                 + " isVisible=" + isVisible
                 + " isSleeping=" + isSleeping
                 + " topActivityInSizeCompat=" + topActivityInSizeCompat
+                + " topActivityEligibleForLetterboxEducation= "
+                        + topActivityEligibleForLetterboxEducation
                 + " locusId=" + mTopActivityLocusId
                 + " displayAreaFeatureId=" + displayAreaFeatureId
                 + " cameraCompatControlState="

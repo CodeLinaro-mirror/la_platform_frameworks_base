@@ -34,6 +34,7 @@ import static org.mockito.Mockito.when;
 import android.content.pm.UserInfo;
 import android.content.res.Configuration;
 import android.graphics.Insets;
+import android.provider.Settings;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
 import android.view.Gravity;
@@ -204,10 +205,14 @@ public class KeyguardSecurityContainerTest extends SysuiTestCase {
         mKeyguardSecurityContainer.updatePositionByTouchX(
                 mKeyguardSecurityContainer.getWidth() - 1f);
 
+        verify(mGlobalSettings).putInt(Settings.Global.ONE_HANDED_KEYGUARD_SIDE,
+                Settings.Global.ONE_HANDED_KEYGUARD_SIDE_RIGHT);
         verify(mSecurityViewFlipper).setTranslationX(
                 mKeyguardSecurityContainer.getWidth() - mSecurityViewFlipper.getWidth());
 
         mKeyguardSecurityContainer.updatePositionByTouchX(1f);
+        verify(mGlobalSettings).putInt(Settings.Global.ONE_HANDED_KEYGUARD_SIDE,
+                Settings.Global.ONE_HANDED_KEYGUARD_SIDE_LEFT);
 
         verify(mSecurityViewFlipper).setTranslationX(0.0f);
     }
@@ -307,7 +312,8 @@ public class KeyguardSecurityContainerTest extends SysuiTestCase {
             UserInfo info = new UserInfo(i /* id */, "Name: " + i, null /* iconPath */,
                     0 /* flags */);
             users.add(new UserRecord(info, null, false /* isGuest */, false /* isCurrent */,
-                    false /* isAddUser */, false /* isRestricted */, true /* isSwitchToEnabled */));
+                    false /* isAddUser */, false /* isRestricted */, true /* isSwitchToEnabled */,
+                    false /* isAddSupervisedUser */));
         }
         return users;
     }

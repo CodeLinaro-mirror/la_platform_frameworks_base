@@ -26,30 +26,23 @@ import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.content.pm.ServiceInfo;
 import android.content.res.Resources;
-import android.content.res.TypedArray;
-import android.content.res.XmlResourceParser;
 import android.graphics.drawable.Drawable;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.provider.Settings;
 import android.service.dreams.DreamService;
 import android.service.dreams.IDreamManager;
-import android.util.AttributeSet;
+import android.text.TextUtils;
 import android.util.Log;
-import android.util.Xml;
 
 import com.android.settingslib.R;
 
-import org.xmlpull.v1.XmlPullParser;
-import org.xmlpull.v1.XmlPullParserException;
-
-import java.io.IOException;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -57,7 +50,6 @@ import java.util.stream.Collectors;
 public class DreamBackend {
     private static final String TAG = "DreamBackend";
     private static final boolean DEBUG = false;
-    private final Drawable mDreamPreviewDefault;
 
     public static class DreamInfo {
         public CharSequence caption;
@@ -116,6 +108,7 @@ public class DreamBackend {
     private final boolean mDreamsEnabledByDefault;
     private final boolean mDreamsActivatedOnSleepByDefault;
     private final boolean mDreamsActivatedOnDockByDefault;
+    private final Set<ComponentName> mDisabledDreams;
     private final Set<Integer> mSupportedComplications;
     private final Set<Integer> mDefaultEnabledComplications;
 
@@ -141,16 +134,18 @@ public class DreamBackend {
                 com.android.internal.R.bool.config_dreamsActivatedOnSleepByDefault);
         mDreamsActivatedOnDockByDefault = resources.getBoolean(
                 com.android.internal.R.bool.config_dreamsActivatedOnDockByDefault);
-        mDreamPreviewDefault = resources.getDrawable(
-                com.android.internal.R.drawable.default_dream_preview);
+        mDisabledDreams = Arrays.stream(resources.getStringArray(
+                        com.android.internal.R.array.config_disabledDreamComponents))
+                .map(ComponentName::unflattenFromString)
+                .collect(Collectors.toSet());
 
-        mSupportedComplications =
-                Arrays.stream(resources.getIntArray(R.array.config_supportedDreamComplications))
-                        .boxed()
-                        .collect(Collectors.toSet());
+        mSupportedComplications = Arrays.stream(resources.getIntArray(
+                        com.android.internal.R.array.config_supportedDreamComplications))
+                .boxed()
+                .collect(Collectors.toSet());
 
-        mDefaultEnabledComplications = Arrays.stream(
-                        resources.getIntArray(R.array.config_dreamComplicationsEnabledByDefault))
+        mDefaultEnabledComplications = Arrays.stream(resources.getIntArray(
+                        com.android.internal.R.array.config_dreamComplicationsEnabledByDefault))
                 .boxed()
                 // A complication can only be enabled by default if it is also supported.
                 .filter(mSupportedComplications::contains)
@@ -166,25 +161,27 @@ public class DreamBackend {
                 PackageManager.GET_META_DATA);
         List<DreamInfo> dreamInfos = new ArrayList<>(resolveInfos.size());
         for (ResolveInfo resolveInfo : resolveInfos) {
-            if (resolveInfo.serviceInfo == null) {
+            final ComponentName componentName = getDreamComponentName(resolveInfo);
+            if (componentName == null || mDisabledDreams.contains(componentName)) {
                 continue;
             }
+
             DreamInfo dreamInfo = new DreamInfo();
             dreamInfo.caption = resolveInfo.loadLabel(pm);
             dreamInfo.icon = resolveInfo.loadIcon(pm);
             dreamInfo.description = getDescription(resolveInfo, pm);
-            dreamInfo.componentName = getDreamComponentName(resolveInfo);
+            dreamInfo.componentName = componentName;
             dreamInfo.isActive = dreamInfo.componentName.equals(activeDream);
 
-            final DreamMetadata dreamMetadata = getDreamMetadata(pm, resolveInfo);
-            dreamInfo.settingsComponentName = dreamMetadata.mSettingsActivity;
-            dreamInfo.previewImage = dreamMetadata.mPreviewImage;
-            if (dreamInfo.previewImage == null) {
-                dreamInfo.previewImage = mDreamPreviewDefault;
+            final DreamService.DreamMetadata dreamMetadata = DreamService.getDreamMetadata(mContext,
+                    resolveInfo.serviceInfo);
+            if (dreamMetadata != null) {
+                dreamInfo.settingsComponentName = dreamMetadata.settingsActivity;
+                dreamInfo.previewImage = dreamMetadata.previewImage;
             }
             dreamInfos.add(dreamInfo);
         }
-        Collections.sort(dreamInfos, mComparator);
+        dreamInfos.sort(mComparator);
         return dreamInfos;
     }
 
@@ -251,9 +248,6 @@ public class DreamBackend {
     }
 
     public @WhenToDream int getWhenToDreamSetting() {
-        if (!isEnabled()) {
-            return NEVER;
-        }
         return isActivatedOnDock() && isActivatedOnSleep() ? EITHER
                 : isActivatedOnDock() ? WHILE_DOCKED
                 : isActivatedOnSleep() ? WHILE_CHARGING
@@ -283,6 +277,11 @@ public class DreamBackend {
             default:
                 break;
         }
+    }
+
+    /** Returns whether a particular complication is enabled */
+    public boolean isComplicationEnabled(@ComplicationType int complication) {
+        return getEnabledComplications().contains(complication);
     }
 
     /** Gets all complications which have been enabled by the user. */
@@ -324,6 +323,35 @@ public class DreamBackend {
                 convertToString(enabledComplications));
     }
 
+    /**
+     * Gets the title of a particular complication type to be displayed to the user. If there
+     * is no title, null is returned.
+     */
+    @Nullable
+    public CharSequence getComplicationTitle(@ComplicationType int complicationType) {
+        int res = 0;
+        switch (complicationType) {
+            case COMPLICATION_TYPE_TIME:
+                res = R.string.dream_complication_title_time;
+                break;
+            case COMPLICATION_TYPE_DATE:
+                res = R.string.dream_complication_title_date;
+                break;
+            case COMPLICATION_TYPE_WEATHER:
+                res = R.string.dream_complication_title_weather;
+                break;
+            case COMPLICATION_TYPE_AIR_QUALITY:
+                res = R.string.dream_complication_title_aqi;
+                break;
+            case COMPLICATION_TYPE_CAST_INFO:
+                res = R.string.dream_complication_title_cast_info;
+                break;
+            default:
+                return null;
+        }
+        return mContext.getString(res);
+    }
+
     private static String convertToString(Set<Integer> set) {
         return set.stream()
                 .map(String::valueOf)
@@ -331,6 +359,9 @@ public class DreamBackend {
     }
 
     private static Set<Integer> parseFromString(String string) {
+        if (TextUtils.isEmpty(string)) {
+            return new HashSet<>();
+        }
         return Arrays.stream(string.split(","))
                 .map(Integer::parseInt)
                 .collect(Collectors.toSet());
@@ -404,25 +435,31 @@ public class DreamBackend {
         }
         final Intent intent = new Intent()
                 .setComponent(dreamInfo.settingsComponentName)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                .addFlags(
+                        Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS);
         uiContext.startActivity(intent);
     }
 
-    public void preview(DreamInfo dreamInfo) {
-        logd("preview(%s)", dreamInfo);
-        if (mDreamManager == null || dreamInfo == null || dreamInfo.componentName == null)
+    /**
+     * Preview a dream, given the component name.
+     */
+    public void preview(ComponentName componentName) {
+        logd("preview(%s)", componentName);
+        if (mDreamManager == null || componentName == null) {
             return;
+        }
         try {
-            mDreamManager.testDream(mContext.getUserId(), dreamInfo.componentName);
+            mDreamManager.testDream(mContext.getUserId(), componentName);
         } catch (RemoteException e) {
-            Log.w(TAG, "Failed to preview " + dreamInfo, e);
+            Log.w(TAG, "Failed to preview " + componentName, e);
         }
     }
 
     public void startDreaming() {
         logd("startDreaming()");
-        if (mDreamManager == null)
+        if (mDreamManager == null) {
             return;
+        }
         try {
             mDreamManager.dream();
         } catch (RemoteException e) {
@@ -435,67 +472,6 @@ public class DreamBackend {
             return null;
         }
         return new ComponentName(resolveInfo.serviceInfo.packageName, resolveInfo.serviceInfo.name);
-    }
-
-    private static final class DreamMetadata {
-        @Nullable
-        Drawable mPreviewImage;
-        @Nullable
-        ComponentName mSettingsActivity;
-    }
-
-    @Nullable
-    private static TypedArray readMetadata(PackageManager pm, ServiceInfo serviceInfo) {
-        if (serviceInfo == null || serviceInfo.metaData == null) {
-            return null;
-        }
-        try (XmlResourceParser parser =
-                     serviceInfo.loadXmlMetaData(pm, DreamService.DREAM_META_DATA)) {
-            if (parser == null) {
-                Log.w(TAG, "No " + DreamService.DREAM_META_DATA + " meta-data");
-                return null;
-            }
-            Resources res = pm.getResourcesForApplication(serviceInfo.applicationInfo);
-            AttributeSet attrs = Xml.asAttributeSet(parser);
-            while (true) {
-                final int type = parser.next();
-                if (type == XmlPullParser.END_DOCUMENT || type == XmlPullParser.START_TAG) {
-                    break;
-                }
-            }
-            String nodeName = parser.getName();
-            if (!"dream".equals(nodeName)) {
-                Log.w(TAG, "Meta-data does not start with dream tag");
-                return null;
-            }
-            return res.obtainAttributes(attrs, com.android.internal.R.styleable.Dream);
-        } catch (PackageManager.NameNotFoundException | IOException | XmlPullParserException e) {
-            Log.w(TAG, "Error parsing : " + serviceInfo.packageName, e);
-            return null;
-        }
-    }
-
-    private static ComponentName convertToComponentName(String flattenedString,
-            ServiceInfo serviceInfo) {
-        if (flattenedString == null) return null;
-
-        if (flattenedString.indexOf('/') < 0) {
-            flattenedString = serviceInfo.packageName + "/" + flattenedString;
-        }
-        return ComponentName.unflattenFromString(flattenedString);
-    }
-
-    private static DreamMetadata getDreamMetadata(PackageManager pm, ResolveInfo resolveInfo) {
-        DreamMetadata result = new DreamMetadata();
-        if (resolveInfo == null) return result;
-        TypedArray rawMetadata = readMetadata(pm, resolveInfo.serviceInfo);
-        if (rawMetadata == null) return result;
-        result.mSettingsActivity = convertToComponentName(rawMetadata.getString(
-                com.android.internal.R.styleable.Dream_settingsActivity), resolveInfo.serviceInfo);
-        result.mPreviewImage = rawMetadata.getDrawable(
-                com.android.internal.R.styleable.Dream_previewImage);
-        rawMetadata.recycle();
-        return result;
     }
 
     private static void logd(String msg, Object... args) {

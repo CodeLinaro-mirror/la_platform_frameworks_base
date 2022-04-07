@@ -20,7 +20,6 @@ import com.android.systemui.dump.DumpManager
 import com.android.systemui.statusbar.notification.NotifPipelineFlags
 import com.android.systemui.statusbar.notification.collection.NotifPipeline
 import com.android.systemui.statusbar.notification.collection.coordinator.dagger.CoordinatorScope
-import com.android.systemui.statusbar.notification.collection.listbuilder.pluggable.NotifComparator
 import com.android.systemui.statusbar.notification.collection.listbuilder.pluggable.NotifSectioner
 import java.io.FileDescriptor
 import java.io.PrintWriter
@@ -46,7 +45,6 @@ class NotifCoordinatorsImpl @Inject constructor(
     bubbleCoordinator: BubbleCoordinator,
     headsUpCoordinator: HeadsUpCoordinator,
     gutsCoordinator: GutsCoordinator,
-    communalCoordinator: CommunalCoordinator,
     conversationCoordinator: ConversationCoordinator,
     debugModeCoordinator: DebugModeCoordinator,
     groupCountCoordinator: GroupCountCoordinator,
@@ -59,12 +57,12 @@ class NotifCoordinatorsImpl @Inject constructor(
     smartspaceDedupingCoordinator: SmartspaceDedupingCoordinator,
     viewConfigCoordinator: ViewConfigCoordinator,
     visualStabilityCoordinator: VisualStabilityCoordinator,
-    sensitiveContentCoordinator: SensitiveContentCoordinator
+    sensitiveContentCoordinator: SensitiveContentCoordinator,
+    activityLaunchAnimCoordinator: ActivityLaunchAnimCoordinator
 ) : NotifCoordinators {
 
     private val mCoordinators: MutableList<Coordinator> = ArrayList()
     private val mOrderedSections: MutableList<NotifSectioner> = ArrayList()
-    private val mOrderedComparators: MutableList<NotifComparator> = ArrayList()
 
     /**
      * Creates all the coordinators.
@@ -88,7 +86,6 @@ class NotifCoordinatorsImpl @Inject constructor(
         mCoordinators.add(appOpsCoordinator)
         mCoordinators.add(deviceProvisionedCoordinator)
         mCoordinators.add(bubbleCoordinator)
-        mCoordinators.add(communalCoordinator)
         mCoordinators.add(debugModeCoordinator)
         mCoordinators.add(conversationCoordinator)
         mCoordinators.add(groupCountCoordinator)
@@ -99,6 +96,7 @@ class NotifCoordinatorsImpl @Inject constructor(
         mCoordinators.add(viewConfigCoordinator)
         mCoordinators.add(visualStabilityCoordinator)
         mCoordinators.add(sensitiveContentCoordinator)
+        mCoordinators.add(activityLaunchAnimCoordinator)
         if (notifPipelineFlags.isSmartspaceDedupingEnabled()) {
             mCoordinators.add(smartspaceDedupingCoordinator)
         }
@@ -119,9 +117,6 @@ class NotifCoordinatorsImpl @Inject constructor(
         mOrderedSections.add(rankingCoordinator.alertingSectioner) // Alerting
         mOrderedSections.add(rankingCoordinator.silentSectioner) // Silent
         mOrderedSections.add(rankingCoordinator.minimizedSectioner) // Minimized
-
-        // Manually add ordered comparators
-        mOrderedComparators.add(conversationCoordinator.comparator)
     }
 
     /**
@@ -133,7 +128,6 @@ class NotifCoordinatorsImpl @Inject constructor(
             c.attach(pipeline)
         }
         pipeline.setSections(mOrderedSections)
-        pipeline.setComparators(mOrderedComparators)
     }
 
     override fun dump(fd: FileDescriptor, pw: PrintWriter, args: Array<String>) {

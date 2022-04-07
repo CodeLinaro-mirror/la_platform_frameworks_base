@@ -58,7 +58,6 @@ import com.android.systemui.statusbar.NotificationRemoteInputManager;
 import com.android.systemui.statusbar.RemoteInputController;
 import com.android.systemui.statusbar.SysuiStatusBarStateController;
 import com.android.systemui.statusbar.notification.DynamicPrivacyController;
-import com.android.systemui.statusbar.notification.ForegroundServiceDismissalFeatureController;
 import com.android.systemui.statusbar.notification.NotifPipelineFlags;
 import com.android.systemui.statusbar.notification.NotificationEntryManager;
 import com.android.systemui.statusbar.notification.collection.NotifCollection;
@@ -68,14 +67,13 @@ import com.android.systemui.statusbar.notification.collection.legacy.VisualStabi
 import com.android.systemui.statusbar.notification.collection.render.NotificationVisibilityProvider;
 import com.android.systemui.statusbar.notification.collection.render.SectionHeaderController;
 import com.android.systemui.statusbar.notification.row.ExpandableNotificationRow;
-import com.android.systemui.statusbar.notification.row.ForegroundServiceDungeonView;
 import com.android.systemui.statusbar.notification.row.NotificationGutsManager;
 import com.android.systemui.statusbar.notification.stack.NotificationStackScrollLayoutController.NotificationPanelEvent;
+import com.android.systemui.statusbar.phone.CentralSurfaces;
 import com.android.systemui.statusbar.phone.HeadsUpManagerPhone;
 import com.android.systemui.statusbar.phone.KeyguardBypassController;
 import com.android.systemui.statusbar.phone.ScrimController;
 import com.android.systemui.statusbar.phone.ShadeController;
-import com.android.systemui.statusbar.phone.StatusBar;
 import com.android.systemui.statusbar.policy.ConfigurationController;
 import com.android.systemui.statusbar.policy.DeviceProvisionedController;
 import com.android.systemui.statusbar.policy.ZenModeController;
@@ -118,7 +116,7 @@ public class NotificationStackScrollLayoutControllerTest extends SysuiTestCase {
     @Mock(answer = Answers.RETURNS_SELF)
     private NotificationSwipeHelper.Builder mNotificationSwipeHelperBuilder;
     @Mock private NotificationSwipeHelper mNotificationSwipeHelper;
-    @Mock private StatusBar mStatusBar;
+    @Mock private CentralSurfaces mCentralSurfaces;
     @Mock private ScrimController mScrimController;
     @Mock private NotificationGroupManagerLegacy mLegacyGroupManager;
     @Mock private SectionHeaderController mSilentHeaderController;
@@ -129,14 +127,14 @@ public class NotificationStackScrollLayoutControllerTest extends SysuiTestCase {
     @Mock private IStatusBarService mIStatusBarService;
     @Mock private UiEventLogger mUiEventLogger;
     @Mock private LockscreenShadeTransitionController mLockscreenShadeTransitionController;
-    @Mock private ForegroundServiceDismissalFeatureController mFgFeatureController;
-    @Mock private ForegroundServiceSectionController mFgServicesSectionController;
-    @Mock private ForegroundServiceDungeonView mForegroundServiceDungeonView;
     @Mock private LayoutInflater mLayoutInflater;
     @Mock private NotificationRemoteInputManager mRemoteInputManager;
     @Mock private VisualStabilityManager mVisualStabilityManager;
     @Mock private ShadeController mShadeController;
     @Mock private InteractionJankMonitor mJankMonitor;
+    @Mock private StackStateLogger mStackLogger;
+    @Mock private NotificationStackScrollLogger mLogger;
+    @Mock private NotificationStackSizeCalculator mNotificationStackSizeCalculator;
 
     @Captor
     private ArgumentCaptor<StatusBarStateController.StateListener> mStateListenerArgumentCaptor;
@@ -149,8 +147,6 @@ public class NotificationStackScrollLayoutControllerTest extends SysuiTestCase {
 
         when(mNotificationSwipeHelperBuilder.build()).thenReturn(mNotificationSwipeHelper);
         when(mNotifPipelineFlags.isNewPipelineEnabled()).thenReturn(false);
-        when(mFgServicesSectionController.createView(mLayoutInflater))
-                .thenReturn(mForegroundServiceDungeonView);
 
         mController = new NotificationStackScrollLayoutController(
                 true,
@@ -173,7 +169,7 @@ public class NotificationStackScrollLayoutControllerTest extends SysuiTestCase {
                 new FalsingManagerFake(),
                 mResources,
                 mNotificationSwipeHelperBuilder,
-                mStatusBar,
+                mCentralSurfaces,
                 mScrimController,
                 mLegacyGroupManager,
                 mLegacyGroupManager,
@@ -185,13 +181,14 @@ public class NotificationStackScrollLayoutControllerTest extends SysuiTestCase {
                 mLockscreenShadeTransitionController,
                 mIStatusBarService,
                 mUiEventLogger,
-                mFgFeatureController,
-                mFgServicesSectionController,
                 mLayoutInflater,
                 mRemoteInputManager,
                 mVisualStabilityManager,
                 mShadeController,
-                mJankMonitor
+                mJankMonitor,
+                mStackLogger,
+                mLogger,
+                mNotificationStackSizeCalculator
         );
 
         when(mNotificationStackScrollLayout.isAttachedToWindow()).thenReturn(true);
@@ -283,18 +280,17 @@ public class NotificationStackScrollLayoutControllerTest extends SysuiTestCase {
                 mStateListenerArgumentCaptor.capture(), anyInt());
         StatusBarStateController.StateListener stateListener =
                 mStateListenerArgumentCaptor.getValue();
-        when(mNotificationStackScrollLayout.isUsingSplitNotificationShade()).thenReturn(true);
         stateListener.onStateChanged(SHADE);
         mController.getView().removeAllViews();
 
-        mController.setQsExpanded(false);
+        mController.setQsFullScreen(false);
         reset(mNotificationStackScrollLayout);
         mController.updateShowEmptyShadeView();
         verify(mNotificationStackScrollLayout).updateEmptyShadeView(
                 /* visible= */ true,
                 /* notifVisibleInShade= */ false);
 
-        mController.setQsExpanded(true);
+        mController.setQsFullScreen(true);
         reset(mNotificationStackScrollLayout);
         mController.updateShowEmptyShadeView();
         verify(mNotificationStackScrollLayout).updateEmptyShadeView(
@@ -395,22 +391,6 @@ public class NotificationStackScrollLayoutControllerTest extends SysuiTestCase {
     }
 
     @Test
-    public void testForegroundDismissEnabled() {
-        when(mFgFeatureController.isForegroundServiceDismissalEnabled()).thenReturn(true);
-        mController.attach(mNotificationStackScrollLayout);
-        verify(mNotificationStackScrollLayout).initializeForegroundServiceSection(
-                mForegroundServiceDungeonView);
-    }
-
-    @Test
-    public void testForegroundDismissaDisabled() {
-        when(mFgFeatureController.isForegroundServiceDismissalEnabled()).thenReturn(false);
-        mController.attach(mNotificationStackScrollLayout);
-        verify(mNotificationStackScrollLayout, never()).initializeForegroundServiceSection(
-                any(ForegroundServiceDungeonView.class));
-    }
-
-    @Test
     public void testUpdateFooter_remoteInput() {
         ArgumentCaptor<RemoteInputController.Callback> callbackCaptor =
                 ArgumentCaptor.forClass(RemoteInputController.Callback.class);
@@ -432,11 +412,11 @@ public class NotificationStackScrollLayoutControllerTest extends SysuiTestCase {
             boolean toShow) {
         if (toShow) {
             statusBarStateListener.onStateChanged(SHADE);
-            mController.setQsExpanded(false);
+            mController.setQsFullScreen(false);
             mController.getView().removeAllViews();
         } else {
             statusBarStateListener.onStateChanged(KEYGUARD);
-            mController.setQsExpanded(true);
+            mController.setQsFullScreen(true);
             mController.getView().addContainerView(mock(ExpandableNotificationRow.class));
         }
     }

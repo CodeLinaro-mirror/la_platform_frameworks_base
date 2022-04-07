@@ -18,12 +18,14 @@ package com.android.wm.shell.splitscreen;
 
 import static android.app.ActivityManager.START_SUCCESS;
 import static android.app.ActivityManager.START_TASK_TO_FRONT;
+import static android.content.Intent.FLAG_ACTIVITY_NO_USER_ACTION;
 import static android.view.Display.DEFAULT_DISPLAY;
 import static android.view.RemoteAnimationTarget.MODE_OPENING;
 
 import static com.android.wm.shell.common.ExecutorUtils.executeRemoteCallWithTaskPermission;
 import static com.android.wm.shell.common.split.SplitScreenConstants.SPLIT_POSITION_BOTTOM_OR_RIGHT;
 import static com.android.wm.shell.common.split.SplitScreenConstants.SPLIT_POSITION_TOP_OR_LEFT;
+import static com.android.wm.shell.common.split.SplitScreenConstants.SPLIT_POSITION_UNDEFINED;
 import static com.android.wm.shell.splitscreen.SplitScreen.STAGE_TYPE_SIDE;
 import static com.android.wm.shell.splitscreen.SplitScreen.STAGE_TYPE_UNDEFINED;
 import static com.android.wm.shell.transition.Transitions.ENABLE_SHELL_TRANSITIONS;
@@ -32,6 +34,7 @@ import android.app.ActivityManager;
 import android.app.ActivityTaskManager;
 import android.app.PendingIntent;
 import android.content.ActivityNotFoundException;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.LauncherApps;
@@ -68,6 +71,7 @@ import com.android.wm.shell.common.SingleInstanceRemoteListener;
 import com.android.wm.shell.common.SyncTransactionQueue;
 import com.android.wm.shell.common.TransactionPool;
 import com.android.wm.shell.common.annotations.ExternalThread;
+import com.android.wm.shell.common.split.SplitLayout;
 import com.android.wm.shell.common.split.SplitScreenConstants.SplitPosition;
 import com.android.wm.shell.draganddrop.DragAndDropPolicy;
 import com.android.wm.shell.recents.RecentTasksController;
@@ -137,6 +141,9 @@ public class SplitScreenController implements DragAndDropPolicy.Starter,
     private final Provider<Optional<StageTaskUnfoldController>> mUnfoldControllerProvider;
 
     private StageCoordinator mStageCoordinator;
+    // Only used for the legacy recents animation from splitscreen to allow the tasks to be animated
+    // outside the bounds of the roots by being reparented into a higher level fullscreen container
+    private SurfaceControl mSplitTasksContainerLayer;
 
     public SplitScreenController(ShellTaskOrganizer shellTaskOrganizer,
             SyncTransactionQueue syncQueue, Context context,
@@ -193,11 +200,12 @@ public class SplitScreenController implements DragAndDropPolicy.Starter,
 
     @Nullable
     public ActivityManager.RunningTaskInfo getTaskInfo(@SplitPosition int splitPosition) {
-        if (isSplitScreenVisible()) {
-            int taskId = mStageCoordinator.getTaskId(splitPosition);
-            return mTaskOrganizer.getRunningTaskInfo(taskId);
+        if (!isSplitScreenVisible() || splitPosition == SPLIT_POSITION_UNDEFINED) {
+            return null;
         }
-        return null;
+
+        final int taskId = mStageCoordinator.getTaskId(splitPosition);
+        return mTaskOrganizer.getRunningTaskInfo(taskId);
     }
 
     public boolean isTaskInSplitScreen(int taskId) {
@@ -318,8 +326,8 @@ public class SplitScreenController implements DragAndDropPolicy.Starter,
         }
     }
 
-    public void startIntent(PendingIntent intent, Intent fillInIntent, @SplitPosition int position,
-            @Nullable Bundle options) {
+    public void startIntent(PendingIntent intent, @Nullable Intent fillInIntent,
+            @SplitPosition int position, @Nullable Bundle options) {
         if (!ENABLE_SHELL_TRANSITIONS) {
             startIntentLegacy(intent, fillInIntent, position, options);
             return;
@@ -328,6 +336,15 @@ public class SplitScreenController implements DragAndDropPolicy.Starter,
         try {
             options = mStageCoordinator.resolveStartStage(STAGE_TYPE_UNDEFINED, position, options,
                     null /* wct */);
+
+            // Flag this as a no-user-action launch to prevent sending user leaving event to the
+            // current top activity since it's going to be put into another side of the split. This
+            // prevents the current top activity from going into pip mode due to user leaving event.
+            if (fillInIntent == null) {
+                fillInIntent = new Intent();
+            }
+            fillInIntent.addFlags(FLAG_ACTIVITY_NO_USER_ACTION);
+
             intent.send(mContext, 0, fillInIntent, null /* onFinished */, null /* handler */,
                     null /* requiredPermission */, options);
         } catch (PendingIntent.CanceledException e) {
@@ -335,7 +352,7 @@ public class SplitScreenController implements DragAndDropPolicy.Starter,
         }
     }
 
-    private void startIntentLegacy(PendingIntent intent, Intent fillInIntent,
+    private void startIntentLegacy(PendingIntent intent, @Nullable Intent fillInIntent,
             @SplitPosition int position, @Nullable Bundle options) {
         final WindowContainerTransaction evictWct = new WindowContainerTransaction();
         mStageCoordinator.prepareEvictChildTasks(position, evictWct);
@@ -346,17 +363,32 @@ public class SplitScreenController implements DragAndDropPolicy.Starter,
                     RemoteAnimationTarget[] wallpapers, RemoteAnimationTarget[] nonApps,
                     IRemoteAnimationFinishedCallback finishedCallback,
                     SurfaceControl.Transaction t) {
-                mStageCoordinator.updateSurfaceBounds(null /* layout */, t);
-
-                if (apps != null) {
-                    for (int i = 0; i < apps.length; ++i) {
-                        if (apps[i].mode == MODE_OPENING) {
-                            t.show(apps[i].leash);
-                        }
+                if (apps == null || apps.length == 0) {
+                    final ActivityManager.RunningTaskInfo pairedTaskInfo =
+                            getTaskInfo(SplitLayout.reversePosition(position));
+                    final ComponentName pairedActivity =
+                            pairedTaskInfo != null ? pairedTaskInfo.baseActivity : null;
+                    final ComponentName intentActivity =
+                            intent.getIntent() != null ? intent.getIntent().getComponent() : null;
+                    if (pairedActivity != null && pairedActivity.equals(intentActivity)) {
+                        // Switch split position if dragging the same activity to another side.
+                        setSideStagePosition(SplitLayout.reversePosition(
+                                mStageCoordinator.getSideStagePosition()));
                     }
+
+                    // Do nothing when the animation was cancelled.
+                    t.apply();
+                    return;
                 }
 
+                mStageCoordinator.updateSurfaceBounds(null /* layout */, t);
+                for (int i = 0; i < apps.length; ++i) {
+                    if (apps[i].mode == MODE_OPENING) {
+                        t.show(apps[i].leash);
+                    }
+                }
                 t.apply();
+
                 if (finishedCallback != null) {
                     try {
                         finishedCallback.onAnimationFinished();
@@ -371,6 +403,15 @@ public class SplitScreenController implements DragAndDropPolicy.Starter,
 
         final WindowContainerTransaction wct = new WindowContainerTransaction();
         options = mStageCoordinator.resolveStartStage(STAGE_TYPE_UNDEFINED, position, options, wct);
+
+        // Flag this as a no-user-action launch to prevent sending user leaving event to the current
+        // top activity since it's going to be put into another side of the split. This prevents the
+        // current top activity from going into pip mode due to user leaving event.
+        if (fillInIntent == null) {
+            fillInIntent = new Intent();
+        }
+        fillInIntent.addFlags(FLAG_ACTIVITY_NO_USER_ACTION);
+
         wct.sendPendingIntent(intent, fillInIntent, options);
         mSyncQueue.queue(transition, WindowManager.TRANSIT_OPEN, wct);
     }
@@ -378,20 +419,24 @@ public class SplitScreenController implements DragAndDropPolicy.Starter,
     RemoteAnimationTarget[] onGoingToRecentsLegacy(boolean cancel, RemoteAnimationTarget[] apps) {
         if (ENABLE_SHELL_TRANSITIONS || apps.length < 2) return null;
         // TODO(b/206487881): Integrate this with shell transition.
+        SurfaceControl.Transaction transaction = new SurfaceControl.Transaction();
+        if (mSplitTasksContainerLayer != null) {
+            // Remove the previous layer before recreating
+            transaction.remove(mSplitTasksContainerLayer);
+        }
         final SurfaceControl.Builder builder = new SurfaceControl.Builder(new SurfaceSession())
                 .setContainerLayer()
                 .setName("RecentsAnimationSplitTasks")
                 .setHidden(false)
                 .setCallsite("SplitScreenController#onGoingtoRecentsLegacy");
         mRootTDAOrganizer.attachToDisplayArea(DEFAULT_DISPLAY, builder);
-        SurfaceControl sc = builder.build();
-        SurfaceControl.Transaction transaction = new SurfaceControl.Transaction();
+        mSplitTasksContainerLayer = builder.build();
 
         // Ensure that we order these in the parent in the right z-order as their previous order
         Arrays.sort(apps, (a1, a2) -> a1.prefixOrderIndex - a2.prefixOrderIndex);
         int layer = 1;
         for (RemoteAnimationTarget appTarget : apps) {
-            transaction.reparent(appTarget.leash, sc);
+            transaction.reparent(appTarget.leash, mSplitTasksContainerLayer);
             transaction.setPosition(appTarget.leash, appTarget.screenSpaceBounds.left,
                     appTarget.screenSpaceBounds.top);
             transaction.setLayer(appTarget.leash, layer++);
@@ -631,6 +676,17 @@ public class SplitScreenController implements DragAndDropPolicy.Starter,
                     (controller) -> controller.mStageCoordinator.startTasksWithLegacyTransition(
                             mainTaskId, mainOptions, sideTaskId, sideOptions, sidePosition,
                             splitRatio, adapter));
+        }
+
+        @Override
+        public void startIntentAndTaskWithLegacyTransition(PendingIntent pendingIntent,
+                Intent fillInIntent, int taskId, Bundle mainOptions, Bundle sideOptions,
+                int sidePosition, float splitRatio, RemoteAnimationAdapter adapter) {
+            executeRemoteCallWithTaskPermission(mController,
+                    "startIntentAndTaskWithLegacyTransition", (controller) ->
+                            controller.mStageCoordinator.startIntentAndTaskWithLegacyTransition(
+                                    pendingIntent, fillInIntent, taskId, mainOptions, sideOptions,
+                                    sidePosition, splitRatio, adapter));
         }
 
         @Override

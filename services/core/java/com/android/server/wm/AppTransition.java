@@ -81,11 +81,11 @@ import static com.android.internal.R.styleable.WindowAnimation_wallpaperIntraOpe
 import static com.android.internal.R.styleable.WindowAnimation_wallpaperIntraOpenExitAnimation;
 import static com.android.internal.R.styleable.WindowAnimation_wallpaperOpenEnterAnimation;
 import static com.android.internal.R.styleable.WindowAnimation_wallpaperOpenExitAnimation;
+import static com.android.internal.protolog.ProtoLogGroup.WM_DEBUG_ANIM;
 import static com.android.internal.protolog.ProtoLogGroup.WM_DEBUG_APP_TRANSITIONS;
 import static com.android.internal.protolog.ProtoLogGroup.WM_DEBUG_APP_TRANSITIONS_ANIM;
 import static com.android.server.wm.AppTransitionProto.APP_TRANSITION_STATE;
 import static com.android.server.wm.AppTransitionProto.LAST_USED_APP_TRANSITION;
-import static com.android.server.wm.WindowManagerDebugConfig.DEBUG_ANIM;
 import static com.android.server.wm.WindowManagerDebugConfig.TAG_WITH_CLASS_NAME;
 import static com.android.server.wm.WindowManagerDebugConfig.TAG_WM;
 import static com.android.server.wm.WindowManagerInternal.AppTransitionListener;
@@ -93,7 +93,7 @@ import static com.android.server.wm.WindowManagerInternal.KeyguardExitAnimationS
 import static com.android.server.wm.WindowStateAnimator.ROOT_TASK_CLIP_AFTER_ANIM;
 import static com.android.server.wm.WindowStateAnimator.ROOT_TASK_CLIP_NONE;
 
-import android.annotation.DrawableRes;
+import android.annotation.ColorInt;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.content.ComponentName;
@@ -101,6 +101,7 @@ import android.content.Context;
 import android.content.res.Configuration;
 import android.content.res.TypedArray;
 import android.graphics.Rect;
+import android.graphics.drawable.Drawable;
 import android.hardware.HardwareBuffer;
 import android.os.Binder;
 import android.os.Debug;
@@ -129,6 +130,7 @@ import android.view.animation.TranslateAnimation;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.policy.TransitionAnimation;
+import com.android.internal.protolog.ProtoLogImpl;
 import com.android.internal.protolog.common.ProtoLog;
 import com.android.internal.util.DumpUtils.Dump;
 import com.android.internal.util.function.pooled.PooledLambda;
@@ -198,6 +200,7 @@ public class AppTransition implements Dump {
     private IRemoteCallback mAnimationFinishedCallback;
     private int mNextAppTransitionEnter;
     private int mNextAppTransitionExit;
+    private @ColorInt int mNextAppTransitionBackgroundColor;
     private int mNextAppTransitionInPlace;
     private boolean mNextAppTransitionIsSync;
 
@@ -235,7 +238,8 @@ public class AppTransition implements Dump {
         mService = service;
         mHandler = new Handler(service.mH.getLooper());
         mDisplayContent = displayContent;
-        mTransitionAnimation = new TransitionAnimation(context, DEBUG_ANIM, TAG);
+        mTransitionAnimation = new TransitionAnimation(
+                context, ProtoLogImpl.isEnabled(WM_DEBUG_ANIM), TAG);
 
         mGridLayoutRecentsEnabled = SystemProperties.getBoolean("ro.recents.grid", false);
 
@@ -539,8 +543,8 @@ public class AppTransition implements Dump {
      * animation.
      */
     HardwareBuffer createCrossProfileAppsThumbnail(
-            @DrawableRes int thumbnailDrawableRes, Rect frame) {
-        return mTransitionAnimation.createCrossProfileAppsThumbnail(thumbnailDrawableRes, frame);
+            Drawable thumbnailDrawable, Rect frame) {
+        return mTransitionAnimation.createCrossProfileAppsThumbnail(thumbnailDrawable, frame);
     }
 
     Animation createCrossProfileAppsThumbnailAnimationLocked(Rect appRect) {
@@ -829,6 +833,7 @@ public class AppTransition implements Dump {
                     break;
             }
             a = animAttr != 0 ? loadAnimationAttr(lp, animAttr, transit) : null;
+
             ProtoLog.v(WM_DEBUG_APP_TRANSITIONS_ANIM,
                     "applyAnimation: anim=%s animAttr=0x%x transit=%s isEntrance=%b "
                             + "Callers=%s",
@@ -836,6 +841,11 @@ public class AppTransition implements Dump {
                     Debug.getCallers(3));
         }
         setAppTransitionFinishedCallbackIfNeeded(a);
+
+        if (mNextAppTransitionBackgroundColor != 0) {
+            a.setBackgroundColor(mNextAppTransitionBackgroundColor);
+        }
+
         return a;
     }
 
@@ -861,14 +871,15 @@ public class AppTransition implements Dump {
     }
 
     void overridePendingAppTransition(String packageName, int enterAnim, int exitAnim,
-            IRemoteCallback startedCallback, IRemoteCallback endedCallback,
-            boolean overrideTaskTransaction) {
+            @ColorInt int backgroundColor, IRemoteCallback startedCallback,
+            IRemoteCallback endedCallback, boolean overrideTaskTransaction) {
         if (canOverridePendingAppTransition()) {
             clear();
             mNextAppTransitionOverrideRequested = true;
             mNextAppTransitionPackage = packageName;
             mNextAppTransitionEnter = enterAnim;
             mNextAppTransitionExit = exitAnim;
+            mNextAppTransitionBackgroundColor = backgroundColor;
             postAnimationCallback();
             mNextAppTransitionCallback = startedCallback;
             mAnimationFinishedCallback = endedCallback;
@@ -1296,6 +1307,8 @@ public class AppTransition implements Dump {
             pw.print(Integer.toHexString(mNextAppTransitionEnter));
             pw.print(" mNextAppTransitionExit=0x");
             pw.println(Integer.toHexString(mNextAppTransitionExit));
+            pw.print(" mNextAppTransitionBackgroundColor=0x");
+            pw.println(Integer.toHexString(mNextAppTransitionBackgroundColor));
         }
         switch (mNextAppTransitionType) {
             case NEXT_TRANSIT_TYPE_CUSTOM_IN_PLACE:

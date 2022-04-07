@@ -15,7 +15,6 @@
  */
 package com.android.internal.util.dump;
 
-import android.annotation.Nullable;
 import android.util.ArrayMap;
 import android.util.Dumpable;
 import android.util.DumpableContainer;
@@ -25,10 +24,11 @@ import android.util.Log;
 import java.io.PrintWriter;
 import java.util.Objects;
 
-// TODO(b/149254050): add unit tests
 /**
  * Helper class for {@link DumpableContainer} implementations - they can "implement it by
  * association", i.e., by delegating the interface methods to a {@code DumpableContainerImpl}.
+ *
+ * <p>This class is not thread safe.
  *
  * @hide
  */
@@ -38,7 +38,6 @@ public final class DumpableContainerImpl implements DumpableContainer {
 
     private static final boolean DEBUG = false;
 
-    @Nullable
     private final ArrayMap<String, Dumpable> mDumpables = new ArrayMap<>();
 
     @Override
@@ -48,8 +47,10 @@ public final class DumpableContainerImpl implements DumpableContainer {
         Objects.requireNonNull(name, () -> "name of" + dumpable);
 
         if (mDumpables.containsKey(name)) {
-            Log.e(TAG, "addDumpable(): ignoring " + dumpable + " as there is already a dumpable"
-                    + " with that name (" + name + "): " + mDumpables.get(name));
+            if (DEBUG) {
+                Log.d(TAG, "addDumpable(): ignoring " + dumpable + " as there is already a dumpable"
+                        + " with that name (" + name + "): " + mDumpables.get(name));
+            }
             return false;
         }
 
@@ -60,11 +61,43 @@ public final class DumpableContainerImpl implements DumpableContainer {
         return true;
     }
 
+    @Override
+    public boolean removeDumpable(Dumpable dumpable) {
+        Objects.requireNonNull(dumpable, "dumpable");
+        String name = dumpable.getDumpableName();
+        if (name == null) {
+            if (DEBUG) {
+                Log.d(TAG, "Tried to remove nameless dumpable: " + dumpable);
+            }
+            return false;
+        }
+
+        Dumpable candidate = mDumpables.get(name);
+        if (candidate == null) {
+            if (DEBUG) {
+                Log.d(TAG, "Dumpable with name " + name + " not found");
+            }
+            return false;
+        }
+
+        // Make sure it's the right one
+        if (candidate != dumpable) {
+            Log.w(TAG, "removeDumpable(): passed dumpable (" + dumpable + ") named " + name
+                    + ", but internal dumpable with that name is " + candidate);
+            return false;
+        }
+        if (DEBUG) {
+            Log.d(TAG, "Removing dumpable named " + name);
+        }
+        mDumpables.remove(name);
+        return true;
+    }
+
     /**
      * Dumps the number of dumpable, without a newline.
      */
     private int dumpNumberDumpables(IndentingPrintWriter writer) {
-        int size = mDumpables == null ? 0 : mDumpables.size();
+        int size = mDumpables.size();
         if (size == 0) {
             writer.print("No dumpables");
         } else {
@@ -102,7 +135,7 @@ public final class DumpableContainerImpl implements DumpableContainer {
             ipw.println();
             return;
         }
-        ipw.println(": ");
+        ipw.println(":");
 
         for (int i = 0; i < size; i++) {
             String dumpableName = mDumpables.keyAt(i);

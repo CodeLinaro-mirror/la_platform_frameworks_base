@@ -18,29 +18,43 @@ package com.android.server.app;
 
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.doAnswer;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.mockitoSession;
+import static com.android.dx.mockito.inline.extended.ExtendedMockito.verify;
+import static com.android.dx.mockito.inline.extended.ExtendedMockito.verifyNoMoreInteractions;
+import static com.android.dx.mockito.inline.extended.ExtendedMockito.when;
 import static com.android.server.app.GameServiceProviderInstanceImplTest.FakeGameService.GameServiceState;
 
 import static com.google.common.collect.Iterables.getOnlyElement;
 import static com.google.common.truth.Truth.assertThat;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoMoreInteractions;
-import static org.mockito.Mockito.when;
 
+import android.Manifest;
 import android.annotation.Nullable;
 import android.app.ActivityManager.RunningTaskInfo;
+import android.app.ActivityManagerInternal;
 import android.app.ActivityTaskManager;
+import android.app.IActivityManager;
 import android.app.IActivityTaskManager;
+import android.app.IProcessObserver;
 import android.app.ITaskStackListener;
 import android.content.ComponentName;
+import android.content.Context;
+import android.content.ContextWrapper;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Paint;
+import android.graphics.Picture;
 import android.graphics.Rect;
+import android.net.Uri;
 import android.os.RemoteException;
 import android.os.UserHandle;
 import android.platform.test.annotations.Presubmit;
@@ -54,16 +68,20 @@ import android.service.games.IGameServiceController;
 import android.service.games.IGameSession;
 import android.service.games.IGameSessionController;
 import android.service.games.IGameSessionService;
+import android.view.SurfaceControl;
 import android.view.SurfaceControlViewHost.SurfacePackage;
 
 import androidx.test.filters.SmallTest;
+import androidx.test.platform.app.InstrumentationRegistry;
 import androidx.test.runner.AndroidJUnit4;
 
 import com.android.internal.infra.AndroidFuture;
 import com.android.internal.util.ConcurrentUtils;
 import com.android.internal.util.FunctionalUtils.ThrowingConsumer;
 import com.android.internal.util.Preconditions;
+import com.android.internal.util.ScreenshotHelper;
 import com.android.server.wm.WindowManagerInternal;
+import com.android.server.wm.WindowManagerInternal.TaskSystemBarsListener;
 import com.android.server.wm.WindowManagerService;
 
 import org.junit.After;
@@ -77,6 +95,8 @@ import org.mockito.quality.Strictness;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Objects;
+import java.util.function.Consumer;
 
 
 /**
@@ -99,23 +119,49 @@ public final class GameServiceProviderInstanceImplTest {
     private static final ComponentName GAME_A_MAIN_ACTIVITY =
             new ComponentName(GAME_A_PACKAGE, "com.package.game.a.MainActivity");
 
-    private static final Bitmap TEST_BITMAP = Bitmap.createBitmap(32, 32, Bitmap.Config.ARGB_8888);
+    private static final String GAME_B_PACKAGE = "com.package.game.b";
+    private static final ComponentName GAME_B_MAIN_ACTIVITY =
+            new ComponentName(GAME_B_PACKAGE, "com.package.game.b.MainActivity");
+
+
+    private static final Bitmap TEST_BITMAP;
+    static {
+        Picture picture = new Picture();
+        Canvas canvas = picture.beginRecording(200, 100);
+        Paint p = new Paint();
+        p.setColor(Color.BLACK);
+        canvas.drawCircle(10, 10, 10, p);
+        picture.endRecording();
+        TEST_BITMAP = Bitmap.createBitmap(picture);
+    }
 
     private MockitoSession mMockingSession;
     private GameServiceProviderInstance mGameServiceProviderInstance;
+    @Mock
+    private ActivityManagerInternal mMockActivityManagerInternal;
     @Mock
     private IActivityTaskManager mMockActivityTaskManager;
     @Mock
     private WindowManagerService mMockWindowManagerService;
     @Mock
     private WindowManagerInternal mMockWindowManagerInternal;
+    @Mock
+    private IActivityManager mMockActivityManager;
+    @Mock
+    private ScreenshotHelper mMockScreenshotHelper;
+    private MockContext mMockContext;
     private FakeGameClassifier mFakeGameClassifier;
     private FakeGameService mFakeGameService;
     private FakeServiceConnector<IGameService> mFakeGameServiceConnector;
     private FakeGameSessionService mFakeGameSessionService;
     private FakeServiceConnector<IGameSessionService> mFakeGameSessionServiceConnector;
     private ArrayList<ITaskStackListener> mTaskStackListeners;
+    private ArrayList<IProcessObserver> mProcessObservers;
+    private ArrayList<TaskSystemBarsListener> mTaskSystemBarsListeners;
     private ArrayList<RunningTaskInfo> mRunningTaskInfos;
+
+    @Mock
+    private PackageManager mMockPackageManager;
 
     @Before
     public void setUp() throws PackageManager.NameNotFoundException, RemoteException {
@@ -124,8 +170,11 @@ public final class GameServiceProviderInstanceImplTest {
                 .strictness(Strictness.LENIENT)
                 .startMocking();
 
+        mMockContext = new MockContext(InstrumentationRegistry.getInstrumentation().getContext());
+
         mFakeGameClassifier = new FakeGameClassifier();
         mFakeGameClassifier.recordGamePackage(GAME_A_PACKAGE);
+        mFakeGameClassifier.recordGamePackage(GAME_B_PACKAGE);
 
         mFakeGameService = new FakeGameService();
         mFakeGameServiceConnector = new FakeServiceConnector<>(mFakeGameService);
@@ -137,25 +186,49 @@ public final class GameServiceProviderInstanceImplTest {
             mTaskStackListeners.add(invocation.getArgument(0));
             return null;
         }).when(mMockActivityTaskManager).registerTaskStackListener(any());
-
-        mRunningTaskInfos = new ArrayList<>();
-        when(mMockActivityTaskManager.getTasks(anyInt(), anyBoolean(), anyBoolean())).thenReturn(
-                mRunningTaskInfos);
-
         doAnswer(invocation -> {
             mTaskStackListeners.remove(invocation.getArgument(0));
             return null;
         }).when(mMockActivityTaskManager).unregisterTaskStackListener(any());
 
+        mProcessObservers = new ArrayList<>();
+        doAnswer(invocation -> {
+            mProcessObservers.add(invocation.getArgument(0));
+            return null;
+        }).when(mMockActivityManager).registerProcessObserver(any());
+        doAnswer(invocation -> {
+            mProcessObservers.remove(invocation.getArgument(0));
+            return null;
+        }).when(mMockActivityManager).unregisterProcessObserver(any());
+
+        mTaskSystemBarsListeners = new ArrayList<>();
+        doAnswer(invocation -> {
+            mTaskSystemBarsListeners.add(invocation.getArgument(0));
+            return null;
+        }).when(mMockWindowManagerInternal).registerTaskSystemBarsListener(any());
+        doAnswer(invocation -> {
+            mTaskSystemBarsListeners.remove(invocation.getArgument(0));
+            return null;
+        }).when(mMockWindowManagerInternal).unregisterTaskSystemBarsListener(any());
+
+        mRunningTaskInfos = new ArrayList<>();
+        when(mMockActivityTaskManager.getTasks(anyInt(), anyBoolean(), anyBoolean())).thenReturn(
+                mRunningTaskInfos);
+
+
         mGameServiceProviderInstance = new GameServiceProviderInstanceImpl(
                 new UserHandle(USER_ID),
                 ConcurrentUtils.DIRECT_EXECUTOR,
+                mMockContext,
                 mFakeGameClassifier,
+                mMockActivityManager,
+                mMockActivityManagerInternal,
                 mMockActivityTaskManager,
                 mMockWindowManagerService,
                 mMockWindowManagerInternal,
                 mFakeGameServiceConnector,
-                mFakeGameSessionServiceConnector);
+                mFakeGameSessionServiceConnector,
+                mMockScreenshotHelper);
     }
 
     @After
@@ -280,6 +353,7 @@ public final class GameServiceProviderInstanceImplTest {
             throws Exception {
         mGameServiceProviderInstance.start();
 
+        mockPermissionGranted(Manifest.permission.MANAGE_GAME_ACTIVITY);
         mFakeGameService.requestCreateGameSession(10);
 
         assertThat(mFakeGameSessionService.getCapturedCreateInvocations()).isEmpty();
@@ -301,6 +375,7 @@ public final class GameServiceProviderInstanceImplTest {
         mGameServiceProviderInstance.start();
         startTask(10, GAME_A_MAIN_ACTIVITY);
 
+        mockPermissionGranted(Manifest.permission.MANAGE_GAME_ACTIVITY);
         mFakeGameService.requestCreateGameSession(10);
 
         FakeGameSessionService.CapturedCreateInvocation capturedCreateInvocation =
@@ -315,6 +390,7 @@ public final class GameServiceProviderInstanceImplTest {
         mGameServiceProviderInstance.start();
         dispatchTaskCreated(10, GAME_A_MAIN_ACTIVITY);
 
+        mockPermissionGranted(Manifest.permission.MANAGE_GAME_ACTIVITY);
         mFakeGameService.requestCreateGameSession(10);
 
         assertThat(mFakeGameSessionService.getCapturedCreateInvocations()).isEmpty();
@@ -324,6 +400,7 @@ public final class GameServiceProviderInstanceImplTest {
     public void gameTaskStartedAndSessionRequested_createsGameSession() throws Exception {
         mGameServiceProviderInstance.start();
         startTask(10, GAME_A_MAIN_ACTIVITY);
+        mockPermissionGranted(Manifest.permission.MANAGE_GAME_ACTIVITY);
         mFakeGameService.requestCreateGameSession(10);
 
         FakeGameSession gameSession10 = new FakeGameSession();
@@ -341,7 +418,9 @@ public final class GameServiceProviderInstanceImplTest {
         mGameServiceProviderInstance.start();
         startTask(10, GAME_A_MAIN_ACTIVITY);
 
+        mockPermissionGranted(Manifest.permission.MANAGE_GAME_ACTIVITY);
         mFakeGameService.requestCreateGameSession(10);
+        mockPermissionGranted(Manifest.permission.MANAGE_GAME_ACTIVITY);
         mFakeGameService.requestCreateGameSession(10);
 
         CreateGameSessionRequest expectedCreateGameSessionRequest = new CreateGameSessionRequest(10,
@@ -355,6 +434,7 @@ public final class GameServiceProviderInstanceImplTest {
     public void gameSessionSuccessfullyCreated_createsTaskOverlay() throws Exception {
         mGameServiceProviderInstance.start();
         startTask(10, GAME_A_MAIN_ACTIVITY);
+        mockPermissionGranted(Manifest.permission.MANAGE_GAME_ACTIVITY);
         mFakeGameService.requestCreateGameSession(10);
 
         FakeGameSession gameSession10 = new FakeGameSession();
@@ -362,14 +442,278 @@ public final class GameServiceProviderInstanceImplTest {
         mFakeGameSessionService.removePendingFutureForTaskId(10)
                 .complete(new CreateGameSessionResult(gameSession10, mockSurfacePackage10));
 
-        verify(mMockWindowManagerInternal).addTaskOverlay(eq(10), eq(mockSurfacePackage10));
-        verifyNoMoreInteractions(mMockWindowManagerInternal);
+        verify(mMockWindowManagerInternal).addTrustedTaskOverlay(eq(10), eq(mockSurfacePackage10));
+    }
+
+    @Test
+    public void gameProcessStopped_soleProcess_destroysGameSession() throws Exception {
+        int gameProcessId = 1000;
+
+        mGameServiceProviderInstance.start();
+
+        startTask(10, GAME_A_MAIN_ACTIVITY);
+        startProcessForPackage(gameProcessId, GAME_A_PACKAGE);
+
+        mockPermissionGranted(Manifest.permission.MANAGE_GAME_ACTIVITY);
+        mFakeGameService.requestCreateGameSession(10);
+
+        FakeGameSession gameSession10 = new FakeGameSession();
+        SurfacePackage mockSurfacePackage10 = Mockito.mock(SurfacePackage.class);
+        mFakeGameSessionService.removePendingFutureForTaskId(10)
+                .complete(new CreateGameSessionResult(gameSession10, mockSurfacePackage10));
+        assertThat(gameSession10.mIsDestroyed).isFalse();
+
+        // Death of the sole game process destroys the game session.
+        dispatchProcessDied(gameProcessId);
+        assertThat(gameSession10.mIsDestroyed).isTrue();
+    }
+
+    @Test
+    public void gameProcessStopped_soleProcess_destroysMultipleGameSessionsForSamePackage()
+            throws Exception {
+        int gameProcessId = 1000;
+
+        mGameServiceProviderInstance.start();
+
+        // Multiple tasks exist for the same package.
+        startTask(10, GAME_A_MAIN_ACTIVITY);
+        startTask(11, GAME_A_MAIN_ACTIVITY);
+        startProcessForPackage(gameProcessId, GAME_A_PACKAGE);
+
+        mockPermissionGranted(Manifest.permission.MANAGE_GAME_ACTIVITY);
+        mFakeGameService.requestCreateGameSession(10);
+        mFakeGameService.requestCreateGameSession(11);
+
+        FakeGameSession gameSession10 = new FakeGameSession();
+        SurfacePackage mockSurfacePackage10 = Mockito.mock(SurfacePackage.class);
+        mFakeGameSessionService.removePendingFutureForTaskId(10)
+                .complete(new CreateGameSessionResult(gameSession10, mockSurfacePackage10));
+        FakeGameSession gameSession11 = new FakeGameSession();
+        SurfacePackage mockSurfacePackage11 = Mockito.mock(SurfacePackage.class);
+        mFakeGameSessionService.removePendingFutureForTaskId(11)
+                .complete(new CreateGameSessionResult(gameSession11, mockSurfacePackage11));
+
+        assertThat(gameSession10.mIsDestroyed).isFalse();
+        assertThat(gameSession11.mIsDestroyed).isFalse();
+
+        // Death of the sole game process destroys both game sessions.
+        dispatchProcessDied(gameProcessId);
+        assertThat(gameSession10.mIsDestroyed).isTrue();
+        assertThat(gameSession11.mIsDestroyed).isTrue();
+    }
+
+    @Test
+    public void gameProcessStopped_multipleProcesses_gameSessionDestroyedWhenAllDead()
+            throws Exception {
+        int firstGameProcessId = 1000;
+        int secondGameProcessId = 1001;
+
+        mGameServiceProviderInstance.start();
+
+        startTask(10, GAME_A_MAIN_ACTIVITY);
+        startProcessForPackage(firstGameProcessId, GAME_A_PACKAGE);
+        startProcessForPackage(secondGameProcessId, GAME_A_PACKAGE);
+
+        mockPermissionGranted(Manifest.permission.MANAGE_GAME_ACTIVITY);
+        mFakeGameService.requestCreateGameSession(10);
+
+        FakeGameSession gameSession10 = new FakeGameSession();
+        SurfacePackage mockSurfacePackage10 = Mockito.mock(SurfacePackage.class);
+        mFakeGameSessionService.removePendingFutureForTaskId(10)
+                .complete(new CreateGameSessionResult(gameSession10, mockSurfacePackage10));
+        assertThat(gameSession10.mIsDestroyed).isFalse();
+
+        // Death of the first process (with the second one still alive) does not destroy the game
+        // session.
+        dispatchProcessDied(firstGameProcessId);
+        assertThat(gameSession10.mIsDestroyed).isFalse();
+
+        // Death of the second process does destroy the game session.
+        dispatchProcessDied(secondGameProcessId);
+        assertThat(gameSession10.mIsDestroyed).isTrue();
+    }
+
+    @Test
+    public void gameProcessCreatedAfterInitialProcessDead_newGameSessionCreated() throws Exception {
+        int firstGameProcessId = 1000;
+        int secondGameProcessId = 1000;
+
+        mGameServiceProviderInstance.start();
+
+        startTask(10, GAME_A_MAIN_ACTIVITY);
+        startProcessForPackage(firstGameProcessId, GAME_A_PACKAGE);
+
+        mockPermissionGranted(Manifest.permission.MANAGE_GAME_ACTIVITY);
+        mFakeGameService.requestCreateGameSession(10);
+
+        FakeGameSession gameSession10 = new FakeGameSession();
+        SurfacePackage mockSurfacePackage10 = Mockito.mock(SurfacePackage.class);
+        mFakeGameSessionService.removePendingFutureForTaskId(10)
+                .complete(new CreateGameSessionResult(gameSession10, mockSurfacePackage10));
+        assertThat(gameSession10.mIsDestroyed).isFalse();
+
+        // After the first game process dies, the game session should be destroyed.
+        dispatchProcessDied(firstGameProcessId);
+        assertThat(gameSession10.mIsDestroyed).isTrue();
+
+        // However, when a new process for the game starts, a new game session should be created.
+        startProcessForPackage(secondGameProcessId, GAME_A_PACKAGE);
+        // Verify that a new pending game session is created for the game's taskId.
+        assertNotNull(mFakeGameSessionService.removePendingFutureForTaskId(10));
+    }
+
+    @Test
+    public void gameProcessCreatedAfterInitialProcessDead_multipleGameSessionsCreatedSamePackage()
+            throws Exception {
+        int firstGameProcessId = 1000;
+        int secondGameProcessId = 1000;
+
+        mGameServiceProviderInstance.start();
+
+        // Multiple tasks exist for the same package.
+        startTask(10, GAME_A_MAIN_ACTIVITY);
+        startTask(11, GAME_A_MAIN_ACTIVITY);
+        startProcessForPackage(firstGameProcessId, GAME_A_PACKAGE);
+
+        mockPermissionGranted(Manifest.permission.MANAGE_GAME_ACTIVITY);
+
+        mFakeGameService.requestCreateGameSession(10);
+        mFakeGameService.requestCreateGameSession(11);
+
+        FakeGameSession gameSession10 = new FakeGameSession();
+        SurfacePackage mockSurfacePackage10 = Mockito.mock(SurfacePackage.class);
+        mFakeGameSessionService.removePendingFutureForTaskId(10)
+                .complete(new CreateGameSessionResult(gameSession10, mockSurfacePackage10));
+        FakeGameSession gameSession11 = new FakeGameSession();
+        SurfacePackage mockSurfacePackage11 = Mockito.mock(SurfacePackage.class);
+        mFakeGameSessionService.removePendingFutureForTaskId(11)
+                .complete(new CreateGameSessionResult(gameSession11, mockSurfacePackage11));
+
+        assertThat(gameSession10.mIsDestroyed).isFalse();
+        assertThat(gameSession11.mIsDestroyed).isFalse();
+
+        // After the first game process dies, both game sessions for the package should be
+        // destroyed.
+        dispatchProcessDied(firstGameProcessId);
+        assertThat(gameSession10.mIsDestroyed).isTrue();
+        assertThat(gameSession11.mIsDestroyed).isTrue();
+
+        // However, when a new process for the game starts, new game sessions for the same
+        // package should be created.
+        startProcessForPackage(secondGameProcessId, GAME_A_PACKAGE);
+        // Verify that new pending game sessions were created for each of the game's taskIds.
+        assertNotNull(mFakeGameSessionService.removePendingFutureForTaskId(10));
+        assertNotNull(mFakeGameSessionService.removePendingFutureForTaskId(11));
+    }
+
+    @Test
+    public void gameProcessStarted_gameSessionNotRequested_doesNothing() throws Exception {
+        int gameProcessId = 1000;
+
+        mGameServiceProviderInstance.start();
+
+        // A game task and process are started, but requestCreateGameSession is never called.
+        startTask(10, GAME_A_MAIN_ACTIVITY);
+        startProcessForPackage(gameProcessId, GAME_A_PACKAGE);
+
+        mockPermissionGranted(Manifest.permission.MANAGE_GAME_ACTIVITY);
+
+        // No game session should be created.
+        assertThat(mFakeGameSessionService.getCapturedCreateInvocations()).isEmpty();
+    }
+
+    @Test
+    public void processActivityAndDeath_notForGame_gameSessionUnaffected() throws Exception {
+        mGameServiceProviderInstance.start();
+
+        startTask(10, GAME_A_MAIN_ACTIVITY);
+
+        mockPermissionGranted(Manifest.permission.MANAGE_GAME_ACTIVITY);
+        mFakeGameService.requestCreateGameSession(10);
+
+        FakeGameSession gameSession10 = new FakeGameSession();
+        SurfacePackage mockSurfacePackage10 = Mockito.mock(SurfacePackage.class);
+        mFakeGameSessionService.removePendingFutureForTaskId(10)
+                .complete(new CreateGameSessionResult(gameSession10, mockSurfacePackage10));
+
+        // Process activity for a process without a known package is ignored.
+        startProcessForPackage(1000, /*packageName=*/ null);
+        dispatchProcessActivity(1000);
+        dispatchProcessDied(1000);
+
+        // Process activity for a process with a different package is ignored
+        startProcessForPackage(1001, GAME_B_PACKAGE);
+        dispatchProcessActivity(1001);
+        dispatchProcessDied(1001);
+
+        // Death of a process for which there was no activity is ignored
+        dispatchProcessDied(1002);
+
+        // Despite all the process activity and death, the game session is not destroyed.
+        assertThat(gameSession10.mIsDestroyed).isFalse();
+    }
+
+    @Test
+    public void taskSystemBarsListenerChanged_noAssociatedGameSession_doesNothing() {
+        mGameServiceProviderInstance.start();
+
+        dispatchTaskSystemBarsEvent(taskSystemBarsListener -> {
+            taskSystemBarsListener.onTransientSystemBarsVisibilityChanged(
+                    10,
+                    /* areVisible= */ false,
+                    /* wereRevealedFromSwipeOnSystemBar= */ false);
+        });
+    }
+
+    @Test
+    public void systemBarsTransientShownDueToGesture_hasGameSession_propagatesToGameSession() {
+        mGameServiceProviderInstance.start();
+        startTask(10, GAME_A_MAIN_ACTIVITY);
+        mockPermissionGranted(Manifest.permission.MANAGE_GAME_ACTIVITY);
+        mFakeGameService.requestCreateGameSession(10);
+
+        FakeGameSession gameSession10 = new FakeGameSession();
+        SurfacePackage mockSurfacePackage10 = Mockito.mock(SurfacePackage.class);
+        mFakeGameSessionService.removePendingFutureForTaskId(10)
+                .complete(new CreateGameSessionResult(gameSession10, mockSurfacePackage10));
+
+        dispatchTaskSystemBarsEvent(taskSystemBarsListener -> {
+            taskSystemBarsListener.onTransientSystemBarsVisibilityChanged(
+                    10,
+                    /* areVisible= */ true,
+                    /* wereRevealedFromSwipeOnSystemBar= */ true);
+        });
+
+        assertThat(gameSession10.mAreTransientSystemBarsVisibleFromRevealGesture).isTrue();
+    }
+
+    @Test
+    public void systemBarsTransientShownButNotGesture_hasGameSession_notPropagatedToGameSession() {
+        mGameServiceProviderInstance.start();
+        startTask(10, GAME_A_MAIN_ACTIVITY);
+        mockPermissionGranted(Manifest.permission.MANAGE_GAME_ACTIVITY);
+        mFakeGameService.requestCreateGameSession(10);
+
+        FakeGameSession gameSession10 = new FakeGameSession();
+        SurfacePackage mockSurfacePackage10 = Mockito.mock(SurfacePackage.class);
+        mFakeGameSessionService.removePendingFutureForTaskId(10)
+                .complete(new CreateGameSessionResult(gameSession10, mockSurfacePackage10));
+
+        dispatchTaskSystemBarsEvent(taskSystemBarsListener -> {
+            taskSystemBarsListener.onTransientSystemBarsVisibilityChanged(
+                    10,
+                    /* areVisible= */ true,
+                    /* wereRevealedFromSwipeOnSystemBar= */ false);
+        });
+
+        assertThat(gameSession10.mAreTransientSystemBarsVisibleFromRevealGesture).isFalse();
     }
 
     @Test
     public void gameTaskFocused_propagatedToGameSession() throws Exception {
         mGameServiceProviderInstance.start();
         startTask(10, GAME_A_MAIN_ACTIVITY);
+        mockPermissionGranted(Manifest.permission.MANAGE_GAME_ACTIVITY);
         mFakeGameService.requestCreateGameSession(10);
 
         FakeGameSession gameSession10 = new FakeGameSession();
@@ -395,6 +739,7 @@ public final class GameServiceProviderInstanceImplTest {
 
         mGameServiceProviderInstance.start();
         startTask(10, GAME_A_MAIN_ACTIVITY);
+        mockPermissionGranted(Manifest.permission.MANAGE_GAME_ACTIVITY);
         mFakeGameService.requestCreateGameSession(10);
 
         FakeGameSession gameSession10 = new FakeGameSession();
@@ -411,6 +756,7 @@ public final class GameServiceProviderInstanceImplTest {
         mGameServiceProviderInstance.start();
 
         startTask(10, GAME_A_MAIN_ACTIVITY);
+        mockPermissionGranted(Manifest.permission.MANAGE_GAME_ACTIVITY);
         mFakeGameService.requestCreateGameSession(10);
 
         dispatchTaskRemoved(10);
@@ -428,6 +774,7 @@ public final class GameServiceProviderInstanceImplTest {
         mGameServiceProviderInstance.start();
 
         startTask(10, GAME_A_MAIN_ACTIVITY);
+        mockPermissionGranted(Manifest.permission.MANAGE_GAME_ACTIVITY);
         mFakeGameService.requestCreateGameSession(10);
 
         FakeGameSession gameSession10 = new FakeGameSession();
@@ -445,6 +792,7 @@ public final class GameServiceProviderInstanceImplTest {
         mGameServiceProviderInstance.start();
 
         startTask(10, GAME_A_MAIN_ACTIVITY);
+        mockPermissionGranted(Manifest.permission.MANAGE_GAME_ACTIVITY);
         mFakeGameService.requestCreateGameSession(10);
 
         FakeGameSession gameSession10 = new FakeGameSession();
@@ -454,9 +802,9 @@ public final class GameServiceProviderInstanceImplTest {
 
         stopTask(10);
 
-        verify(mMockWindowManagerInternal).addTaskOverlay(eq(10), eq(mockSurfacePackage10));
-        verify(mMockWindowManagerInternal).removeTaskOverlay(eq(10), eq(mockSurfacePackage10));
-        verifyNoMoreInteractions(mMockWindowManagerInternal);
+        verify(mMockWindowManagerInternal).addTrustedTaskOverlay(eq(10), eq(mockSurfacePackage10));
+        verify(mMockWindowManagerInternal).removeTrustedTaskOverlay(eq(10),
+                eq(mockSurfacePackage10));
     }
 
     @Test
@@ -465,6 +813,7 @@ public final class GameServiceProviderInstanceImplTest {
         mGameServiceProviderInstance.start();
 
         startTask(10, GAME_A_MAIN_ACTIVITY);
+        mockPermissionGranted(Manifest.permission.MANAGE_GAME_ACTIVITY);
         mFakeGameService.requestCreateGameSession(10);
 
         FakeGameSession gameSession10 = new FakeGameSession();
@@ -492,6 +841,7 @@ public final class GameServiceProviderInstanceImplTest {
         startTask(10, GAME_A_MAIN_ACTIVITY);
         startTask(11, GAME_A_MAIN_ACTIVITY);
 
+        mockPermissionGranted(Manifest.permission.MANAGE_GAME_ACTIVITY);
         mFakeGameService.requestCreateGameSession(10);
 
         FakeGameSession gameSession10 = new FakeGameSession();
@@ -509,6 +859,7 @@ public final class GameServiceProviderInstanceImplTest {
         mGameServiceProviderInstance.start();
 
         startTask(10, GAME_A_MAIN_ACTIVITY);
+        mockPermissionGranted(Manifest.permission.MANAGE_GAME_ACTIVITY);
         mFakeGameService.requestCreateGameSession(10);
 
         FakeGameSession gameSession10 = new FakeGameSession();
@@ -536,6 +887,7 @@ public final class GameServiceProviderInstanceImplTest {
         mGameServiceProviderInstance.start();
 
         startTask(10, GAME_A_MAIN_ACTIVITY);
+        mockPermissionGranted(Manifest.permission.MANAGE_GAME_ACTIVITY);
         mFakeGameService.requestCreateGameSession(10);
 
         FakeGameSession gameSession10 = new FakeGameSession();
@@ -565,6 +917,7 @@ public final class GameServiceProviderInstanceImplTest {
         mGameServiceProviderInstance.start();
 
         startTask(10, GAME_A_MAIN_ACTIVITY);
+        mockPermissionGranted(Manifest.permission.MANAGE_GAME_ACTIVITY);
         mFakeGameService.requestCreateGameSession(10);
 
         FakeGameSession gameSession10 = new FakeGameSession();
@@ -598,10 +951,48 @@ public final class GameServiceProviderInstanceImplTest {
     }
 
     @Test
+    public void createGameSession_failurePermissionDenied() throws Exception {
+        mGameServiceProviderInstance.start();
+        startTask(10, GAME_A_MAIN_ACTIVITY);
+        mockPermissionDenied(Manifest.permission.MANAGE_GAME_ACTIVITY);
+        assertThrows(SecurityException.class, () -> mFakeGameService.requestCreateGameSession(10));
+    }
+
+    @Test
+    public void gameSessionServiceDies_severalActiveGameSessions_destroysGameSessions() {
+        mGameServiceProviderInstance.start();
+
+        startTask(10, GAME_A_MAIN_ACTIVITY);
+        mockPermissionGranted(Manifest.permission.MANAGE_GAME_ACTIVITY);
+        mFakeGameService.requestCreateGameSession(10);
+
+        FakeGameSession gameSession10 = new FakeGameSession();
+        SurfacePackage mockSurfacePackage10 = Mockito.mock(SurfacePackage.class);
+        mFakeGameSessionService.removePendingFutureForTaskId(10)
+                .complete(new CreateGameSessionResult(gameSession10, mockSurfacePackage10));
+
+        startTask(11, GAME_A_MAIN_ACTIVITY);
+        mFakeGameService.requestCreateGameSession(11);
+
+        FakeGameSession gameSession11 = new FakeGameSession();
+        SurfacePackage mockSurfacePackage11 = Mockito.mock(SurfacePackage.class);
+        mFakeGameSessionService.removePendingFutureForTaskId(11)
+                .complete(new CreateGameSessionResult(gameSession11, mockSurfacePackage11));
+
+        mFakeGameSessionServiceConnector.killServiceProcess();
+
+        assertThat(gameSession10.mIsDestroyed).isTrue();
+        assertThat(gameSession11.mIsDestroyed).isTrue();
+        assertThat(mFakeGameServiceConnector.getIsConnected()).isTrue();
+        assertThat(mFakeGameSessionServiceConnector.getIsConnected()).isFalse();
+    }
+
+    @Test
     public void stop_severalActiveGameSessions_destroysGameSessionsAndUnbinds() throws Exception {
         mGameServiceProviderInstance.start();
 
         startTask(10, GAME_A_MAIN_ACTIVITY);
+        mockPermissionGranted(Manifest.permission.MANAGE_GAME_ACTIVITY);
         mFakeGameService.requestCreateGameSession(10);
 
         FakeGameSession gameSession10 = new FakeGameSession();
@@ -629,7 +1020,13 @@ public final class GameServiceProviderInstanceImplTest {
     public void takeScreenshot_failureNoBitmapCaptured() throws Exception {
         mGameServiceProviderInstance.start();
         startTask(10, GAME_A_MAIN_ACTIVITY);
+        mockPermissionGranted(Manifest.permission.MANAGE_GAME_ACTIVITY);
         mFakeGameService.requestCreateGameSession(10);
+
+        FakeGameSession gameSession10 = new FakeGameSession();
+        SurfacePackage mockOverlaySurfacePackage = Mockito.mock(SurfacePackage.class);
+        mFakeGameSessionService.removePendingFutureForTaskId(10)
+                .complete(new CreateGameSessionResult(gameSession10, mockOverlaySurfacePackage));
 
         IGameSessionController gameSessionController = getOnlyElement(
                 mFakeGameSessionService.getCapturedCreateInvocations()).mGameSessionController;
@@ -639,25 +1036,111 @@ public final class GameServiceProviderInstanceImplTest {
         GameScreenshotResult result = resultFuture.get();
         assertEquals(GameScreenshotResult.GAME_SCREENSHOT_ERROR_INTERNAL_ERROR,
                 result.getStatus());
-        verify(mMockWindowManagerService).captureTaskBitmap(10);
+
+        verify(mMockWindowManagerService).captureTaskBitmap(eq(10), any());
     }
 
     @Test
     public void takeScreenshot_success() throws Exception {
-        when(mMockWindowManagerService.captureTaskBitmap(10)).thenReturn(TEST_BITMAP);
-
+        SurfaceControl mockOverlaySurfaceControl = Mockito.mock(SurfaceControl.class);
+        SurfaceControl[] excludeLayers = new SurfaceControl[1];
+        excludeLayers[0] = mockOverlaySurfaceControl;
+        int taskId = 10;
+        when(mMockWindowManagerService.captureTaskBitmap(eq(10), any())).thenReturn(TEST_BITMAP);
+        doAnswer(invocation -> {
+            Consumer<Uri> consumer = invocation.getArgument(invocation.getArguments().length - 1);
+            consumer.accept(Uri.parse("a/b.png"));
+            return null;
+        }).when(mMockScreenshotHelper).provideScreenshot(
+                any(), any(), any(), anyInt(), anyInt(), any(), anyInt(), any(), any());
         mGameServiceProviderInstance.start();
-        startTask(10, GAME_A_MAIN_ACTIVITY);
-        mFakeGameService.requestCreateGameSession(10);
+        startTask(taskId, GAME_A_MAIN_ACTIVITY);
+        mockPermissionGranted(Manifest.permission.MANAGE_GAME_ACTIVITY);
+        mFakeGameService.requestCreateGameSession(taskId);
+
+        FakeGameSession gameSession10 = new FakeGameSession();
+        SurfacePackage mockOverlaySurfacePackage = Mockito.mock(SurfacePackage.class);
+        when(mockOverlaySurfacePackage.getSurfaceControl()).thenReturn(mockOverlaySurfaceControl);
+        mFakeGameSessionService.removePendingFutureForTaskId(taskId)
+                .complete(new CreateGameSessionResult(gameSession10, mockOverlaySurfacePackage));
 
         IGameSessionController gameSessionController = getOnlyElement(
                 mFakeGameSessionService.getCapturedCreateInvocations()).mGameSessionController;
         AndroidFuture<GameScreenshotResult> resultFuture = new AndroidFuture<>();
-        gameSessionController.takeScreenshot(10, resultFuture);
+        gameSessionController.takeScreenshot(taskId, resultFuture);
 
         GameScreenshotResult result = resultFuture.get();
         assertEquals(GameScreenshotResult.GAME_SCREENSHOT_SUCCESS, result.getStatus());
-        assertEquals(TEST_BITMAP, result.getBitmap());
+    }
+
+    @Test
+    public void restartGame_taskIdAssociatedWithGame_restartsTargetGame() throws Exception {
+        mockPermissionGranted(Manifest.permission.MANAGE_GAME_ACTIVITY);
+        Intent launchIntent = new Intent("com.test.ACTION_LAUNCH_GAME_PACKAGE")
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        when(mMockPackageManager.getLaunchIntentForPackage(GAME_A_PACKAGE))
+                .thenReturn(launchIntent);
+
+        mGameServiceProviderInstance.start();
+
+        startTask(10, GAME_A_MAIN_ACTIVITY);
+        mockPermissionGranted(Manifest.permission.MANAGE_GAME_ACTIVITY);
+        mFakeGameService.requestCreateGameSession(10);
+
+        FakeGameSession gameSession10 = new FakeGameSession();
+        SurfacePackage mockSurfacePackage10 = Mockito.mock(SurfacePackage.class);
+        mFakeGameSessionService.removePendingFutureForTaskId(10)
+                .complete(new CreateGameSessionResult(gameSession10, mockSurfacePackage10));
+
+        startTask(11, GAME_B_MAIN_ACTIVITY);
+        mFakeGameService.requestCreateGameSession(11);
+
+        FakeGameSession gameSession11 = new FakeGameSession();
+        SurfacePackage mockSurfacePackage11 = Mockito.mock(SurfacePackage.class);
+        mFakeGameSessionService.removePendingFutureForTaskId(11)
+                .complete(new CreateGameSessionResult(gameSession11, mockSurfacePackage11));
+
+        mFakeGameSessionService.getCapturedCreateInvocations().get(0)
+                .mGameSessionController.restartGame(10);
+
+        verify(mMockActivityManager).forceStopPackage(GAME_A_PACKAGE, UserHandle.USER_CURRENT);
+        assertThat(mMockContext.getLastStartedIntent()).isEqualTo(launchIntent);
+    }
+
+    @Test
+    public void restartGame_taskIdNotAssociatedWithGame_noOp() throws Exception {
+        mockPermissionGranted(Manifest.permission.MANAGE_GAME_ACTIVITY);
+        mGameServiceProviderInstance.start();
+
+        startTask(10, GAME_A_MAIN_ACTIVITY);
+        mockPermissionGranted(Manifest.permission.MANAGE_GAME_ACTIVITY);
+        mFakeGameService.requestCreateGameSession(10);
+
+        FakeGameSession gameSession10 = new FakeGameSession();
+        SurfacePackage mockSurfacePackage10 = Mockito.mock(SurfacePackage.class);
+        mFakeGameSessionService.removePendingFutureForTaskId(10)
+                .complete(new CreateGameSessionResult(gameSession10, mockSurfacePackage10));
+
+        getOnlyElement(
+                mFakeGameSessionService.getCapturedCreateInvocations())
+                .mGameSessionController.restartGame(11);
+
+        verify(mMockActivityManager).registerProcessObserver(any());
+        verifyNoMoreInteractions(mMockActivityManager);
+        assertThat(mMockContext.getLastStartedIntent()).isNull();
+    }
+
+    @Test
+    public void restartGame_failurePermissionDenied() throws Exception {
+        mGameServiceProviderInstance.start();
+        startTask(10, GAME_A_MAIN_ACTIVITY);
+        mockPermissionGranted(Manifest.permission.MANAGE_GAME_ACTIVITY);
+        mFakeGameService.requestCreateGameSession(10);
+        IGameSessionController gameSessionController = Objects.requireNonNull(getOnlyElement(
+                mFakeGameSessionService.getCapturedCreateInvocations())).mGameSessionController;
+        mockPermissionDenied(Manifest.permission.MANAGE_GAME_ACTIVITY);
+        assertThrows(SecurityException.class,
+                () -> gameSessionController.restartGame(10));
     }
 
     private void startTask(int taskId, ComponentName componentName) {
@@ -674,7 +1157,6 @@ public final class GameServiceProviderInstanceImplTest {
         mRunningTaskInfos.removeIf(runningTaskInfo -> runningTaskInfo.taskId == taskId);
         dispatchTaskRemoved(taskId);
     }
-
 
     private void dispatchTaskRemoved(int taskId) {
         dispatchTaskChangeEvent(taskStackListener -> {
@@ -698,6 +1180,52 @@ public final class GameServiceProviderInstanceImplTest {
             ThrowingConsumer<ITaskStackListener> taskStackListenerConsumer) {
         for (ITaskStackListener taskStackListener : mTaskStackListeners) {
             taskStackListenerConsumer.accept(taskStackListener);
+        }
+    }
+
+    private void startProcessForPackage(int processId, @Nullable String packageName) {
+        if (packageName != null) {
+            when(mMockActivityManagerInternal.getPackageNameByPid(processId)).thenReturn(
+                    packageName);
+        }
+
+        dispatchProcessActivity(processId);
+    }
+
+    private void dispatchProcessActivity(int processId) {
+        dispatchProcessChangedEvent(processObserver -> {
+            // Neither uid nor foregroundActivities are used by the implementation being tested.
+            processObserver.onForegroundActivitiesChanged(processId, /*uid=*/
+                    0, /*foregroundActivities=*/ false);
+        });
+    }
+
+    private void dispatchProcessDied(int processId) {
+        dispatchProcessChangedEvent(processObserver -> {
+            // The uid param is not used by the implementation being tested.
+            processObserver.onProcessDied(processId, /*uid=*/ 0);
+        });
+    }
+
+    private void dispatchProcessChangedEvent(
+            ThrowingConsumer<IProcessObserver> processObserverConsumer) {
+        for (IProcessObserver processObserver : mProcessObservers) {
+            processObserverConsumer.accept(processObserver);
+        }
+    }
+
+    private void mockPermissionGranted(String permission) {
+        mMockContext.setPermission(permission, PackageManager.PERMISSION_GRANTED);
+    }
+
+    private void mockPermissionDenied(String permission) {
+        mMockContext.setPermission(permission, PackageManager.PERMISSION_DENIED);
+    }
+
+    private void dispatchTaskSystemBarsEvent(
+            ThrowingConsumer<TaskSystemBarsListener> taskSystemBarsListenerConsumer) {
+        for (TaskSystemBarsListener listener : mTaskSystemBarsListeners) {
+            taskSystemBarsListenerConsumer.accept(listener);
         }
     }
 
@@ -815,6 +1343,7 @@ public final class GameServiceProviderInstanceImplTest {
     private static class FakeGameSession extends IGameSession.Stub {
         boolean mIsDestroyed = false;
         boolean mIsFocused = false;
+        boolean mAreTransientSystemBarsVisibleFromRevealGesture = false;
 
         @Override
         public void onDestroyed() {
@@ -824,6 +1353,61 @@ public final class GameServiceProviderInstanceImplTest {
         @Override
         public void onTaskFocusChanged(boolean focused) {
             mIsFocused = focused;
+        }
+
+        @Override
+        public void onTransientSystemBarVisibilityFromRevealGestureChanged(boolean areVisible) {
+            mAreTransientSystemBarsVisibleFromRevealGesture = areVisible;
+        }
+    }
+
+    private final class MockContext extends ContextWrapper {
+        private Intent mLastStartedIntent;
+        // Map of permission name -> PermissionManager.Permission_{GRANTED|DENIED} constant
+        private final HashMap<String, Integer> mMockedPermissions = new HashMap<>();
+
+        MockContext(Context base) {
+            super(base);
+        }
+
+        /**
+         * Mock checks for the specified permission, and have them behave as per {@code granted}.
+         *
+         * <p>Passing null reverts to default behavior, which does a real permission check on the
+         * test package.
+         *
+         * @param granted One of {@link PackageManager#PERMISSION_GRANTED} or
+         *                {@link PackageManager#PERMISSION_DENIED}.
+         */
+        public void setPermission(String permission, Integer granted) {
+            mMockedPermissions.put(permission, granted);
+        }
+
+        @Override
+        public PackageManager getPackageManager() {
+            return mMockPackageManager;
+        }
+
+        @Override
+        public void startActivity(Intent intent) {
+            mLastStartedIntent = intent;
+        }
+
+        @Override
+        public void enforceCallingPermission(String permission, @Nullable String message) {
+            final Integer granted = mMockedPermissions.get(permission);
+            if (granted == null) {
+                super.enforceCallingOrSelfPermission(permission, message);
+                return;
+            }
+
+            if (!granted.equals(PackageManager.PERMISSION_GRANTED)) {
+                throw new SecurityException("[Test] permission denied: " + permission);
+            }
+        }
+
+        Intent getLastStartedIntent() {
+            return mLastStartedIntent;
         }
     }
 }

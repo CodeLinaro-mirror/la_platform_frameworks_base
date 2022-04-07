@@ -16,6 +16,8 @@
 
 package android.location;
 
+import static android.Manifest.permission.LOCATION_BYPASS;
+
 import android.Manifest;
 import android.annotation.NonNull;
 import android.annotation.RequiresPermission;
@@ -221,7 +223,7 @@ public final class LastLocationRequest implements Parcelable {
          * @hide
          */
         @SystemApi
-        @RequiresPermission(Manifest.permission.WRITE_SECURE_SETTINGS)
+        @RequiresPermission(LOCATION_BYPASS)
         public @NonNull LastLocationRequest.Builder setAdasGnssBypass(boolean adasGnssBypass) {
             mAdasGnssBypass = adasGnssBypass;
             return this;
@@ -239,7 +241,7 @@ public final class LastLocationRequest implements Parcelable {
          * @hide
          */
         @SystemApi
-        @RequiresPermission(Manifest.permission.WRITE_SECURE_SETTINGS)
+        @RequiresPermission(LOCATION_BYPASS)
         public @NonNull Builder setLocationSettingsIgnored(boolean locationSettingsIgnored) {
             mLocationSettingsIgnored = locationSettingsIgnored;
             return this;

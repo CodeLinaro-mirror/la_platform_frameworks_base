@@ -57,6 +57,7 @@ public final class PackageManagerServiceTestParams {
     public IncrementalManager incrementalManager;
     public PackageInstallerService installerService;
     public InstantAppRegistry instantAppRegistry;
+    public ChangedPackagesTracker changedPackagesTracker = new ChangedPackagesTracker();
     public InstantAppResolverConnection instantAppResolverConnection;
     public ComponentName instantAppResolverSettingsComponent;
     public boolean isPreNmr1Upgrade;
@@ -88,6 +89,7 @@ public final class PackageManagerServiceTestParams {
     public @Nullable String defaultTextClassifierPackage;
     public @Nullable String systemTextClassifierPackage;
     public @Nullable String overlayConfigSignaturePackage;
+    public @NonNull String requiredSdkSandboxPackage;
     public ViewCompiler viewCompiler;
     public @Nullable String retailDemoPackage;
     public @Nullable String recentsPackage;
@@ -107,7 +109,7 @@ public final class PackageManagerServiceTestParams {
     public AppDataHelper appDataHelper;
     public InstallPackageHelper installPackageHelper;
     public RemovePackageHelper removePackageHelper;
-    public InitAndSystemPackageHelper initAndSystemPackageHelper;
+    public InitAppsHelper initAndSystemPackageHelper;
     public DeletePackageHelper deletePackageHelper;
     public PreferredActivityHelper preferredActivityHelper;
     public ResolveIntentHelper resolveIntentHelper;

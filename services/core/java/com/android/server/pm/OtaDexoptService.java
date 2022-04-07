@@ -30,6 +30,7 @@ import android.os.ResultReceiver;
 import android.os.ServiceManager;
 import android.os.ShellCallback;
 import android.os.storage.StorageManager;
+import android.util.ArrayMap;
 import android.util.Log;
 import android.util.Slog;
 
@@ -130,8 +131,9 @@ public class OtaDexoptService extends IOtaDexopt.Stub {
         Predicate<PackageStateInternal> isPlatformPackage = pkgSetting ->
                 PLATFORM_PACKAGE_NAME.equals(pkgSetting.getPkg().getPackageName());
         // Important: the packages we need to run with ab-ota compiler-reason.
+        final Computer snapshot = mPackageManagerService.snapshotComputer();
         final Collection<? extends PackageStateInternal> allPackageStates =
-                mPackageManagerService.getPackageStates().values();
+                snapshot.getPackageStates().values();
         important = DexOptHelper.getPackagesForDexopt(allPackageStates,mPackageManagerService,
                 DEBUG_DEXOPT);
         // Remove Platform Package from A/B OTA b/160735835.
@@ -164,7 +166,7 @@ public class OtaDexoptService extends IOtaDexopt.Stub {
             Log.i(TAG, "Low on space, deleting oat files in an attempt to free up space: "
                     + DexOptHelper.packagesToString(others));
             for (PackageStateInternal pkg : others) {
-                mPackageManagerService.deleteOatArtifactsOfPackage(pkg.getPackageName());
+                mPackageManagerService.deleteOatArtifactsOfPackage(snapshot, pkg.getPackageName());
             }
         }
         long spaceAvailableNow = getAvailableSpace();
@@ -376,12 +378,13 @@ public class OtaDexoptService extends IOtaDexopt.Stub {
         }
 
         // Make a copy of all packages and look into each package.
-        final PackageManagerInternal pmInt = LocalServices.getService(PackageManagerInternal.class);
-        final ArrayList<AndroidPackage> pkgs = new ArrayList<>();
-        pmInt.forEachPackage(pkgs::add);
+        final ArrayMap<String, ? extends PackageStateInternal> packageStates =
+                LocalServices.getService(PackageManagerInternal.class).getPackageStates();
         int packagePaths = 0;
         int pathsSuccessful = 0;
-        for (AndroidPackage pkg : pkgs) {
+        for (int index = 0; index < packageStates.size(); index++) {
+            final PackageStateInternal packageState = packageStates.valueAt(index);
+            final AndroidPackage pkg = packageState.getPkg();
             if (pkg == null) {
                 continue;
             }
@@ -404,10 +407,9 @@ public class OtaDexoptService extends IOtaDexopt.Stub {
                 continue;
             }
 
-            PackageStateInternal pkgSetting = pmInt.getPackageStateInternal(pkg.getPackageName());
             final String[] instructionSets = getAppDexInstructionSets(
-                    AndroidPackageUtils.getPrimaryCpuAbi(pkg, pkgSetting),
-                    AndroidPackageUtils.getSecondaryCpuAbi(pkg, pkgSetting));
+                    AndroidPackageUtils.getPrimaryCpuAbi(pkg, packageState),
+                    AndroidPackageUtils.getSecondaryCpuAbi(pkg, packageState));
             final List<String> paths =
                     AndroidPackageUtils.getAllCodePathsExcludingResourceOnly(pkg);
             final String[] dexCodeInstructionSets = getDexCodeInstructionSets(instructionSets);

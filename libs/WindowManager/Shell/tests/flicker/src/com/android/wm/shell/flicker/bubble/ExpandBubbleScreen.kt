@@ -24,7 +24,7 @@ import com.android.server.wm.flicker.FlickerParametersRunnerFactory
 import com.android.server.wm.flicker.FlickerTestParameter
 import com.android.server.wm.flicker.annotation.Group4
 import com.android.server.wm.flicker.dsl.FlickerBuilder
-import com.android.wm.shell.flicker.helpers.BaseAppHelper
+import com.android.server.wm.flicker.helpers.isShellTransitionsEnabled
 import org.junit.Assume
 import org.junit.Before
 import org.junit.runner.RunWith
@@ -45,7 +45,12 @@ import org.junit.runners.Parameterized
 @RunWith(Parameterized::class)
 @Parameterized.UseParametersRunnerFactory(FlickerParametersRunnerFactory::class)
 @Group4
-class ExpandBubbleScreen(testSpec: FlickerTestParameter) : BaseBubbleScreen(testSpec) {
+open class ExpandBubbleScreen(testSpec: FlickerTestParameter) : BaseBubbleScreen(testSpec) {
+
+    @Before
+    open fun before() {
+        Assume.assumeFalse(isShellTransitionsEnabled)
+    }
 
     override val transition: FlickerBuilder.() -> Unit
         get() = buildTransition {
@@ -62,15 +67,9 @@ class ExpandBubbleScreen(testSpec: FlickerTestParameter) : BaseBubbleScreen(test
             }
         }
 
-    @Before
-    fun setup() {
-        // This test doesn't work in shell transitions because of b/205288792
-        Assume.assumeFalse(BaseAppHelper.isShellTransitionsEnabled())
-    }
-
     @Presubmit
     @Test
-    fun testAppIsAlwaysVisible() {
+    open fun testAppIsAlwaysVisible() {
         testSpec.assertLayers {
             this.isVisible(testApp.component)
         }

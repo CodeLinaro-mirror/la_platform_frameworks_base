@@ -451,7 +451,7 @@ class BatteryExternalStatsWorker implements BatteryStatsImpl.ExternalStatsSync {
                 mUidsToRemove.clear();
                 mCurrentFuture = null;
                 mUseLatestStates = true;
-                if (updateFlags == UPDATE_ALL) {
+                if ((updateFlags & UPDATE_ALL) == UPDATE_ALL) {
                     cancelSyncDueToBatteryLevelChangeLocked();
                 }
                 if ((updateFlags & UPDATE_CPU) != 0) {
@@ -496,7 +496,11 @@ class BatteryExternalStatsWorker implements BatteryStatsImpl.ExternalStatsSync {
                 Slog.wtf(TAG, "Error updating external stats: ", e);
             }
 
-            if ((updateFlags & UPDATE_ALL) == UPDATE_ALL) {
+            if ((updateFlags & RESET) != 0) {
+                synchronized (BatteryExternalStatsWorker.this) {
+                    mLastCollectionTimeStamp = 0;
+                }
+            } else if ((updateFlags & UPDATE_ALL) == UPDATE_ALL) {
                 synchronized (BatteryExternalStatsWorker.this) {
                     mLastCollectionTimeStamp = SystemClock.elapsedRealtime();
                 }
@@ -557,8 +561,18 @@ class BatteryExternalStatsWorker implements BatteryStatsImpl.ExternalStatsSync {
             // We were asked to fetch Bluetooth data.
             final BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
             if (adapter != null) {
-                bluetoothReceiver = new SynchronousResultReceiver("bluetooth");
-                adapter.requestControllerActivityEnergyInfo(bluetoothReceiver);
+                SynchronousResultReceiver resultReceiver =
+                        new SynchronousResultReceiver("bluetooth");
+                adapter.requestControllerActivityEnergyInfo(
+                        Runnable::run,
+                        info -> {
+                            Bundle bundle = new Bundle();
+                            bundle.putParcelable(BatteryStats.RESULT_RECEIVER_CONTROLLER_KEY,
+                                    info);
+                            resultReceiver.send(0, bundle);
+                        }
+                );
+                bluetoothReceiver = resultReceiver;
             }
         }
 
@@ -658,7 +672,7 @@ class BatteryExternalStatsWorker implements BatteryStatsImpl.ExternalStatsSync {
                 mStats.updateCpuTimeLocked(onBattery, onBatteryScreenOff, cpuClusterChargeUC);
             }
 
-            if (updateFlags == UPDATE_ALL) {
+            if ((updateFlags & UPDATE_ALL) == UPDATE_ALL) {
                 mStats.updateKernelWakelocksLocked(elapsedRealtimeUs);
                 mStats.updateKernelMemoryBandwidthLocked(elapsedRealtimeUs);
             }
@@ -731,7 +745,7 @@ class BatteryExternalStatsWorker implements BatteryStatsImpl.ExternalStatsSync {
                     uptime, networkStatsManager);
         }
 
-        if (updateFlags == UPDATE_ALL) {
+        if ((updateFlags & UPDATE_ALL) == UPDATE_ALL) {
             // This helps mStats deal with ignoring data from prior to resets.
             mStats.informThatAllExternalStatsAreFlushed();
         }

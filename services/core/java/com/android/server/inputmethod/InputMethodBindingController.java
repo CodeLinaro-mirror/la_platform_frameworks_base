@@ -315,9 +315,10 @@ final class InputMethodBindingController {
                     mService.reRequestCurrentClientSessionLocked();
                 }
 
-                if (mSupportsStylusHw) {
-                    // TODO init Handwriting spy.
-                }
+                // reset Handwriting event receiver.
+                // always call this as it handles changes in mSupportsStylusHw. It is a noop
+                // if unchanged.
+                mService.scheduleResetStylusHandwriting();
             }
             Trace.traceEnd(TRACE_TAG_WINDOW_MANAGER);
         }
@@ -407,6 +408,11 @@ final class InputMethodBindingController {
     @GuardedBy("ImfLock.class")
     @NonNull
     InputBindResult bindCurrentMethod() {
+        if (mSelectedMethodId == null) {
+            Slog.e(TAG, "mSelectedMethodId is null!");
+            return InputBindResult.NO_IME;
+        }
+
         InputMethodInfo info = mMethodMap.get(mSelectedMethodId);
         if (info == null) {
             throw new IllegalArgumentException("Unknown id: " + mSelectedMethodId);
@@ -421,7 +427,7 @@ final class InputMethodBindingController {
             addFreshWindowToken();
             return new InputBindResult(
                     InputBindResult.ResultCode.SUCCESS_WAITING_IME_BINDING,
-                    null, null, mCurId, mCurSeq, false);
+                    null, null, null, mCurId, mCurSeq, false);
         }
 
         Slog.w(InputMethodManagerService.TAG,

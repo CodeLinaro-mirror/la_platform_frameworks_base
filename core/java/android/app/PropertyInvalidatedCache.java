@@ -17,6 +17,8 @@
 package android.app;
 
 import android.annotation.NonNull;
+import android.annotation.Nullable;
+import android.annotation.TestApi;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
@@ -27,9 +29,10 @@ import android.text.TextUtils;
 import android.util.Log;
 
 import com.android.internal.annotations.GuardedBy;
-import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.util.FastPrintWriter;
 
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.PrintWriter;
@@ -104,17 +107,21 @@ import java.util.concurrent.atomic.AtomicLong;
  * <pre>
  * public class ActivityThread {
  *   ...
+ *   private final PropertyInvalidatedCache.QueryHandler&lt;Integer, Birthday&gt; mBirthdayQuery =
+ *       new PropertyInvalidatedCache.QueryHandler&lt;Integer, Birthday&gt;() {
+ *           {@literal @}Override
+ *           public Birthday apply(Integer) {
+ *              return GetService("birthdayd").getUserBirthday(userId);
+ *           }
+ *       };
  *   private static final int BDAY_CACHE_MAX = 8;  // Maximum birthdays to cache
  *   private static final String BDAY_CACHE_KEY = "cache_key.birthdayd";
  *   private final PropertyInvalidatedCache&lt;Integer, Birthday%&gt; mBirthdayCache = new
- *     PropertyInvalidatedCache&lt;Integer, Birthday%&gt;(BDAY_CACHE_MAX, BDAY_CACHE_KEY) {
- *       {@literal @}Override
- *       protected Birthday recompute(Integer userId) {
- *         return GetService("birthdayd").getUserBirthday(userId);
- *       }
- *     };
+ *     PropertyInvalidatedCache&lt;Integer, Birthday%&gt;(
+ *             BDAY_CACHE_MAX, MODULE_SYSTEM, "getUserBirthday", mBirthdayQuery);
+ *
  *   public void disableUserBirthdayCache() {
- *     mBirthdayCache.disableLocal();
+ *     mBirthdayCache.disableForCurrentProcess();
  *   }
  *   public void invalidateUserBirthdayCache() {
  *     mBirthdayCache.invalidateCache();
@@ -128,6 +135,26 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * With this cache, clients perform a binder call to birthdayd if asking for a user's birthday
  * for the first time; on subsequent queries, we return the already-known Birthday object.
+ *
+ * The second parameter to the IpcDataCache constructor is a string that identifies the "module"
+ * that owns the cache. There are some well-known modules (such as {@code MODULE_SYSTEM} but any
+ * string is permitted.  The third parameters is the name of the API being cached; this, too, can
+ * any value.  The fourth is the name of the cache.  The cache is usually named after th API.
+ * Some things you must know about the three strings:
+ * <list>
+ * <ul> The system property that controls the cache is named {@code cache_key.<module>.<api>}.
+ * Usually, the SELinux rules permit a process to write a system property (and therefore
+ * invalidate a cache) based on the wildcard {@code cache_key.<module>.*}.  This means that
+ * although the cache can be constructed with any module string, whatever string is chosen must be
+ * consistent with the SELinux configuration.
+ * <ul> The API name can be any string of alphanumeric characters.  All caches with the same API
+ * are invalidated at the same time.  If a server supports several caches and all are invalidated
+ * in common, then it is most efficient to assign the same API string to every cache.
+ * <ul> The cache name can be any string.  In debug output, the name is used to distiguish between
+ * caches with the same API name.  The cache name is also used when disabling caches in the
+ * current process.  So, invalidation is based on the module+api but disabling (which is generally
+ * a once-per-process operation) is based on the cache name.
+ * </list>
  *
  * User birthdays do occasionally change, so we have to modify the server to invalidate this
  * cache when necessary. That invalidation code looks like this:
@@ -184,25 +211,23 @@ import java.util.concurrent.atomic.AtomicLong;
  * <pre>
  * public class ActivityThread {
  *   ...
- *   private static final int BDAY_CACHE_MAX = 8;  // Maximum birthdays to cache
- *   private static final String BDAY_CACHE_KEY = "cache_key.birthdayd";
- *   private final PropertyInvalidatedCache&lt;Integer, Birthday%&gt; mBirthdayCache = new
- *     PropertyInvalidatedCache&lt;Integer, Birthday%&gt;(BDAY_CACHE_MAX, BDAY_CACHE_KEY) {
- *       {@literal @}Override
- *       protected Birthday recompute(Integer userId) {
- *         return GetService("birthdayd").getUserBirthday(userId);
- *       }
- *       {@literal @}Override
- *       protected boolean bypass(Integer userId) {
- *         return userId == NEXT_BIRTHDAY;
- *       }
- *     };
+ *   private final IpcDataCache.QueryHandler&lt;Integer, Birthday&gt; mBirthdayQuery =
+ *       new IpcDataCache.QueryHandler&lt;Integer, Birthday&gt;() {
+ *           {@literal @}Override
+ *           public Birthday apply(Integer) {
+ *              return GetService("birthdayd").getUserBirthday(userId);
+ *           }
+ *           {@literal @}Override
+ *           public boolean shouldBypassQuery(Integer userId) {
+ *               return userId == NEXT_BIRTHDAY;
+ *           }
+ *       };
  *   ...
  * }
  * </pre>
  *
- * If the {@code bypass()} method returns true then the cache is not used for that
- * particular query.  The {@code bypass()} method is not abstract and the default
+ * If the {@code shouldBypassQuery()} method returns true then the cache is not used for that
+ * particular query.  The {@code shouldBypassQuery()} method is not abstract and the default
  * implementation returns false.
  *
  * For security, there is a allowlist of processes that are allowed to invalidate a cache.
@@ -221,10 +246,109 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * @param <Query> The class used to index cache entries: must be hashable and comparable
  * @param <Result> The class holding cache entries; use a boxed primitive if possible
- *
- * {@hide}
+ * @hide
  */
-public abstract class PropertyInvalidatedCache<Query, Result> {
+@TestApi
+public class PropertyInvalidatedCache<Query, Result> {
+    /**
+     * This is a configuration class that customizes a cache instance.
+     * @hide
+     */
+    @TestApi
+    public static abstract class QueryHandler<Q,R> {
+        /**
+         * Compute a result given a query.  The semantics are those of Functor.
+         */
+        public abstract @Nullable R apply(@NonNull Q query);
+
+        /**
+         * Return true if a query should not use the cache.  The default implementation
+         * always uses the cache.
+         */
+        public boolean shouldBypassCache(@NonNull Q query) {
+            return false;
+        }
+    };
+
+    /**
+     * The system properties used by caches should be of the form <prefix>.<module>.<api>,
+     * where the prefix is "cache_key", the module is one of the constants below, and the
+     * api is any string.  The ability to write the property (which happens during
+     * invalidation) depends on SELinux rules; these rules are defined against
+     * <prefix>.<module>.  Therefore, the module chosen for a cache property must match
+     * the permissions granted to the processes that contain the corresponding caches.
+     * @hide
+     */
+
+    /**
+     * The module used for unit tests and cts tests.  It is expected that no process in
+     * the system has permissions to write properties with this module.
+     * @hide
+     */
+    @TestApi
+    public static final String MODULE_TEST = "test";
+
+    /**
+     * The module used for system server/framework caches.  This is not visible outside
+     * the system processes.
+     * @hide
+     */
+    @TestApi
+    public static final String MODULE_SYSTEM = "system_server";
+
+    /**
+     * The module used for bluetooth caches.
+     * @hide
+     */
+    @TestApi
+    public static final String MODULE_BLUETOOTH = "bluetooth";
+
+    /**
+     * The module used for telephony caches.
+     */
+    public static final String MODULE_TELEPHONY = "telephony";
+
+    /**
+     * Construct a system property that matches the rules described above.  The module is
+     * one of the permitted values above.  The API is a string that is a legal Java simple
+     * identifier.  The api is modified to conform to the system property style guide by
+     * replacing every upper case letter with an underscore and the lower case equivalent.
+     * There is no requirement that the apiName be the name of an actual API.
+     *
+     * Be aware that SystemProperties has a maximum length which is private to the
+     * implementation.  The current maximum is 92 characters. If this method creates a
+     * property name that is too long, SystemProperties.set() will fail without a good
+     * error message.
+     * @hide
+     */
+    @TestApi
+    public static @NonNull String createPropertyName(@NonNull String module,
+            @NonNull String apiName) {
+        char[] api = apiName.toCharArray();
+        int upper = 0;
+        for (int i = 0; i < api.length; i++) {
+            if (Character.isUpperCase(api[i])) {
+                upper++;
+            }
+        }
+        char[] suffix = new char[api.length + upper];
+        int j = 0;
+        for (int i = 0; i < api.length; i++) {
+            if (Character.isJavaIdentifierPart(api[i])) {
+                if (Character.isUpperCase(api[i])) {
+                    suffix[j++] = '_';
+                    suffix[j++] = Character.toLowerCase(api[i]);
+                } else {
+                    suffix[j++] = api[i];
+                }
+            } else {
+                throw new IllegalArgumentException("invalid api name");
+            }
+        }
+
+        return "cache_key." + module + "." + new String(suffix);
+    }
+
     /**
      * Reserved nonce values.  Use isReservedNonce() to test for a reserved value.  Note
      * that all values cause the cache to be skipped.
@@ -335,6 +459,25 @@ public abstract class PropertyInvalidatedCache<Query, Result> {
      */
     private final String mCacheName;
 
+    /**
+     * The function that computes a Result, given a Query.  This function is called on a
+     * cache miss.
+     */
+    private QueryHandler<Query, Result> mComputer;
+
+    /**
+     * A default function that delegates to the deprecated recompute() method.
+     */
+    private static class DefaultComputer<Query, Result> extends QueryHandler<Query, Result> {
+        final PropertyInvalidatedCache<Query, Result> mCache;
+        DefaultComputer(PropertyInvalidatedCache<Query, Result> cache) {
+            mCache = cache;
+        }
+        public Result apply(Query query) {
+            return mCache.recompute(query);
+        }
+    }
+
     @GuardedBy("mLock")
     private final LinkedHashMap<Query, Result> mCache;
 
@@ -359,8 +502,13 @@ public abstract class PropertyInvalidatedCache<Query, Result> {
      * property name.  New clients should prefer the constructor that takes an explicit
      * cache name.
      *
+     * TODO(216112648): deprecate this as a public interface, in favor of the four-argument
+     * constructor.
+     *
      * @param maxEntries Maximum number of entries to cache; LRU discard
      * @param propertyName Name of the system property holding the cache invalidation nonce.
+     *
+     * @hide
      */
     public PropertyInvalidatedCache(int maxEntries, @NonNull String propertyName) {
         this(maxEntries, propertyName, propertyName);
@@ -369,32 +517,72 @@ public abstract class PropertyInvalidatedCache<Query, Result> {
     /**
      * Make a new property invalidated cache.
      *
+     * TODO(216112648): deprecate this as a public interface, in favor of the four-argument
+     * constructor.
+     *
      * @param maxEntries Maximum number of entries to cache; LRU discard
      * @param propertyName Name of the system property holding the cache invalidation nonce
      * @param cacheName Name of this cache in debug and dumpsys
+     * @hide
      */
     public PropertyInvalidatedCache(int maxEntries, @NonNull String propertyName,
             @NonNull String cacheName) {
         mPropertyName = propertyName;
         mCacheName = cacheName;
         mMaxEntries = maxEntries;
-        mCache = new LinkedHashMap<Query, Result>(
+        mComputer = new DefaultComputer<>(this);
+        mCache = createMap();
+        registerCache();
+    }
+
+    /**
+     * Make a new property invalidated cache.  The key is computed from the module and api
+     * parameters.
+     *
+     * @param maxEntries Maximum number of entries to cache; LRU discard
+     * @param module The module under which the cache key should be placed.
+     * @param api The api this cache front-ends.  The api must be a Java identifier but
+     * need not be an actual api.
+     * @param cacheName Name of this cache in debug and dumpsys
+     * @param computer The code to compute values that are not in the cache.
+     * @hide
+     */
+    @TestApi
+    public PropertyInvalidatedCache(int maxEntries, @NonNull String module, @NonNull String api,
+            @NonNull String cacheName, @NonNull QueryHandler<Query, Result> computer) {
+        mPropertyName = createPropertyName(module, api);
+        mCacheName = cacheName;
+        mMaxEntries = maxEntries;
+        mComputer = computer;
+        mCache = createMap();
+        registerCache();
+    }
+
+    // Create a map.  This should be called only from the constructor.
+    private LinkedHashMap<Query, Result> createMap() {
+        return new LinkedHashMap<Query, Result>(
             2 /* start small */,
             0.75f /* default load factor */,
             true /* LRU access order */) {
+                @GuardedBy("mLock")
                 @Override
                 protected boolean removeEldestEntry(Map.Entry eldest) {
                     final int size = size();
                     if (size > mHighWaterMark) {
                         mHighWaterMark = size;
                     }
-                    if (size > maxEntries) {
+                    if (size > mMaxEntries) {
                         mMissOverflow++;
                         return true;
                     }
                     return false;
                 }
-            };
+        };
+    }
+
+    // Register the map in the global list.  If the cache is disabled globally, disable it
+    // now.
+    private void registerCache() {
         synchronized (sCorkLock) {
             sCaches.put(this, null);
             if (sDisabledKeys.contains(mCacheName)) {
@@ -418,8 +606,9 @@ public abstract class PropertyInvalidatedCache<Query, Result> {
     /**
      * Enable or disable testing.  The testing property map is cleared every time this
      * method is called.
+     * @hide
      */
-    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PACKAGE)
+    @TestApi
     public static void setTestMode(boolean mode) {
         sTesting = mode;
         synchronized (sTestingPropertyMap) {
@@ -431,11 +620,20 @@ public abstract class PropertyInvalidatedCache<Query, Result> {
      * Enable testing the specific cache key.  Only keys in the map are subject to testing.
      * There is no method to stop testing a property name.  Just disable the test mode.
      */
-    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PACKAGE)
-    public static void testPropertyName(@NonNull String name) {
+    private static void testPropertyName(@NonNull String name) {
         synchronized (sTestingPropertyMap) {
             sTestingPropertyMap.put(name, (long) NONCE_UNSET);
         }
+    }
+
+    /**
+     * Enable testing the specific cache key.  Only keys in the map are subject to testing.
+     * There is no method to stop testing a property name.  Just disable the test mode.
+     * @hide
+     */
+    @TestApi
+    public void testPropertyName() {
+        testPropertyName(mPropertyName);
     }
 
     // Read the system property associated with the current cache.  This method uses the
@@ -490,6 +688,9 @@ public abstract class PropertyInvalidatedCache<Query, Result> {
 
     /**
      * Forget all cached values.
+     * TODO(216112648) remove this as a public API.  Clients should invalidate caches, not clear
+     * them.
+     * @hide
      */
     public final void clear() {
         synchronized (mLock) {
@@ -505,22 +706,29 @@ public abstract class PropertyInvalidatedCache<Query, Result> {
      * Fetch a result from scratch in case it's not in the cache at all.  Called unlocked: may
      * block. If this function returns null, the result of the cache query is null. There is no
      * "negative cache" in the query: we don't cache null results at all.
+     * TODO(216112648): deprecate this as a public interface, in favor of an instance of
+     * QueryHandler.
+     * @hide
      */
-    public abstract @NonNull Result recompute(@NonNull Query query);
+    public Result recompute(@NonNull Query query) {
+        return mComputer.apply(query);
+    }
 
     /**
      * Return true if the query should bypass the cache.  The default behavior is to
      * always use the cache but the method can be overridden for a specific class.
+     * TODO(216112648): deprecate this as a public interface, in favor of an instance of
+     * QueryHandler.
+     * @hide
      */
     public boolean bypass(@NonNull Query query) {
-        return false;
+        return mComputer.shouldBypassCache(query);
     }
 
     /**
-     * Determines if a pair of responses are considered equal. Used to determine whether a
-     * cache is inadvertently returning stale results when VERIFY is set to true.  Some
-     * existing clients override this method, but it is now deprecated in favor of a valid
-     * equals() method on the Result class.
+     * Determines if a pair of responses are considered equal. Used to determine whether
+     * a cache is inadvertently returning stale results when VERIFY is set to true.
+     * @hide
      */
     public boolean resultEquals(Result cachedResult, Result fetchedResult) {
         // If a service crashes and returns a null result, the cached value remains valid.
@@ -541,6 +749,7 @@ public abstract class PropertyInvalidatedCache<Query, Result> {
      * the meantime (if the nonce has changed in the meantime, we drop the cache and try the
      * whole query again), or 3) null, which causes the old value to be removed from the cache
      * and null to be returned as the result of the cache query.
+     * @hide
      */
     protected Result refresh(Result oldResult, Query query) {
         return oldResult;
@@ -551,7 +760,7 @@ public abstract class PropertyInvalidatedCache<Query, Result> {
      * testing.  To disable a cache in normal code, use disableLocal().
      * @hide
      */
-    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PACKAGE)
+    @TestApi
     public final void disableInstance() {
         synchronized (mLock) {
             mDisabled = true;
@@ -580,9 +789,10 @@ public abstract class PropertyInvalidatedCache<Query, Result> {
      * disabled remain disabled (the "disabled" setting is sticky).  However, new caches
      * with this name will not be disabled.  It is not an error if the cache name is not
      * found in the list of disabled caches.
+     * @hide
      */
-    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PACKAGE)
-    public final void clearDisableLocal() {
+    @TestApi
+    public final void forgetDisableLocal() {
         synchronized (sCorkLock) {
             sDisabledKeys.remove(mCacheName);
         }
@@ -592,25 +802,47 @@ public abstract class PropertyInvalidatedCache<Query, Result> {
      * Disable this cache in the current process, and all other caches that use the same
      * name.  This does not affect caches that have a different name but use the same
      * property.
+     * TODO(216112648) Remove this in favor of disableForCurrentProcess().
+     * @hide
      */
-    public final void disableLocal() {
-        disableLocal(mCacheName);
+    public void disableLocal() {
+        disableForCurrentProcess();
     }
 
     /**
-     * Return whether the cache is disabled in this process.
+     * Disable this cache in the current process, and all other caches that use the same
+     * name.  This does not affect caches that have a different name but use the same
+     * property.
+     * @hide
      */
-    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PACKAGE)
-    public final boolean isDisabledLocal() {
+    @TestApi
+    public void disableForCurrentProcess() {
+        disableLocal(mCacheName);
+    }
+
+    /** @hide */
+    @TestApi
+    public static void disableForCurrentProcess(@NonNull String cacheName) {
+        disableLocal(cacheName);
+    }
+
+    /**
+     * Return whether a cache instance is disabled.
+     * @hide
+     */
+    @TestApi
+    public final boolean isDisabled() {
         return mDisabled || !sEnabled;
     }
 
     /**
      * Get a value from the cache or recompute it.
+     * @hide
      */
-    public @NonNull Result query(@NonNull Query query) {
+    @TestApi
+    public @Nullable Result query(@NonNull Query query) {
         // Let access to mDisabled race: it's atomic anyway.
-        long currentNonce = (!isDisabledLocal()) ? getCurrentNonce() : NONCE_DISABLED;
+        long currentNonce = (!isDisabled()) ? getCurrentNonce() : NONCE_DISABLED;
         if (bypass(query)) {
             currentNonce = NONCE_BYPASS;
         }
@@ -724,8 +956,9 @@ public abstract class PropertyInvalidatedCache<Query, Result> {
      * When multiple caches share a single property value, using an instance method on one of
      * the cache objects to invalidate all of the cache objects becomes confusing and you should
      * just use the static version of this function.
+     * @hide
      */
-    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PACKAGE)
+    @TestApi
     public final void disableSystemWide() {
         disableSystemWide(mPropertyName);
     }
@@ -746,16 +979,31 @@ public abstract class PropertyInvalidatedCache<Query, Result> {
     /**
      * Non-static convenience version of invalidateCache() for situations in which only a single
      * PropertyInvalidatedCache is keyed on a particular property value.
+     * @hide
      */
-    public final void invalidateCache() {
+    @TestApi
+    public void invalidateCache() {
         invalidateCache(mPropertyName);
+    }
+
+    /**
+     * Invalidate caches in all processes that are keyed for the module and api.
+     * @hide
+     */
+    @TestApi
+    public static void invalidateCache(@NonNull String module, @NonNull String api) {
+        invalidateCache(createPropertyName(module, api));
     }
 
     /**
      * Invalidate PropertyInvalidatedCache caches in all processes that are keyed on
      * {@var name}. This function is synchronous: caches are invalidated upon return.
      *
+     * TODO(216112648) make this method private in favor of the two-argument (module, api)
+     * override.
+     *
      * @param name Name of the cache-key property to invalidate
+     * @hide
      */
     public static void invalidateCache(@NonNull String name) {
         if (!sEnabled) {
@@ -824,6 +1072,7 @@ public abstract class PropertyInvalidatedCache<Query, Result> {
      * corkInvalidations() and uncorkInvalidations() must be called in pairs.
      *
      * @param name Name of the cache-key property to cork
+     * @hide
      */
     public static void corkInvalidations(@NonNull String name) {
         if (!sEnabled) {
@@ -871,6 +1120,7 @@ public abstract class PropertyInvalidatedCache<Query, Result> {
      * transitioning it to normal operation (unless explicitly disabled system-wide).
      *
      * @param name Name of the cache-key property to uncork
+     * @hide
      */
     public static void uncorkInvalidations(@NonNull String name) {
         if (!sEnabled) {
@@ -916,6 +1166,7 @@ public abstract class PropertyInvalidatedCache<Query, Result> {
      * The auto-cork delay is configurable but it should not be too long.  The purpose of
      * the delay is to minimize the number of times a server writes to the system property
      * when invalidating the cache.  One write every 50ms does not hurt system performance.
+     * @hide
      */
     public static final class AutoCorker {
         public static final int DEFAULT_AUTO_CORK_DELAY_MS = 50;
@@ -962,8 +1213,10 @@ public abstract class PropertyInvalidatedCache<Query, Result> {
                     getHandlerLocked().sendEmptyMessageAtTime(0, mUncorkDeadlineMs);
                     PropertyInvalidatedCache.corkInvalidations(mPropertyName);
                 } else {
-                    final long count = sCorkedInvalidates.getOrDefault(mPropertyName, (long) 0);
-                    sCorkedInvalidates.put(mPropertyName, count + 1);
+                    synchronized (sCorkLock) {
+                        final long count = sCorkedInvalidates.getOrDefault(mPropertyName, (long) 0);
+                        sCorkedInvalidates.put(mPropertyName, count + 1);
+                    }
                 }
             }
         }
@@ -1043,6 +1296,8 @@ public abstract class PropertyInvalidatedCache<Query, Result> {
      * Return the query as a string, to be used in debug messages.  New clients should not
      * override this, but should instead add the necessary toString() method to the Query
      * class.
+     * TODO(216112648) add a method in the QueryHandler and deprecate this API.
+     * @hide
      */
     protected @NonNull String queryToString(@NonNull Query query) {
         return Objects.toString(query);
@@ -1054,8 +1309,9 @@ public abstract class PropertyInvalidatedCache<Query, Result> {
      * process does not have privileges to write SystemProperties. Once disabled it is not
      * possible to re-enable caching in the current process.  If a client wants to
      * temporarily disable caching, use the corking mechanism.
+     * @hide
      */
-    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PACKAGE)
+    @TestApi
     public static void disableForTestMode() {
         Log.d(TAG, "disabling all caches in the process");
         sEnabled = false;
@@ -1064,10 +1320,11 @@ public abstract class PropertyInvalidatedCache<Query, Result> {
     /**
      * Report the disabled status of this cache instance.  The return value does not
      * reflect status of the property key.
+     * @hide
      */
-    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PACKAGE)
+    @TestApi
     public boolean getDisabledState() {
-        return isDisabledLocal();
+        return isDisabled();
     }
 
     /**
@@ -1088,7 +1345,7 @@ public abstract class PropertyInvalidatedCache<Query, Result> {
         }
     }
 
-    private void dumpContents(PrintWriter pw, String[] args) {
+    private void dumpContents(PrintWriter pw) {
         long invalidateCount;
         long corkedInvalidates;
         synchronized (sCorkLock) {
@@ -1133,7 +1390,8 @@ public abstract class PropertyInvalidatedCache<Query, Result> {
     }
 
     /**
-     * Dumps the contents of every cache in the process to the provided ParcelFileDescriptor.
+     * Dumps contents of every cache in the process to the provided ParcelFileDescriptor.
+     * @hide
      */
     public static void dumpCacheInfo(@NonNull ParcelFileDescriptor pfd, @NonNull String[] args) {
         ArrayList<PropertyInvalidatedCache> activeCaches;
@@ -1164,7 +1422,7 @@ public abstract class PropertyInvalidatedCache<Query, Result> {
 
             for (int i = 0; i < activeCaches.size(); i++) {
                 PropertyInvalidatedCache currentCache = activeCaches.get(i);
-                currentCache.dumpContents(pw, args);
+                currentCache.dumpContents(pw);
                 pw.flush();
             }
         } catch (IOException e) {
@@ -1174,6 +1432,7 @@ public abstract class PropertyInvalidatedCache<Query, Result> {
 
     /**
      * Trim memory by clearing all the caches.
+     * @hide
      */
     public static void onTrimMemory() {
         for (PropertyInvalidatedCache pic : getActiveCaches()) {

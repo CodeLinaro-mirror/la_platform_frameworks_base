@@ -18,6 +18,7 @@ package com.android.systemui.media.dialog;
 
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
+import android.app.WallpaperColors;
 import android.content.Context;
 import android.graphics.PorterDuff;
 import android.graphics.PorterDuffColorFilter;
@@ -33,7 +34,6 @@ import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
-import android.widget.RelativeLayout;
 import android.widget.SeekBar;
 import android.widget.TextView;
 
@@ -56,7 +56,7 @@ public abstract class MediaOutputBaseAdapter extends
     static final int CUSTOMIZED_ITEM_GROUP = 2;
     static final int CUSTOMIZED_ITEM_DYNAMIC_GROUP = 3;
 
-    final MediaOutputController mController;
+    protected final MediaOutputController mController;
 
     private int mMargin;
     private boolean mIsAnimating;
@@ -84,6 +84,10 @@ public abstract class MediaOutputBaseAdapter extends
         return null;
     }
 
+    void updateColorScheme(WallpaperColors wallpaperColors, boolean isDarkTheme) {
+        mController.setCurrentColorScheme(wallpaperColors, isDarkTheme);
+    }
+
     CharSequence getItemTitle(MediaDevice device) {
         return device.getName();
     }
@@ -105,6 +109,10 @@ public abstract class MediaOutputBaseAdapter extends
         return mCurrentActivePosition;
     }
 
+    public MediaOutputController getController() {
+        return mController;
+    }
+
     /**
      * ViewHolder for binding device view.
      */
@@ -120,7 +128,7 @@ public abstract class MediaOutputBaseAdapter extends
         final ImageView mTitleIcon;
         final ProgressBar mProgressBar;
         final SeekBar mSeekBar;
-        final RelativeLayout mTwoLineLayout;
+        final LinearLayout mTwoLineLayout;
         final ImageView mStatusIcon;
         final CheckBox mCheckBox;
         private String mDeviceId;
@@ -162,12 +170,17 @@ public abstract class MediaOutputBaseAdapter extends
         void setSingleLineLayout(CharSequence title, boolean bFocused, boolean showSeekBar,
                 boolean showProgressBar, boolean showStatus) {
             mTwoLineLayout.setVisibility(View.GONE);
+            boolean isActive = showSeekBar || showProgressBar;
             final Drawable backgroundDrawable =
-                    showSeekBar || showProgressBar
+                    isActive
                             ? mContext.getDrawable(R.drawable.media_output_item_background_active)
                                     .mutate() : mContext.getDrawable(
                             R.drawable.media_output_item_background)
                             .mutate();
+            backgroundDrawable.setColorFilter(new PorterDuffColorFilter(
+                    isActive ? mController.getColorConnectedItemBackground()
+                            : mController.getColorItemBackground(),
+                    PorterDuff.Mode.SRC_IN));
             mItemLayout.setBackground(backgroundDrawable);
             mProgressBar.setVisibility(showProgressBar ? View.VISIBLE : View.GONE);
             mSeekBar.setAlpha(1);
@@ -203,8 +216,13 @@ public abstract class MediaOutputBaseAdapter extends
             mStatusIcon.setVisibility(showStatus ? View.VISIBLE : View.GONE);
             mSeekBar.setAlpha(1);
             mSeekBar.setVisibility(showSeekBar ? View.VISIBLE : View.GONE);
-            mItemLayout.setBackground(mContext.getDrawable(R.drawable.media_output_item_background)
-                    .mutate());
+            final Drawable backgroundDrawable = mContext.getDrawable(
+                            R.drawable.media_output_item_background)
+                    .mutate();
+            backgroundDrawable.setColorFilter(new PorterDuffColorFilter(
+                    mController.getColorItemBackground(),
+                    PorterDuff.Mode.SRC_IN));
+            mItemLayout.setBackground(backgroundDrawable);
             mProgressBar.setVisibility(showProgressBar ? View.VISIBLE : View.GONE);
             mSubTitleText.setVisibility(showSubtitle ? View.VISIBLE : View.GONE);
             mTwoLineTitleText.setTranslationY(0);
@@ -232,7 +250,7 @@ public abstract class MediaOutputBaseAdapter extends
             mSeekBar.setMin(0);
             final int currentVolume = device.getCurrentVolume();
             if (mSeekBar.getProgress() != currentVolume) {
-                mSeekBar.setProgress(currentVolume);
+                mSeekBar.setProgress(currentVolume, true);
             }
             mSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
                 @Override
@@ -261,7 +279,7 @@ public abstract class MediaOutputBaseAdapter extends
             mSeekBar.setMin(0);
             final int currentVolume = mController.getSessionVolume();
             if (mSeekBar.getProgress() != currentVolume) {
-                mSeekBar.setProgress(currentVolume);
+                mSeekBar.setProgress(currentVolume, true);
             }
             mSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
                 @Override
@@ -350,7 +368,7 @@ public abstract class MediaOutputBaseAdapter extends
                     .mutate();
             drawable.setColorFilter(
                     new PorterDuffColorFilter(Utils.getColorStateListDefaultColor(mContext,
-                            R.color.media_dialog_active_item_main_content),
+                            R.color.media_dialog_item_main_content),
                             PorterDuff.Mode.SRC_IN));
             return drawable;
         }

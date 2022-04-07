@@ -88,6 +88,7 @@ interface IActivityClientController {
 
     boolean enterPictureInPictureMode(in IBinder token, in PictureInPictureParams params);
     void setPictureInPictureParams(in IBinder token, in PictureInPictureParams params);
+    oneway void setShouldDockBigOverlays(in IBinder token, in boolean shouldDockBigOverlays);
     void toggleFreeformWindowingMode(in IBinder token);
 
     oneway void startLockTaskModeByToken(in IBinder token);
@@ -112,11 +113,11 @@ interface IActivityClientController {
      * calls, so this method should be the same as them to keep the invocation order.
      */
     void overridePendingTransition(in IBinder token, in String packageName,
-            int enterAnim, int exitAnim);
+            int enterAnim, int exitAnim, int backgroundColor);
     int setVrMode(in IBinder token, boolean enabled, in ComponentName packageName);
 
-    /** See {@link android.app.Activity#setDisablePreviewScreenshots}. */
-    oneway void setDisablePreviewScreenshots(in IBinder token, boolean disable);
+    /** See {@link android.app.Activity#setRecentsScreenshotEnabled}. */
+    oneway void setRecentsScreenshotEnabled(in IBinder token, boolean enabled);
 
     /**
      * It should only be called from home activity to remove its outdated snapshot. The home

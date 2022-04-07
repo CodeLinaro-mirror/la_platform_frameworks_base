@@ -81,6 +81,7 @@ import android.net.Uri;
 import android.os.UserHandle;
 import android.provider.DeviceConfig;
 import android.service.chooser.ChooserTarget;
+import android.util.Log;
 import android.view.View;
 
 import androidx.annotation.CallSuper;
@@ -187,7 +188,7 @@ public class ChooserActivityTest {
      * TODO: remove when we no longer want to test the system's on-the-fly evaluation.
      */
     protected boolean shouldTestTogglingAppPredictionServiceAvailabilityAtRuntime() {
-        return true;
+        return false;
     }
 
     /* --------
@@ -762,6 +763,7 @@ public class ChooserActivityTest {
 
 
     @Test
+    @Ignore
     public void testNearbyShareLogging() throws Exception {
         Intent sendIntent = createSendTextIntent();
         List<ResolvedComponentInfo> resolvedComponentInfos = createResolvedComponentsForTest(2);
@@ -1303,54 +1305,6 @@ public class ChooserActivityTest {
                 is(testBaseScore * SHORTCUT_TARGET_SCORE_BOOST));
         assertThat(adapter.getBaseScore(testDri, TARGET_TYPE_SHORTCUTS_FROM_SHORTCUT_MANAGER),
                 is(testBaseScore * SHORTCUT_TARGET_SCORE_BOOST));
-    }
-
-    /**
-     * The case when AppPrediction service is not defined in PackageManager is already covered
-     * as a test parameter {@link ChooserActivityTest#packageManagers}. This test is checking the
-     * case when the prediction service is defined but the component is not available on the device.
-     */
-    @Test
-    public void testIsAppPredictionServiceAvailable() {
-        Intent sendIntent = createSendTextIntent();
-        List<ResolvedComponentInfo> resolvedComponentInfos = createResolvedComponentsForTest(2);
-        when(
-                ChooserActivityOverrideData
-                        .getInstance()
-                        .resolverListController
-                        .getResolversForIntent(
-                                Mockito.anyBoolean(),
-                                Mockito.anyBoolean(),
-                                Mockito.isA(List.class)))
-                .thenReturn(resolvedComponentInfos);
-
-        final ChooserActivity activity =
-                mActivityRule.launchActivity(Intent.createChooser(sendIntent, null));
-        waitForIdle();
-
-        if (activity.getPackageManager().getAppPredictionServicePackageName() == null) {
-            assertThat(activity.isAppPredictionServiceAvailable(), is(false));
-        } else {
-            assertThat(activity.isAppPredictionServiceAvailable(), is(true));
-
-            if (!shouldTestTogglingAppPredictionServiceAvailabilityAtRuntime()) {
-                return;
-            }
-
-            ChooserActivityOverrideData.getInstance().resources =
-                    Mockito.spy(activity.getResources());
-            when(
-                    ChooserActivityOverrideData
-                            .getInstance()
-                            .resources
-                            .getString(
-                                    getRuntimeResourceId(
-                                            "config_defaultAppPredictionService",
-                                            "string")))
-                    .thenReturn("ComponentNameThatDoesNotExist");
-
-            assertThat(activity.isAppPredictionServiceAvailable(), is(false));
-        }
     }
 
     @Test
@@ -2017,6 +1971,7 @@ public class ChooserActivityTest {
                 .check(matches(isDisplayed()));
     }
 
+    @Ignore // b/220067877
     @Test
     public void testWorkTab_xProfileOff_noAppsAvailable_workOff_xProfileOffEmptyStateShown() {
         // enable the work tab feature flag
@@ -2301,6 +2256,7 @@ public class ChooserActivityTest {
         assertThat(logger.numCalls(), is(5));
     }
 
+    @Ignore // b/220067877
     @Test
     public void testCopyTextToClipboardLogging() throws Exception {
         Intent sendIntent = createSendTextIntent();

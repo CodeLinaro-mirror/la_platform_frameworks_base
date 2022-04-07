@@ -18,10 +18,10 @@ package com.android.systemui.flags
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.content.pm.PackageManager.NameNotFoundException
 import android.content.res.Resources
-import androidx.test.filters.SmallTest
+import android.test.suitebuilder.annotation.SmallTest
+import com.android.internal.statusbar.IStatusBarService
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.dump.DumpManager
 import com.android.systemui.util.mockito.any
@@ -35,6 +35,8 @@ import org.junit.Assert
 import org.junit.Before
 import org.junit.Test
 import org.mockito.Mock
+import org.mockito.Mockito.anyBoolean
+import org.mockito.Mockito.anyString
 import org.mockito.Mockito.inOrder
 import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
@@ -57,24 +59,33 @@ class FeatureFlagsDebugTest : SysuiTestCase() {
     @Mock private lateinit var mFlagManager: FlagManager
     @Mock private lateinit var mMockContext: Context
     @Mock private lateinit var mSecureSettings: SecureSettings
+    @Mock private lateinit var mSystemProperties: SystemPropertiesHelper
     @Mock private lateinit var mResources: Resources
     @Mock private lateinit var mDumpManager: DumpManager
+    @Mock private lateinit var mBarService: IStatusBarService
     private val mFlagMap = mutableMapOf<Int, Flag<*>>()
     private lateinit var mBroadcastReceiver: BroadcastReceiver
     private lateinit var mClearCacheAction: Consumer<Int>
 
+    private val teamfoodableFlagA = BooleanFlag(500, false, true)
+    private val teamfoodableFlagB = BooleanFlag(501, true, true)
+
     @Before
     fun setup() {
         MockitoAnnotations.initMocks(this)
+        mFlagMap.put(teamfoodableFlagA.id, teamfoodableFlagA)
+        mFlagMap.put(teamfoodableFlagB.id, teamfoodableFlagB)
         mFeatureFlagsDebug = FeatureFlagsDebug(
             mFlagManager,
             mMockContext,
             mSecureSettings,
+            mSystemProperties,
             mResources,
             mDumpManager,
-            { mFlagMap }
+            mFlagMap,
+            mBarService
         )
-        verify(mFlagManager).restartAction = any()
+        verify(mFlagManager).onSettingsChangedAction = any()
         mBroadcastReceiver = withArgCaptor {
             verify(mMockContext).registerReceiver(capture(), any(), nullable(), nullable(),
                 any())
@@ -87,12 +98,50 @@ class FeatureFlagsDebugTest : SysuiTestCase() {
 
     @Test
     fun testReadBooleanFlag() {
+        // Remember that the TEAMFOOD flag is id#1 and has special behavior.
         whenever(mFlagManager.readFlagValue<Boolean>(eq(3), any())).thenReturn(true)
         whenever(mFlagManager.readFlagValue<Boolean>(eq(4), any())).thenReturn(false)
-        assertThat(mFeatureFlagsDebug.isEnabled(BooleanFlag(1, false))).isFalse()
         assertThat(mFeatureFlagsDebug.isEnabled(BooleanFlag(2, true))).isTrue()
         assertThat(mFeatureFlagsDebug.isEnabled(BooleanFlag(3, false))).isTrue()
         assertThat(mFeatureFlagsDebug.isEnabled(BooleanFlag(4, true))).isFalse()
+        assertThat(mFeatureFlagsDebug.isEnabled(BooleanFlag(5, false))).isFalse()
+    }
+
+    @Test
+    fun testTeamFoodFlag_False() {
+        whenever(mFlagManager.readFlagValue<Boolean>(eq(1), any())).thenReturn(false)
+        assertThat(mFeatureFlagsDebug.isEnabled(teamfoodableFlagA)).isFalse()
+        assertThat(mFeatureFlagsDebug.isEnabled(teamfoodableFlagB)).isTrue()
+
+        // Regular boolean flags should still test the same.
+        // Only our teamfoodableFlag should change.
+        testReadBooleanFlag()
+    }
+
+    @Test
+    fun testTeamFoodFlag_True() {
+        whenever(mFlagManager.readFlagValue<Boolean>(eq(1), any())).thenReturn(true)
+        assertThat(mFeatureFlagsDebug.isEnabled(teamfoodableFlagA)).isTrue()
+        assertThat(mFeatureFlagsDebug.isEnabled(teamfoodableFlagB)).isTrue()
+
+        // Regular boolean flags should still test the same.
+        // Only our teamfoodableFlag should change.
+        testReadBooleanFlag()
+    }
+
+    @Test
+    fun testTeamFoodFlag_Overridden() {
+        whenever(mFlagManager.readFlagValue<Boolean>(eq(teamfoodableFlagA.id), any()))
+                .thenReturn(true)
+        whenever(mFlagManager.readFlagValue<Boolean>(eq(teamfoodableFlagB.id), any()))
+                .thenReturn(false)
+        whenever(mFlagManager.readFlagValue<Boolean>(eq(1), any())).thenReturn(true)
+        assertThat(mFeatureFlagsDebug.isEnabled(teamfoodableFlagA)).isTrue()
+        assertThat(mFeatureFlagsDebug.isEnabled(teamfoodableFlagB)).isFalse()
+
+        // Regular boolean flags should still test the same.
+        // Only our teamfoodableFlag should change.
+        testReadBooleanFlag()
     }
 
     @Test
@@ -118,6 +167,22 @@ class FeatureFlagsDebugTest : SysuiTestCase() {
         Assert.assertThrows(NameNotFoundException::class.java) {
             mFeatureFlagsDebug.isEnabled(ResourceBooleanFlag(5, 1005))
         }
+    }
+
+    @Test
+    fun testReadSysPropBooleanFlag() {
+        whenever(mSystemProperties.getBoolean(anyString(), anyBoolean())).thenAnswer {
+            if ("b".equals(it.getArgument<String?>(0))) {
+                return@thenAnswer true
+            }
+            return@thenAnswer it.getArgument(1)
+        }
+
+        assertThat(mFeatureFlagsDebug.isEnabled(SysPropBooleanFlag(1, "a"))).isFalse()
+        assertThat(mFeatureFlagsDebug.isEnabled(SysPropBooleanFlag(2, "b"))).isTrue()
+        assertThat(mFeatureFlagsDebug.isEnabled(SysPropBooleanFlag(3, "c", true))).isTrue()
+        assertThat(mFeatureFlagsDebug.isEnabled(SysPropBooleanFlag(4, "d", false))).isFalse()
+        assertThat(mFeatureFlagsDebug.isEnabled(SysPropBooleanFlag(5, "e"))).isFalse()
     }
 
     @Test
@@ -257,7 +322,7 @@ class FeatureFlagsDebugTest : SysuiTestCase() {
             verify(mFlagManager, times(numReads)).readFlagValue(eq(id), any<FlagSerializer<*>>())
             verify(mFlagManager).idToSettingsKey(eq(id))
             verify(mSecureSettings).putString(eq("key-$id"), eq(data))
-            verify(mFlagManager).dispatchListenersAndMaybeRestart(eq(id))
+            verify(mFlagManager).dispatchListenersAndMaybeRestart(eq(id), any())
         }.verifyNoMoreInteractions()
         verifyNoMoreInteractions(mFlagManager, mSecureSettings)
     }

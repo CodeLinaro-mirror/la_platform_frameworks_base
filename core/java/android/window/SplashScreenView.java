@@ -65,6 +65,7 @@ import com.android.internal.util.ContrastColorUtil;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.function.Consumer;
+import java.util.function.LongConsumer;
 
 /**
  * <p>The view which allows an activity to customize its splash screen exit animation.</p>
@@ -151,6 +152,7 @@ public final class SplashScreenView extends FrameLayout {
         private Instant mIconAnimationStart;
         private Duration mIconAnimationDuration;
         private Consumer<Runnable> mUiThreadInitTask;
+        private boolean mAllowHandleSolidColor = true;
 
         public Builder(@NonNull Context context) {
             mContext = context;
@@ -231,14 +233,6 @@ public final class SplashScreenView extends FrameLayout {
         }
 
         /**
-         * Set the animation duration if icon is animatable.
-         */
-        public Builder setAnimationDurationMillis(int duration) {
-            mIconAnimationDuration = Duration.ofMillis(duration);
-            return this;
-        }
-
-        /**
          * Set the Runnable that can receive the task which should be executed on UI thread.
          * @param uiThreadInitTask
          */
@@ -254,6 +248,15 @@ public final class SplashScreenView extends FrameLayout {
             mBrandingDrawable = branding;
             mBrandingImageWidth = width;
             mBrandingImageHeight = height;
+            return this;
+        }
+
+        /**
+         * Sets whether this view can be copied and transferred to the client if the view is
+         * empty style splash screen.
+         */
+        public Builder setAllowHandleSolidColor(boolean allowHandleSolidColor) {
+            mAllowHandleSolidColor = allowHandleSolidColor;
             return this;
         }
 
@@ -283,8 +286,7 @@ public final class SplashScreenView extends FrameLayout {
                 } else {
                     view.mIconView = createSurfaceView(view);
                 }
-                view.initIconAnimation(mIconDrawable,
-                        mIconAnimationDuration != null ? mIconAnimationDuration.toMillis() : 0);
+                view.initIconAnimation(mIconDrawable);
                 view.mIconAnimationStart = mIconAnimationStart;
                 view.mIconAnimationDuration = mIconAnimationDuration;
             } else if (mIconSize != 0) {
@@ -303,7 +305,7 @@ public final class SplashScreenView extends FrameLayout {
                 }
                 view.mIconView = imageView;
             }
-            if (mOverlayDrawable != null || mIconDrawable == null) {
+            if (mOverlayDrawable != null || (view.mIconView == null && !mAllowHandleSolidColor)) {
                 view.setNotCopyable();
             }
 
@@ -452,6 +454,11 @@ public final class SplashScreenView extends FrameLayout {
     /**
      * Returns the duration of the icon animation if icon is animatable.
      *
+     * Note the return value can be null or 0 if the
+     * {@link android.R.attr#windowSplashScreenAnimatedIcon} is not
+     * {@link android.graphics.drawable.AnimationDrawable} or
+     * {@link android.graphics.drawable.AnimatedVectorDrawable}.
+     *
      * @see android.R.attr#windowSplashScreenAnimatedIcon
      * @see android.R.attr#windowSplashScreenAnimationDuration
      */
@@ -483,15 +490,15 @@ public final class SplashScreenView extends FrameLayout {
             Log.d(TAG, "Transferring surface " + mSurfaceView.toString());
         }
 
-        mSurfaceView.setChildSurfacePackageOnDraw(mSurfacePackage);
+        mSurfaceView.setChildSurfacePackage(mSurfacePackage);
     }
 
-    void initIconAnimation(Drawable iconDrawable, long duration) {
+    void initIconAnimation(Drawable iconDrawable) {
         if (!(iconDrawable instanceof IconAnimateListener)) {
             return;
         }
         IconAnimateListener aniDrawable = (IconAnimateListener) iconDrawable;
-        aniDrawable.prepareAnimate(duration, this::animationStartCallback);
+        aniDrawable.prepareAnimate(this::animationStartCallback);
         aniDrawable.setAnimationJankMonitoring(new AnimatorListenerAdapter() {
             @Override
             public void onAnimationCancel(Animator animation) {
@@ -511,8 +518,11 @@ public final class SplashScreenView extends FrameLayout {
         });
     }
 
-    private void animationStartCallback() {
+    private void animationStartCallback(long animDuration) {
         mIconAnimationStart = Instant.now();
+        if (animDuration >= 0) {
+            mIconAnimationDuration = Duration.ofMillis(animDuration);
+        }
     }
 
     /**
@@ -681,11 +691,9 @@ public final class SplashScreenView extends FrameLayout {
     public interface IconAnimateListener {
         /**
          * Prepare the animation if this drawable also be animatable.
-         * @param duration The animation duration.
          * @param startListener The callback listener used to receive the start of the animation.
-         * @return true if this drawable object can also be animated and it can be played now.
          */
-        boolean prepareAnimate(long duration, Runnable startListener);
+        void prepareAnimate(LongConsumer startListener);
 
         /**
          * Stop animation.
@@ -720,13 +728,15 @@ public final class SplashScreenView extends FrameLayout {
         private RemoteCallback mClientCallback;
 
         public SplashScreenViewParcelable(SplashScreenView view) {
-            mIconSize = view.mIconView.getWidth();
+            final View iconView = view.getIconView();
+            mIconSize = iconView != null ? iconView.getWidth() : 0;
             mBackgroundColor = view.getInitBackgroundColor();
-            mIconBackground = copyDrawable(view.getIconView().getBackground());
+            mIconBackground = iconView != null ? copyDrawable(iconView.getBackground()) : null;
             mSurfacePackage = view.mSurfacePackageCopy;
             if (mSurfacePackage == null) {
                 // We only need to copy the drawable if we are not using a SurfaceView
-                mIconBitmap = copyDrawable(((ImageView) view.getIconView()).getDrawable());
+                mIconBitmap = iconView != null
+                        ? copyDrawable(((ImageView) view.getIconView()).getDrawable()) : null;
             }
             mBrandingBitmap = copyDrawable(view.getBrandingView().getBackground());
 

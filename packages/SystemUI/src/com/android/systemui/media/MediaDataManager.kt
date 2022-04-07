@@ -27,12 +27,8 @@ import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.content.pm.ApplicationInfo
-import android.content.pm.PackageManager
 import android.graphics.Bitmap
-import android.graphics.Canvas
 import android.graphics.ImageDecoder
-import android.graphics.drawable.Drawable
 import android.graphics.drawable.Icon
 import android.media.MediaDescription
 import android.media.MediaMetadata
@@ -109,6 +105,17 @@ fun isMediaNotification(sbn: StatusBarNotification): Boolean {
 }
 
 /**
+ * Allow recommendations from smartspace to show in media controls.
+ * Requires [Utils.useQsMediaPlayer] to be enabled.
+ * On by default, but can be disabled by setting to 0
+ */
+private fun allowMediaRecommendations(context: Context): Boolean {
+    val flag = Settings.Secure.getInt(context.contentResolver,
+            Settings.Secure.MEDIA_CONTROLS_RECOMMENDATION, 1)
+    return Utils.useQsMediaPlayer(context) && flag > 0
+}
+
+/**
  * A class that facilitates management and loading of Media Data, ready for binding.
  */
 @SysUISingleton
@@ -131,7 +138,7 @@ class MediaDataManager(
     private val useQsMediaPlayer: Boolean,
     private val systemClock: SystemClock,
     private val tunerService: TunerService,
-    private val mediaFlags: MediaFlags,
+    private val mediaFlags: MediaFlags
 ) : Dumpable, BcSmartspaceDataPlugin.SmartspaceTargetListener {
 
     companion object {
@@ -154,7 +161,7 @@ class MediaDataManager(
 
     private val themeText = com.android.settingslib.Utils.getColorAttr(context,
             com.android.internal.R.attr.textColorPrimary).defaultColor
-    private val bgColor = context.getColor(android.R.color.system_accent2_50)
+    private val bgColor = context.getColor(R.color.material_dynamic_secondary95)
 
     // Internal listeners are part of the internal pipeline. External listeners (those registered
     // with [MediaDeviceManager.addListener]) receive events after they have propagated through
@@ -168,24 +175,13 @@ class MediaDataManager(
     // There should ONLY be at most one Smartspace media recommendation.
     var smartspaceMediaData: SmartspaceMediaData = EMPTY_SMARTSPACE_MEDIA_DATA
     private var smartspaceSession: SmartspaceSession? = null
-    private var allowMediaRecommendations = Utils.allowMediaRecommendations(context)
+    private var allowMediaRecommendations = allowMediaRecommendations(context)
 
     /**
      * Check whether this notification is an RCN
-     * TODO(b/204910409) implement new API for explicitly declaring this
      */
     private fun isRemoteCastNotification(sbn: StatusBarNotification): Boolean {
-        val pm = context.packageManager
-        try {
-            val info = pm.getApplicationInfo(sbn.packageName, PackageManager.MATCH_SYSTEM_ONLY)
-            if (info.privateFlags and ApplicationInfo.PRIVATE_FLAG_PRIVILEGED != 0) {
-                val extras = sbn.notification.extras
-                if (extras.containsKey(Notification.EXTRA_SUBSTITUTE_APP_NAME)) {
-                    return true
-                }
-            }
-        } catch (e: PackageManager.NameNotFoundException) { }
-        return false
+        return sbn.notification.extras.containsKey(Notification.EXTRA_MEDIA_REMOTE_DEVICE)
     }
 
     @Inject
@@ -287,7 +283,7 @@ class MediaDataManager(
         smartspaceSession?.let { it.requestSmartspaceUpdate() }
         tunerService.addTunable(object : TunerService.Tunable {
             override fun onTuningChanged(key: String?, newValue: String?) {
-                allowMediaRecommendations = Utils.allowMediaRecommendations(context)
+                allowMediaRecommendations = allowMediaRecommendations(context)
                 if (!allowMediaRecommendations) {
                     dismissSmartspaceRecommendation(key = smartspaceMediaData.targetId, delay = 0L)
                 }
@@ -546,7 +542,8 @@ class MediaDataManager(
         foregroundExecutor.execute {
             onMediaDataLoaded(packageName, null, MediaData(userId, true, bgColor, appName,
                     null, desc.subtitle, desc.title, artworkIcon, listOf(mediaAction), listOf(0),
-                    null, packageName, token, appIntent, device = null, active = false,
+                    MediaButton(playOrPause = mediaAction), packageName, token, appIntent,
+                    device = null, active = false,
                     resumeAction = resumeAction, resumption = true, notificationKey = packageName,
                     hasCheckedForResume = true, lastActive = lastActive))
         }
@@ -562,37 +559,19 @@ class MediaDataManager(
         val mediaController = mediaControllerFactory.create(token)
         val metadata = mediaController.metadata
 
-        // Foreground and Background colors computed from album art
+        // Album art
         val notif: Notification = sbn.notification
-        var artworkBitmap = metadata?.getBitmap(MediaMetadata.METADATA_KEY_ART)
+        var artworkBitmap = metadata?.let { loadBitmapFromUri(it) }
+        if (artworkBitmap == null) {
+            artworkBitmap = metadata?.getBitmap(MediaMetadata.METADATA_KEY_ART)
+        }
         if (artworkBitmap == null) {
             artworkBitmap = metadata?.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART)
-        }
-        if (artworkBitmap == null && metadata != null) {
-            artworkBitmap = loadBitmapFromUri(metadata)
         }
         val artWorkIcon = if (artworkBitmap == null) {
             notif.getLargeIcon()
         } else {
             Icon.createWithBitmap(artworkBitmap)
-        }
-        if (artWorkIcon != null) {
-            // If we have art, get colors from that
-            if (artworkBitmap == null) {
-                if (artWorkIcon.type == Icon.TYPE_BITMAP ||
-                        artWorkIcon.type == Icon.TYPE_ADAPTIVE_BITMAP) {
-                    artworkBitmap = artWorkIcon.bitmap
-                } else {
-                    val drawable: Drawable = artWorkIcon.loadDrawable(context)
-                    artworkBitmap = Bitmap.createBitmap(
-                            drawable.intrinsicWidth,
-                            drawable.intrinsicHeight,
-                            Bitmap.Config.ARGB_8888)
-                    val canvas = Canvas(artworkBitmap)
-                    drawable.setBounds(0, 0, drawable.intrinsicWidth, drawable.intrinsicHeight)
-                    drawable.draw(canvas)
-                }
-            }
         }
 
         // App name
@@ -617,13 +596,33 @@ class MediaDataManager(
             artist = HybridGroupManager.resolveText(notif)
         }
 
+        // Device name (used for remote cast notifications)
+        var device: MediaDeviceData? = null
+        if (isRemoteCastNotification(sbn)) {
+            val extras = sbn.notification.extras
+            val deviceName = extras.getCharSequence(Notification.EXTRA_MEDIA_REMOTE_DEVICE, null)
+            val deviceIcon = extras.getInt(Notification.EXTRA_MEDIA_REMOTE_ICON, -1)
+            val deviceIntent = extras.getParcelable(Notification.EXTRA_MEDIA_REMOTE_INTENT)
+                    as PendingIntent?
+            Log.d(TAG, "$key is RCN for $deviceName")
+
+            if (deviceName != null && deviceIcon > -1) {
+                // Name and icon must be present, but intent may be null
+                val enabled = deviceIntent != null && deviceIntent.isActivity
+                val deviceDrawable = Icon.createWithResource(sbn.packageName, deviceIcon)
+                        .loadDrawable(sbn.getPackageContext(context))
+                device = MediaDeviceData(enabled, deviceDrawable, deviceName, deviceIntent)
+            }
+        }
+
         // Control buttons
         // If flag is enabled and controller has a PlaybackState, create actions from session info
         // Otherwise, use the notification actions
         var actionIcons: List<MediaAction> = emptyList()
         var actionsToShowCollapsed: List<Int> = emptyList()
         var semanticActions: MediaButton? = null
-        if (mediaFlags.areMediaSessionActionsEnabled() && mediaController.playbackState != null) {
+        if (mediaFlags.areMediaSessionActionsEnabled(sbn.packageName, sbn.user) &&
+                mediaController.playbackState != null) {
             semanticActions = createActionsFromState(sbn.packageName, mediaController)
         } else {
             val actions = createActionsFromNotification(sbn)
@@ -644,7 +643,7 @@ class MediaDataManager(
             val active = mediaEntries[key]?.active ?: true
             onMediaDataLoaded(key, oldKey, MediaData(sbn.normalizedUserId, true, bgColor, app,
                     smallIcon, artist, song, artWorkIcon, actionIcons, actionsToShowCollapsed,
-                    semanticActions, sbn.packageName, token, notif.contentIntent, null,
+                    semanticActions, sbn.packageName, token, notif.contentIntent, device,
                     active, resumeAction = resumeAction, playbackLocation = playbackLocation,
                     notificationKey = key, hasCheckedForResume = hasCheckedForResume,
                     isPlaying = isPlaying, isClearable = sbn.isClearable(),
@@ -677,7 +676,10 @@ class MediaDataManager(
                 }
                 val runnable = if (action.actionIntent != null) {
                     Runnable {
-                        if (action.isAuthenticationRequired()) {
+                        if (action.actionIntent.isActivity) {
+                            activityStarter.startPendingIntentDismissingKeyguard(
+                                action.actionIntent)
+                        } else if (action.isAuthenticationRequired()) {
                             activityStarter.dismissKeyguardThenExecute({
                                 var result = sendPendingIntent(action.actionIntent)
                                 result
@@ -693,11 +695,12 @@ class MediaDataManager(
                     Icon.createWithResource(sbn.packageName, action.getIcon()!!.getResId())
                 } else {
                     action.getIcon()
-                }.setTint(themeText)
+                }.setTint(themeText).loadDrawable(context)
                 val mediaAction = MediaAction(
                     mediaActionIcon,
                     runnable,
-                    action.title)
+                    action.title,
+                    null)
                 actionIcons.add(mediaAction)
             }
         }
@@ -736,7 +739,7 @@ class MediaDataManager(
                 }
             }
 
-            // Finally, assign the remaining button slots: C A play/pause B D
+            // Finally, assign the remaining button slots: play/pause A B C D
             // A = previous, else custom action (if not reserved)
             // B = next, else custom action (if not reserved)
             // C and D are always custom actions
@@ -762,8 +765,8 @@ class MediaDataManager(
                 null
             }
 
-            actions.startCustom = customActions[customIdx++]
-            actions.endCustom = customActions[customIdx++]
+            actions.custom0 = customActions[customIdx++]
+            actions.custom1 = customActions[customIdx++]
         }
         return actions
     }
@@ -787,32 +790,34 @@ class MediaDataManager(
         return when (action) {
             PlaybackState.ACTION_PLAY -> {
                 MediaAction(
-                    Icon.createWithResource(context, com.android.internal.R.drawable.ic_media_play),
+                    context.getDrawable(R.drawable.ic_media_play),
                     { controller.transportControls.play() },
-                    context.getString(R.string.controls_media_button_play)
+                    context.getString(R.string.controls_media_button_play),
+                    context.getDrawable(R.drawable.ic_media_play_container)
                 )
             }
             PlaybackState.ACTION_PAUSE -> {
                 MediaAction(
-                    Icon.createWithResource(context,
-                        com.android.internal.R.drawable.ic_media_pause),
+                    context.getDrawable(R.drawable.ic_media_pause),
                     { controller.transportControls.pause() },
-                    context.getString(R.string.controls_media_button_pause)
+                    context.getString(R.string.controls_media_button_pause),
+                    context.getDrawable(R.drawable.ic_media_pause_container)
                 )
             }
             PlaybackState.ACTION_SKIP_TO_PREVIOUS -> {
                 MediaAction(
-                    Icon.createWithResource(context,
-                        com.android.internal.R.drawable.ic_media_previous),
+                    context.getDrawable(R.drawable.ic_media_prev),
                     { controller.transportControls.skipToPrevious() },
-                    context.getString(R.string.controls_media_button_prev)
+                    context.getString(R.string.controls_media_button_prev),
+                    null
                 )
             }
             PlaybackState.ACTION_SKIP_TO_NEXT -> {
                 MediaAction(
-                    Icon.createWithResource(context, com.android.internal.R.drawable.ic_media_next),
+                    context.getDrawable(R.drawable.ic_media_next),
                     { controller.transportControls.skipToNext() },
-                    context.getString(R.string.controls_media_button_next)
+                    context.getString(R.string.controls_media_button_next),
+                    null
                 )
             }
             else -> null
@@ -835,9 +840,10 @@ class MediaDataManager(
 
         val it = state.customActions[index]
         return MediaAction(
-            Icon.createWithResource(packageName, it.icon),
+            Icon.createWithResource(packageName, it.icon).loadDrawable(context),
             { controller.transportControls.sendCustomAction(it, it.extras) },
-            it.name
+            it.name,
+            null
         )
     }
 
@@ -900,9 +906,11 @@ class MediaDataManager(
 
     private fun getResumeMediaAction(action: Runnable): MediaAction {
         return MediaAction(
-            Icon.createWithResource(context, R.drawable.lb_ic_play).setTint(themeText),
+            Icon.createWithResource(context, R.drawable.ic_media_play)
+                .setTint(themeText).loadDrawable(context),
             action,
-            context.getString(R.string.controls_media_resume)
+            context.getString(R.string.controls_media_resume),
+            context.getDrawable(R.drawable.ic_media_play_container)
         )
     }
 
@@ -964,6 +972,7 @@ class MediaDataManager(
             // Move to resume key (aka package name) if that key doesn't already exist.
             val resumeAction = getResumeMediaAction(removed.resumeAction!!)
             val updated = removed.copy(token = null, actions = listOf(resumeAction),
+                    semanticActions = MediaButton(playOrPause = resumeAction),
                     actionsToShowInCompact = listOf(0), active = false, resumption = true,
                     isPlaying = false, isClearable = true)
             val pkg = removed.packageName

@@ -205,13 +205,23 @@ public final class EditableInputConnection extends BaseInputConnection
     }
 
     @Override
+    public boolean requestCursorUpdates(
+            @CursorUpdateMode int cursorUpdateMode, @CursorUpdateFilter int cursorUpdateFilter) {
+        // TODO(b/210039666): use separate attrs for updateMode and updateFilter.
+        return requestCursorUpdates(cursorUpdateMode | cursorUpdateFilter);
+    }
+
+    @Override
     public boolean requestCursorUpdates(int cursorUpdateMode) {
         if (DEBUG) Log.v(TAG, "requestUpdateCursorAnchorInfo " + cursorUpdateMode);
 
         // It is possible that any other bit is used as a valid flag in a future release.
         // We should reject the entire request in such a case.
         final int knownFlagMask = InputConnection.CURSOR_UPDATE_IMMEDIATE
-                | InputConnection.CURSOR_UPDATE_MONITOR;
+                | InputConnection.CURSOR_UPDATE_MONITOR
+                | InputConnection.CURSOR_UPDATE_FILTER_EDITOR_BOUNDS
+                | InputConnection.CURSOR_UPDATE_FILTER_INSERTION_MARKER
+                | InputConnection.CURSOR_UPDATE_FILTER_CHARACTER_BOUNDS;
         final int unknownFlags = cursorUpdateMode & ~knownFlagMask;
         if (unknownFlags != 0) {
             if (DEBUG) {

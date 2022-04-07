@@ -17,12 +17,15 @@
 package android.media.tv;
 
 import android.annotation.NonNull;
+import android.annotation.Nullable;
 import android.os.Parcel;
 import android.os.Parcelable;
 
-/** @hide */
+/**
+ * A response for Stream Event from broadcast signal.
+ */
 public final class StreamEventResponse extends BroadcastInfoResponse implements Parcelable {
-    public static final @TvInputManager.BroadcastInfoType int responseType =
+    private static final @TvInputManager.BroadcastInfoType int RESPONSE_TYPE =
             TvInputManager.BROADCAST_INFO_STREAM_EVENT;
 
     public static final @NonNull Parcelable.Creator<StreamEventResponse> CREATOR =
@@ -40,52 +43,72 @@ public final class StreamEventResponse extends BroadcastInfoResponse implements 
             };
 
     private final int mEventId;
-    private final long mNpt;
+    private final long mNptMillis;
     private final byte[] mData;
 
-    public static StreamEventResponse createFromParcelBody(Parcel in) {
+    static StreamEventResponse createFromParcelBody(Parcel in) {
         return new StreamEventResponse(in);
     }
 
     public StreamEventResponse(int requestId, int sequence, @ResponseResult int responseResult,
-            int eventId, long npt, @NonNull byte[] data) {
-        super(responseType, requestId, sequence, responseResult);
+            int eventId, long nptMillis, @Nullable byte[] data) {
+        super(RESPONSE_TYPE, requestId, sequence, responseResult);
         mEventId = eventId;
-        mNpt = npt;
+        mNptMillis = nptMillis;
         mData = data;
     }
 
     private StreamEventResponse(@NonNull Parcel source) {
-        super(responseType, source);
+        super(RESPONSE_TYPE, source);
         mEventId = source.readInt();
-        mNpt = source.readLong();
+        mNptMillis = source.readLong();
         int dataLength = source.readInt();
-        mData = new byte[dataLength];
-        source.readByteArray(mData);
+        if (dataLength > 0) {
+            mData = new byte[dataLength];
+            source.readByteArray(mData);
+        } else {
+            mData = null;
+        }
     }
 
-    /** Returns the event ID */
+    /**
+     * Returns the event ID.
+     */
     public int getEventId() {
         return mEventId;
     }
 
-    /** Returns the NPT(Normal Play Time) value when the event occurred or will occur */
-    public long getNpt() {
-        return mNpt;
+    /**
+     * Returns the NPT(Normal Play Time) value when the event occurred or will occur.
+     * <p>The time unit of NPT is millisecond.
+     */
+    public long getNptMillis() {
+        return mNptMillis;
     }
 
-    /** Returns the application specific data */
-    @NonNull
+    /**
+     * Returns the application specific data.
+     */
+    @Nullable
     public byte[] getData() {
         return mData;
+    }
+
+    @Override
+    public int describeContents() {
+        return 0;
     }
 
     @Override
     public void writeToParcel(@NonNull Parcel dest, int flags) {
         super.writeToParcel(dest, flags);
         dest.writeInt(mEventId);
-        dest.writeLong(mNpt);
-        dest.writeInt(mData.length);
-        dest.writeByteArray(mData);
+        dest.writeLong(mNptMillis);
+        if (mData != null && mData.length > 0) {
+            dest.writeInt(mData.length);
+            dest.writeByteArray(mData);
+        } else {
+            dest.writeInt(0);
+        }
     }
 }

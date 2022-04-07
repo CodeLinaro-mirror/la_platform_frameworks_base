@@ -17,6 +17,7 @@
 package android.companion.virtual;
 
 import android.app.PendingIntent;
+import android.companion.virtual.audio.IAudioSessionCallback;
 import android.graphics.Point;
 import android.graphics.PointF;
 import android.hardware.input.VirtualKeyEvent;
@@ -44,6 +45,15 @@ interface IVirtualDevice {
      * Closes the virtual device and frees all associated resources.
      */
     void close();
+
+    /**
+     * Notifies of an audio session being started.
+     */
+    void onAudioSessionStarting(
+            int displayId,
+            IAudioSessionCallback callback);
+
+    void onAudioSessionEnded();
 
     void createVirtualKeyboard(
             int displayId,
@@ -77,4 +87,7 @@ interface IVirtualDevice {
     void launchPendingIntent(
             int displayId, in PendingIntent pendingIntent, in ResultReceiver resultReceiver);
     PointF getCursorPosition(IBinder token);
+
+    /** Sets whether to show or hide the cursor while this virtual device is active. */
+    void setShowPointerIcon(boolean showPointerIcon);
 }

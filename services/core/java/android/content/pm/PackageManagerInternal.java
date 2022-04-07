@@ -45,12 +45,14 @@ import android.util.SparseArray;
 import com.android.internal.util.function.pooled.PooledLambda;
 import com.android.server.pm.PackageList;
 import com.android.server.pm.PackageSetting;
+import com.android.server.pm.dex.DynamicCodeLogger;
 import com.android.server.pm.parsing.pkg.AndroidPackage;
 import com.android.server.pm.pkg.AndroidPackageApi;
-import com.android.server.pm.pkg.PackageState;
 import com.android.server.pm.pkg.PackageStateInternal;
+import com.android.server.pm.pkg.SharedUserApi;
 import com.android.server.pm.pkg.component.ParsedMainComponent;
 import com.android.server.pm.pkg.mutate.PackageStateMutator;
+import com.android.server.pm.snapshot.PackageDataSnapshot;
 
 import java.io.IOException;
 import java.lang.annotation.Retention;
@@ -65,7 +67,8 @@ import java.util.function.Consumer;
  *
  * @hide Only for use within the system server.
  */
-public abstract class PackageManagerInternal implements PackageSettingsSnapshotProvider {
+public abstract class PackageManagerInternal {
+
     @IntDef(prefix = "PACKAGE_", value = {
             PACKAGE_SYSTEM,
             PACKAGE_SETUP_WIZARD,
@@ -191,6 +194,19 @@ public abstract class PackageManagerInternal implements PackageSettingsSnapshotP
      * @return True a permissions review is required.
      */
     public abstract boolean isPermissionsReviewRequired(String packageName, int userId);
+
+
+    /**
+     * Gets whether a given package name belongs to the calling uid. If the calling uid is an
+     * {@link Process#isSdkSandboxUid(int) sdk sandbox uid}, checks whether the package name is
+     * equal to {@link PackageManager#getSdkSandboxPackageName()}.
+     *
+     * @param packageName The package name to check.
+     * @param callingUid The calling uid.
+     * @param userId The user under which to check.
+     * @return True if the package name belongs to the calling uid.
+     */
+    public abstract boolean isSameApp(String packageName, int callingUid, int userId);
 
     /**
      * Retrieve all of the information we know about a particular package/application.
@@ -655,6 +671,11 @@ public abstract class PackageManagerInternal implements PackageSettingsSnapshotP
     public abstract void notifyPackageUse(String packageName, int reason);
 
     /**
+     * Notify the package is force stopped.
+     */
+    public abstract void onPackageProcessKilledForUninstall(String packageName);
+
+    /**
      * Returns a package object for the given package name.
      */
     public abstract @Nullable AndroidPackage getPackage(@NonNull String packageName);
@@ -667,8 +688,6 @@ public abstract class PackageManagerInternal implements PackageSettingsSnapshotP
 
     @Nullable
     public abstract PackageStateInternal getPackageStateInternal(@NonNull String packageName);
-
-    public abstract @Nullable PackageState getPackageState(@NonNull String packageName);
 
     @NonNull
     public abstract ArrayMap<String, ? extends PackageStateInternal> getPackageStates();
@@ -717,7 +736,8 @@ public abstract class PackageManagerInternal implements PackageSettingsSnapshotP
     /**
      * Returns a package object for the disabled system package name.
      */
-    public abstract @Nullable PackageSetting getDisabledSystemPackage(@NonNull String packageName);
+    public abstract @Nullable PackageStateInternal getDisabledSystemPackage(
+            @NonNull String packageName);
 
     /**
      * Returns the package name for the disabled system package.
@@ -881,6 +901,11 @@ public abstract class PackageManagerInternal implements PackageSettingsSnapshotP
     public abstract void freeStorage(String volumeUuid, long bytes,
             @StorageManager.AllocateFlags int flags) throws IOException;
 
+    /**
+     * Blocking call to clear all cached app data above quota.
+     */
+    public abstract void freeAllAppCacheAboveQuota(@NonNull String volumeUuid) throws IOException;
+
     /** Returns {@code true} if the specified component is enabled and matches the given flags. */
     public abstract boolean isEnabledAndMatches(@NonNull ParsedMainComponent component,
             @PackageManager.ComponentInfoFlagsBits long flags, int userId);
@@ -901,32 +926,20 @@ public abstract class PackageManagerInternal implements PackageSettingsSnapshotP
 
     /**
      * Perform the given action for each package.
-     *
-     * @param locked whether to hold the packages lock. If the lock is not held, the objects will
-     *               be iterated using a temporary data structure. In the vast majority of cases,
-     *               the lock should not have to be held. This is exposed to mirror the
-     *               functionality of the other forEach methods, for eventual migration.
      * @param action action to be performed
      */
-    public abstract void forEachPackageState(boolean locked, Consumer<PackageStateInternal> action);
+    public abstract void forEachPackageState(Consumer<PackageStateInternal> action);
 
     /**
-     * {@link #forEachPackageState(boolean, Consumer)} but filtered to only states with packages
+     * {@link #forEachPackageState(Consumer)} but filtered to only states with packages
      * on device where {@link PackageStateInternal#getPkg()} is not null.
      */
     public abstract void forEachPackage(Consumer<AndroidPackage> action);
 
     /**
      * Perform the given action for each installed package for a user.
-     * Note that packages lock will be held while performing the actions.
      */
     public abstract void forEachInstalledPackage(
-            @NonNull Consumer<AndroidPackage> actionLocked, @UserIdInt int userId);
-
-    /**
-     * Perform the given action for each installed package for a user.
-     */
-    public abstract void forEachInstalledPackage(boolean locked,
             @NonNull Consumer<AndroidPackage> action, @UserIdInt int userId);
 
     /** Returns the list of enabled components */
@@ -1274,6 +1287,21 @@ public abstract class PackageManagerInternal implements PackageSettingsSnapshotP
             boolean migrateAppsData);
 
     /**
+     * Returns an array of PackageStateInternal that are all part of a shared user setting which is
+     * denoted by the app ID. Returns an empty set if the shared user setting doesn't exist or does
+     * not contain any package.
+     */
+    @NonNull
+    public abstract ArraySet<PackageStateInternal> getSharedUserPackages(int sharedUserAppId);
+
+    /**
+     * Returns the SharedUserApi denoted by the app ID of the shared user setting. Returns null if
+     * the corresponding shared user setting doesn't exist.
+     */
+    @Nullable
+    public abstract SharedUserApi getSharedUserApi(int sharedUserAppId);
+
+    /**
      * Initiates a package state mutation request, returning the current state as known by
      * PackageManager. This allows the later commit request to compare the initial values and
      * determine if any state was changed or any packages were updated since the whole request
@@ -1330,4 +1358,16 @@ public abstract class PackageManagerInternal implements PackageSettingsSnapshotP
     public abstract PackageStateMutator.Result commitPackageStateMutation(
             @Nullable PackageStateMutator.InitialState state,
             @NonNull Consumer<PackageStateMutator> consumer);
+
+    /**
+     * @return package data snapshot for use with other PackageManager infrastructure. This should
+     * only be used as a parameter passed to another PM related class. Do not call methods on this
+     * directly.
+     */
+    @NonNull
+    public abstract PackageDataSnapshot snapshot();
+
+    public abstract void shutdown();
+
+    public abstract DynamicCodeLogger getDynamicCodeLogger();
 }

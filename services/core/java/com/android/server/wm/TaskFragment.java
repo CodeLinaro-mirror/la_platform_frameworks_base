@@ -25,11 +25,13 @@ import static android.app.WindowConfiguration.WINDOWING_MODE_FULLSCREEN;
 import static android.app.WindowConfiguration.WINDOWING_MODE_MULTI_WINDOW;
 import static android.app.WindowConfiguration.WINDOWING_MODE_PINNED;
 import static android.app.WindowConfiguration.WINDOWING_MODE_UNDEFINED;
+import static android.content.pm.ActivityInfo.FLAG_ALLOW_UNTRUSTED_ACTIVITY_EMBEDDING;
 import static android.content.pm.ActivityInfo.FLAG_RESUME_WHILE_PAUSING;
 import static android.content.res.Configuration.ORIENTATION_LANDSCAPE;
 import static android.content.res.Configuration.ORIENTATION_PORTRAIT;
 import static android.content.res.Configuration.ORIENTATION_UNDEFINED;
 import static android.os.Process.INVALID_UID;
+import static android.os.Process.SYSTEM_UID;
 import static android.os.UserHandle.USER_NULL;
 import static android.view.Display.INVALID_DISPLAY;
 import static android.view.WindowManager.TRANSIT_CLOSE;
@@ -61,8 +63,6 @@ import static com.android.server.wm.TaskFragmentProto.DISPLAY_ID;
 import static com.android.server.wm.TaskFragmentProto.MIN_HEIGHT;
 import static com.android.server.wm.TaskFragmentProto.MIN_WIDTH;
 import static com.android.server.wm.TaskFragmentProto.WINDOW_CONTAINER;
-import static com.android.server.wm.WindowContainer.AnimationFlags.CHILDREN;
-import static com.android.server.wm.WindowContainer.AnimationFlags.TRANSITION;
 import static com.android.server.wm.WindowContainerChildProto.TASK_FRAGMENT;
 
 import android.annotation.IntDef;
@@ -81,6 +81,7 @@ import android.graphics.Point;
 import android.graphics.Rect;
 import android.os.IBinder;
 import android.os.RemoteException;
+import android.os.UserHandle;
 import android.util.DisplayMetrics;
 import android.util.Slog;
 import android.util.proto.ProtoOutputStream;
@@ -95,6 +96,7 @@ import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.protolog.common.ProtoLog;
 import com.android.internal.util.function.pooled.PooledLambda;
 import com.android.internal.util.function.pooled.PooledPredicate;
+import com.android.server.pm.parsing.pkg.AndroidPackage;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
@@ -102,6 +104,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 
@@ -237,7 +240,7 @@ class TaskFragment extends WindowContainer<WindowContainer> {
 
     /** Client assigned unique token for this TaskFragment if this is created by an organizer. */
     @Nullable
-    private IBinder mFragmentToken;
+    private final IBinder mFragmentToken;
 
     /**
      * Whether to delay the last activity of TaskFragment being immediately removed while finishing.
@@ -402,6 +405,12 @@ class TaskFragment extends WindowContainer<WindowContainer> {
             Slog.d(TAG, "setResumedActivity taskFrag:" + this + " + from: "
                     + mResumedActivity + " to:" + r + " reason:" + reason);
         }
+
+        if (r != null && mResumedActivity == null) {
+            // Task is becoming active.
+            getTask().touchActiveTime();
+        }
+
         final ActivityRecord prevR = mResumedActivity;
         mResumedActivity = r;
         mTaskSupervisor.updateTopResumedActivityIfNeeded();
@@ -502,6 +511,71 @@ class TaskFragment extends WindowContainer<WindowContainer> {
             return taskFragment != null && taskFragment.isEmbedded();
         }
         return false;
+    }
+
+    /**
+     * Checks if the organized task fragment is allowed to have the specified activity, which is
+     * allowed if an activity allows embedding in untrusted mode, or if the trusted mode can be
+     * enabled.
+     * @see #isAllowedToEmbedActivityInTrustedMode(ActivityRecord)
+     */
+    boolean isAllowedToEmbedActivity(@NonNull ActivityRecord a) {
+        return isAllowedToEmbedActivityInUntrustedMode(a)
+                || isAllowedToEmbedActivityInTrustedMode(a);
+    }
+
+    /**
+     * Checks if the organized task fragment is allowed to embed activity in untrusted mode.
+     */
+    boolean isAllowedToEmbedActivityInUntrustedMode(@NonNull ActivityRecord a) {
+        final WindowContainer parent = getParent();
+        if (parent == null || !parent.getBounds().contains(getBounds())) {
+            // Without full trust between the host and the embedded activity, we don't allow
+            // TaskFragment to have bounds outside of the parent bounds.
+            return false;
+        }
+        return (a.info.flags & FLAG_ALLOW_UNTRUSTED_ACTIVITY_EMBEDDING)
+                == FLAG_ALLOW_UNTRUSTED_ACTIVITY_EMBEDDING;
+    }
+
+    /**
+     * Checks if the organized task fragment is allowed to embed activity in fully trusted mode,
+     * which means that all transactions are allowed. This is supported in the following cases:
+     * <li>the activity belongs to the same app as the organizer host;</li>
+     * <li>the activity has declared the organizer host as trusted explicitly via known
+     * certificate.</li>
+     */
+    boolean isAllowedToEmbedActivityInTrustedMode(@NonNull ActivityRecord a) {
+        if (UserHandle.getAppId(mTaskFragmentOrganizerUid) == SYSTEM_UID) {
+            // The system is trusted to embed other apps securely and for all users.
+            return true;
+        }
+
+        if (mTaskFragmentOrganizerUid == a.getUid()) {
+            // Activities from the same UID can be embedded freely by the host.
+            return true;
+        }
+
+        Set<String> knownActivityEmbeddingCerts = a.info.getKnownActivityEmbeddingCerts();
+        if (knownActivityEmbeddingCerts.isEmpty()) {
+            // An application must either declare that it allows untrusted embedding, or specify
+            // a set of app certificates that are allowed to embed it in trusted mode.
+            return false;
+        }
+
+        AndroidPackage hostPackage = mAtmService.getPackageManagerInternalLocked()
+                .getPackage(mTaskFragmentOrganizerUid);
+
+        return hostPackage != null && hostPackage.getSigningDetails().hasAncestorOrSelfWithDigest(
+                knownActivityEmbeddingCerts);
+    }
+
+    /**
+     * Checks if all activities in the task fragment are allowed to be embedded in trusted mode.
+     * @see #isAllowedToEmbedActivityInTrustedMode(ActivityRecord)
+     */
+    boolean isAllowedToBeEmbeddedInTrustedMode() {
+        return forAllActivities(this::isAllowedToEmbedActivityInTrustedMode);
     }
 
     /**
@@ -823,11 +897,17 @@ class TaskFragment extends WindowContainer<WindowContainer> {
                 if (!adjacentTaskFragments.isEmpty() && !gotTranslucentAdjacent) {
                     // The z-order of this TaskFragment is in middle of two adjacent TaskFragments
                     // and it cannot be visible if the TaskFragment on top is not translucent and
-                    // is fully occluding this one.
+                    // is occluding this one.
+                    mTmpRect.set(getBounds());
                     for (int j = adjacentTaskFragments.size() - 1; j >= 0; --j) {
                         final TaskFragment taskFragment = adjacentTaskFragments.get(j);
-                        if (!taskFragment.isTranslucent(starting)
-                                && taskFragment.getBounds().contains(this.getBounds())) {
+                        final TaskFragment adjacentTaskFragment =
+                                taskFragment.mAdjacentTaskFragment;
+                        if (adjacentTaskFragment == this) {
+                            continue;
+                        }
+                        if (mTmpRect.intersect(taskFragment.getBounds())
+                                || mTmpRect.intersect(adjacentTaskFragment.getBounds())) {
                             return TASK_FRAGMENT_VISIBILITY_INVISIBLE;
                         }
                     }
@@ -945,6 +1025,10 @@ class TaskFragment extends WindowContainer<WindowContainer> {
             // we still want to check if the visibility of other windows have changed (e.g. bringing
             // a fullscreen window forward to cover another freeform activity.)
             if (taskDisplayArea.inMultiWindowMode()) {
+                if (taskDisplayArea.mDisplayContent != null
+                        && taskDisplayArea.mDisplayContent.mFocusedApp != next) {
+                    taskDisplayArea.mDisplayContent.setFocusedApp(next);
+                }
                 taskDisplayArea.ensureActivitiesVisible(null /* starting */, 0 /* configChanges */,
                         false /* preserveWindows */, true /* notifyClients */);
             }
@@ -1390,7 +1474,8 @@ class TaskFragment extends WindowContainer<WindowContainer> {
             // next activity.
             final boolean lastResumedCanPip = prev.checkEnterPictureInPictureState(
                     "shouldAutoPipWhilePausing", userLeaving);
-            if (lastResumedCanPip && prev.pictureInPictureArgs.isAutoEnterEnabled()) {
+            if (userLeaving && lastResumedCanPip
+                    && prev.pictureInPictureArgs.isAutoEnterEnabled()) {
                 shouldAutoPip = true;
             } else if (!lastResumedCanPip) {
                 // If the flag RESUME_WHILE_PAUSING is set, then continue to schedule the previous
@@ -1638,7 +1723,7 @@ class TaskFragment extends WindowContainer<WindowContainer> {
         if (isAddingActivity && task != null) {
 
             // TODO(b/207481538): temporary per-activity screenshoting
-            if (r != null && BackNavigationController.isEnabled()) {
+            if (r != null && BackNavigationController.isScreenshotEnabled()) {
                 ProtoLog.v(WM_DEBUG_BACK_PREVIEW, "Screenshotting Activity %s",
                         r.mActivityComponent.flattenToString());
                 Rect outBounds = r.getBounds();
@@ -1697,8 +1782,7 @@ class TaskFragment extends WindowContainer<WindowContainer> {
         // Resolve override windowing mode to fullscreen for home task (even on freeform
         // display), or split-screen if in split-screen mode.
         if (getActivityType() == ACTIVITY_TYPE_HOME && windowingMode == WINDOWING_MODE_UNDEFINED) {
-            windowingMode = WindowConfiguration.isSplitScreenWindowingMode(parentWindowingMode)
-                    ? parentWindowingMode : WINDOWING_MODE_FULLSCREEN;
+            windowingMode = WINDOWING_MODE_FULLSCREEN;
             getResolvedOverrideConfiguration().windowConfiguration.setWindowingMode(windowingMode);
         }
 
@@ -2234,6 +2318,10 @@ class TaskFragment extends WindowContainer<WindowContainer> {
         mMinHeight = minHeight;
     }
 
+    boolean shouldRemoveSelfOnLastChildRemoval() {
+        return !mCreatedByOrganizer || mIsRemovalRequested;
+    }
+
     @Override
     void removeChild(WindowContainer child) {
         removeChild(child, true /* removeSelfIfPossible */);
@@ -2241,7 +2329,7 @@ class TaskFragment extends WindowContainer<WindowContainer> {
 
     void removeChild(WindowContainer child, boolean removeSelfIfPossible) {
         super.removeChild(child);
-        if (BackNavigationController.isEnabled()) {
+        if (BackNavigationController.isScreenshotEnabled()) {
             //TODO(b/207481538) Remove once the infrastructure to support per-activity screenshot is
             // implemented
             ActivityRecord r = child.asActivityRecord();
@@ -2249,7 +2337,7 @@ class TaskFragment extends WindowContainer<WindowContainer> {
                 mBackScreenshots.remove(r.mActivityComponent.flattenToString());
             }
         }
-        if (removeSelfIfPossible && (!mCreatedByOrganizer || mIsRemovalRequested) && !hasChild()) {
+        if (removeSelfIfPossible && shouldRemoveSelfOnLastChildRemoval() && !hasChild()) {
             removeImmediately("removeLastChild " + child);
         }
     }
@@ -2267,13 +2355,18 @@ class TaskFragment extends WindowContainer<WindowContainer> {
             return;
         }
         mIsRemovalRequested = true;
-        forAllActivities(r -> {
-            if (withTransition) {
+        // The task order may be changed by finishIfPossible() for adjusting focus if there are
+        // nested tasks, so add all activities into a list to avoid missed removals.
+        final ArrayList<ActivityRecord> removingActivities = new ArrayList<>();
+        forAllActivities((Consumer<ActivityRecord>) removingActivities::add);
+        for (int i = removingActivities.size() - 1; i >= 0; --i) {
+            final ActivityRecord r = removingActivities.get(i);
+            if (withTransition && r.isVisible()) {
                 r.finishIfPossible(reason, false /* oomAdj */);
             } else {
                 r.destroyIfPossible(reason);
             }
-        });
+        }
     }
 
     void setDelayLastActivityRemoval(boolean delay) {
@@ -2291,8 +2384,7 @@ class TaskFragment extends WindowContainer<WindowContainer> {
         if (!hasChild()) {
             return false;
         }
-        return isAnimating(TRANSITION | CHILDREN, WindowState.EXIT_ANIMATING_TYPES)
-                || inTransition();
+        return isExitAnimationRunningSelfOrChild() || inTransition();
     }
 
     @Override
@@ -2313,8 +2405,16 @@ class TaskFragment extends WindowContainer<WindowContainer> {
     void removeImmediately() {
         mIsRemovalRequested = false;
         resetAdjacentTaskFragment();
+        cleanUp();
         super.removeImmediately();
         sendTaskFragmentVanished();
+    }
+
+    /** Called on remove to cleanup. */
+    private void cleanUp() {
+        if (mIsEmbedded) {
+            mAtmService.mWindowOrganizerController.cleanUpEmbeddedTaskFragment(this);
+        }
     }
 
     @Override
@@ -2340,7 +2440,7 @@ class TaskFragment extends WindowContainer<WindowContainer> {
         // Bounds need to be relative, as the dim layer is a child.
         final Rect dimBounds = getBounds();
         dimBounds.offsetTo(0 /* newLeft */, 0 /* newTop */);
-        if (mDimmer.updateDims(getPendingTransaction(), dimBounds)) {
+        if (mDimmer.updateDims(getSyncTransaction(), dimBounds)) {
             scheduleAnimation();
         }
     }

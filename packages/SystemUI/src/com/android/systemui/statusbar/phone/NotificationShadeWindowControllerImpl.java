@@ -26,6 +26,7 @@ import static com.android.systemui.statusbar.NotificationRemoteInputManager.ENAB
 import android.app.IActivityManager;
 import android.content.Context;
 import android.content.pm.ActivityInfo;
+import android.content.res.Configuration;
 import android.graphics.PixelFormat;
 import android.graphics.Region;
 import android.os.Binder;
@@ -111,6 +112,13 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
     private final SysuiColorExtractor mColorExtractor;
     private final ScreenOffAnimationController mScreenOffAnimationController;
     private float mFaceAuthDisplayBrightness = LayoutParams.BRIGHTNESS_OVERRIDE_NONE;
+    /**
+     * Layout params would be aggregated and dispatched all at once if this is > 0.
+     *
+     * @see #batchApplyWindowLayoutParams(Runnable)
+     */
+    private int mDeferWindowLayoutParams;
+    private boolean mLastKeyguardRotationAllowed;
 
     @Inject
     public NotificationShadeWindowControllerImpl(Context context, WindowManager windowManager,
@@ -137,7 +145,7 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
         mScreenOffAnimationController = screenOffAnimationController;
         dumpManager.registerDumpable(getClass().getName(), this);
         mAuthController = authController;
-
+        mLastKeyguardRotationAllowed = mKeyguardStateController.isKeyguardScreenRotationAllowed();
         mLockScreenDisplayTimeout = context.getResources()
                 .getInteger(R.integer.config_lockScreenDisplayTimeout);
         ((SysuiStatusBarStateController) statusBarStateController)
@@ -277,14 +285,12 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
     }
 
     private void applyKeyguardFlags(State state) {
-        final boolean scrimsOccludingWallpaper =
-                state.mScrimsVisibility == ScrimController.OPAQUE || state.mLightRevealScrimOpaque;
         final boolean keyguardOrAod = state.mKeyguardShowing
                 || (state.mDozing && mDozeParameters.getAlwaysOn());
-        if ((keyguardOrAod && !state.mBackdropShowing && !scrimsOccludingWallpaper)
+        if ((keyguardOrAod && !state.mBackdropShowing && !state.mLightRevealScrimOpaque)
                 || mKeyguardViewMediator.isAnimatingBetweenKeyguardAndSurfaceBehindOrWillBe()) {
             // Show the wallpaper if we're on keyguard/AOD and the wallpaper is not occluded by a
-            // solid backdrop or scrim. Also, show it if we are currently animating between the
+            // solid backdrop. Also, show it if we are currently animating between the
             // keyguard and the surface behind the keyguard - we want to use the wallpaper as a
             // backdrop for this animation.
             mLpChanged.flags |= LayoutParams.FLAG_SHOW_WALLPAPER;
@@ -304,10 +310,8 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
             if (onKeyguard
                     && mAuthController.isUdfpsEnrolled(KeyguardUpdateMonitor.getCurrentUser())) {
                 mLpChanged.preferredMaxDisplayRefreshRate = mKeyguardPreferredRefreshRate;
-                mLpChanged.preferredMinDisplayRefreshRate = mKeyguardPreferredRefreshRate;
             } else {
                 mLpChanged.preferredMaxDisplayRefreshRate = 0;
-                mLpChanged.preferredMinDisplayRefreshRate = 0;
             }
             Trace.setCounter("display_set_preferred_refresh_rate",
                     (long) mKeyguardPreferredRefreshRate);
@@ -380,10 +384,12 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
             }
             visible = true;
         }
-        if (visible) {
-            mNotificationShadeView.setVisibility(View.VISIBLE);
-        } else {
-            mNotificationShadeView.setVisibility(View.INVISIBLE);
+        if (mNotificationShadeView != null) {
+            if (visible) {
+                mNotificationShadeView.setVisibility(View.VISIBLE);
+            } else {
+                mNotificationShadeView.setVisibility(View.INVISIBLE);
+            }
         }
     }
 
@@ -437,6 +443,20 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
         }
     }
 
+    private void applyWindowLayoutParams() {
+        if (mDeferWindowLayoutParams == 0 && mLp != null && mLp.copyFrom(mLpChanged) != 0) {
+            mWindowManager.updateViewLayout(mNotificationShadeView, mLp);
+        }
+    }
+
+    @Override
+    public void batchApplyWindowLayoutParams(Runnable scope) {
+        mDeferWindowLayoutParams++;
+        scope.run();
+        mDeferWindowLayoutParams--;
+        applyWindowLayoutParams();
+    }
+
     private void apply(State state) {
         applyKeyguardFlags(state);
         applyFocusableFlag(state);
@@ -451,9 +471,8 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
         applyHasTopUi(state);
         applyNotTouchable(state);
         applyStatusBarColorSpaceAgnosticFlag(state);
-        if (mLp != null && mLp.copyFrom(mLpChanged) != 0) {
-            mWindowManager.updateViewLayout(mNotificationShadeView, mLp);
-        }
+        applyWindowLayoutParams();
+
         if (mHasTopUi != mHasTopUiChanged) {
             whitelistIpcs(() -> {
                 try {
@@ -739,6 +758,7 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
         pw.println(TAG + ":");
         pw.println("  mKeyguardMaxRefreshRate=" + mKeyguardMaxRefreshRate);
         pw.println("  mKeyguardPreferredRefreshRate=" + mKeyguardPreferredRefreshRate);
+        pw.println("  mDeferWindowLayoutParams=" + mDeferWindowLayoutParams);
         pw.println(mCurrentState);
         if (mNotificationShadeView != null && mNotificationShadeView.getViewRootImpl() != null) {
             mNotificationShadeView.getViewRootImpl().dump("  ", pw);
@@ -759,6 +779,17 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
         final boolean useDarkText = mColorExtractor.getNeutralColors().supportsDarkText();
         // Make sure we have the correct navbar/statusbar colors.
         setKeyguardDark(useDarkText);
+    }
+
+    @Override
+    public void onConfigChanged(Configuration newConfig) {
+        final boolean newScreenRotationAllowed = mKeyguardStateController
+                .isKeyguardScreenRotationAllowed();
+
+        if (mLastKeyguardRotationAllowed != newScreenRotationAllowed) {
+            apply(mCurrentState);
+            mLastKeyguardRotationAllowed = newScreenRotationAllowed;
+        }
     }
 
     /**
@@ -809,7 +840,7 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
         Set<String> mComponentsForcingTopUi = new HashSet<>();
 
         /**
-         * The {@link StatusBar} state from the status bar.
+         * The status bar state from {@link CentralSurfaces}.
          */
         int mStatusBarState;
 

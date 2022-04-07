@@ -74,10 +74,9 @@ public class AccessibilityRecord {
     private static final int PROPERTY_IMPORTANT_FOR_ACCESSIBILITY = 0x00000200;
 
     private static final int GET_SOURCE_PREFETCH_FLAGS =
-        AccessibilityNodeInfo.FLAG_PREFETCH_PREDECESSORS
-        | AccessibilityNodeInfo.FLAG_PREFETCH_SIBLINGS
-        | AccessibilityNodeInfo.FLAG_PREFETCH_DESCENDANTS;
-
+            AccessibilityNodeInfo.FLAG_PREFETCH_ANCESTORS
+                    | AccessibilityNodeInfo.FLAG_PREFETCH_SIBLINGS
+                    | AccessibilityNodeInfo.FLAG_PREFETCH_DESCENDANTS_HYBRID;
 
     @UnsupportedAppUsage
     boolean mSealed;
@@ -133,7 +132,7 @@ public class AccessibilityRecord {
      *
      * @throws IllegalStateException If called from an AccessibilityService.
      */
-    public void setSource(View source) {
+    public void setSource(@Nullable View source) {
         setSource(source, AccessibilityNodeProvider.HOST_VIEW_ID);
     }
 
@@ -184,17 +183,31 @@ public class AccessibilityRecord {
      * </p>
      * @return The info of the source.
      */
-    public AccessibilityNodeInfo getSource() {
+    public @Nullable AccessibilityNodeInfo getSource() {
+        return getSource(GET_SOURCE_PREFETCH_FLAGS);
+    }
+
+    /**
+     * Gets the {@link AccessibilityNodeInfo} of the event source.
+     *
+     * @param prefetchingStrategy the prefetching strategy.
+     * @return The info of the source.
+     *
+     * @see AccessibilityNodeInfo#getParent(int) for a description of prefetching.
+     */
+    @Nullable
+    public AccessibilityNodeInfo getSource(
+            @AccessibilityNodeInfo.PrefetchingStrategy int prefetchingStrategy) {
         enforceSealed();
         if ((mConnectionId == UNDEFINED)
                 || (mSourceWindowId == AccessibilityWindowInfo.UNDEFINED_WINDOW_ID)
                 || (AccessibilityNodeInfo.getAccessibilityViewId(mSourceNodeId)
-                        == AccessibilityNodeInfo.UNDEFINED_ITEM_ID)) {
+                == AccessibilityNodeInfo.UNDEFINED_ITEM_ID)) {
             return null;
         }
         AccessibilityInteractionClient client = AccessibilityInteractionClient.getInstance();
         return client.findAccessibilityNodeInfoByAccessibilityId(mConnectionId, mSourceWindowId,
-                mSourceNodeId, false, GET_SOURCE_PREFETCH_FLAGS, null);
+                mSourceNodeId, false, prefetchingStrategy, null);
     }
 
     /**
@@ -629,7 +642,7 @@ public class AccessibilityRecord {
      *
      * @return The class name.
      */
-    public CharSequence getClassName() {
+    public @Nullable CharSequence getClassName() {
         return mClassName;
     }
 
@@ -640,7 +653,7 @@ public class AccessibilityRecord {
      *
      * @throws IllegalStateException If called from an AccessibilityService.
      */
-    public void setClassName(CharSequence className) {
+    public void setClassName(@Nullable CharSequence className) {
         enforceNotSealed();
         mClassName = className;
     }
@@ -651,7 +664,7 @@ public class AccessibilityRecord {
      *
      * @return The text.
      */
-    public List<CharSequence> getText() {
+    public @NonNull List<CharSequence> getText() {
         return mText;
     }
 
@@ -660,7 +673,7 @@ public class AccessibilityRecord {
      *
      * @return The text before the change.
      */
-    public CharSequence getBeforeText() {
+    public @Nullable CharSequence getBeforeText() {
         return mBeforeText;
     }
 
@@ -671,7 +684,7 @@ public class AccessibilityRecord {
      *
      * @throws IllegalStateException If called from an AccessibilityService.
      */
-    public void setBeforeText(CharSequence beforeText) {
+    public void setBeforeText(@Nullable CharSequence beforeText) {
         enforceNotSealed();
         mBeforeText = (beforeText == null) ? null
                 : beforeText.subSequence(0, beforeText.length());
@@ -682,7 +695,7 @@ public class AccessibilityRecord {
      *
      * @return The description.
      */
-    public CharSequence getContentDescription() {
+    public @Nullable CharSequence getContentDescription() {
         return mContentDescription;
     }
 
@@ -693,7 +706,7 @@ public class AccessibilityRecord {
      *
      * @throws IllegalStateException If called from an AccessibilityService.
      */
-    public void setContentDescription(CharSequence contentDescription) {
+    public void setContentDescription(@Nullable CharSequence contentDescription) {
         enforceNotSealed();
         mContentDescription = (contentDescription == null) ? null
                 : contentDescription.subSequence(0, contentDescription.length());
@@ -704,7 +717,7 @@ public class AccessibilityRecord {
      *
      * @return The parcelable data.
      */
-    public Parcelable getParcelableData() {
+    public @Nullable Parcelable getParcelableData() {
         return mParcelableData;
     }
 
@@ -715,7 +728,7 @@ public class AccessibilityRecord {
      *
      * @throws IllegalStateException If called from an AccessibilityService.
      */
-    public void setParcelableData(Parcelable parcelableData) {
+    public void setParcelableData(@Nullable Parcelable parcelableData) {
         enforceNotSealed();
         mParcelableData = parcelableData;
     }
@@ -822,7 +835,7 @@ public class AccessibilityRecord {
      * @return An instance.
      */
     @Deprecated
-    public static AccessibilityRecord obtain(AccessibilityRecord record) {
+    public static @NonNull AccessibilityRecord obtain(@NonNull AccessibilityRecord record) {
        AccessibilityRecord clone = AccessibilityRecord.obtain();
        clone.init(record);
        return clone;
@@ -836,7 +849,7 @@ public class AccessibilityRecord {
      * @return An instance.
      */
     @Deprecated
-    public static AccessibilityRecord obtain() {
+    public static @NonNull AccessibilityRecord obtain() {
         return new AccessibilityRecord();
     }
 
@@ -854,7 +867,7 @@ public class AccessibilityRecord {
      *
      * @param record The to initialize from.
      */
-    void init(AccessibilityRecord record) {
+    void init(@NonNull AccessibilityRecord record) {
         mSealed = record.mSealed;
         mBooleanProperties = record.mBooleanProperties;
         mCurrentItemIndex = record.mCurrentItemIndex;

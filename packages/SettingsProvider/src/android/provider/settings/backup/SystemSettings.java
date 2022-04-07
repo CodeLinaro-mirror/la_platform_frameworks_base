@@ -43,6 +43,7 @@ public class SystemSettings {
         Settings.System.FONT_SCALE,
         Settings.System.DIM_SCREEN,
         Settings.System.SCREEN_OFF_TIMEOUT,
+        Settings.System.SCREEN_OFF_TIMEOUT_DOCKED,
         Settings.System.SCREEN_BRIGHTNESS_MODE,
         Settings.System.SCREEN_AUTO_BRIGHTNESS_ADJ,
         Settings.System.SCREEN_BRIGHTNESS_FOR_VR,
@@ -84,6 +85,7 @@ public class SystemSettings {
         Settings.System.RING_VIBRATION_INTENSITY,
         Settings.System.HAPTIC_FEEDBACK_INTENSITY,
         Settings.System.HARDWARE_HAPTIC_FEEDBACK_INTENSITY,
+        Settings.System.HAPTIC_FEEDBACK_ENABLED,
         Settings.System.DISPLAY_COLOR_MODE_VENDOR_HINT, // must precede DISPLAY_COLOR_MODE
         Settings.System.DISPLAY_COLOR_MODE,
         Settings.System.ALARM_ALERT,

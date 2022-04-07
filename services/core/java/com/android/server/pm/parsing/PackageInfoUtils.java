@@ -34,19 +34,6 @@ import android.content.pm.ProcessInfo;
 import android.content.pm.ProviderInfo;
 import android.content.pm.ServiceInfo;
 import android.content.pm.SharedLibraryInfo;
-import com.android.server.pm.pkg.parsing.PackageInfoWithoutStateUtils;
-import com.android.server.pm.pkg.parsing.ParsingUtils;
-import com.android.server.pm.pkg.component.ComponentParseUtils;
-import com.android.server.pm.pkg.component.ParsedActivity;
-import com.android.server.pm.pkg.component.ParsedComponent;
-import com.android.server.pm.pkg.component.ParsedInstrumentation;
-import com.android.server.pm.pkg.component.ParsedMainComponent;
-import com.android.server.pm.pkg.component.ParsedPermission;
-import com.android.server.pm.pkg.component.ParsedPermissionGroup;
-import com.android.server.pm.pkg.component.ParsedProcess;
-import com.android.server.pm.pkg.component.ParsedProvider;
-import com.android.server.pm.pkg.component.ParsedService;
-import com.android.server.pm.pkg.PackageUserStateUtils;
 import android.os.UserHandle;
 import android.util.ArrayMap;
 import android.util.ArraySet;
@@ -60,6 +47,19 @@ import com.android.server.pm.parsing.pkg.PackageImpl;
 import com.android.server.pm.pkg.PackageStateInternal;
 import com.android.server.pm.pkg.PackageStateUnserialized;
 import com.android.server.pm.pkg.PackageUserStateInternal;
+import com.android.server.pm.pkg.PackageUserStateUtils;
+import com.android.server.pm.pkg.component.ComponentParseUtils;
+import com.android.server.pm.pkg.component.ParsedActivity;
+import com.android.server.pm.pkg.component.ParsedComponent;
+import com.android.server.pm.pkg.component.ParsedInstrumentation;
+import com.android.server.pm.pkg.component.ParsedMainComponent;
+import com.android.server.pm.pkg.component.ParsedPermission;
+import com.android.server.pm.pkg.component.ParsedPermissionGroup;
+import com.android.server.pm.pkg.component.ParsedProcess;
+import com.android.server.pm.pkg.component.ParsedProvider;
+import com.android.server.pm.pkg.component.ParsedService;
+import com.android.server.pm.pkg.parsing.PackageInfoWithoutStateUtils;
+import com.android.server.pm.pkg.parsing.ParsingUtils;
 
 import libcore.util.EmptyArray;
 
@@ -121,6 +121,12 @@ public class PackageInfoUtils {
 
         info.isStub = pkg.isStub();
         info.coreApp = pkg.isCoreApp();
+
+        if (pkgSetting != null && !pkgSetting.hasSharedUser()) {
+            // It is possible that this shared UID app has left
+            info.sharedUserId = null;
+            info.sharedUserLabel = 0;
+        }
 
         if ((flags & PackageManager.GET_ACTIVITIES) != 0) {
             final int N = pkg.getActivities().size();

@@ -21,15 +21,20 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewTreeObserver
+
 import com.android.systemui.R
 import com.android.systemui.shared.animation.UnfoldMoveFromCenterAnimator
+import com.android.systemui.statusbar.phone.userswitcher.StatusBarUserSwitcherController
 import com.android.systemui.statusbar.policy.ConfigurationController
 import com.android.systemui.unfold.SysUIUnfoldComponent
 import com.android.systemui.unfold.UNFOLD_STATUS_BAR
 import com.android.systemui.unfold.util.ScopedUnfoldTransitionProgressProvider
 import com.android.systemui.util.ViewController
 import com.android.systemui.util.kotlin.getOrNull
+import com.android.systemui.util.view.ViewUtil
+
 import java.util.Optional
+
 import javax.inject.Inject
 import javax.inject.Named
 
@@ -38,6 +43,8 @@ class PhoneStatusBarViewController private constructor(
     view: PhoneStatusBarView,
     @Named(UNFOLD_STATUS_BAR) private val progressProvider: ScopedUnfoldTransitionProgressProvider?,
     private val moveFromCenterAnimationController: StatusBarMoveFromCenterAnimationController?,
+    private val userSwitcherController: StatusBarUserSwitcherController,
+    private val viewUtil: ViewUtil,
     touchEventHandler: PhoneStatusBarView.TouchEventHandler,
     private val configurationController: ConfigurationController
 ) : ViewController<PhoneStatusBarView>(view) {
@@ -49,29 +56,29 @@ class PhoneStatusBarViewController private constructor(
     }
 
     override fun onViewAttached() {
-        moveFromCenterAnimationController?.let { animationController ->
-            val statusBarLeftSide: View = mView.findViewById(R.id.status_bar_left_side)
-            val systemIconArea: ViewGroup = mView.findViewById(R.id.system_icon_area)
+        if (moveFromCenterAnimationController == null) return
 
-            val viewsToAnimate = arrayOf(
-                statusBarLeftSide,
-                systemIconArea
-            )
+        val statusBarLeftSide: View = mView.findViewById(R.id.status_bar_left_side)
+        val systemIconArea: ViewGroup = mView.findViewById(R.id.system_icon_area)
 
-            mView.viewTreeObserver.addOnPreDrawListener(object :
-                ViewTreeObserver.OnPreDrawListener {
-                override fun onPreDraw(): Boolean {
-                    animationController.onViewsReady(viewsToAnimate)
-                    mView.viewTreeObserver.removeOnPreDrawListener(this)
-                    return true
-                }
-            })
+        val viewsToAnimate = arrayOf(
+            statusBarLeftSide,
+            systemIconArea
+        )
 
-            mView.addOnLayoutChangeListener { _, left, _, right, _, oldLeft, _, oldRight, _ ->
-                val widthChanged = right - left != oldRight - oldLeft
-                if (widthChanged) {
-                    moveFromCenterAnimationController.onStatusBarWidthChanged()
-                }
+        mView.viewTreeObserver.addOnPreDrawListener(object :
+            ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                moveFromCenterAnimationController.onViewsReady(viewsToAnimate)
+                mView.viewTreeObserver.removeOnPreDrawListener(this)
+                return true
+            }
+        })
+
+        mView.addOnLayoutChangeListener { _, left, _, right, _, oldLeft, _, oldRight, _ ->
+            val widthChanged = right - left != oldRight - oldLeft
+            if (widthChanged) {
+                moveFromCenterAnimationController.onStatusBarWidthChanged()
             }
         }
 
@@ -87,6 +94,10 @@ class PhoneStatusBarViewController private constructor(
 
     init {
         mView.setTouchEventHandler(touchEventHandler)
+    }
+
+    override fun onInit() {
+        userSwitcherController.init()
     }
 
     fun setImportantForAccessibility(mode: Int) {
@@ -109,12 +120,7 @@ class PhoneStatusBarViewController private constructor(
      * view's range and false otherwise.
      */
     fun touchIsWithinView(x: Float, y: Float): Boolean {
-        val left = mView.locationOnScreen[0]
-        val top = mView.locationOnScreen[1]
-        return left <= x &&
-                x <= left + mView.width &&
-                top <= y &&
-                y <= top + mView.height
+        return viewUtil.touchIsWithinView(mView, x, y)
     }
 
     class StatusBarViewsCenterProvider : UnfoldMoveFromCenterAnimator.ViewCenterProvider {
@@ -153,6 +159,8 @@ class PhoneStatusBarViewController private constructor(
         private val unfoldComponent: Optional<SysUIUnfoldComponent>,
         @Named(UNFOLD_STATUS_BAR)
         private val progressProvider: Optional<ScopedUnfoldTransitionProgressProvider>,
+        private val userSwitcherController: StatusBarUserSwitcherController,
+        private val viewUtil: ViewUtil,
         private val configurationController: ConfigurationController
     ) {
         fun create(
@@ -162,9 +170,9 @@ class PhoneStatusBarViewController private constructor(
             PhoneStatusBarViewController(
                 view,
                 progressProvider.getOrNull(),
-                unfoldComponent.map {
-                    it.getStatusBarMoveFromCenterAnimationController()
-                }.getOrNull(),
+                unfoldComponent.getOrNull()?.getStatusBarMoveFromCenterAnimationController(),
+                userSwitcherController,
+                viewUtil,
                 touchEventHandler,
                 configurationController
             )

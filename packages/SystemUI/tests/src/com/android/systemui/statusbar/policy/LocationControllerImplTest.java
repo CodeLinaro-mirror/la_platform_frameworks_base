@@ -14,7 +14,12 @@
 
 package com.android.systemui.statusbar.policy;
 
+
+import static com.google.common.truth.Truth.assertThat;
+
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -22,11 +27,13 @@ import static org.mockito.Mockito.when;
 
 import android.app.AppOpsManager;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.content.pm.UserInfo;
 import android.location.LocationManager;
 import android.os.Handler;
 import android.os.UserHandle;
 import android.provider.DeviceConfig;
+import android.provider.Settings;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
 import android.testing.TestableLooper.RunWithLooper;
@@ -34,6 +41,7 @@ import android.testing.TestableLooper.RunWithLooper;
 import androidx.test.filters.SmallTest;
 
 import com.android.internal.config.sysui.SystemUiDeviceConfigFlags;
+import com.android.internal.logging.testing.UiEventLoggerFake;
 import com.android.systemui.BootCompleteCache;
 import com.android.systemui.SysuiTestCase;
 import com.android.systemui.appops.AppOpItem;
@@ -43,6 +51,7 @@ import com.android.systemui.settings.UserTracker;
 import com.android.systemui.statusbar.policy.LocationController.LocationChangeCallback;
 import com.android.systemui.util.DeviceConfigProxy;
 import com.android.systemui.util.DeviceConfigProxyFake;
+import com.android.systemui.util.settings.SecureSettings;
 
 import com.google.common.collect.ImmutableList;
 
@@ -60,9 +69,12 @@ public class LocationControllerImplTest extends SysuiTestCase {
     private LocationControllerImpl mLocationController;
     private TestableLooper mTestableLooper;
     private DeviceConfigProxy mDeviceConfigProxy;
+    private UiEventLoggerFake mUiEventLogger;
 
+    @Mock private PackageManager mPackageManager;
     @Mock private AppOpsController mAppOpsController;
     @Mock private UserTracker mUserTracker;
+    @Mock private SecureSettings mSecureSettings;
 
     @Before
     public void setup() {
@@ -72,8 +84,10 @@ public class LocationControllerImplTest extends SysuiTestCase {
         when(mUserTracker.getUserProfiles())
                 .thenReturn(ImmutableList.of(new UserInfo(0, "name", 0)));
         mDeviceConfigProxy = new DeviceConfigProxyFake();
+        mUiEventLogger = new UiEventLoggerFake();
 
         mTestableLooper = TestableLooper.get(this);
+
         mLocationController = new LocationControllerImpl(mContext,
                 mAppOpsController,
                 mDeviceConfigProxy,
@@ -82,7 +96,9 @@ public class LocationControllerImplTest extends SysuiTestCase {
                 mock(BroadcastDispatcher.class),
                 mock(BootCompleteCache.class),
                 mUserTracker,
-                mContext.getPackageManager());
+                mPackageManager,
+                mUiEventLogger,
+                mSecureSettings);
 
         mTestableLooper.processAllMessages();
     }
@@ -160,10 +176,16 @@ public class LocationControllerImplTest extends SysuiTestCase {
         mTestableLooper.processAllMessages();
 
         verify(callback, times(1)).onLocationActiveChanged(anyBoolean());
+        assertThat(mUiEventLogger.numLogs()).isEqualTo(1);
+        assertThat(mUiEventLogger.eventId(0)).isEqualTo(
+                LocationControllerImpl.LocationIndicatorEvent.LOCATION_INDICATOR_MONITOR_HIGH_POWER
+                        .getId());
     }
 
     @Test
     public void testCallbackNotified_additionalOps() {
+        // Return -1 for non system apps
+        when(mPackageManager.getPermissionFlags(any(), any(), any())).thenReturn(-1);
         LocationChangeCallback callback = mock(LocationChangeCallback.class);
         mLocationController.addCallback(callback);
         mDeviceConfigProxy.setProperty(
@@ -176,10 +198,10 @@ public class LocationControllerImplTest extends SysuiTestCase {
         when(mAppOpsController.getActiveAppOps())
                 .thenReturn(ImmutableList.of(
                         new AppOpItem(AppOpsManager.OP_FINE_LOCATION, 0,
-                                "com.google.android.googlequicksearchbox",
+                                "com.third.party.app",
                                 System.currentTimeMillis())));
         mLocationController.onActiveStateChanged(AppOpsManager.OP_FINE_LOCATION, 0,
-                "com.google.android.googlequicksearchbox", true);
+                "ccom.third.party.app", true);
 
         mTestableLooper.processAllMessages();
 
@@ -187,14 +209,20 @@ public class LocationControllerImplTest extends SysuiTestCase {
 
         when(mAppOpsController.getActiveAppOps()).thenReturn(ImmutableList.of());
         mLocationController.onActiveStateChanged(AppOpsManager.OP_FINE_LOCATION, 0,
-                "com.google.android.googlequicksearchbox", false);
+                "com.third.party.app", false);
         mTestableLooper.processAllMessages();
 
         verify(callback, times(1)).onLocationActiveChanged(false);
+
+        when(mAppOpsController.getActiveAppOps()).thenReturn(ImmutableList.of());
+        mLocationController.onActiveStateChanged(AppOpsManager.OP_MONITOR_HIGH_POWER_LOCATION, 0,
+                "com.third.party.app", true);
+        mTestableLooper.processAllMessages();
+        verify(callback, times(1)).onLocationActiveChanged(true);
     }
 
     @Test
-    public void testCallbackNotified_additionalOps_shouldShowSystem() {
+    public void testCallbackNotified_additionalOps_shouldNotShowSystem() {
         LocationChangeCallback callback = mock(LocationChangeCallback.class);
         mLocationController.addCallback(callback);
         mDeviceConfigProxy.setProperty(
@@ -207,10 +235,10 @@ public class LocationControllerImplTest extends SysuiTestCase {
         when(mAppOpsController.getActiveAppOps())
                 .thenReturn(ImmutableList.of(
                         new AppOpItem(AppOpsManager.OP_FINE_LOCATION, 0,
-                                "com.google.android.gms",
+                                "com.system.app",
                                 System.currentTimeMillis())));
         mLocationController.onActiveStateChanged(AppOpsManager.OP_FINE_LOCATION, 0,
-                "com.google.android.gms", true);
+                "com.system.app", true);
 
         mTestableLooper.processAllMessages();
 
@@ -219,7 +247,9 @@ public class LocationControllerImplTest extends SysuiTestCase {
 
 
     @Test
-    public void testCallbackNotified_additionalOps_shouldNotShowSystem() {
+    public void testCallbackNotified_additionalOps_shouldShowSystem() {
+        when(mSecureSettings.getInt(Settings.Secure.LOCATION_SHOW_SYSTEM_OPS, 0))
+                .thenReturn(1);
         LocationChangeCallback callback = mock(LocationChangeCallback.class);
         mLocationController.addCallback(callback);
         mDeviceConfigProxy.setProperty(
@@ -236,10 +266,10 @@ public class LocationControllerImplTest extends SysuiTestCase {
 
         when(mAppOpsController.getActiveAppOps())
                 .thenReturn(ImmutableList.of(
-                        new AppOpItem(AppOpsManager.OP_FINE_LOCATION, 0, "com.google.android.gms",
+                        new AppOpItem(AppOpsManager.OP_FINE_LOCATION, 0, "com.system.app",
                                 System.currentTimeMillis())));
         mLocationController.onActiveStateChanged(AppOpsManager.OP_FINE_LOCATION, 0,
-                "com.google.android.gms", true);
+                "com.system.app", true);
 
         mTestableLooper.processAllMessages();
 
@@ -247,10 +277,75 @@ public class LocationControllerImplTest extends SysuiTestCase {
 
         when(mAppOpsController.getActiveAppOps()).thenReturn(ImmutableList.of());
         mLocationController.onActiveStateChanged(AppOpsManager.OP_FINE_LOCATION, 0,
-                "com.google.android.gms", false);
+                "com.system.app", false);
         mTestableLooper.processAllMessages();
 
         verify(callback, times(1)).onLocationActiveChanged(false);
+
+        when(mSecureSettings.getInt(Settings.Secure.LOCATION_SHOW_SYSTEM_OPS, 0))
+                .thenReturn(0);
+        mLocationController.onActiveStateChanged(AppOpsManager.OP_FINE_LOCATION, 0,
+                "com.system.app", true);
+
+        mTestableLooper.processAllMessages();
+
+        // onLocationActive(true) was not called again because the setting is disabled.
+        verify(callback, times(1)).onLocationActiveChanged(true);
+    }
+
+    @Test
+    public void testCallbackNotified_verifyMetrics() {
+        // Return -1 for non system apps and 0 for system apps.
+        when(mPackageManager.getPermissionFlags(any(),
+                eq("com.system.app"), any())).thenReturn(0);
+        when(mPackageManager.getPermissionFlags(any(),
+                eq("com.third.party.app"), any())).thenReturn(-1);
+        LocationChangeCallback callback = mock(LocationChangeCallback.class);
+        mLocationController.addCallback(callback);
+        mDeviceConfigProxy.setProperty(
+                DeviceConfig.NAMESPACE_PRIVACY,
+                SystemUiDeviceConfigFlags.PROPERTY_LOCATION_INDICATORS_SMALL_ENABLED,
+                "true",
+                true);
+        mTestableLooper.processAllMessages();
+
+        when(mAppOpsController.getActiveAppOps())
+                .thenReturn(ImmutableList.of(
+                        new AppOpItem(AppOpsManager.OP_FINE_LOCATION, 0, "com.system.app",
+                                System.currentTimeMillis()),
+                        new AppOpItem(AppOpsManager.OP_COARSE_LOCATION, 0,
+                                "com.third.party.app",
+                                System.currentTimeMillis()),
+                        new AppOpItem(AppOpsManager.OP_MONITOR_HIGH_POWER_LOCATION, 0,
+                                "com.another.developer.app",
+                                System.currentTimeMillis())));
+        mLocationController.onActiveStateChanged(AppOpsManager.OP_FINE_LOCATION, 0,
+                "com.system.app", true);
+
+        mTestableLooper.processAllMessages();
+
+        verify(callback, times(1)).onLocationActiveChanged(true);
+        assertThat(mUiEventLogger.numLogs()).isEqualTo(3);
+        assertThat(mUiEventLogger.eventId(0)).isEqualTo(
+                LocationControllerImpl.LocationIndicatorEvent.LOCATION_INDICATOR_MONITOR_HIGH_POWER
+                        .getId());
+        // Even though the system access wasn't shown due to the device settings, ensure it was
+        // still logged.
+        assertThat(mUiEventLogger.eventId(1)).isEqualTo(
+                LocationControllerImpl.LocationIndicatorEvent.LOCATION_INDICATOR_SYSTEM_APP
+                        .getId());
+        assertThat(mUiEventLogger.eventId(2)).isEqualTo(
+                LocationControllerImpl.LocationIndicatorEvent.LOCATION_INDICATOR_NON_SYSTEM_APP
+                        .getId());
+        mUiEventLogger.getLogs().clear();
+
+        when(mAppOpsController.getActiveAppOps()).thenReturn(ImmutableList.of());
+        mLocationController.onActiveStateChanged(AppOpsManager.OP_FINE_LOCATION, 0,
+                "com.system.app", false);
+        mTestableLooper.processAllMessages();
+
+        verify(callback, times(1)).onLocationActiveChanged(false);
+        assertThat(mUiEventLogger.numLogs()).isEqualTo(0);
     }
 
     @Test

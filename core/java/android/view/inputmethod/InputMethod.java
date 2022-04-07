@@ -31,6 +31,7 @@ import android.view.MotionEvent;
 import android.view.View;
 
 import com.android.internal.inputmethod.IInputMethodPrivilegedOperations;
+import com.android.internal.inputmethod.InputMethodNavButtonFlags;
 import com.android.internal.view.IInlineSuggestionsRequestCallback;
 import com.android.internal.view.InlineSuggestionsRequestInfo;
 
@@ -105,12 +106,13 @@ public interface InputMethod {
      *                             current IME.
      * @param configChanges {@link InputMethodInfo#getConfigChanges()} declared by IME.
      * @param stylusHwSupported {@link InputMethodInfo#supportsStylusHandwriting()} declared by IME.
+     * @param navButtonFlags The initial state of {@link InputMethodNavButtonFlags}.
      * @hide
      */
     @MainThread
     default void initializeInternal(IBinder token,
             IInputMethodPrivilegedOperations privilegedOperations, int configChanges,
-            boolean stylusHwSupported) {
+            boolean stylusHwSupported, @InputMethodNavButtonFlags int navButtonFlags) {
         attachToken(token);
     }
 
@@ -229,6 +231,7 @@ public interface InputMethod {
      *                        the next {@link #startInput(InputConnection, EditorInfo, IBinder)} as
      *                        long as your implementation of {@link InputMethod} relies on such
      *                        IPCs
+     * @param navButtonFlags {@link InputMethodNavButtonFlags} in the initial state of this session.
      * @see #startInput(InputConnection, EditorInfo)
      * @see #restartInput(InputConnection, EditorInfo)
      * @see EditorInfo
@@ -237,12 +240,22 @@ public interface InputMethod {
     @MainThread
     default void dispatchStartInputWithToken(@Nullable InputConnection inputConnection,
             @NonNull EditorInfo editorInfo, boolean restarting,
-            @NonNull IBinder startInputToken) {
+            @NonNull IBinder startInputToken, @InputMethodNavButtonFlags int navButtonFlags) {
         if (restarting) {
             restartInput(inputConnection, editorInfo);
         } else {
             startInput(inputConnection, editorInfo);
         }
+    }
+
+    /**
+     * Notifies that {@link InputMethodNavButtonFlags} have been updated.
+     *
+     * @param navButtonFlags The new {@link InputMethodNavButtonFlags}.
+     * @hide
+     */
+    @MainThread
+    default void onNavButtonFlagsChanged(@InputMethodNavButtonFlags int navButtonFlags) {
     }
 
     /**
@@ -375,22 +388,6 @@ public interface InputMethod {
     public void changeInputMethodSubtype(InputMethodSubtype subtype);
 
     /**
-     * Update token of the client window requesting {@link #showSoftInput(int, ResultReceiver)}
-     * @param showInputToken placeholder app window token for window requesting
-     *        {@link InputMethodManager#showSoftInput(View, int)}
-     * @hide
-     */
-    public void setCurrentShowInputToken(IBinder showInputToken);
-
-    /**
-     * Update token of the client window requesting {@link #hideSoftInput(int, ResultReceiver)}
-     * @param hideInputToken placeholder app window token for window requesting
-     *        {@link InputMethodManager#hideSoftInputFromWindow(IBinder, int)}
-     * @hide
-     */
-    public void setCurrentHideInputToken(IBinder hideInputToken);
-
-    /**
      * Checks if IME is ready to start stylus handwriting session.
      * If yes, {@link #startStylusHandwriting(InputChannel, List)} is called.
      * @param requestId
@@ -405,7 +402,23 @@ public interface InputMethod {
      * @hide
      */
     default void startStylusHandwriting(
-            @NonNull InputChannel channel, @Nullable List<MotionEvent> events) {
+            int requestId, @NonNull InputChannel channel, @Nullable List<MotionEvent> events) {
+        // intentionally empty
+    }
+
+    /**
+     * Initialize Ink window early-on.
+     * @hide
+     */
+    default void initInkWindow() {
+        // intentionally empty
+    }
+
+    /**
+     * Finish stylus handwriting session.
+     * @hide
+     */
+    default void finishStylusHandwriting() {
         // intentionally empty
     }
 

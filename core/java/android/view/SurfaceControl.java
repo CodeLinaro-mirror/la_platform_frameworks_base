@@ -44,10 +44,15 @@ import android.graphics.Point;
 import android.graphics.Rect;
 import android.graphics.Region;
 import android.gui.DropInputMode;
+import android.hardware.DataSpace;
 import android.hardware.HardwareBuffer;
+import android.hardware.SyncFence;
 import android.hardware.display.DeviceProductInfo;
 import android.hardware.display.DisplayedContentSample;
 import android.hardware.display.DisplayedContentSamplingAttributes;
+import android.hardware.graphics.common.DisplayDecorationSupport;
+import android.opengl.EGLDisplay;
+import android.opengl.EGLSync;
 import android.os.Build;
 import android.os.IBinder;
 import android.os.Parcel;
@@ -59,6 +64,7 @@ import android.util.proto.ProtoOutputStream;
 import android.view.Surface.OutOfResourcesException;
 
 import com.android.internal.annotations.GuardedBy;
+import com.android.internal.util.Preconditions;
 import com.android.internal.util.VirtualRefBasePtr;
 
 import dalvik.system.CloseGuard;
@@ -77,6 +83,7 @@ import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 /**
  * Handle to an on-screen Surface managed by the system compositor. The SurfaceControl is
@@ -197,6 +204,9 @@ public final class SurfaceControl implements Parcelable {
     private static native int[] nativeGetCompositionDataspaces();
     private static native boolean nativeSetActiveColorMode(IBinder displayToken,
             int colorMode);
+    private static native boolean nativeGetBootDisplayModeSupport();
+    private static native void nativeSetBootDisplayMode(IBinder displayToken, int displayMode);
+    private static native void nativeClearBootDisplayMode(IBinder displayToken);
     private static native void nativeSetAutoLowLatencyMode(IBinder displayToken, boolean on);
     private static native void nativeSetGameContentType(IBinder displayToken, boolean on);
     private static native void nativeSetDisplayPowerMode(
@@ -204,11 +214,11 @@ public final class SurfaceControl implements Parcelable {
     private static native void nativeReparent(long transactionObj, long nativeObject,
             long newParentNativeObject);
     private static native void nativeSetBuffer(long transactionObj, long nativeObject,
-            HardwareBuffer buffer);
+            HardwareBuffer buffer, long fencePtr, Consumer<SyncFence> releaseCallback);
     private static native void nativeSetBufferTransform(long transactionObj, long nativeObject,
             int transform);
-    private static native void nativeSetColorSpace(long transactionObj, long nativeObject,
-            int colorSpace);
+    private static native void nativeSetDataSpace(long transactionObj, long nativeObject,
+            @DataSpace.NamedDataSpace int dataSpace);
     private static native void nativeSetDamageRegion(long transactionObj, long nativeObject,
             Region region);
 
@@ -231,7 +241,8 @@ public final class SurfaceControl implements Parcelable {
             float shadowRadius);
     private static native void nativeSetGlobalShadowSettings(@Size(4) float[] ambientColor,
             @Size(4) float[] spotColor, float lightPosY, float lightPosZ, float lightRadius);
-    private static native boolean nativeGetDisplayDecorationSupport(IBinder displayToken);
+    private static native DisplayDecorationSupport nativeGetDisplayDecorationSupport(
+            IBinder displayToken);
 
     private static native void nativeSetFrameRate(long transactionObj, long nativeObject,
             float frameRate, int compatibility, int changeFrameRateStrategy);
@@ -239,6 +250,7 @@ public final class SurfaceControl implements Parcelable {
 
     private static native void nativeSetFixedTransformHint(long transactionObj, long nativeObject,
             int transformHint);
+    private static native void nativeRemoveCurrentInputFocus(long nativeObject, int displayId);
     private static native void nativeSetFocusedWindow(long transactionObj, IBinder toToken,
             String windowName, IBinder focusedToken, String focusedWindowName, int displayId);
     private static native void nativeSetFrameTimelineVsync(long transactionObj,
@@ -254,6 +266,9 @@ public final class SurfaceControl implements Parcelable {
     private static native int nativeGetLayerId(long nativeObject);
     private static native void nativeAddTransactionCommittedListener(long nativeObject,
             TransactionCommittedListener listener);
+    private static native void nativeSanitize(long transactionObject);
+    private static native void nativeSetDestinationFrame(long transactionObj, long nativeObject,
+            int l, int t, int r, int b);
 
     /**
      * Transforms that can be applied to buffers as they are displayed to a window.
@@ -379,9 +394,7 @@ public final class SurfaceControl implements Parcelable {
         public static final int JANK_SURFACEFLINGER_GPU_DEADLINE_MISSED = 0x4;
         // Either App or GPU took too long on the frame
         public static final int JANK_APP_DEADLINE_MISSED = 0x8;
-        // Predictions live for 120ms, if prediction is expired for a frame, there is definitely a
-        // jank
-        // associated with the App if this is for a SurfaceFrame, and SF for a DisplayFrame.
+        // Vsync predictions have drifted beyond the threshold from the actual HWVsync
         public static final int PREDICTION_ERROR = 0x10;
         // Latching a buffer early might cause an early present of the frame
         public static final int SURFACE_FLINGER_SCHEDULING = 0x20;
@@ -1877,6 +1890,8 @@ public final class SurfaceControl implements Parcelable {
         public boolean autoLowLatencyModeSupported;
         public boolean gameContentTypeSupported;
 
+        public int preferredBootDisplayMode;
+
         @Override
         public String toString() {
             return "DynamicDisplayInfo{"
@@ -1886,7 +1901,8 @@ public final class SurfaceControl implements Parcelable {
                     + ", activeColorMode=" + activeColorMode
                     + ", hdrCapabilities=" + hdrCapabilities
                     + ", autoLowLatencyModeSupported=" + autoLowLatencyModeSupported
-                    + ", gameContentTypeSupported" + gameContentTypeSupported + "}";
+                    + ", gameContentTypeSupported" + gameContentTypeSupported
+                    + ", preferredBootDisplayMode" + preferredBootDisplayMode + "}";
         }
 
         @Override
@@ -1898,7 +1914,8 @@ public final class SurfaceControl implements Parcelable {
                 && activeDisplayModeId == that.activeDisplayModeId
                 && Arrays.equals(supportedColorModes, that.supportedColorModes)
                 && activeColorMode == that.activeColorMode
-                && Objects.equals(hdrCapabilities, that.hdrCapabilities);
+                && Objects.equals(hdrCapabilities, that.hdrCapabilities)
+                && preferredBootDisplayMode == that.preferredBootDisplayMode;
         }
 
         @Override
@@ -2260,6 +2277,36 @@ public final class SurfaceControl implements Parcelable {
             }
         }
         return colorSpaces;
+    }
+
+    /**
+     * @hide
+     */
+    public static boolean getBootDisplayModeSupport() {
+        return nativeGetBootDisplayModeSupport();
+    }
+
+    /** There is no associated getter for this method.  When this is set, the display is expected
+     * to start up in this mode next time the device reboots.
+     * @hide
+     */
+    public static void setBootDisplayMode(IBinder displayToken, int displayModeId) {
+        if (displayToken == null) {
+            throw new IllegalArgumentException("displayToken must not be null");
+        }
+
+        nativeSetBootDisplayMode(displayToken, displayModeId);
+    }
+
+    /**
+     * @hide
+     */
+    public static void clearBootDisplayMode(IBinder displayToken) {
+        if (displayToken == null) {
+            throw new IllegalArgumentException("displayToken must not be null");
+        }
+
+        nativeClearBootDisplayMode(displayToken);
     }
 
     /**
@@ -2655,16 +2702,18 @@ public final class SurfaceControl implements Parcelable {
     }
 
     /**
-     * Returns whether a display supports DISPLAY_DECORATION.
+     * Returns whether/how a display supports DISPLAY_DECORATION.
      *
      * @param displayToken
      *      The token for the display.
      *
-     * @return Whether the display supports DISPLAY_DECORATION.
+     * @return A class describing how the display supports DISPLAY_DECORATION or null if it does
+     * not.
      *
+     * TODO (b/218524164): Move this out of SurfaceControl.
      * @hide
      */
-    public static boolean getDisplayDecorationSupport(IBinder displayToken) {
+    public static DisplayDecorationSupport getDisplayDecorationSupport(IBinder displayToken) {
         return nativeGetDisplayDecorationSupport(displayToken);
     }
 
@@ -2690,6 +2739,17 @@ public final class SurfaceControl implements Parcelable {
      */
     public static int getGPUContextPriority() {
         return nativeGetGPUContextPriority();
+    }
+
+    /**
+     * Interface to handle request to
+     * {@link SurfaceControl.Transaction#addTransactionCommittedListener(Executor, TransactionCommittedListener)}
+     */
+    public interface TransactionCommittedListener {
+        /**
+         * Invoked when the transaction has been committed in SurfaceFlinger.
+         */
+        void onTransactionCommitted();
     }
 
     /**
@@ -2729,9 +2789,13 @@ public final class SurfaceControl implements Parcelable {
          * is allowed as a convenience.
          */
         public Transaction() {
-            mNativeObject = nativeCreateTransaction();
-            mFreeNativeResources
-                = sRegistry.registerNativeAllocation(this, mNativeObject);
+            this(nativeCreateTransaction());
+        }
+
+        private Transaction(long nativeObject) {
+            mNativeObject = nativeObject;
+            mFreeNativeResources =
+                    sRegistry.registerNativeAllocation(this, mNativeObject);
         }
 
         private Transaction(Parcel in) {
@@ -2899,6 +2963,8 @@ public final class SurfaceControl implements Parcelable {
         @NonNull
         public Transaction setScale(@NonNull SurfaceControl sc, float scaleX, float scaleY) {
             checkPreconditions(sc);
+            Preconditions.checkArgument(scaleX >= 0, "Negative value passed in for scaleX");
+            Preconditions.checkArgument(scaleY >= 0, "Negative value passed in for scaleY");
             nativeSetScale(mNativeObject, sc.mNativeObject, scaleX, scaleY);
             return this;
         }
@@ -3035,6 +3101,10 @@ public final class SurfaceControl implements Parcelable {
          * @param destFrame The destination rectangle in parent space. Or null for the source frame.
          * @param orientation The buffer rotation
          * @return This transaction object.
+         * @deprecated Use {@link #setCrop(SurfaceControl, Rect)},
+         * {@link #setBufferTransform(SurfaceControl, int)},
+         * {@link #setPosition(SurfaceControl, float, float)} and
+         * {@link #setScale(SurfaceControl, float, float)} instead.
          */
         @NonNull
         public Transaction setGeometry(@NonNull SurfaceControl sc, @Nullable Rect sourceCrop,
@@ -3139,6 +3209,7 @@ public final class SurfaceControl implements Parcelable {
         public @NonNull Transaction setCrop(@NonNull SurfaceControl sc, @Nullable Rect crop) {
             checkPreconditions(sc);
             if (crop != null) {
+                Preconditions.checkArgument(crop.isValid(), "Crop isn't valid.");
                 nativeSetWindowCrop(mNativeObject, sc.mNativeObject,
                         crop.left, crop.top, crop.right, crop.bottom);
             } else {
@@ -3594,6 +3665,17 @@ public final class SurfaceControl implements Parcelable {
         }
 
         /**
+         * Removes the input focus from the current window which is having the input focus. Should
+         * only be called when the current focused app is not responding and the current focused
+         * window is not beloged to the current focused app.
+         * @hide
+         */
+        public Transaction removeCurrentInputFocus(int displayId) {
+            nativeRemoveCurrentInputFocus(mNativeObject, displayId);
+            return this;
+        }
+
+        /**
          * Adds or removes the flag SKIP_SCREENSHOT of the surface.  Setting the flag is equivalent
          * to creating the Surface with the {@link #SKIP_SCREENSHOT} flag.
          *
@@ -3634,29 +3716,120 @@ public final class SurfaceControl implements Parcelable {
          */
         public @NonNull Transaction setBuffer(@NonNull SurfaceControl sc,
                 @Nullable HardwareBuffer buffer) {
-            checkPreconditions(sc);
-            nativeSetBuffer(mNativeObject, sc.mNativeObject, buffer);
-            return this;
+            return setBuffer(sc, buffer, null);
         }
 
         /**
+         * Updates the HardwareBuffer displayed for the SurfaceControl.
+         *
+         * Note that the buffer must be allocated with {@link HardwareBuffer#USAGE_COMPOSER_OVERLAY}
+         * as well as {@link HardwareBuffer#USAGE_GPU_SAMPLED_IMAGE} as the surface control might
+         * be composited using either an overlay or using the GPU.
+         *
+         * A presentation fence may be passed to improve performance by allowing the buffer
+         * to complete rendering while it is waiting for the transaction to be applied.
+         * For example, if the buffer is being produced by rendering with OpenGL ES then
+         * a fence created with
+         * {@link android.opengl.EGLExt#eglDupNativeFenceFDANDROID(EGLDisplay, EGLSync)} can be
+         * used to allow the GPU rendering to be concurrent with the transaction. The compositor
+         * will wait for the fence to be signaled before the buffer is displayed. If multiple
+         * buffers are set as part of the same transaction, the presentation fences of all of them
+         * must signal before any buffer is displayed. That is, the entire transaction is delayed
+         * until all presentation fences have signaled, ensuring the transaction remains consistent.
+         *
+         * @param sc The SurfaceControl to update
+         * @param buffer The buffer to be displayed
+         * @param fence The presentation fence. If null or invalid, this is equivalent to
+         *              {@link #setBuffer(SurfaceControl, HardwareBuffer)}
+         * @return this
+         */
+        public @NonNull Transaction setBuffer(@NonNull SurfaceControl sc,
+                @Nullable HardwareBuffer buffer, @Nullable SyncFence fence) {
+            return setBuffer(sc, buffer, fence, null);
+        }
+
+        /**
+         * Updates the HardwareBuffer displayed for the SurfaceControl.
+         *
+         * Note that the buffer must be allocated with {@link HardwareBuffer#USAGE_COMPOSER_OVERLAY}
+         * as well as {@link HardwareBuffer#USAGE_GPU_SAMPLED_IMAGE} as the surface control might
+         * be composited using either an overlay or using the GPU.
+         *
+         * A presentation fence may be passed to improve performance by allowing the buffer
+         * to complete rendering while it is waiting for the transaction to be applied.
+         * For example, if the buffer is being produced by rendering with OpenGL ES then
+         * a fence created with
+         * {@link android.opengl.EGLExt#eglDupNativeFenceFDANDROID(EGLDisplay, EGLSync)} can be
+         * used to allow the GPU rendering to be concurrent with the transaction. The compositor
+         * will wait for the fence to be signaled before the buffer is displayed. If multiple
+         * buffers are set as part of the same transaction, the presentation fences of all of them
+         * must signal before any buffer is displayed. That is, the entire transaction is delayed
+         * until all presentation fences have signaled, ensuring the transaction remains consistent.
+         *
+         * A releaseCallback may be passed to know when the buffer is safe to be reused. This
+         * is recommended when attempting to render continuously using SurfaceControl transactions
+         * instead of through {@link Surface}, as it provides a safe & reliable way to know when
+         * a buffer can be re-used. The callback will be invoked with a {@link SyncFence} which,
+         * if {@link SyncFence#isValid() valid}, must be waited on prior to using the buffer. This
+         * can either be done directly with {@link SyncFence#awaitForever()} or it may be done
+         * indirectly such as passing it as a release fence to
+         * {@link android.media.Image#setFence(SyncFence)} when using
+         * {@link android.media.ImageReader}.
+         *
+         * @param sc The SurfaceControl to update
+         * @param buffer The buffer to be displayed
+         * @param fence The presentation fence. If null or invalid, this is equivalent to
+         *              {@link #setBuffer(SurfaceControl, HardwareBuffer)}
+         * @param releaseCallback The callback to invoke when the buffer being set has been released
+         *                        by a later transaction. That is, the point at which it is safe
+         *                        to re-use the buffer.
+         * @return this
+         */
+        public @NonNull Transaction setBuffer(@NonNull SurfaceControl sc,
+                @Nullable HardwareBuffer buffer, @Nullable SyncFence fence,
+                @Nullable Consumer<SyncFence> releaseCallback) {
+            checkPreconditions(sc);
+            if (fence != null) {
+                synchronized (fence.getLock()) {
+                    nativeSetBuffer(mNativeObject, sc.mNativeObject, buffer,
+                            fence.getNativeFence(), releaseCallback);
+                }
+            } else {
+                nativeSetBuffer(mNativeObject, sc.mNativeObject, buffer, 0, releaseCallback);
+            }
+            return this;
+        }
+
+
+        /**
          * Sets the buffer transform that should be applied to the current buffer.
+         *
+         * This can be used in combination with
+         * {@link AttachedSurfaceControl#addOnBufferTransformHintChangedListener(AttachedSurfaceControl.OnBufferTransformHintChangedListener)}
+         * to pre-rotate the buffer for the current display orientation. This can
+         * improve the performance of displaying the associated buffer.
          *
          * @param sc The SurfaceControl to update
          * @param transform The transform to apply to the buffer.
          * @return this
          */
         public @NonNull Transaction setBufferTransform(@NonNull SurfaceControl sc,
-                /* TODO: Mark the intdef */ int transform) {
+                @SurfaceControl.BufferTransform int transform) {
             checkPreconditions(sc);
             nativeSetBufferTransform(mNativeObject, sc.mNativeObject, transform);
             return this;
         }
 
         /**
-         * Updates the region for the content on this surface updated in this transaction.
+         * Updates the region for the content on this surface updated in this transaction. The
+         * damage region is the area of the buffer that has changed since the previously
+         * sent buffer. This can be used to reduce the amount of recomposition that needs
+         * to happen when only a small region of the buffer is being updated, such as for
+         * a small blinking cursor or a loading indicator.
          *
-         * If unspecified, the complete surface is assumed to be damaged.
+         * @param sc The SurfaceControl on which to set the damage region
+         * @param region The region to set. If null, the entire buffer is assumed dirty. This is
+         *               equivalent to not setting a damage region at all.
          */
         public @NonNull Transaction setDamageRegion(@NonNull SurfaceControl sc,
                 @Nullable Region region) {
@@ -3670,10 +3843,31 @@ public final class SurfaceControl implements Parcelable {
          * SurfaceControls that were created as type {@link #FX_SURFACE_BLAST}
          *
          * @hide
+         * @deprecated use {@link #setDataSpace(SurfaceControl, long)} instead
          */
+        @Deprecated
         public Transaction setColorSpace(SurfaceControl sc, ColorSpace colorSpace) {
             checkPreconditions(sc);
-            nativeSetColorSpace(mNativeObject, sc.mNativeObject, colorSpace.getId());
+            if (colorSpace.getId() == ColorSpace.Named.DCI_P3.ordinal()) {
+                setDataSpace(sc, DataSpace.DATASPACE_DCI_P3);
+            } else {
+                setDataSpace(sc, DataSpace.DATASPACE_SRGB);
+            }
+            return this;
+        }
+
+        /**
+         * Set the dataspace for the SurfaceControl. This will control how the buffer
+         * set with {@link #setBuffer(SurfaceControl, HardwareBuffer)} is displayed.
+         *
+         * @param sc The SurfaceControl to update
+         * @param dataspace The dataspace to set it to
+         * @return this
+         */
+        public @NonNull Transaction setDataSpace(@NonNull SurfaceControl sc,
+                @DataSpace.NamedDataSpace int dataspace) {
+            checkPreconditions(sc);
+            nativeSetDataSpace(mNativeObject, sc.mNativeObject, dataspace);
             return this;
         }
 
@@ -3696,6 +3890,33 @@ public final class SurfaceControl implements Parcelable {
         public Transaction setDropInputMode(SurfaceControl sc, @DropInputMode int mode) {
             checkPreconditions(sc);
             nativeSetDropInputMode(mNativeObject, sc.mNativeObject, mode);
+            return this;
+        }
+
+        /**
+         * @hide
+         */
+        public void sanitize() {
+            nativeSanitize(mNativeObject);
+        }
+
+        /**
+         * @hide
+         */
+        public Transaction setDesintationFrame(SurfaceControl sc, @NonNull Rect destinationFrame) {
+            checkPreconditions(sc);
+            nativeSetDestinationFrame(mNativeObject, sc.mNativeObject,
+                    destinationFrame.left, destinationFrame.top, destinationFrame.right,
+                    destinationFrame.bottom);
+            return this;
+        }
+
+        /**
+         * @hide
+         */
+        public Transaction setDesintationFrame(SurfaceControl sc, int width, int height) {
+            checkPreconditions(sc);
+            nativeSetDestinationFrame(mNativeObject, sc.mNativeObject, 0, 0, width, height);
             return this;
         }
 
@@ -3917,5 +4138,11 @@ public final class SurfaceControl implements Parcelable {
         }
 
         return -1;
+    }
+
+    // Called by native
+    private static void invokeReleaseCallback(Consumer<SyncFence> callback, long nativeFencePtr) {
+        SyncFence fence = new SyncFence(nativeFencePtr);
+        callback.accept(fence);
     }
 }

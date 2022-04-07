@@ -31,6 +31,8 @@ import android.util.TypedXmlPullParser;
 import android.util.TypedXmlSerializer;
 
 import com.android.server.pm.parsing.pkg.AndroidPackage;
+import com.android.server.pm.pkg.PackageStateInternal;
+import com.android.server.pm.pkg.SharedUserApi;
 import com.android.server.utils.WatchedArrayMap;
 
 import org.xmlpull.v1.XmlPullParser;
@@ -353,9 +355,10 @@ public class KeySetManagerService {
         return mKeySets.get(id) != null;
     }
 
-    public boolean shouldCheckUpgradeKeySetLocked(PackageSetting oldPs, int scanFlags) {
+    public boolean shouldCheckUpgradeKeySetLocked(PackageStateInternal oldPs,
+            SharedUserApi sharedUserSetting, int scanFlags) {
         // Can't rotate keys during boot or if sharedUser.
-        if (oldPs == null || (scanFlags&SCAN_INITIAL) != 0 || oldPs.isSharedUser()
+        if (oldPs == null || (scanFlags & SCAN_INITIAL) != 0 || (sharedUserSetting != null)
                 || !oldPs.getKeySetData().isUsingUpgradeKeySets()) {
             return false;
         }
@@ -374,7 +377,7 @@ public class KeySetManagerService {
         return true;
     }
 
-    public boolean checkUpgradeKeySetLocked(PackageSetting oldPS, AndroidPackage pkg) {
+    public boolean checkUpgradeKeySetLocked(PackageStateInternal oldPS, AndroidPackage pkg) {
         // Upgrade keysets are being used.  Determine if new package has a superset of the
         // required keys.
         long[] upgradeKeySets = oldPS.getKeySetData().getUpgradeKeySets();

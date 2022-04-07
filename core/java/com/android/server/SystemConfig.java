@@ -31,9 +31,11 @@ import android.os.FileUtils;
 import android.os.Process;
 import android.os.SystemProperties;
 import android.os.Trace;
+import android.os.VintfRuntimeInfo;
 import android.os.incremental.IncrementalManager;
 import android.os.storage.StorageManager;
 import android.permission.PermissionManager.SplitPermissionInfo;
+import android.sysprop.ApexProperties;
 import android.text.TextUtils;
 import android.util.ArrayMap;
 import android.util.ArraySet;
@@ -56,7 +58,10 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileReader;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -237,6 +242,10 @@ public class SystemConfig {
     // be delivered anonymously even to apps which target O+.
     final ArraySet<String> mAllowImplicitBroadcasts = new ArraySet<>();
 
+    // These are the packages that are exempted from the background restriction applied
+    // by the system automatically, i.e., due to high background current drain.
+    final ArraySet<String> mBgRestrictionExemption = new ArraySet<>();
+
     // These are the package names of apps which should be automatically granted domain verification
     // for all of their domains. The only way these apps can be overridden by the user is by
     // explicitly disabling overall link handling support in app info.
@@ -389,6 +398,10 @@ public class SystemConfig {
         return mAllowIgnoreLocationSettings;
     }
 
+    public ArraySet<String> getBgRestrictionExemption() {
+        return mBgRestrictionExemption;
+    }
+
     public ArraySet<String> getLinkedApps() {
         return mLinkedApps;
     }
@@ -427,15 +440,15 @@ public class SystemConfig {
     }
 
     /** Get privapp permission allowlist for an apk-in-apex. */
-    public ArraySet<String> getApexPrivAppPermissions(String module, String packageName) {
-        return mApexPrivAppPermissions.getOrDefault(module, EMPTY_PERMISSIONS)
-                .get(packageName);
+    public ArraySet<String> getApexPrivAppPermissions(String apexName, String apkPackageName) {
+        return mApexPrivAppPermissions.getOrDefault(apexName, EMPTY_PERMISSIONS)
+                .get(apkPackageName);
     }
 
     /** Get privapp permissions denylist for an apk-in-apex. */
-    public ArraySet<String> getApexPrivAppDenyPermissions(String module, String packageName) {
-        return mApexPrivAppDenyPermissions.getOrDefault(module, EMPTY_PERMISSIONS)
-                .get(packageName);
+    public ArraySet<String> getApexPrivAppDenyPermissions(String apexName, String apkPackageName) {
+        return mApexPrivAppDenyPermissions.getOrDefault(apexName, EMPTY_PERMISSIONS)
+                .get(apkPackageName);
     }
 
     public ArraySet<String> getVendorPrivAppPermissions(String packageName) {
@@ -663,6 +676,7 @@ public class SystemConfig {
             readPermissions(parser, Environment.buildPath(f, "etc", "permissions"),
                     apexPermissionFlag);
         }
+        pruneVendorApexPrivappAllowlists();
     }
 
     @VisibleForTesting
@@ -1049,6 +1063,20 @@ public class SystemConfig {
                         }
                         XmlUtils.skipCurrentTag(parser);
                     } break;
+                    case "bg-restriction-exemption": {
+                        if (allowOverrideAppRestrictions) {
+                            String pkgname = parser.getAttributeValue(null, "package");
+                            if (pkgname == null) {
+                                Slog.w(TAG, "<" + name + "> without package in "
+                                        + permFile + " at " + parser.getPositionDescription());
+                            } else {
+                                mBgRestrictionExemption.add(pkgname);
+                            }
+                        } else {
+                            logNotAllowedInPartition(name, permFile, parser);
+                        }
+                        XmlUtils.skipCurrentTag(parser);
+                    } break;
                     case "default-enabled-vr-app": {
                         if (allowAppConfigs) {
                             String pkgname = parser.getAttributeValue(null, "package");
@@ -1164,7 +1192,8 @@ public class SystemConfig {
                             boolean systemExt = permFile.toPath().startsWith(
                                     Environment.getSystemExtDirectory().toPath() + "/");
                             boolean apex = permFile.toPath().startsWith(
-                                    Environment.getApexDirectory().toPath() + "/");
+                                    Environment.getApexDirectory().toPath() + "/")
+                                    && ApexProperties.updatable().orElse(false);
                             if (vendor) {
                                 readPrivAppPermissions(parser, mVendorPrivAppPermissions,
                                         mVendorPrivAppDenyPermissions);
@@ -1175,7 +1204,8 @@ public class SystemConfig {
                                 readPrivAppPermissions(parser, mSystemExtPrivAppPermissions,
                                         mSystemExtPrivAppDenyPermissions);
                             } else if (apex) {
-                                readApexPrivAppPermissions(parser, permFile);
+                                readApexPrivAppPermissions(parser, permFile,
+                                        Environment.getApexDirectory().toPath());
                             } else {
                                 readPrivAppPermissions(parser, mPrivAppPermissions,
                                         mPrivAppDenyPermissions);
@@ -1421,6 +1451,14 @@ public class SystemConfig {
             addFeature(PackageManager.FEATURE_IPSEC_TUNNELS, 0);
         }
 
+        if (isFilesystemSupported("erofs")) {
+            if (isKernelVersionAtLeast(5, 10)) {
+                addFeature(PackageManager.FEATURE_EROFS, 0);
+            } else if (isKernelVersionAtLeast(4, 19)) {
+                addFeature(PackageManager.FEATURE_EROFS_LEGACY, 0);
+            }
+        }
+
         for (String featureName : mUnavailableFeatures) {
             removeFeature(featureName);
         }
@@ -1522,6 +1560,21 @@ public class SystemConfig {
         grantMap.put(packageName, permissions);
         if (denyPermissions != null) {
             denyMap.put(packageName, denyPermissions);
+        }
+    }
+
+    /**
+     * Prunes out any privileged permission allowlists bundled in vendor apexes.
+     */
+    @VisibleForTesting
+    public void pruneVendorApexPrivappAllowlists() {
+        for (String moduleName: mAllowedVendorApexes.keySet()) {
+            if (mApexPrivAppPermissions.containsKey(moduleName)
+                    || mApexPrivAppDenyPermissions.containsKey(moduleName)) {
+                Slog.w(TAG, moduleName + " is a vendor apex, ignore its priv-app allowlist");
+                mApexPrivAppPermissions.remove(moduleName);
+                mApexPrivAppDenyPermissions.remove(moduleName);
+            }
         }
     }
 
@@ -1735,8 +1788,7 @@ public class SystemConfig {
     /**
      * Returns the module name for a file in the apex module's partition.
      */
-    private String getApexModuleNameFromFilePath(Path path) {
-        final Path apexDirectoryPath = Environment.getApexDirectory().toPath();
+    private String getApexModuleNameFromFilePath(Path path, Path apexDirectoryPath) {
         if (!path.startsWith(apexDirectoryPath)) {
             throw new IllegalArgumentException("File " + path + " is not part of an APEX.");
         }
@@ -1748,9 +1800,14 @@ public class SystemConfig {
         return path.getName(apexDirectoryPath.getNameCount()).toString();
     }
 
-    private void readApexPrivAppPermissions(XmlPullParser parser, File permFile)
-            throws IOException, XmlPullParserException {
-        final String moduleName = getApexModuleNameFromFilePath(permFile.toPath());
+    /**
+     * Reads the contents of the privileged permission allowlist stored inside an APEX.
+     */
+    @VisibleForTesting
+    public void readApexPrivAppPermissions(XmlPullParser parser, File permFile,
+            Path apexDirectoryPath) throws IOException, XmlPullParserException {
+        final String moduleName =
+                getApexModuleNameFromFilePath(permFile.toPath(), apexDirectoryPath);
         final ArrayMap<String, ArraySet<String>> privAppPermissions;
         if (mApexPrivAppPermissions.containsKey(moduleName)) {
             privAppPermissions = mApexPrivAppPermissions.get(moduleName);
@@ -1770,5 +1827,30 @@ public class SystemConfig {
 
     private static boolean isSystemProcess() {
         return Process.myUid() == Process.SYSTEM_UID;
+    }
+
+    private static boolean isFilesystemSupported(String fs) {
+        try {
+            final byte[] fsTableData = Files.readAllBytes(Paths.get("/proc/filesystems"));
+            final String fsTable = new String(fsTableData, StandardCharsets.UTF_8);
+            return fsTable.contains("\t" + fs + "\n");
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private static boolean isKernelVersionAtLeast(int major, int minor) {
+        final String kernelVersion = VintfRuntimeInfo.getKernelVersion();
+        final String[] parts = kernelVersion.split("\\.");
+        if (parts.length < 2) {
+            return false;
+        }
+        try {
+            final int majorVersion = Integer.parseInt(parts[0]);
+            final int minorVersion = Integer.parseInt(parts[1]);
+            return majorVersion > major || (majorVersion == major && minorVersion >= minor);
+        } catch (NumberFormatException e) {
+            return false;
+        }
     }
 }

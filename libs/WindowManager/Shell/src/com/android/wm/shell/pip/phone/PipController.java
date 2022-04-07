@@ -46,10 +46,8 @@ import android.graphics.Rect;
 import android.os.RemoteException;
 import android.os.UserHandle;
 import android.os.UserManager;
-import android.util.Log;
 import android.util.Pair;
 import android.util.Size;
-import android.util.Slog;
 import android.view.DisplayInfo;
 import android.view.SurfaceControl;
 import android.view.WindowManagerGlobal;
@@ -61,6 +59,7 @@ import androidx.annotation.Nullable;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.jank.InteractionJankMonitor;
+import com.android.internal.protolog.common.ProtoLog;
 import com.android.wm.shell.R;
 import com.android.wm.shell.WindowManagerShellWrapper;
 import com.android.wm.shell.common.DisplayChangeController;
@@ -85,10 +84,12 @@ import com.android.wm.shell.pip.PipSnapAlgorithm;
 import com.android.wm.shell.pip.PipTaskOrganizer;
 import com.android.wm.shell.pip.PipTransitionController;
 import com.android.wm.shell.pip.PipUtils;
+import com.android.wm.shell.protolog.ShellProtoLogGroup;
 import com.android.wm.shell.transition.Transitions;
 
 import java.io.PrintWriter;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Consumer;
 
 /**
@@ -136,6 +137,11 @@ public class PipController implements PipTransitionController.PipTransitionCallb
          * @param cornerRadius the pixel value of the corner radius, zero means it's disabled.
          */
         void onPipCornerRadiusChanged(int cornerRadius);
+
+        /**
+         * Notifies the listener that user leaves PiP by tapping on the expand button.
+         */
+        void onExpandPip();
     }
 
     /**
@@ -143,6 +149,9 @@ public class PipController implements PipTransitionController.PipTransitionCallb
      */
     private final DisplayChangeController.OnDisplayChangingListener mRotationController = (
             int displayId, int fromRotation, int toRotation, WindowContainerTransaction t) -> {
+        if (mPipTransitionController.handleRotateDisplay(fromRotation, toRotation, t)) {
+            return;
+        }
         if (mPipBoundsState.getDisplayLayout().rotation() == toRotation) {
             // The same rotation may have been set by auto PiP-able or fixed rotation. So notify
             // the change with fromRotation=false to apply the rotated destination bounds from
@@ -225,6 +234,14 @@ public class PipController implements PipTransitionController.PipTransitionCallb
                     onDisplayChanged(mDisplayController.getDisplayLayout(displayId),
                             true /* saveRestoreSnapFraction */);
                 }
+
+                @Override
+                public void onKeepClearAreasChanged(int displayId, Set<Rect> restricted,
+                        Set<Rect> unrestricted) {
+                    if (mPipBoundsState.getDisplayId() == displayId) {
+                        mPipBoundsState.setKeepClearAreas(restricted, unrestricted);
+                    }
+                }
             };
 
     /**
@@ -246,8 +263,9 @@ public class PipController implements PipTransitionController.PipTransitionCallb
         }
 
         @Override
-        public void onActionsChanged(ParceledListSlice<RemoteAction> actions) {
-            mMenuController.setAppActions(actions);
+        public void onActionsChanged(ParceledListSlice<RemoteAction> actions,
+                RemoteAction closeAction) {
+            mMenuController.setAppActions(actions, closeAction);
         }
 
         @Override
@@ -282,7 +300,8 @@ public class PipController implements PipTransitionController.PipTransitionCallb
             Optional<OneHandedController> oneHandedController,
             ShellExecutor mainExecutor) {
         if (!context.getPackageManager().hasSystemFeature(FEATURE_PICTURE_IN_PICTURE)) {
-            Slog.w(TAG, "Device doesn't support Pip feature");
+            ProtoLog.w(ShellProtoLogGroup.WM_SHELL_PICTURE_IN_PICTURE,
+                    "%s: Device doesn't support Pip feature", TAG);
             return null;
         }
 
@@ -375,7 +394,8 @@ public class PipController implements PipTransitionController.PipTransitionCallb
         try {
             mWindowManagerShellWrapper.addPinnedStackListener(mPinnedTaskListener);
         } catch (RemoteException e) {
-            Slog.e(TAG, "Failed to register pinned stack listener", e);
+            ProtoLog.e(ShellProtoLogGroup.WM_SHELL_PICTURE_IN_PICTURE,
+                    "%s: Failed to register pinned stack listener, %s", TAG, e);
         }
 
         try {
@@ -387,7 +407,8 @@ public class PipController implements PipTransitionController.PipTransitionCallb
                 mPipInputConsumer.registerInputConsumer();
             }
         } catch (RemoteException | UnsupportedOperationException e) {
-            Log.e(TAG, "Failed to register pinned stack listener", e);
+            ProtoLog.e(ShellProtoLogGroup.WM_SHELL_PICTURE_IN_PICTURE,
+                    "%s: Failed to register pinned stack listener, %s", TAG, e);
             e.printStackTrace();
         }
 
@@ -592,9 +613,9 @@ public class PipController implements PipTransitionController.PipTransitionCallb
         return entryBounds;
     }
 
-    private void stopSwipePipToHome(ComponentName componentName, Rect destinationBounds,
+    private void stopSwipePipToHome(int taskId, ComponentName componentName, Rect destinationBounds,
             SurfaceControl overlay) {
-        mPipTaskOrganizer.stopSwipePipToHome(componentName, destinationBounds, overlay);
+        mPipTaskOrganizer.stopSwipePipToHome(taskId, componentName, destinationBounds, overlay);
     }
 
     private String getTransitionTag(int direction) {
@@ -636,6 +657,9 @@ public class PipController implements PipTransitionController.PipTransitionCallb
         mTouchHandler.setTouchEnabled(false);
         if (mPinnedStackAnimationRecentsCallback != null) {
             mPinnedStackAnimationRecentsCallback.onPipAnimationStarted();
+            if (direction == TRANSITION_DIRECTION_LEAVE_PIP) {
+                mPinnedStackAnimationRecentsCallback.onExpandPip();
+            }
         }
     }
 
@@ -724,7 +748,8 @@ public class PipController implements PipTransitionController.PipTransitionCallb
                     .getRootTaskInfo(WINDOWING_MODE_PINNED, ACTIVITY_TYPE_UNDEFINED);
             if (pinnedTaskInfo == null) return false;
         } catch (RemoteException e) {
-            Log.e(TAG, "Failed to get RootTaskInfo for pinned task", e);
+            ProtoLog.e(ShellProtoLogGroup.WM_SHELL_PICTURE_IN_PICTURE,
+                    "%s: Failed to get RootTaskInfo for pinned task, %s", TAG, e);
             return false;
         }
         final PipSnapAlgorithm pipSnapAlgorithm = mPipBoundsAlgorithm.getSnapAlgorithm();
@@ -870,7 +895,8 @@ public class PipController implements PipTransitionController.PipTransitionCallb
                     PipController.this.dump(pw);
                 });
             } catch (InterruptedException e) {
-                Slog.e(TAG, "Failed to dump PipController in 2s");
+                ProtoLog.e(ShellProtoLogGroup.WM_SHELL_PICTURE_IN_PICTURE,
+                        "%s: Failed to dump PipController in 2s", TAG);
             }
         }
     }
@@ -892,6 +918,11 @@ public class PipController implements PipTransitionController.PipTransitionCallb
             @Override
             public void onPipCornerRadiusChanged(int cornerRadius) {
                 mListener.call(l -> l.onPipCornerRadiusChanged(cornerRadius));
+            }
+
+            @Override
+            public void onExpandPip() {
+                mListener.call(l -> l.onExpandPip());
             }
         };
 
@@ -923,11 +954,12 @@ public class PipController implements PipTransitionController.PipTransitionCallb
         }
 
         @Override
-        public void stopSwipePipToHome(ComponentName componentName, Rect destinationBounds,
-                SurfaceControl overlay) {
+        public void stopSwipePipToHome(int taskId, ComponentName componentName,
+                Rect destinationBounds, SurfaceControl overlay) {
             executeRemoteCallWithTaskPermission(mController, "stopSwipePipToHome",
                     (controller) -> {
-                        controller.stopSwipePipToHome(componentName, destinationBounds, overlay);
+                        controller.stopSwipePipToHome(taskId, componentName, destinationBounds,
+                                overlay);
                     });
         }
 

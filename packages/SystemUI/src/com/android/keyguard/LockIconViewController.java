@@ -35,7 +35,6 @@ import android.hardware.biometrics.SensorLocationInternal;
 import android.hardware.fingerprint.FingerprintSensorPropertiesInternal;
 import android.os.Process;
 import android.os.VibrationAttributes;
-import android.os.Vibrator;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.util.MathUtils;
@@ -60,7 +59,8 @@ import com.android.systemui.dump.DumpManager;
 import com.android.systemui.plugins.FalsingManager;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.statusbar.StatusBarState;
-import com.android.systemui.statusbar.phone.dagger.StatusBarComponent;
+import com.android.systemui.statusbar.VibratorHelper;
+import com.android.systemui.statusbar.phone.dagger.CentralSurfacesComponent;
 import com.android.systemui.statusbar.policy.ConfigurationController;
 import com.android.systemui.statusbar.policy.KeyguardStateController;
 import com.android.systemui.util.ViewController;
@@ -78,7 +78,7 @@ import javax.inject.Inject;
  * For devices with UDFPS, the lock icon will show at the sensor location. Else, the lock
  * icon will show a set distance from the bottom of the device.
  */
-@StatusBarComponent.StatusBarScope
+@CentralSurfacesComponent.CentralSurfacesScope
 public class LockIconViewController extends ViewController<LockIconView> implements Dumpable {
     private static final String TAG = "LockIconViewController";
     private static final float sDefaultDensity =
@@ -103,7 +103,7 @@ public class LockIconViewController extends ViewController<LockIconView> impleme
 
     @NonNull private CharSequence mUnlockedLabel;
     @NonNull private CharSequence mLockedLabel;
-    @Nullable private final Vibrator mVibrator;
+    @NonNull private final VibratorHelper mVibrator;
     @Nullable private final AuthRippleController mAuthRippleController;
 
     // Tracks the velocity of a touch to help filter out the touches that move too fast.
@@ -154,7 +154,7 @@ public class LockIconViewController extends ViewController<LockIconView> impleme
             @NonNull AccessibilityManager accessibilityManager,
             @NonNull ConfigurationController configurationController,
             @NonNull @Main DelayableExecutor executor,
-            @Nullable Vibrator vibrator,
+            @NonNull VibratorHelper vibrator,
             @Nullable AuthRippleController authRippleController,
             @NonNull @Main Resources resources
     ) {
@@ -211,6 +211,18 @@ public class LockIconViewController extends ViewController<LockIconView> impleme
         mDownDetected = false;
         updateBurnInOffsets();
         updateVisibility();
+
+        mAccessibilityManager.addAccessibilityStateChangeListener(
+                mAccessibilityStateChangeListener);
+        updateAccessibility();
+    }
+
+    private void updateAccessibility() {
+        if (mAccessibilityManager.isEnabled()) {
+            mView.setOnClickListener(mA11yClickListener);
+        } else {
+            mView.setOnClickListener(null);
+        }
     }
 
     @Override
@@ -225,6 +237,9 @@ public class LockIconViewController extends ViewController<LockIconView> impleme
             mCancelDelayedUpdateVisibilityRunnable.run();
             mCancelDelayedUpdateVisibilityRunnable = null;
         }
+
+        mAccessibilityManager.removeAccessibilityStateChangeListener(
+                mAccessibilityStateChangeListener);
     }
 
     public float getTop() {
@@ -250,7 +265,6 @@ public class LockIconViewController extends ViewController<LockIconView> impleme
             return;
         }
 
-        boolean wasShowingUnlock = mShowUnlockIcon;
         boolean wasShowingFpIcon = mUdfpsEnrolled && !mShowUnlockIcon && !mShowLockIcon
                 && !mShowAodUnlockedIcon && !mShowAodLockIcon;
         mShowLockIcon = !mCanDismissLockScreen && !mUserUnlockedWithBiometric && isLockScreen()
@@ -433,7 +447,6 @@ public class LockIconViewController extends ViewController<LockIconView> impleme
                 public void onDozingChanged(boolean isDozing) {
                     mIsDozing = isDozing;
                     updateBurnInOffsets();
-                    updateIsUdfpsEnrolled();
                     updateVisibility();
                 }
 
@@ -513,7 +526,6 @@ public class LockIconViewController extends ViewController<LockIconView> impleme
                     mKeyguardUpdateMonitor.getUserUnlockedWithBiometric(
                         KeyguardUpdateMonitor.getCurrentUser());
             }
-            updateIsUdfpsEnrolled();
             updateVisibility();
         }
 
@@ -560,7 +572,7 @@ public class LockIconViewController extends ViewController<LockIconView> impleme
         switch(event.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
             case MotionEvent.ACTION_HOVER_ENTER:
-                if (mVibrator != null && !mDownDetected) {
+                if (!mDownDetected && mAccessibilityManager.isTouchExplorationEnabled()) {
                     mVibrator.vibrate(
                             Process.myUid(),
                             getContext().getOpPackageName(),
@@ -647,15 +659,13 @@ public class LockIconViewController extends ViewController<LockIconView> impleme
             mOnGestureDetectedRunnable.run();
         }
 
-        if (mVibrator != null) {
-            // play device entry haptic (same as biometric success haptic)
-            mVibrator.vibrate(
-                    Process.myUid(),
-                    getContext().getOpPackageName(),
-                    UdfpsController.EFFECT_CLICK,
-                    "lock-icon-device-entry",
-                    TOUCH_VIBRATION_ATTRIBUTES);
-        }
+        // play device entry haptic (same as biometric success haptic)
+        mVibrator.vibrate(
+                Process.myUid(),
+                getContext().getOpPackageName(),
+                UdfpsController.EFFECT_CLICK,
+                "lock-icon-device-entry",
+                TOUCH_VIBRATION_ATTRIBUTES);
 
         mKeyguardViewController.showBouncer(/* scrim */ true);
     }
@@ -670,11 +680,8 @@ public class LockIconViewController extends ViewController<LockIconView> impleme
             mVelocityTracker.recycle();
             mVelocityTracker = null;
         }
-        if (mVibrator != null) {
-            mVibrator.cancel();
-        }
+        mVibrator.cancel();
     }
-
 
     private boolean inLockIconArea(MotionEvent event) {
         return mSensorTouchLocation.contains((int) event.getX(), (int) event.getY())
@@ -692,6 +699,14 @@ public class LockIconViewController extends ViewController<LockIconView> impleme
         mView.setAlpha(alpha);
     }
 
+    private void updateUdfpsConfig() {
+        // must be called from the main thread since it may update the views
+        mExecutor.execute(() -> {
+            updateIsUdfpsEnrolled();
+            updateConfiguration();
+        });
+    }
+
     private final AuthController.Callback mAuthControllerCallback = new AuthController.Callback() {
         @Override
         public void onAllAuthenticatorsRegistered() {
@@ -704,11 +719,8 @@ public class LockIconViewController extends ViewController<LockIconView> impleme
         }
     };
 
-    private void updateUdfpsConfig() {
-        // must be called from the main thread since it may update the views
-        mExecutor.execute(() -> {
-            updateIsUdfpsEnrolled();
-            updateConfiguration();
-        });
-    }
+    private final View.OnClickListener mA11yClickListener = v -> onLongPress();
+
+    private final AccessibilityManager.AccessibilityStateChangeListener
+            mAccessibilityStateChangeListener = enabled -> updateAccessibility();
 }

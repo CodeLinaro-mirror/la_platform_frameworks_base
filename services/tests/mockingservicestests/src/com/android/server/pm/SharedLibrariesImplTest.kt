@@ -41,11 +41,14 @@ import com.android.server.utils.WatchedLongSparseArray
 import com.google.common.truth.Truth.assertThat
 import libcore.util.HexEncoding
 import org.junit.Before
+import org.junit.Ignore
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.JUnit4
 import org.mockito.Mock
+import org.mockito.Mockito.anyLong
+import org.mockito.Mockito.anyString
 import org.mockito.Mockito.doAnswer
 import org.mockito.Mockito.verify
 import org.mockito.MockitoAnnotations
@@ -54,6 +57,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
+@Ignore("b/216603387")
 @RunWith(JUnit4::class)
 class SharedLibrariesImplTest {
 
@@ -80,6 +84,7 @@ class SharedLibrariesImplTest {
     private lateinit var mSharedLibrariesImpl: SharedLibrariesImpl
     private lateinit var mPms: PackageManagerService
     private lateinit var mSettings: Settings
+    private lateinit var mComputer: Computer
 
     @Mock
     private lateinit var mDeletePackageHelper: DeletePackageHelper
@@ -96,20 +101,29 @@ class SharedLibrariesImplTest {
         mRule.system().stageNominalSystemState()
         addExistingPackages()
 
-        val testParams = PackageManagerServiceTestParams().apply {
-            packages = mExistingPackages
-        }
-        mPms = spy(PackageManagerService(mRule.mocks().injector, testParams))
+        mPms = spy(PackageManagerService(mRule.mocks().injector,
+            false /*coreOnly*/,
+            false /*factoryTest*/,
+            MockSystem.DEFAULT_VERSION_INFO.fingerprint,
+            false /*isEngBuild*/,
+            false /*isUserDebugBuild*/,
+            Build.VERSION_CODES.CUR_DEVELOPMENT,
+            Build.VERSION.INCREMENTAL))
         mSettings = mRule.mocks().injector.settings
         mSharedLibrariesImpl = SharedLibrariesImpl(mPms, mRule.mocks().injector)
         mSharedLibrariesImpl.setDeletePackageHelper(mDeletePackageHelper)
         addExistingSharedLibraries()
 
+        mComputer = mock {
+            whenever(sharedLibraries) { mSharedLibrariesImpl.sharedLibraries }
+            whenever(resolveInternalPackageName(anyString(), anyLong())) { arguments[0] }
+        }
+
         whenever(mSettings.getPackageLPr(any())) { mExistingSettings[arguments[0]] }
         whenever(mRule.mocks().injector.getSystemService(StorageManager::class.java))
             .thenReturn(mStorageManager)
         whenever(mStorageManager.findPathForUuid(nullable())).thenReturn(mFile)
-        doAnswer { it.arguments[0] }.`when`(mPms).resolveInternalPackageNameLPr(any(), any())
+        doAnswer { mComputer }.`when`(mPms).snapshotComputer()
         whenever(mDeletePackageHelper.deletePackageX(any(), any(), any(), any(), any()))
             .thenReturn(PackageManager.DELETE_SUCCEEDED)
         whenever(mRule.mocks().injector.compatibility).thenReturn(mPlatformCompat)
@@ -169,7 +183,8 @@ class SharedLibrariesImplTest {
 
     @Test
     fun removeSharedLibrary() {
-        doAnswer { mutableListOf(VersionedPackage(CONSUMER_PACKAGE_NAME, 1L)) }.`when`(mPms)
+        doAnswer { mutableListOf(VersionedPackage(CONSUMER_PACKAGE_NAME, 1L)) }
+            .`when`(mComputer)
             .getPackagesUsingSharedLibrary(any(), any(), any(), any())
         val staticInfo = mSharedLibrariesImpl
             .getSharedLibraryInfo(STATIC_LIB_NAME, STATIC_LIB_VERSION)!!
@@ -185,7 +200,8 @@ class SharedLibrariesImplTest {
 
     @Test
     fun pruneUnusedStaticSharedLibraries() {
-        mSharedLibrariesImpl.pruneUnusedStaticSharedLibraries(Long.MAX_VALUE, 0)
+        mSharedLibrariesImpl.pruneUnusedStaticSharedLibraries(mPms.snapshotComputer(),
+            Long.MAX_VALUE, 0)
 
         verify(mDeletePackageHelper)
             .deletePackageX(eq(STATIC_LIB_PACKAGE_NAME), any(), any(), any(), any())
@@ -209,7 +225,7 @@ class SharedLibrariesImplTest {
         val pair = createBasicAndroidPackage(STATIC_LIB_PACKAGE_NAME + "_" + 10, 10L,
             staticLibrary = STATIC_LIB_NAME, staticLibraryVersion = 10L)
         val parsedPackage = pair.second as ParsedPackage
-        val scanRequest = ScanRequest(parsedPackage, null, null, null,
+        val scanRequest = ScanRequest(parsedPackage, null, null, null, null,
             null, null, null, 0, 0, false, null, null)
         val scanResult = ScanResult(scanRequest, true, null, null, false, 0, null, null, null)
 
@@ -305,7 +321,7 @@ class SharedLibrariesImplTest {
         val packageSetting = mRule.system()
             .createBasicSettingBuilder(pair.first.parentFile, parsedPackage.hideAsFinal())
             .setPkgFlags(ApplicationInfo.FLAG_SYSTEM).build()
-        val scanRequest = ScanRequest(parsedPackage, null, null, null,
+        val scanRequest = ScanRequest(parsedPackage, null, null, null, null,
             null, null, null, 0, 0, false, null, null)
         val scanResult = ScanResult(scanRequest, true, packageSetting, null,
             false, 0, null, null, listOf(testInfo))

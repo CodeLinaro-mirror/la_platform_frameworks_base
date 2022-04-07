@@ -62,6 +62,7 @@ public class SystemNotificationChannels {
     public static String DO_NOT_DISTURB = "DO_NOT_DISTURB";
     public static String ACCESSIBILITY_MAGNIFICATION = "ACCESSIBILITY_MAGNIFICATION";
     public static String ACCESSIBILITY_SECURITY_POLICY = "ACCESSIBILITY_SECURITY_POLICY";
+    public static String ABUSIVE_BACKGROUND_APPS = "ABUSIVE_BACKGROUND_APPS";
 
     public static void createAll(Context context) {
         final NotificationManager nm = context.getSystemService(NotificationManager.class);
@@ -209,12 +210,18 @@ public class SystemNotificationChannels {
                 NotificationManager.IMPORTANCE_LOW);
         channelsList.add(accessibilitySecurityPolicyChannel);
 
+        final NotificationChannel abusiveBackgroundAppsChannel = new NotificationChannel(
+                ABUSIVE_BACKGROUND_APPS,
+                context.getString(R.string.notification_channel_abusive_bg_apps),
+                NotificationManager.IMPORTANCE_LOW);
+        channelsList.add(abusiveBackgroundAppsChannel);
+
         nm.createNotificationChannels(channelsList);
     }
 
     private static String getDeviceAdminNotificationChannelName(Context context) {
         DevicePolicyManager dpm = context.getSystemService(DevicePolicyManager.class);
-        return dpm.getString(NOTIFICATION_CHANNEL_DEVICE_ADMIN,
+        return dpm.getResources().getString(NOTIFICATION_CHANNEL_DEVICE_ADMIN,
                 () -> context.getString(R.string.notification_channel_device_admin));
     }
 

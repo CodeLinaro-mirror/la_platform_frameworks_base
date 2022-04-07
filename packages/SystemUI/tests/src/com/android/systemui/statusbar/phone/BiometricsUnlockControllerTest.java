@@ -38,6 +38,7 @@ import android.testing.TestableLooper.RunWithLooper;
 import android.testing.TestableResources;
 
 import com.android.internal.logging.MetricsLogger;
+import com.android.internal.util.LatencyTracker;
 import com.android.keyguard.KeyguardUpdateMonitor;
 import com.android.systemui.SysuiTestCase;
 import com.android.systemui.biometrics.AuthController;
@@ -46,6 +47,7 @@ import com.android.systemui.keyguard.KeyguardUnlockAnimationController;
 import com.android.systemui.keyguard.KeyguardViewMediator;
 import com.android.systemui.keyguard.ScreenLifecycle;
 import com.android.systemui.keyguard.WakefulnessLifecycle;
+import com.android.systemui.log.SessionTracker;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.statusbar.NotificationMediaManager;
 import com.android.systemui.statusbar.NotificationShadeWindowController;
@@ -107,6 +109,10 @@ public class BiometricsUnlockControllerTest extends SysuiTestCase {
     private StatusBarStateController mStatusBarStateController;
     @Mock
     private KeyguardUnlockAnimationController mKeyguardUnlockAnimationController;
+    @Mock
+    private SessionTracker mSessionTracker;
+    @Mock
+    private LatencyTracker mLatencyTracker;
     private BiometricUnlockController mBiometricUnlockController;
 
     @Before
@@ -120,16 +126,16 @@ public class BiometricsUnlockControllerTest extends SysuiTestCase {
                 .thenReturn(true);
         when(mAuthController.isUdfpsFingerDown()).thenReturn(false);
         when(mKeyguardBypassController.canPlaySubtleWindowAnimations()).thenReturn(true);
-        mContext.addMockSystemService(PowerManager.class, mPowerManager);
         mDependency.injectTestDependency(NotificationMediaManager.class, mMediaManager);
         res.addOverride(com.android.internal.R.integer.config_wakeUpDelayDoze, 0);
-        mBiometricUnlockController = new BiometricUnlockController(mContext, mDozeScrimController,
+        mBiometricUnlockController = new BiometricUnlockController(mDozeScrimController,
                 mKeyguardViewMediator, mScrimController, mShadeController,
                 mNotificationShadeWindowController, mKeyguardStateController, mHandler,
                 mUpdateMonitor, res.getResources(), mKeyguardBypassController, mDozeParameters,
                 mMetricsLogger, mDumpManager, mPowerManager,
                 mNotificationMediaManager, mWakefulnessLifecycle, mScreenLifecycle,
-                mAuthController, mStatusBarStateController, mKeyguardUnlockAnimationController);
+                mAuthController, mStatusBarStateController, mKeyguardUnlockAnimationController,
+                mSessionTracker, mLatencyTracker);
         mBiometricUnlockController.setKeyguardViewController(mStatusBarKeyguardViewManager);
         mBiometricUnlockController.setBiometricModeListener(mBiometricModeListener);
     }
@@ -402,7 +408,7 @@ public class BiometricsUnlockControllerTest extends SysuiTestCase {
     @Test
     public void onFinishedGoingToSleep_authenticatesWhenPending() {
         when(mUpdateMonitor.isGoingToSleep()).thenReturn(true);
-        mBiometricUnlockController.onFinishedGoingToSleep(-1);
+        mBiometricUnlockController.mWakefulnessObserver.onFinishedGoingToSleep();
         verify(mHandler, never()).post(any());
 
         ArgumentCaptor<Runnable> captor = ArgumentCaptor.forClass(Runnable.class);
@@ -410,7 +416,7 @@ public class BiometricsUnlockControllerTest extends SysuiTestCase {
         // value of isUnlockingWithBiometricAllowed()
         mBiometricUnlockController.onBiometricAuthenticated(1 /* userId */,
                 BiometricSourceType.FACE, true /* isStrongBiometric */);
-        mBiometricUnlockController.onFinishedGoingToSleep(-1);
+        mBiometricUnlockController.mWakefulnessObserver.onFinishedGoingToSleep();
         verify(mHandler).post(captor.capture());
         captor.getValue().run();
     }

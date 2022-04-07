@@ -29,12 +29,8 @@ import android.apex.CompressedApexInfoList;
 import android.apex.IApexService;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
-import android.content.pm.PackageInstaller;
 import android.content.pm.PackageManager;
 import android.content.pm.SigningDetails;
-import com.android.server.pm.pkg.parsing.PackageInfoWithoutStateUtils;
-import com.android.server.pm.pkg.parsing.ParsingPackageUtils;
-import com.android.server.pm.pkg.component.ParsedApexSystemService;
 import android.content.pm.parsing.result.ParseResult;
 import android.content.pm.parsing.result.ParseTypeImpl;
 import android.os.Binder;
@@ -43,6 +39,7 @@ import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.Trace;
 import android.sysprop.ApexProperties;
+import android.text.TextUtils;
 import android.util.ArrayMap;
 import android.util.ArraySet;
 import android.util.PrintWriterPrinter;
@@ -59,6 +56,9 @@ import com.android.modules.utils.build.UnboundedSdkLevel;
 import com.android.server.pm.parsing.PackageParser2;
 import com.android.server.pm.parsing.pkg.AndroidPackage;
 import com.android.server.pm.parsing.pkg.ParsedPackage;
+import com.android.server.pm.pkg.component.ParsedApexSystemService;
+import com.android.server.pm.pkg.parsing.PackageInfoWithoutStateUtils;
+import com.android.server.pm.pkg.parsing.ParsingPackageUtils;
 import com.android.server.utils.TimingsTraceAndSlog;
 
 import com.google.android.collect.Lists;
@@ -347,6 +347,13 @@ public abstract class ApexManager {
     public abstract String getApexModuleNameForPackageName(String apexPackageName);
 
     /**
+     * Returns the package name of the active APEX whose name is {@code apexModuleName}. If not
+     * found, returns {@code null}.
+     */
+    @Nullable
+    public abstract String getActivePackageNameForApexModuleName(String apexModuleName);
+
+    /**
      * Copies the CE apex data directory for the given {@code userId} to a backup location, for use
      * in case of rollback.
      *
@@ -414,9 +421,11 @@ public abstract class ApexManager {
             throws PackageManagerException;
 
     /**
-     * Get a map of system services defined in an apex mapped to the jar files they reside in.
+     * Get a list of apex system services implemented in an apex.
+     *
+     * <p>The list is sorted by initOrder for consistency.
      */
-    public abstract Map<String, String> getApexSystemServices();
+    public abstract List<ApexSystemServiceInfo> getApexSystemServices();
 
     /**
      * Dumps various state information to the provided {@link PrintWriter} object.
@@ -449,7 +458,7 @@ public abstract class ApexManager {
          * Map of all apex system services to the jar files they are contained in.
          */
         @GuardedBy("mLock")
-        private Map<String, String> mApexSystemServices = new ArrayMap<>();
+        private List<ApexSystemServiceInfo> mApexSystemServices = new ArrayList<>();
 
         /**
          * Contains the list of {@code packageName}s of apks-in-apex for given
@@ -482,6 +491,12 @@ public abstract class ApexManager {
         private ArrayMap<String, String> mPackageNameToApexModuleName;
 
         /**
+         * Reverse mapping of {@link #mPackageNameToApexModuleName}, for active packages only.
+         */
+        @GuardedBy("mLock")
+        private ArrayMap<String, String> mApexModuleNameToActivePackageName;
+
+        /**
          * Whether an APEX package is active or not.
          *
          * @param packageInfo the package to check
@@ -505,7 +520,7 @@ public abstract class ApexManager {
         @Override
         public List<ActiveApexInfo> getActiveApexInfos() {
             final TimingsTraceAndSlog t = new TimingsTraceAndSlog(TAG + "Timing",
-                    Trace.TRACE_TAG_APEX_MANAGER);
+                    Trace.TRACE_TAG_PACKAGE_MANAGER);
             synchronized (mLock) {
                 if (mActiveApexInfosCache == null) {
                     t.traceBegin("getActiveApexInfos_noCache");
@@ -549,6 +564,7 @@ public abstract class ApexManager {
             try {
                 mAllPackagesCache = new ArrayList<>();
                 mPackageNameToApexModuleName = new ArrayMap<>();
+                mApexModuleNameToActivePackageName = new ArrayMap<>();
                 allPkgs = waitForApexService().getAllPackages();
             } catch (RemoteException re) {
                 Slog.e(TAG, "Unable to retrieve packages from apexservice: " + re.toString());
@@ -580,6 +596,8 @@ public abstract class ApexManager {
                 ApexInfo ai = parsingApexInfo.get(parseResult.scanFile);
 
                 if (throwable == null) {
+                    // Calling hideAsFinal to assign derived fields for the app info flags.
+                    parseResult.parsedPackage.hideAsFinal();
                     final PackageInfo packageInfo = PackageInfoWithoutStateUtils.generate(
                             parseResult.parsedPackage, ai, flags);
                     if (packageInfo == null) {
@@ -604,15 +622,23 @@ public abstract class ApexManager {
                             continue;
                         }
 
-                        String name = service.getName();
-                        if (mApexSystemServices.containsKey(name)) {
-                            throw new IllegalStateException(String.format(
-                                    "Duplicate apex-system-service %s from %s, %s",
-                                    name, mApexSystemServices.get(name), service.getJarPath()));
+                        if (ai.isActive) {
+                            String name = service.getName();
+                            for (int j = 0; j < mApexSystemServices.size(); j++) {
+                                ApexSystemServiceInfo info = mApexSystemServices.get(j);
+                                if (info.getName().equals(name)) {
+                                    throw new IllegalStateException(TextUtils.formatSimple(
+                                            "Duplicate apex-system-service %s from %s, %s", name,
+                                            info.mJarPath, service.getJarPath()));
+                                }
+                            }
+                            ApexSystemServiceInfo info = new ApexSystemServiceInfo(
+                                    service.getName(), service.getJarPath(),
+                                    service.getInitOrder());
+                            mApexSystemServices.add(info);
                         }
-
-                        mApexSystemServices.put(name, service.getJarPath());
                     }
+                    Collections.sort(mApexSystemServices);
                     mPackageNameToApexModuleName.put(packageInfo.packageName, ai.moduleName);
                     if (ai.isActive) {
                         if (activePackagesSet.contains(packageInfo.packageName)) {
@@ -621,6 +647,13 @@ public abstract class ApexManager {
                                             + packageInfo.packageName);
                         }
                         activePackagesSet.add(packageInfo.packageName);
+                        if (mApexModuleNameToActivePackageName.containsKey(ai.moduleName)) {
+                            throw new IllegalStateException(
+                                    "Two active packages have the same APEX module name: "
+                                            + ai.moduleName);
+                        }
+                        mApexModuleNameToActivePackageName.put(
+                                ai.moduleName, packageInfo.packageName);
                     }
                     if (ai.isFactory) {
                         // Don't throw when the duplicating APEX is VNDK APEX
@@ -800,7 +833,7 @@ public abstract class ApexManager {
                 throw new RuntimeException(re);
             } catch (Exception e) {
                 throw new PackageManagerException(
-                        PackageInstaller.SessionInfo.SESSION_VERIFICATION_FAILED,
+                        PackageManager.INSTALL_FAILED_VERIFICATION_FAILURE,
                         "apexd verification failed : " + e.getMessage());
             }
         }
@@ -827,7 +860,7 @@ public abstract class ApexManager {
                 throw new RuntimeException(re);
             } catch (Exception e) {
                 throw new PackageManagerException(
-                        PackageInstaller.SessionInfo.SESSION_VERIFICATION_FAILED,
+                        PackageManager.INSTALL_FAILED_VERIFICATION_FAILURE,
                         "Failed to mark apexd session as ready : " + e.getMessage());
             }
         }
@@ -950,6 +983,16 @@ public abstract class ApexManager {
                 Preconditions.checkState(mPackageNameToApexModuleName != null,
                         "APEX packages have not been scanned");
                 return mPackageNameToApexModuleName.get(apexPackageName);
+            }
+        }
+
+        @Override
+        @Nullable
+        public String getActivePackageNameForApexModuleName(String apexModuleName) {
+            synchronized (mLock) {
+                Preconditions.checkState(mApexModuleNameToActivePackageName != null,
+                        "APEX packages have not been scanned");
+                return mApexModuleNameToActivePackageName.get(apexModuleName);
             }
         }
 
@@ -1133,7 +1176,7 @@ public abstract class ApexManager {
         }
 
         @Override
-        public Map<String, String> getApexSystemServices() {
+        public List<ApexSystemServiceInfo> getApexSystemServices() {
             synchronized (mLock) {
                 Preconditions.checkState(mApexSystemServices != null,
                         "APEX packages have not been scanned");
@@ -1378,6 +1421,12 @@ public abstract class ApexManager {
         }
 
         @Override
+        @Nullable
+        public String getActivePackageNameForApexModuleName(String apexModuleName) {
+            return null;
+        }
+
+        @Override
         public boolean snapshotCeData(int userId, int rollbackId, String apexPackageName) {
             throw new UnsupportedOperationException();
         }
@@ -1423,10 +1472,10 @@ public abstract class ApexManager {
         }
 
         @Override
-        public Map<String, String> getApexSystemServices() {
+        public List<ApexSystemServiceInfo> getApexSystemServices() {
             // TODO(satayev): we can't really support flattened apex use case, and need to migrate
             // the manifest entries into system's manifest asap.
-            return Collections.emptyMap();
+            return Collections.emptyList();
         }
 
         @Override

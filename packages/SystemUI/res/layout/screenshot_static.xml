@@ -14,30 +14,30 @@
   ~ See the License for the specific language governing permissions and
   ~ limitations under the License.
   -->
-<androidx.constraintlayout.widget.ConstraintLayout
+<com.android.systemui.screenshot.DraggableConstraintLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent">
     <ImageView
-        android:id="@+id/screenshot_actions_container_background"
+        android:id="@+id/actions_container_background"
         android:visibility="gone"
         android:layout_height="0dp"
         android:layout_width="0dp"
         android:elevation="1dp"
         android:background="@drawable/action_chip_container_background"
-        android:layout_marginStart="@dimen/screenshot_action_container_margin_horizontal"
-        app:layout_constraintBottom_toBottomOf="@+id/screenshot_actions_container"
+        android:layout_marginStart="@dimen/overlay_action_container_margin_horizontal"
+        app:layout_constraintBottom_toBottomOf="@+id/actions_container"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="@+id/screenshot_actions_container"
-        app:layout_constraintEnd_toEndOf="@+id/screenshot_actions_container"/>
+        app:layout_constraintTop_toTopOf="@+id/actions_container"
+        app:layout_constraintEnd_toEndOf="@+id/actions_container"/>
     <HorizontalScrollView
-        android:id="@+id/screenshot_actions_container"
+        android:id="@+id/actions_container"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:layout_marginEnd="@dimen/screenshot_action_container_margin_horizontal"
-        android:paddingEnd="@dimen/screenshot_action_container_padding_right"
-        android:paddingVertical="@dimen/screenshot_action_container_padding_vertical"
+        android:layout_marginEnd="@dimen/overlay_action_container_margin_horizontal"
+        android:paddingEnd="@dimen/overlay_action_container_padding_right"
+        android:paddingVertical="@dimen/overlay_action_container_padding_vertical"
         android:elevation="1dp"
         android:scrollbars="none"
         app:layout_constraintHorizontal_bias="0"
@@ -50,11 +50,11 @@
             android:id="@+id/screenshot_actions"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content">
-            <include layout="@layout/screenshot_action_chip"
+            <include layout="@layout/overlay_action_chip"
                      android:id="@+id/screenshot_share_chip"/>
-            <include layout="@layout/screenshot_action_chip"
+            <include layout="@layout/overlay_action_chip"
                      android:id="@+id/screenshot_edit_chip"/>
-            <include layout="@layout/screenshot_action_chip"
+            <include layout="@layout/overlay_action_chip"
                      android:id="@+id/screenshot_scroll_chip"
                      android:visibility="gone" />
         </LinearLayout>
@@ -89,7 +89,7 @@
     <ImageView
         android:id="@+id/screenshot_preview"
         android:visibility="invisible"
-        android:layout_width="@dimen/screenshot_x_scale"
+        android:layout_width="@dimen/overlay_x_scale"
         android:layout_margin="@dimen/overlay_border_width"
         android:layout_height="wrap_content"
         android:layout_gravity="center"
@@ -130,4 +130,4 @@
         app:layout_constraintStart_toStartOf="@id/screenshot_preview"
         app:layout_constraintTop_toTopOf="@id/screenshot_preview"
         android:elevation="@dimen/overlay_preview_elevation"/>
-</androidx.constraintlayout.widget.ConstraintLayout>
+</com.android.systemui.screenshot.DraggableConstraintLayout>

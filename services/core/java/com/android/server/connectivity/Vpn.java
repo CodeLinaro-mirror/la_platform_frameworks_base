@@ -75,6 +75,7 @@ import android.net.RouteInfo;
 import android.net.UidRangeParcel;
 import android.net.UnderlyingNetworkInfo;
 import android.net.VpnManager;
+import android.net.VpnProfileState;
 import android.net.VpnService;
 import android.net.VpnTransportInfo;
 import android.net.ipsec.ike.ChildSessionCallback;
@@ -153,6 +154,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeSet;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
@@ -205,6 +207,7 @@ public class Vpn {
     private final NetworkInfo mNetworkInfo;
     private int mLegacyState;
     @VisibleForTesting protected String mPackage;
+    private String mSessionKey;
     private int mOwnerUID;
     private boolean mIsPackageTargetingAtLeastQ;
     @VisibleForTesting
@@ -1317,6 +1320,8 @@ public class Vpn {
                 .setLegacyType(ConnectivityManager.TYPE_VPN)
                 .setLegacyTypeName("VPN")
                 .setBypassableVpn(mConfig.allowBypass && !mLockdown)
+                .setVpnRequiresValidation(mConfig.requiresInternetValidation)
+                .setLocalRoutesExcludedForVpn(mConfig.excludeLocalRoutes)
                 .build();
 
         capsBuilder.setOwnerUid(mOwnerUID);
@@ -2017,7 +2022,8 @@ public class Vpn {
                             .setCategory(Notification.CATEGORY_SYSTEM)
                             .setVisibility(Notification.VISIBILITY_PUBLIC)
                             .setOngoing(true)
-                            .setColor(mContext.getColor(R.color.system_notification_accent_color));
+                            .setColor(mContext.getColor(
+                                    android.R.color.system_notification_accent_color));
             notificationManager.notify(TAG, SystemMessage.NOTE_VPN_DISCONNECTED, builder.build());
         } finally {
             Binder.restoreCallingIdentity(token);
@@ -2517,6 +2523,7 @@ public class Vpn {
             mProfile = profile;
             mIpSecManager = (IpSecManager) mContext.getSystemService(Context.IPSEC_SERVICE);
             mNetworkCallback = new VpnIkev2Utils.Ikev2VpnNetworkCallback(TAG, this);
+            mSessionKey = UUID.randomUUID().toString();
         }
 
         @Override
@@ -2838,6 +2845,7 @@ public class Vpn {
          */
         private void disconnectVpnRunner() {
             mActiveNetwork = null;
+            mSessionKey = null;
             mIsRunning = false;
 
             resetIkeState();
@@ -3329,7 +3337,7 @@ public class Vpn {
      *
      * @param packageName the package name of the app provisioning this profile
      */
-    public synchronized void startVpnProfile(@NonNull String packageName) {
+    public synchronized String startVpnProfile(@NonNull String packageName) {
         requireNonNull(packageName, "No package name provided");
 
         enforceNotRestrictedUser();
@@ -3347,6 +3355,7 @@ public class Vpn {
             }
 
             startVpnProfilePrivileged(profile, packageName);
+            return mSessionKey;
         } finally {
             Binder.restoreCallingIdentity(token);
         }
@@ -3378,6 +3387,8 @@ public class Vpn {
             }
             mConfig.startTime = SystemClock.elapsedRealtime();
             mConfig.proxyInfo = profile.proxy;
+            mConfig.requiresInternetValidation = profile.requiresInternetValidation;
+            mConfig.excludeLocalRoutes = profile.excludeLocalRoutes;
 
             switch (profile.type) {
                 case VpnProfile.TYPE_IKEV2_IPSEC_USER_PASS:
@@ -3426,6 +3437,45 @@ public class Vpn {
         if (isCurrentIkev2VpnLocked(packageName)) {
             prepareInternal(VpnConfig.LEGACY_VPN);
         }
+    }
+
+    private @VpnProfileState.State int getStateFromLegacyState(int legacyState) {
+        switch (legacyState) {
+            case LegacyVpnInfo.STATE_CONNECTING:
+                return VpnProfileState.STATE_CONNECTING;
+            case LegacyVpnInfo.STATE_CONNECTED:
+                return VpnProfileState.STATE_CONNECTED;
+            case LegacyVpnInfo.STATE_DISCONNECTED:
+                return VpnProfileState.STATE_DISCONNECTED;
+            case LegacyVpnInfo.STATE_FAILED:
+                return VpnProfileState.STATE_FAILED;
+            default:
+                Log.wtf(TAG, "Unhandled state " + legacyState
+                        + ", treat it as STATE_DISCONNECTED");
+                return VpnProfileState.STATE_DISCONNECTED;
+        }
+    }
+
+    private VpnProfileState makeVpnProfileState() {
+        // TODO: mSessionKey will be moved to Ikev2VpnRunner once aosp/2007077 is merged, so after
+        //  merging aosp/2007077, here should check Ikev2VpnRunner is null or not. Session key will
+        //  be null if Ikev2VpnRunner is null.
+        return new VpnProfileState(getStateFromLegacyState(mLegacyState), mSessionKey, mAlwaysOn,
+                mLockdown);
+    }
+
+    /**
+     * Retrieve the VpnProfileState for the profile provisioned by the given package.
+     *
+     * @return the VpnProfileState with current information, or null if there was no profile
+     *         provisioned by the given package.
+     */
+    @Nullable
+    public synchronized VpnProfileState getProvisionedVpnProfileState(
+            @NonNull String packageName) {
+        requireNonNull(packageName, "No package name provided");
+        enforceNotRestrictedUser();
+        return isCurrentIkev2VpnLocked(packageName) ? makeVpnProfileState() : null;
     }
 
     /**

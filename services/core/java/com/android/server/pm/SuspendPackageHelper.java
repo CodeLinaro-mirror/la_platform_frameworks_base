@@ -27,6 +27,7 @@ import static com.android.server.pm.PackageManagerService.TAG;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.annotation.UserIdInt;
 import android.app.ActivityManager;
 import android.app.IActivityManager;
 import android.content.Intent;
@@ -46,14 +47,18 @@ import android.util.SparseArray;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.util.ArrayUtils;
+import com.android.internal.util.CollectionUtils;
 import com.android.server.pm.parsing.pkg.AndroidPackage;
 import com.android.server.pm.pkg.PackageStateInternal;
 import com.android.server.pm.pkg.PackageUserStateInternal;
 import com.android.server.pm.pkg.SuspendParams;
+import com.android.server.pm.pkg.mutate.PackageUserStateWrite;
+import com.android.server.utils.WatchedArrayMap;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Objects;
 import java.util.function.Predicate;
 
 public final class SuspendPackageHelper {
@@ -95,87 +100,114 @@ public final class SuspendPackageHelper {
      * @return The names of failed packages.
      */
     @Nullable
-    String[] setPackagesSuspended(@Nullable String[] packageNames, boolean suspended,
-            @Nullable PersistableBundle appExtras, @Nullable PersistableBundle launcherExtras,
-            @Nullable SuspendDialogInfo dialogInfo, @NonNull String callingPackage,
-            int userId, int callingUid) {
+    String[] setPackagesSuspended(@NonNull Computer snapshot, @Nullable String[] packageNames,
+            boolean suspended, @Nullable PersistableBundle appExtras,
+            @Nullable PersistableBundle launcherExtras, @Nullable SuspendDialogInfo dialogInfo,
+            @NonNull String callingPackage, @UserIdInt int userId, int callingUid) {
         if (ArrayUtils.isEmpty(packageNames)) {
             return packageNames;
         }
-        if (suspended && !isSuspendAllowedForUser(userId, callingUid)) {
+        if (suspended && !isSuspendAllowedForUser(snapshot, userId, callingUid)) {
             Slog.w(TAG, "Cannot suspend due to restrictions on user " + userId);
             return packageNames;
         }
 
+        final SuspendParams newSuspendParams =
+                new SuspendParams(dialogInfo, appExtras, launcherExtras);
+
         final List<String> changedPackagesList = new ArrayList<>(packageNames.length);
         final IntArray changedUids = new IntArray(packageNames.length);
-        final List<String> modifiedPackagesList = new ArrayList<>(packageNames.length);
         final IntArray modifiedUids = new IntArray(packageNames.length);
-        final List<String> unactionedPackages = new ArrayList<>(packageNames.length);
-        final boolean[] canSuspend =
-                suspended ? canSuspendPackageForUser(packageNames, userId, callingUid) : null;
+        final List<String> unmodifiablePackages = new ArrayList<>(packageNames.length);
 
+        ArraySet<String> modifiedPackages = new ArraySet<>();
+
+        final boolean[] canSuspend = suspended
+                ? canSuspendPackageForUser(snapshot, packageNames, userId, callingUid) : null;
         for (int i = 0; i < packageNames.length; i++) {
             final String packageName = packageNames[i];
             if (callingPackage.equals(packageName)) {
                 Slog.w(TAG, "Calling package: " + callingPackage + " trying to "
                         + (suspended ? "" : "un") + "suspend itself. Ignoring");
-                unactionedPackages.add(packageName);
+                unmodifiablePackages.add(packageName);
                 continue;
             }
-            final PackageSetting pkgSetting;
-            synchronized (mPm.mLock) {
-                pkgSetting = mPm.mSettings.getPackageLPr(packageName);
-                if (pkgSetting == null
-                        || mPm.shouldFilterApplication(pkgSetting, callingUid, userId)) {
-                    Slog.w(TAG, "Could not find package setting for package: " + packageName
-                            + ". Skipping suspending/un-suspending.");
-                    unactionedPackages.add(packageName);
-                    continue;
-                }
+            final PackageStateInternal packageState =
+                    snapshot.getPackageStateInternal(packageName);
+            if (packageState == null
+                    || snapshot.shouldFilterApplication(packageState, callingUid, userId)) {
+                Slog.w(TAG, "Could not find package setting for package: " + packageName
+                        + ". Skipping suspending/un-suspending.");
+                unmodifiablePackages.add(packageName);
+                continue;
             }
             if (canSuspend != null && !canSuspend[i]) {
-                unactionedPackages.add(packageName);
+                unmodifiablePackages.add(packageName);
                 continue;
             }
-            final boolean packageUnsuspended;
-            final boolean packageModified;
-            synchronized (mPm.mLock) {
-                if (suspended) {
-                    packageModified = pkgSetting.addOrUpdateSuspension(callingPackage,
-                            dialogInfo, appExtras, launcherExtras, userId);
-                } else {
-                    packageModified = pkgSetting.removeSuspension(callingPackage, userId);
+
+            final WatchedArrayMap<String, SuspendParams> suspendParamsMap =
+                    packageState.getUserStateOrDefault(userId).getSuspendParams();
+            if (suspended) {
+                if (suspendParamsMap != null && suspendParamsMap.containsKey(packageName)) {
+                    final SuspendParams suspendParams = suspendParamsMap.get(packageName);
+                    // Skip if there's no changes
+                    if (suspendParams != null
+                            && Objects.equals(suspendParams.getDialogInfo(), dialogInfo)
+                            && Objects.equals(suspendParams.getAppExtras(), appExtras)
+                            && Objects.equals(suspendParams.getLauncherExtras(),
+                            launcherExtras)) {
+                        // Carried over API behavior, must notify change even if no change
+                        changedPackagesList.add(packageName);
+                        changedUids.add(UserHandle.getUid(userId, packageState.getAppId()));
+                        continue;
+                    }
                 }
-                packageUnsuspended = !suspended && !pkgSetting.getSuspended(userId);
             }
+
+            // If size one, the package will be unsuspended from this call
+            boolean packageUnsuspended =
+                    !suspended && CollectionUtils.size(suspendParamsMap) <= 1;
             if (suspended || packageUnsuspended) {
                 changedPackagesList.add(packageName);
-                changedUids.add(UserHandle.getUid(userId, pkgSetting.getAppId()));
+                changedUids.add(UserHandle.getUid(userId, packageState.getAppId()));
             }
-            if (packageModified) {
-                modifiedPackagesList.add(packageName);
-                modifiedUids.add(UserHandle.getUid(userId, pkgSetting.getAppId()));
-            }
+
+            modifiedPackages.add(packageName);
+            modifiedUids.add(UserHandle.getUid(userId, packageState.getAppId()));
         }
+
+        mPm.commitPackageStateMutation(null, mutator -> {
+            final int size = modifiedPackages.size();
+            for (int index = 0; index < size; index++) {
+                final String packageName  = modifiedPackages.valueAt(index);
+                final PackageUserStateWrite userState = mutator.forPackage(packageName)
+                        .userState(userId);
+                if (suspended) {
+                    userState.putSuspendParams(callingPackage, newSuspendParams);
+                } else {
+                    userState.removeSuspension(callingPackage);
+                }
+            }
+        });
+
+        final Computer newSnapshot = mPm.snapshotComputer();
 
         if (!changedPackagesList.isEmpty()) {
             final String[] changedPackages = changedPackagesList.toArray(new String[0]);
-            sendPackagesSuspendedForUser(
+            sendPackagesSuspendedForUser(newSnapshot,
                     suspended ? Intent.ACTION_PACKAGES_SUSPENDED
                             : Intent.ACTION_PACKAGES_UNSUSPENDED,
                     changedPackages, changedUids.toArray(), userId);
             sendMyPackageSuspendedOrUnsuspended(changedPackages, suspended, userId);
-            synchronized (mPm.mLock) {
-                mPm.scheduleWritePackageRestrictionsLocked(userId);
-            }
+            mPm.scheduleWritePackageRestrictions(userId);
         }
         // Send the suspension changed broadcast to ensure suspension state is not stale.
-        if (!modifiedPackagesList.isEmpty()) {
-            sendPackagesSuspendedForUser(Intent.ACTION_PACKAGES_SUSPENSION_CHANGED,
-                    modifiedPackagesList.toArray(new String[0]), modifiedUids.toArray(), userId);
+        if (!modifiedPackages.isEmpty()) {
+            sendPackagesSuspendedForUser(newSnapshot, Intent.ACTION_PACKAGES_SUSPENSION_CHANGED,
+                    modifiedPackages.toArray(new String[0]), modifiedUids.toArray(), userId);
         }
-        return unactionedPackages.toArray(new String[0]);
+        return unmodifiablePackages.toArray(new String[0]);
     }
 
     /**
@@ -187,25 +219,25 @@ public final class SuspendPackageHelper {
      * @return The names of packages which are Unsuspendable.
      */
     @NonNull
-    String[] getUnsuspendablePackagesForUser(@NonNull String[] packageNames, int userId,
-            int callingUid) {
-        if (!isSuspendAllowedForUser(userId, callingUid)) {
+    String[] getUnsuspendablePackagesForUser(@NonNull Computer snapshot,
+            @NonNull String[] packageNames, @UserIdInt int userId, int callingUid) {
+        if (!isSuspendAllowedForUser(snapshot, userId, callingUid)) {
             Slog.w(TAG, "Cannot suspend due to restrictions on user " + userId);
             return packageNames;
         }
         final ArraySet<String> unactionablePackages = new ArraySet<>();
-        final boolean[] canSuspend = canSuspendPackageForUser(packageNames, userId, callingUid);
+        final boolean[] canSuspend = canSuspendPackageForUser(snapshot, packageNames, userId,
+                callingUid);
         for (int i = 0; i < packageNames.length; i++) {
             if (!canSuspend[i]) {
                 unactionablePackages.add(packageNames[i]);
                 continue;
             }
-            synchronized (mPm.mLock) {
-                final PackageSetting ps = mPm.mSettings.getPackageLPr(packageNames[i]);
-                if (ps == null || mPm.shouldFilterApplication(ps, callingUid, userId)) {
-                    Slog.w(TAG, "Could not find package setting for package: " + packageNames[i]);
-                    unactionablePackages.add(packageNames[i]);
-                }
+            final PackageStateInternal packageState =
+                    snapshot.getPackageStateFiltered(packageNames[i], callingUid, userId);
+            if (packageState == null) {
+                Slog.w(TAG, "Could not find package setting for package: " + packageNames[i]);
+                unactionablePackages.add(packageNames[i]);
             }
         }
         return unactionablePackages.toArray(new String[unactionablePackages.size()]);
@@ -220,8 +252,9 @@ public final class SuspendPackageHelper {
      * @return The app extras of the suspended package.
      */
     @Nullable
-    Bundle getSuspendedPackageAppExtras(@NonNull String packageName, int userId, int callingUid) {
-        final PackageStateInternal ps = mPm.getPackageStateInternal(packageName, callingUid);
+    Bundle getSuspendedPackageAppExtras(@NonNull Computer snapshot, @NonNull String packageName,
+            int userId, int callingUid) {
+        final PackageStateInternal ps = snapshot.getPackageStateInternal(packageName, callingUid);
         if (ps == null) {
             return null;
         }
@@ -249,28 +282,64 @@ public final class SuspendPackageHelper {
      *                                   suspensions will be removed.
      * @param userId The user for which the changes are taking place.
      */
-    void removeSuspensionsBySuspendingPackage(@NonNull String[] packagesToChange,
+    void removeSuspensionsBySuspendingPackage(@NonNull Computer computer,
+            @NonNull String[] packagesToChange,
             @NonNull Predicate<String> suspendingPackagePredicate, int userId) {
         final List<String> unsuspendedPackages = new ArrayList<>();
         final IntArray unsuspendedUids = new IntArray();
-        synchronized (mPm.mLock) {
-            for (String packageName : packagesToChange) {
-                final PackageSetting ps = mPm.mSettings.getPackageLPr(packageName);
-                if (ps != null && ps.getUserStateOrDefault(userId).isSuspended()) {
-                    ps.removeSuspension(suspendingPackagePredicate, userId);
-                    if (!ps.getUserStateOrDefault(userId).isSuspended()) {
-                        unsuspendedPackages.add(ps.getPackageName());
-                        unsuspendedUids.add(UserHandle.getUid(userId, ps.getAppId()));
+        final ArrayMap<String, ArraySet<String>> pkgToSuspendingPkgsToCommit = new ArrayMap<>();
+        for (String packageName : packagesToChange) {
+            final PackageStateInternal packageState =
+                    computer.getPackageStateInternal(packageName);
+            final PackageUserStateInternal packageUserState = packageState == null
+                    ? null : packageState.getUserStateOrDefault(userId);
+            if (packageUserState == null || !packageUserState.isSuspended()) {
+                continue;
+            }
+
+            WatchedArrayMap<String, SuspendParams> suspendParamsMap =
+                    packageUserState.getSuspendParams();
+            int countRemoved = 0;
+            for (int index = 0; index < suspendParamsMap.size(); index++) {
+                String suspendingPackage = suspendParamsMap.keyAt(index);
+                if (suspendingPackagePredicate.test(suspendingPackage)) {
+                    ArraySet<String> suspendingPkgsToCommit =
+                            pkgToSuspendingPkgsToCommit.get(packageName);
+                    if (suspendingPkgsToCommit == null) {
+                        suspendingPkgsToCommit = new ArraySet<>();
+                        pkgToSuspendingPkgsToCommit.put(packageName, suspendingPkgsToCommit);
                     }
+                    suspendingPkgsToCommit.add(suspendingPackage);
+                    countRemoved++;
                 }
             }
-            mPm.scheduleWritePackageRestrictionsLocked(userId);
+
+            // Everything would be removed and package unsuspended
+            if (countRemoved == suspendParamsMap.size()) {
+                unsuspendedPackages.add(packageState.getPackageName());
+                unsuspendedUids.add(UserHandle.getUid(userId, packageState.getAppId()));
+            }
         }
+
+        mPm.commitPackageStateMutation(null, mutator -> {
+            for (int mapIndex = 0; mapIndex < pkgToSuspendingPkgsToCommit.size(); mapIndex++) {
+                String packageName = pkgToSuspendingPkgsToCommit.keyAt(mapIndex);
+                ArraySet<String> packagesToRemove = pkgToSuspendingPkgsToCommit.valueAt(mapIndex);
+                PackageUserStateWrite userState = mutator.forPackage(packageName).userState(userId);
+                for (int setIndex = 0; setIndex < packagesToRemove.size(); setIndex++) {
+                    userState.removeSuspension(packagesToRemove.valueAt(setIndex));
+                }
+            }
+        });
+
+        final Computer newSnapshot = mPm.snapshotComputer();
+
+        mPm.scheduleWritePackageRestrictions(userId);
         if (!unsuspendedPackages.isEmpty()) {
             final String[] packageArray = unsuspendedPackages.toArray(
                     new String[unsuspendedPackages.size()]);
             sendMyPackageSuspendedOrUnsuspended(packageArray, false, userId);
-            sendPackagesSuspendedForUser(Intent.ACTION_PACKAGES_UNSUSPENDED,
+            sendPackagesSuspendedForUser(newSnapshot, Intent.ACTION_PACKAGES_UNSUSPENDED,
                     packageArray, unsuspendedUids.toArray(), userId);
         }
     }
@@ -284,10 +353,10 @@ public final class SuspendPackageHelper {
      * @return The launcher extras.
      */
     @Nullable
-    Bundle getSuspendedPackageLauncherExtras(@NonNull String packageName, int userId,
-            int callingUid) {
-        final PackageStateInternal packageState = mPm.getPackageStateInternal(
-                packageName, callingUid);
+    Bundle getSuspendedPackageLauncherExtras(@NonNull Computer snapshot,
+            @NonNull String packageName, int userId, int callingUid) {
+        final PackageStateInternal packageState =
+                snapshot.getPackageStateInternal(packageName, callingUid);
         if (packageState == null) {
             return null;
         }
@@ -312,9 +381,10 @@ public final class SuspendPackageHelper {
      * @param callingUid The caller's uid.
      * @return {@code true}, if the given package is suspended.
      */
-    boolean isPackageSuspended(@NonNull String packageName, int userId, int callingUid) {
-        final PackageStateInternal packageState = mPm.getPackageStateInternal(
-                packageName, callingUid);
+    boolean isPackageSuspended(@NonNull Computer snapshot, @NonNull String packageName, int userId,
+            int callingUid) {
+        final PackageStateInternal packageState =
+                snapshot.getPackageStateInternal(packageName, callingUid);
         return packageState != null && packageState.getUserStateOrDefault(userId)
                 .isSuspended();
     }
@@ -328,8 +398,9 @@ public final class SuspendPackageHelper {
      * @return The name of suspending package.
      */
     @Nullable
-    String getSuspendingPackage(@NonNull String suspendedPackage, int userId, int callingUid) {
-        final PackageStateInternal packageState = mPm.getPackageStateInternal(
+    String getSuspendingPackage(@NonNull Computer snapshot, @NonNull String suspendedPackage,
+            int userId, int callingUid) {
+        final PackageStateInternal packageState = snapshot.getPackageStateInternal(
                 suspendedPackage, callingUid);
         if (packageState == null) {
             return  null;
@@ -360,9 +431,10 @@ public final class SuspendPackageHelper {
      * @return The dialog info.
      */
     @Nullable
-    SuspendDialogInfo getSuspendedDialogInfo(@NonNull String suspendedPackage,
-            @NonNull String suspendingPackage, int userId, int callingUid) {
-        final PackageStateInternal packageState = mPm.getPackageStateInternal(
+    SuspendDialogInfo getSuspendedDialogInfo(@NonNull Computer snapshot,
+            @NonNull String suspendedPackage, @NonNull String suspendingPackage, int userId,
+            int callingUid) {
+        final PackageStateInternal packageState = snapshot.getPackageStateInternal(
                 suspendedPackage, callingUid);
         if (packageState == null) {
             return  null;
@@ -373,7 +445,8 @@ public final class SuspendPackageHelper {
             return null;
         }
 
-        final ArrayMap<String, SuspendParams> suspendParamsMap = userState.getSuspendParams();
+        final WatchedArrayMap<String, SuspendParams> suspendParamsMap =
+                userState.getSuspendParams();
         if (suspendParamsMap == null) {
             return null;
         }
@@ -389,9 +462,9 @@ public final class SuspendPackageHelper {
      * @param callingUid The caller's uid.
      * @return {@code true} if the user is allowed to suspend packages by the caller.
      */
-    boolean isSuspendAllowedForUser(int userId, int callingUid) {
+    boolean isSuspendAllowedForUser(@NonNull Computer snapshot, int userId, int callingUid) {
         final UserManagerService userManager = mInjector.getUserManagerService();
-        return isCallerDeviceOrProfileOwner(userId, callingUid)
+        return isCallerDeviceOrProfileOwner(snapshot, userId, callingUid)
                 || (!userManager.hasUserRestriction(UserManager.DISALLOW_APPS_CONTROL, userId)
                 && !userManager.hasUserRestriction(UserManager.DISALLOW_UNINSTALL_APPS, userId));
     }
@@ -406,20 +479,23 @@ public final class SuspendPackageHelper {
      * @return An array containing results of the checks
      */
     @NonNull
-    boolean[] canSuspendPackageForUser(@NonNull String[] packageNames, int userId, int callingUid) {
+    boolean[] canSuspendPackageForUser(@NonNull Computer snapshot, @NonNull String[] packageNames,
+            int userId, int callingUid) {
         final boolean[] canSuspend = new boolean[packageNames.length];
-        final boolean isCallerOwner = isCallerDeviceOrProfileOwner(userId, callingUid);
+        final boolean isCallerOwner = isCallerDeviceOrProfileOwner(snapshot, userId, callingUid);
         final long token = Binder.clearCallingIdentity();
         try {
             final DefaultAppProvider defaultAppProvider = mInjector.getDefaultAppProvider();
             final String activeLauncherPackageName = defaultAppProvider.getDefaultHome(userId);
             final String dialerPackageName = defaultAppProvider.getDefaultDialer(userId);
-            final String requiredInstallerPackage = getKnownPackageName(PACKAGE_INSTALLER, userId);
+            final String requiredInstallerPackage =
+                    getKnownPackageName(snapshot, PACKAGE_INSTALLER, userId);
             final String requiredUninstallerPackage =
-                    getKnownPackageName(PACKAGE_UNINSTALLER, userId);
-            final String requiredVerifierPackage = getKnownPackageName(PACKAGE_VERIFIER, userId);
+                    getKnownPackageName(snapshot, PACKAGE_UNINSTALLER, userId);
+            final String requiredVerifierPackage =
+                    getKnownPackageName(snapshot, PACKAGE_VERIFIER, userId);
             final String requiredPermissionControllerPackage =
-                    getKnownPackageName(PACKAGE_PERMISSION_CONTROLLER, userId);
+                    getKnownPackageName(snapshot, PACKAGE_PERMISSION_CONTROLLER, userId);
             for (int i = 0; i < packageNames.length; i++) {
                 canSuspend[i] = false;
                 final String packageName = packageNames[i];
@@ -459,36 +535,38 @@ public final class SuspendPackageHelper {
                             + "\": required for permissions management");
                     continue;
                 }
-                synchronized (mPm.mLock) {
-                    if (mProtectedPackages.isPackageStateProtected(userId, packageName)) {
-                        Slog.w(TAG, "Cannot suspend package \"" + packageName
-                                + "\": protected package");
-                        continue;
-                    }
-                    if (!isCallerOwner && mPm.mSettings.getBlockUninstallLPr(userId, packageName)) {
-                        Slog.w(TAG, "Cannot suspend package \"" + packageName
-                                + "\": blocked by admin");
-                        continue;
-                    }
+                if (mProtectedPackages.isPackageStateProtected(userId, packageName)) {
+                    Slog.w(TAG, "Cannot suspend package \"" + packageName
+                            + "\": protected package");
+                    continue;
+                }
+                if (!isCallerOwner && snapshot.getBlockUninstall(userId, packageName)) {
+                    Slog.w(TAG, "Cannot suspend package \"" + packageName
+                            + "\": blocked by admin");
+                    continue;
+                }
 
-                    AndroidPackage pkg = mPm.mPackages.get(packageName);
-                    if (pkg != null) {
-                        // Cannot suspend SDK libs as they are controlled by SDK manager.
-                        if (pkg.isSdkLibrary()) {
-                            Slog.w(TAG, "Cannot suspend package: " + packageName
-                                    + " providing SDK library: "
-                                    + pkg.getSdkLibName());
-                            continue;
-                        }
-                        // Cannot suspend static shared libs as they are considered
-                        // a part of the using app (emulating static linking). Also
-                        // static libs are installed always on internal storage.
-                        if (pkg.isStaticSharedLibrary()) {
-                            Slog.w(TAG, "Cannot suspend package: " + packageName
-                                    + " providing static shared library: "
-                                    + pkg.getStaticSharedLibName());
-                            continue;
-                        }
+                // Cannot suspend static shared libs as they are considered
+                // a part of the using app (emulating static linking). Also
+                // static libs are installed always on internal storage.
+                PackageStateInternal packageState = snapshot.getPackageStateInternal(packageName);
+                AndroidPackage pkg = packageState == null ? null : packageState.getPkg();
+                if (pkg != null) {
+                    // Cannot suspend SDK libs as they are controlled by SDK manager.
+                    if (pkg.isSdkLibrary()) {
+                        Slog.w(TAG, "Cannot suspend package: " + packageName
+                                + " providing SDK library: "
+                                + pkg.getSdkLibName());
+                        continue;
+                    }
+                    // Cannot suspend static shared libs as they are considered
+                    // a part of the using app (emulating static linking). Also
+                    // static libs are installed always on internal storage.
+                    if (pkg.isStaticSharedLibrary()) {
+                        Slog.w(TAG, "Cannot suspend package: " + packageName
+                                + " providing static shared library: "
+                                + pkg.getStaticSharedLibName());
+                        continue;
                     }
                 }
                 if (PLATFORM_PACKAGE_NAME.equals(packageName)) {
@@ -512,8 +590,8 @@ public final class SuspendPackageHelper {
      * @param userId The user where packages reside.
      */
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
-    void sendPackagesSuspendedForUser(@NonNull String intent, @NonNull String[] pkgList,
-            @NonNull int[] uidList, int userId) {
+    void sendPackagesSuspendedForUser(@NonNull Computer snapshot, @NonNull String intent,
+            @NonNull String[] pkgList, @NonNull int[] uidList, int userId) {
         final List<List<String>> pkgsToSend = new ArrayList(pkgList.length);
         final List<IntArray> uidsToSend = new ArrayList(pkgList.length);
         final List<SparseArray<int[]>> allowListsToSend = new ArrayList(pkgList.length);
@@ -524,8 +602,8 @@ public final class SuspendPackageHelper {
             final String pkgName = pkgList[i];
             final int uid = uidList[i];
             SparseArray<int[]> allowList = mInjector.getAppsFilter().getVisibilityAllowList(
-                    mPm.getPackageStateInternal(pkgName, SYSTEM_UID),
-                    userIds, mPm.getPackageStates());
+                    snapshot.getPackageStateInternal(pkgName, SYSTEM_UID),
+                    userIds, snapshot.getPackageStates());
             if (allowList == null) {
                 allowList = new SparseArray<>(0);
             }
@@ -560,19 +638,22 @@ public final class SuspendPackageHelper {
         }
     }
 
-    private String getKnownPackageName(@KnownPackage int knownPackage, int userId) {
-        final String[] knownPackages = mPm.getKnownPackageNamesInternal(knownPackage, userId);
+    private String getKnownPackageName(@NonNull Computer snapshot, @KnownPackage int knownPackage,
+            int userId) {
+        final String[] knownPackages =
+                mPm.getKnownPackageNamesInternal(snapshot, knownPackage, userId);
         return knownPackages.length > 0 ? knownPackages[0] : null;
     }
 
-    private boolean isCallerDeviceOrProfileOwner(int userId, int callingUid) {
+    private boolean isCallerDeviceOrProfileOwner(@NonNull Computer snapshot, int userId,
+            int callingUid) {
         if (callingUid == SYSTEM_UID) {
             return true;
         }
         final String ownerPackage = mProtectedPackages.getDeviceOwnerOrProfileOwnerPackage(userId);
         if (ownerPackage != null) {
-            return callingUid == mPm.getPackageUidInternal(
-                    ownerPackage, 0, userId, callingUid);
+            return callingUid == snapshot.getPackageUidInternal(ownerPackage, 0, userId,
+                    callingUid);
         }
         return false;
     }
@@ -591,9 +672,10 @@ public final class SuspendPackageHelper {
                 return;
             }
             final int[] targetUserIds = new int[] {userId};
+            final Computer snapshot = mPm.snapshotComputer();
             for (String packageName : affectedPackages) {
                 final Bundle appExtras = suspended
-                        ? getSuspendedPackageAppExtras(packageName, userId, SYSTEM_UID)
+                        ? getSuspendedPackageAppExtras(snapshot, packageName, userId, SYSTEM_UID)
                         : null;
                 final Bundle intentExtras;
                 if (appExtras != null) {

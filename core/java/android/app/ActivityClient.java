@@ -324,6 +324,14 @@ public class ActivityClient {
         }
     }
 
+    void setShouldDockBigOverlays(IBinder token, boolean shouldDockBigOverlays) {
+        try {
+            getActivityClientController().setShouldDockBigOverlays(token, shouldDockBigOverlays);
+        } catch (RemoteException e) {
+            e.rethrowFromSystemServer();
+        }
+    }
+
     void toggleFreeformWindowingMode(IBinder token) {
         try {
             getActivityClientController().toggleFreeformWindowingMode(token);
@@ -428,19 +436,19 @@ public class ActivityClient {
         }
     }
 
-    void overridePendingTransition(IBinder token, String packageName,
-            int enterAnim, int exitAnim) {
+    void overridePendingTransition(IBinder token, String packageName, int enterAnim, int exitAnim,
+            int backgroundColor) {
         try {
             getActivityClientController().overridePendingTransition(token, packageName,
-                    enterAnim, exitAnim);
+                    enterAnim, exitAnim, backgroundColor);
         } catch (RemoteException e) {
             e.rethrowFromSystemServer();
         }
     }
 
-    void setDisablePreviewScreenshots(IBinder token, boolean disable) {
+    void setRecentsScreenshotEnabled(IBinder token, boolean enabled) {
         try {
-            getActivityClientController().setDisablePreviewScreenshots(token, disable);
+            getActivityClientController().setRecentsScreenshotEnabled(token, enabled);
         } catch (RemoteException e) {
             e.rethrowFromSystemServer();
         }

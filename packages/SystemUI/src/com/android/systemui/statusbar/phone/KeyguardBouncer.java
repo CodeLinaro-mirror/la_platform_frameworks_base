@@ -41,6 +41,7 @@ import com.android.keyguard.ViewMediatorCallback;
 import com.android.keyguard.dagger.KeyguardBouncerComponent;
 import com.android.systemui.DejankUtils;
 import com.android.systemui.classifier.FalsingCollector;
+import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.keyguard.DismissCallbackRegistry;
 import com.android.systemui.shared.system.SysUiStatsLog;
 import com.android.systemui.statusbar.policy.KeyguardStateController;
@@ -115,7 +116,7 @@ public class KeyguardBouncer {
             BouncerExpansionCallback expansionCallback,
             KeyguardStateController keyguardStateController,
             KeyguardUpdateMonitor keyguardUpdateMonitor,
-            KeyguardBypassController keyguardBypassController, Handler handler,
+            KeyguardBypassController keyguardBypassController, @Main Handler handler,
             KeyguardSecurityModel keyguardSecurityModel,
             KeyguardBouncerComponent.Factory keyguardBouncerComponentFactory) {
         mContext = context;
@@ -605,11 +606,47 @@ public class KeyguardBouncer {
         mResetCallbacks.remove(callback);
     }
 
+    /**
+     * Adds a callback to listen to bouncer expansion updates.
+     */
+    public void addBouncerExpansionCallback(BouncerExpansionCallback callback) {
+        if (!mExpansionCallbacks.contains(callback)) {
+            mExpansionCallbacks.add(callback);
+        }
+    }
+
+    /**
+     * Removes a previously added callback. If the callback was never added, this methood
+     * does nothing.
+     */
+    public void removeBouncerExpansionCallback(BouncerExpansionCallback callback) {
+        mExpansionCallbacks.remove(callback);
+    }
+
     public interface BouncerExpansionCallback {
-        void onFullyShown();
-        void onStartingToHide();
-        void onStartingToShow();
-        void onFullyHidden();
+        /**
+         * Invoked when the bouncer expansion reaches {@link KeyguardBouncer#EXPANSION_VISIBLE}.
+         */
+        default void onFullyShown() {
+        }
+
+        /**
+         * Invoked when the bouncer is starting to transition to a hidden state.
+         */
+        default void onStartingToHide() {
+        }
+
+        /**
+         * Invoked when the bouncer is starting to transition to a visible state.
+         */
+        default void onStartingToShow() {
+        }
+
+        /**
+         * Invoked when the bouncer expansion reaches {@link KeyguardBouncer#EXPANSION_HIDDEN}.
+         */
+        default void onFullyHidden() {
+        }
 
         /**
          * From 0f {@link KeyguardBouncer#EXPANSION_VISIBLE} when fully visible
@@ -647,7 +684,7 @@ public class KeyguardBouncer {
                 DismissCallbackRegistry dismissCallbackRegistry, FalsingCollector falsingCollector,
                 KeyguardStateController keyguardStateController,
                 KeyguardUpdateMonitor keyguardUpdateMonitor,
-                KeyguardBypassController keyguardBypassController, Handler handler,
+                KeyguardBypassController keyguardBypassController, @Main Handler handler,
                 KeyguardSecurityModel keyguardSecurityModel,
                 KeyguardBouncerComponent.Factory keyguardBouncerComponentFactory) {
             mContext = context;

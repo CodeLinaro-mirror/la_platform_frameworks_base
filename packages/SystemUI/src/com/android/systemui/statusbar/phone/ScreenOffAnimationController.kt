@@ -37,8 +37,8 @@ class ScreenOffAnimationController @Inject constructor(
     private val animations: List<ScreenOffAnimation> =
         listOfNotNull(foldToAodAnimation, unlockedScreenOffAnimation)
 
-    fun initialize(statusBar: StatusBar, lightRevealScrim: LightRevealScrim) {
-        animations.forEach { it.initialize(statusBar, lightRevealScrim) }
+    fun initialize(centralSurfaces: CentralSurfaces, lightRevealScrim: LightRevealScrim) {
+        animations.forEach { it.initialize(centralSurfaces, lightRevealScrim) }
         wakefulnessLifecycle.addObserver(this)
     }
 
@@ -113,14 +113,16 @@ class ScreenOffAnimationController @Inject constructor(
      * the animation ends
      */
     fun shouldDelayKeyguardShow(): Boolean =
-        animations.any { it.shouldPlayAnimation() }
+        animations.any { it.shouldDelayKeyguardShow() }
 
     /**
      * Return true while we want to ignore requests to show keyguard, we need to handle pending
      * keyguard lock requests manually
+     *
+     * @see [com.android.systemui.keyguard.KeyguardViewMediator.maybeHandlePendingLock]
      */
     fun isKeyguardShowDelayed(): Boolean =
-        animations.any { it.isAnimationPlaying() }
+        animations.any { it.isKeyguardShowDelayed() }
 
     /**
      * Return true to ignore requests to hide keyguard
@@ -129,7 +131,7 @@ class ScreenOffAnimationController @Inject constructor(
         animations.any { it.isKeyguardHideDelayed() }
 
     /**
-     * Return true to make the StatusBar expanded so we can animate [LightRevealScrim]
+     * Return true to make the status bar expanded so we can animate [LightRevealScrim]
      */
     fun shouldShowLightRevealScrim(): Boolean =
         animations.any { it.shouldPlayAnimation() }
@@ -195,7 +197,7 @@ class ScreenOffAnimationController @Inject constructor(
 }
 
 interface ScreenOffAnimation {
-    fun initialize(statusBar: StatusBar, lightRevealScrim: LightRevealScrim) {}
+    fun initialize(centralSurfaces: CentralSurfaces, lightRevealScrim: LightRevealScrim) {}
 
     /**
      * Called when started going to sleep, should return true if the animation will be played
@@ -211,6 +213,8 @@ interface ScreenOffAnimation {
     fun shouldAnimateInKeyguard(): Boolean = false
     fun animateInKeyguard(keyguardView: View, after: Runnable) = after.run()
 
+    fun shouldDelayKeyguardShow(): Boolean = false
+    fun isKeyguardShowDelayed(): Boolean = false
     fun isKeyguardHideDelayed(): Boolean = false
     fun shouldHideScrimOnWakeUp(): Boolean = false
     fun overrideNotificationsDozeAmount(): Boolean = false

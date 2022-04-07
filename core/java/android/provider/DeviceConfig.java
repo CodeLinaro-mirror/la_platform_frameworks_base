@@ -74,6 +74,13 @@ public final class DeviceConfig {
     public static final String NAMESPACE_ACTIVITY_MANAGER = "activity_manager";
 
     /**
+     * Namespace for activity manager, specific to the "component alias" feature. We needed a
+     * different namespace in order to avoid phonetype from resetting it.
+     * @hide
+     */
+    public static final String NAMESPACE_ACTIVITY_MANAGER_COMPONENT_ALIAS = "activity_manager_ca";
+
+    /**
      * Namespace for all activity manager related features that are used at the native level.
      * These features are applied at reboot.
      *
@@ -322,6 +329,13 @@ public final class DeviceConfig {
     public static final String NAMESPACE_NNAPI_NATIVE = "nnapi_native";
 
     /**
+     * Namespace for all OnDevicePersonalization related feature.
+     * @hide
+     */
+    @SystemApi
+    public static final String NAMESPACE_ON_DEVICE_PERSONALIZATION = "on_device_personalization";
+
+    /**
      * Namespace for features related to the Package Manager Service.
      *
      * @hide
@@ -407,6 +421,13 @@ public final class DeviceConfig {
     public static final String NAMESPACE_SCHEDULER = "scheduler";
 
     /**
+     * Namespace for all SdkSandbox related features.
+     * @hide
+     */
+    @SystemApi
+    public static final String NAMESPACE_SDK_SANDBOX = "sdk_sandbox";
+
+    /**
      * Namespace for settings statistics features.
      *
      * @hide
@@ -464,11 +485,11 @@ public final class DeviceConfig {
     public static final String NAMESPACE_STORAGE_NATIVE_BOOT = "storage_native_boot";
 
     /**
-     * Namespace for all Supplemental Api related features.
+     * Namespace for all AdServices related features.
      * @hide
      */
     @SystemApi
-    public static final String NAMESPACE_SUPPLEMENTAL_API = "supplemental_api";
+    public static final String NAMESPACE_ADSERVICES = "adservices";
 
     /**
      * Namespace for all SurfaceFlinger features that are used at the native level.
@@ -579,6 +600,13 @@ public final class DeviceConfig {
     public static final String NAMESPACE_SELECTION_TOOLBAR = "selection_toolbar";
 
     /**
+     * Definitions for voice interaction related functions.
+     *
+     * @hide
+     */
+    public static final String NAMESPACE_VOICE_INTERACTION = "voice_interaction";
+
+    /**
      * List of namespaces which can be read without READ_DEVICE_CONFIG permission
      *
      * @hide
@@ -586,7 +614,7 @@ public final class DeviceConfig {
     @NonNull
     private static final List<String> PUBLIC_NAMESPACES =
             Arrays.asList(NAMESPACE_TEXTCLASSIFIER, NAMESPACE_RUNTIME, NAMESPACE_STATSD_JAVA,
-                    NAMESPACE_STATSD_JAVA_BOOT, NAMESPACE_SELECTION_TOOLBAR);
+                    NAMESPACE_STATSD_JAVA_BOOT, NAMESPACE_SELECTION_TOOLBAR, NAMESPACE_AUTOFILL);
     /**
      * Privacy related properties definitions.
      *

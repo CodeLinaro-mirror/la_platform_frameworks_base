@@ -35,6 +35,7 @@ import android.widget.LinearLayout;
 
 import androidx.test.filters.SmallTest;
 
+import com.android.keyguard.KeyguardUpdateMonitor;
 import com.android.systemui.SysuiTestCase;
 import com.android.systemui.flags.FeatureFlags;
 import com.android.systemui.plugins.statusbar.NotificationSwipeActionHelper;
@@ -53,9 +54,9 @@ import com.android.systemui.statusbar.notification.logging.NotificationLogger;
 import com.android.systemui.statusbar.notification.row.ExpandableNotificationRow;
 import com.android.systemui.statusbar.notification.row.ExpandableView;
 import com.android.systemui.statusbar.notification.row.NotificationTestHelper;
-import com.android.systemui.statusbar.notification.stack.ForegroundServiceSectionController;
 import com.android.systemui.statusbar.notification.stack.NotificationListContainer;
 import com.android.systemui.statusbar.phone.KeyguardBypassController;
+import com.android.systemui.statusbar.policy.KeyguardStateController;
 import com.android.wm.shell.bubbles.Bubbles;
 
 import com.google.android.collect.Lists;
@@ -119,11 +120,12 @@ public class NotificationViewHierarchyManagerTest extends SysuiTestCase {
                 mock(KeyguardBypassController.class),
                 Optional.of(mock(Bubbles.class)),
                 mock(DynamicPrivacyController.class),
-                mock(ForegroundServiceSectionController.class),
                 mock(DynamicChildBindController.class),
                 mock(LowPriorityInflationHelper.class),
                 mock(AssistantFeedbackController.class),
-                mNotifPipelineFlags);
+                mNotifPipelineFlags,
+                mock(KeyguardUpdateMonitor.class),
+                mock(KeyguardStateController.class));
         mViewHierarchyManager.setUpWithPresenter(mPresenter, mStackController, mListContainer);
     }
 

@@ -16,6 +16,7 @@
 
 package com.android.server.companion.presence;
 
+import static com.android.server.companion.presence.CompanionDevicePresenceMonitor.DEBUG;
 import static com.android.server.companion.presence.Utils.btDeviceToString;
 
 import android.annotation.NonNull;
@@ -39,7 +40,6 @@ import java.util.Map;
 class BluetoothCompanionDeviceConnectionListener
         extends BluetoothAdapter.BluetoothConnectionCallback
         implements AssociationStore.OnChangeListener {
-    private static final boolean DEBUG = false;
     private static final String TAG = "CompanionDevice_PresenceMonitor_BT";
 
     interface Callback {
@@ -91,10 +91,10 @@ class BluetoothCompanionDeviceConnectionListener
      */
     @Override
     public void onDeviceDisconnected(@NonNull BluetoothDevice device,
-            @DisconnectReason int reason) {
+            int reason) {
         if (DEBUG) {
             Log.i(TAG, "onDevice_Disconnected() " + btDeviceToString(device));
-            Log.d(TAG, "  reason=" + disconnectReasonText(reason));
+            Log.d(TAG, "  reason=" + disconnectReasonToString(reason));
         }
 
         final MacAddress macAddress = MacAddress.fromString(device.getAddress());

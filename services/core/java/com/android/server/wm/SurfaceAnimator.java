@@ -16,10 +16,10 @@
 
 package com.android.server.wm;
 
+import static com.android.internal.protolog.ProtoLogGroup.WM_DEBUG_ANIM;
 import static com.android.server.wm.SurfaceAnimatorProto.ANIMATION_ADAPTER;
 import static com.android.server.wm.SurfaceAnimatorProto.ANIMATION_START_DELAYED;
 import static com.android.server.wm.SurfaceAnimatorProto.LEASH;
-import static com.android.server.wm.WindowManagerDebugConfig.DEBUG_ANIM;
 import static com.android.server.wm.WindowManagerDebugConfig.TAG_WITH_CLASS_NAME;
 import static com.android.server.wm.WindowManagerDebugConfig.TAG_WM;
 
@@ -32,8 +32,11 @@ import android.view.SurfaceControl;
 import android.view.SurfaceControl.Transaction;
 
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.internal.protolog.ProtoLogImpl;
+import com.android.internal.protolog.common.ProtoLog;
 
 import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.function.Supplier;
@@ -88,6 +91,8 @@ class SurfaceAnimator {
 
     private boolean mAnimationStartDelayed;
 
+    private boolean mAnimationFinished;
+
     /**
      * @param animatable The object to animate.
      * @param staticAnimationFinishedCallback Callback to invoke when an animation has finished
@@ -137,6 +142,7 @@ class SurfaceAnimator {
                         || anim.shouldDeferAnimationFinish(resetAndInvokeFinish))) {
                     resetAndInvokeFinish.run();
                 }
+                mAnimationFinished = true;
             }
         };
     }
@@ -182,10 +188,16 @@ class SurfaceAnimator {
         }
         mAnimatable.onLeashAnimationStarting(t, mLeash);
         if (mAnimationStartDelayed) {
-            if (DEBUG_ANIM) Slog.i(TAG, "Animation start delayed");
+            ProtoLog.i(WM_DEBUG_ANIM, "Animation start delayed for %s", mAnimatable);
             return;
         }
         mAnimation.startAnimation(mLeash, t, type, mInnerAnimationFinishedCallback);
+        if (ProtoLogImpl.isEnabled(WM_DEBUG_ANIM)) {
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            mAnimation.dump(pw, "");
+            ProtoLog.d(WM_DEBUG_ANIM, "Animation start for %s, anim=%s", mAnimatable, sw);
+        }
         if (snapshotAnim != null) {
             mSnapshot = freezer.takeSnapshotForAnimation();
             if (mSnapshot == null) {
@@ -302,6 +314,9 @@ class SurfaceAnimator {
             Slog.w(TAG, "Unable to transfer animation, surface or parent is null");
             cancelAnimation();
             return;
+        } else if (from.mAnimationFinished) {
+            Slog.w(TAG, "Unable to transfer animation, because " + from + " animation is finished");
+            return;
         }
         endDelayingAnimationStart();
         final Transaction t = mAnimatable.getPendingTransaction();
@@ -334,7 +349,8 @@ class SurfaceAnimator {
      *                      to another animator.
      */
     private void cancelAnimation(Transaction t, boolean restarting, boolean forwardCancel) {
-        if (DEBUG_ANIM) Slog.i(TAG, "Cancelling animation restarting=" + restarting);
+        ProtoLog.i(WM_DEBUG_ANIM, "Cancelling animation restarting=%b for %s",
+                restarting, mAnimatable);
         final SurfaceControl leash = mLeash;
         final AnimationAdapter animation = mAnimation;
         final @AnimationType int animationType = mAnimationType;
@@ -392,6 +408,7 @@ class SurfaceAnimator {
         SurfaceControl leash = mLeash;
         mLeash = null;
         final boolean scheduleAnim = removeLeash(t, mAnimatable, leash, destroyLeash);
+        mAnimationFinished = false;
         if (scheduleAnim) {
             mService.scheduleAnimationLocked();
         }
@@ -412,7 +429,8 @@ class SurfaceAnimator {
         final boolean reparent = surface != null && (curAnimationLeash == null
                 || curAnimationLeash.equals(leash));
         if (reparent) {
-            if (DEBUG_ANIM) Slog.i(TAG, "Reparenting to original parent: " + parent);
+            ProtoLog.i(WM_DEBUG_ANIM, "Reparenting to original parent: %s for %s",
+                    parent, animatable);
             // We shouldn't really need these isValid checks but we do
             // b/130364451
             if (surface.isValid() && parent != null && parent.isValid()) {
@@ -437,7 +455,7 @@ class SurfaceAnimator {
     static SurfaceControl createAnimationLeash(Animatable animatable, SurfaceControl surface,
             Transaction t, @AnimationType int type, int width, int height, int x, int y,
             boolean hidden, Supplier<Transaction> transactionFactory) {
-        if (DEBUG_ANIM) Slog.i(TAG, "Reparenting to leash");
+        ProtoLog.i(WM_DEBUG_ANIM, "Reparenting to leash for %s", animatable);
         final SurfaceControl.Builder builder = animatable.makeAnimationLeash()
                 .setParent(animatable.getAnimationLeashParent())
                 .setName(surface + " - animation-leash of " + animationTypeToString(type))

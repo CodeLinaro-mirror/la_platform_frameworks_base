@@ -72,6 +72,7 @@ oneway interface IApplicationThread {
     @UnsupportedAppUsage
     void scheduleStopService(IBinder token);
     void bindApplication(in String packageName, in ApplicationInfo info,
+            in String sdkSandboxClientAppPackage,
             in ProviderInfoList providerList, in ComponentName testName,
             in ProfilerInfo profilerInfo, in Bundle testArguments,
             IInstrumentationWatcher testWatcher, IUiAutomationConnection uiAutomationConnection,
@@ -113,6 +114,7 @@ oneway interface IApplicationThread {
             in ParcelFileDescriptor fd, in RemoteCallback finishCallback);
     void dumpActivity(in ParcelFileDescriptor fd, IBinder servicetoken, in String prefix,
             in String[] args);
+    void dumpResources(in ParcelFileDescriptor fd, in RemoteCallback finishCallback);
     void clearDnsCache();
     void updateHttpProxy();
     void setCoreSettings(in Bundle coreSettings);

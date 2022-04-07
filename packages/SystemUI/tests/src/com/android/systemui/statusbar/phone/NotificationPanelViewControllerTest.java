@@ -23,13 +23,11 @@ import static com.android.keyguard.KeyguardClockSwitch.SMALL;
 import static com.android.systemui.statusbar.StatusBarState.KEYGUARD;
 import static com.android.systemui.statusbar.StatusBarState.SHADE;
 import static com.android.systemui.statusbar.StatusBarState.SHADE_LOCKED;
-import static com.android.systemui.statusbar.notification.ViewGroupFadeHelper.reset;
 
 import static com.google.common.truth.Truth.assertThat;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
-import static org.mockito.ArgumentMatchers.anyFloat;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeast;
@@ -58,13 +56,11 @@ import android.util.DisplayMetrics;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.View;
-import android.view.ViewGroup;
 import android.view.ViewPropertyAnimator;
 import android.view.ViewStub;
 import android.view.accessibility.AccessibilityManager;
 import android.view.accessibility.AccessibilityNodeInfo;
 
-import androidx.constraintlayout.widget.ConstraintLayout;
 import androidx.constraintlayout.widget.ConstraintSet;
 import androidx.test.filters.SmallTest;
 
@@ -89,37 +85,28 @@ import com.android.systemui.SysuiTestCase;
 import com.android.systemui.biometrics.AuthController;
 import com.android.systemui.classifier.FalsingCollectorFake;
 import com.android.systemui.classifier.FalsingManagerFake;
-import com.android.systemui.communal.CommunalHostView;
-import com.android.systemui.communal.CommunalHostViewController;
-import com.android.systemui.communal.CommunalSource;
-import com.android.systemui.communal.CommunalSourceMonitor;
-import com.android.systemui.communal.CommunalStateController;
-import com.android.systemui.communal.dagger.CommunalViewComponent;
 import com.android.systemui.controls.dagger.ControlsComponent;
 import com.android.systemui.doze.DozeLog;
 import com.android.systemui.dump.DumpManager;
 import com.android.systemui.flags.FeatureFlags;
-import com.android.systemui.flags.Flags;
 import com.android.systemui.fragments.FragmentHostManager;
 import com.android.systemui.fragments.FragmentService;
-import com.android.systemui.idle.IdleHostViewController;
-import com.android.systemui.idle.dagger.IdleViewComponent;
 import com.android.systemui.keyguard.KeyguardUnlockAnimationController;
 import com.android.systemui.media.KeyguardMediaController;
 import com.android.systemui.media.MediaDataManager;
 import com.android.systemui.media.MediaHierarchyManager;
+import com.android.systemui.model.SysUiState;
 import com.android.systemui.navigationbar.NavigationModeController;
 import com.android.systemui.plugins.FalsingManager;
 import com.android.systemui.qrcodescanner.controller.QRCodeScannerController;
-import com.android.systemui.qs.QSDetailDisplayer;
 import com.android.systemui.screenrecord.RecordingController;
 import com.android.systemui.statusbar.CommandQueue;
 import com.android.systemui.statusbar.KeyguardAffordanceView;
 import com.android.systemui.statusbar.KeyguardIndicationController;
 import com.android.systemui.statusbar.LockscreenShadeTransitionController;
-import com.android.systemui.statusbar.NotificationLockscreenUserManager;
 import com.android.systemui.statusbar.NotificationRemoteInputManager;
 import com.android.systemui.statusbar.NotificationShadeDepthController;
+import com.android.systemui.statusbar.NotificationShadeWindowController;
 import com.android.systemui.statusbar.NotificationShelfController;
 import com.android.systemui.statusbar.PulseExpansionHandler;
 import com.android.systemui.statusbar.QsFrameTranslateController;
@@ -131,11 +118,12 @@ import com.android.systemui.statusbar.notification.ConversationNotificationManag
 import com.android.systemui.statusbar.notification.DynamicPrivacyController;
 import com.android.systemui.statusbar.notification.NotificationEntryManager;
 import com.android.systemui.statusbar.notification.NotificationWakeUpCoordinator;
-import com.android.systemui.statusbar.notification.collection.legacy.NotificationGroupManagerLegacy;
 import com.android.systemui.statusbar.notification.stack.AmbientState;
+import com.android.systemui.statusbar.notification.stack.NotificationListContainer;
 import com.android.systemui.statusbar.notification.stack.NotificationRoundnessManager;
 import com.android.systemui.statusbar.notification.stack.NotificationStackScrollLayout;
 import com.android.systemui.statusbar.notification.stack.NotificationStackScrollLayoutController;
+import com.android.systemui.statusbar.notification.stack.NotificationStackSizeCalculator;
 import com.android.systemui.statusbar.phone.panelstate.PanelExpansionStateManager;
 import com.android.systemui.statusbar.policy.ConfigurationController;
 import com.android.systemui.statusbar.policy.KeyguardQsUserSwitchController;
@@ -159,7 +147,6 @@ import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.mockito.stubbing.Answer;
 
-import java.lang.ref.WeakReference;
 import java.util.List;
 import java.util.Optional;
 
@@ -171,7 +158,7 @@ public class NotificationPanelViewControllerTest extends SysuiTestCase {
     private static final int NOTIFICATION_SCRIM_TOP_PADDING_IN_SPLIT_SHADE = 50;
 
     @Mock
-    private StatusBar mStatusBar;
+    private CentralSurfaces mCentralSurfaces;
     @Mock
     private NotificationStackScrollLayout mNotificationStackScrollLayout;
     @Mock
@@ -185,8 +172,6 @@ public class NotificationPanelViewControllerTest extends SysuiTestCase {
     private HeadsUpManagerPhone mHeadsUpManager;
     @Mock
     private NotificationShelfController mNotificationShelfController;
-    @Mock
-    private NotificationGroupManagerLegacy mGroupManager;
     @Mock
     private KeyguardStatusBarView mKeyguardStatusBar;
     @Mock
@@ -211,10 +196,6 @@ public class NotificationPanelViewControllerTest extends SysuiTestCase {
     private FeatureFlags mFeatureFlags;
     @Mock
     private DynamicPrivacyController mDynamicPrivacyController;
-    @Mock
-    private ShadeController mShadeController;
-    @Mock
-    private NotificationLockscreenUserManager mNotificationLockscreenUserManager;
     @Mock
     private NotificationEntryManager mNotificationEntryManager;
     @Mock
@@ -267,34 +248,11 @@ public class NotificationPanelViewControllerTest extends SysuiTestCase {
     @Mock
     private KeyguardUserSwitcherController mKeyguardUserSwitcherController;
     @Mock
-    private IdleViewComponent.Factory mIdleViewComponentFactory;
-    @Mock
-    private IdleViewComponent mIdleViewComponent;
-    @Mock
-    private IdleHostViewController mIdleHostViewController;
-    @Mock
-    private QSDetailDisplayer mQSDetailDisplayer;
-    @Mock
     private KeyguardStatusViewComponent mKeyguardStatusViewComponent;
     @Mock
     private KeyguardStatusBarViewComponent.Factory mKeyguardStatusBarViewComponentFactory;
     @Mock
     private KeyguardStatusBarViewComponent mKeyguardStatusBarViewComponent;
-    @Mock
-    private CommunalViewComponent.Factory mCommunalViewComponentFactory;
-    @Mock
-    private CommunalViewComponent mCommunalViewComponent;
-    @Mock
-    private CommunalHostViewController mCommunalHostViewController;
-    @Mock
-    private CommunalSourceMonitor mCommunalSourceMonitor;
-    @Mock
-    private CommunalSource mCommunalSource;
-    @Mock
-    private CommunalHostView mCommunalHostView;
-    @Mock
-    private CommunalStateController mCommunalStateController;
-    private CommunalStateController.Callback mCommunalStateControllerCallback;
     @Mock
     private KeyguardClockSwitchController mKeyguardClockSwitchController;
     @Mock
@@ -330,7 +288,7 @@ public class NotificationPanelViewControllerTest extends SysuiTestCase {
     @Mock
     private SecureSettings mSecureSettings;
     @Mock
-    private SplitShadeHeaderController mSplitShadeHeaderController;
+    private LargeScreenShadeHeaderController mLargeScreenShadeHeaderController;
     @Mock
     private ContentResolver mContentResolver;
     @Mock
@@ -365,6 +323,15 @@ public class NotificationPanelViewControllerTest extends SysuiTestCase {
     private StatusBarWindowStateController mStatusBarWindowStateController;
     @Mock
     private KeyguardUnlockAnimationController mKeyguardUnlockAnimationController;
+    @Mock
+    private NotificationShadeWindowController mNotificationShadeWindowController;
+    @Mock
+    private SysUiState mSysUiState;
+    @Mock
+    private NotificationListContainer mNotificationListContainer;
+    @Mock
+    private NotificationStackSizeCalculator mNotificationStackSizeCalculator;
+    private NotificationPanelViewController.PanelEventsEmitter mPanelEventsEmitter;
     private Optional<SysUIUnfoldComponent> mSysUIUnfoldComponent = Optional.empty();
     private SysuiStatusBarStateController mStatusBarStateController;
     private NotificationPanelViewController mNotificationPanelViewController;
@@ -391,11 +358,11 @@ public class NotificationPanelViewControllerTest extends SysuiTestCase {
         mConfiguration.orientation = ORIENTATION_PORTRAIT;
         when(mResources.getDisplayMetrics()).thenReturn(mDisplayMetrics);
         mDisplayMetrics.density = 100;
-        when(mFeatureFlags.isEnabled(Flags.NOTIFICATION_SHADE_DRAG)).thenReturn(true);
+        when(mResources.getBoolean(R.bool.config_enableNotificationShadeDrag)).thenReturn(true);
         when(mResources.getDimensionPixelSize(R.dimen.notifications_top_padding_split_shade))
                 .thenReturn(NOTIFICATION_SCRIM_TOP_PADDING_IN_SPLIT_SHADE);
-        when(mResources.getDimensionPixelSize(R.dimen.qs_panel_width)).thenReturn(400);
-        when(mResources.getDimensionPixelSize(R.dimen.notification_panel_width)).thenReturn(400);
+        when(mResources.getDimensionPixelSize(R.dimen.notification_panel_margin_horizontal))
+                .thenReturn(10);
         when(mView.getContext()).thenReturn(getContext());
         when(mView.findViewById(R.id.keyguard_header)).thenReturn(mKeyguardStatusBar);
         when(mView.findViewById(R.id.keyguard_user_switcher_view)).thenReturn(mUserSwitcherView);
@@ -404,7 +371,6 @@ public class NotificationPanelViewControllerTest extends SysuiTestCase {
         when(mView.findViewById(R.id.keyguard_clock_container)).thenReturn(mKeyguardClockSwitch);
         when(mView.findViewById(R.id.notification_stack_scroller))
                 .thenReturn(mNotificationStackScrollLayout);
-        when(mView.findViewById(R.id.communal_host)).thenReturn(mCommunalHostView);
         when(mNotificationStackScrollLayoutController.getHeight()).thenReturn(1000);
         when(mNotificationStackScrollLayoutController.getHeadsUpCallback())
                 .thenReturn(mHeadsUpCallback);
@@ -416,8 +382,6 @@ public class NotificationPanelViewControllerTest extends SysuiTestCase {
         when(mView.findViewById(R.id.keyguard_status_view))
                 .thenReturn(mock(KeyguardStatusView.class));
         mNotificationContainerParent = new NotificationsQuickSettingsContainer(getContext(), null);
-        mNotificationContainerParent.addView(newViewWithId(R.id.qs_frame));
-        mNotificationContainerParent.addView(newViewWithId(R.id.notification_stack_scroller));
         mNotificationContainerParent.addView(mKeyguardStatusView);
         mNotificationContainerParent.onFinishInflate();
         when(mView.findViewById(R.id.notification_container_parent))
@@ -470,14 +434,6 @@ public class NotificationPanelViewControllerTest extends SysuiTestCase {
                 .thenReturn(mKeyguardStatusBarViewComponent);
         when(mKeyguardStatusBarViewComponent.getKeyguardStatusBarViewController())
                 .thenReturn(mKeyguardStatusBarViewController);
-        when(mCommunalViewComponentFactory.build(any()))
-                .thenReturn(mCommunalViewComponent);
-        when(mCommunalViewComponent.getCommunalHostViewController())
-                .thenReturn(mCommunalHostViewController);
-        when(mIdleViewComponentFactory.build(any()))
-                .thenReturn(mIdleViewComponent);
-        when(mIdleViewComponent.getIdleHostViewController())
-                .thenReturn(mIdleHostViewController);
         when(mLayoutInflater.inflate(eq(R.layout.keyguard_status_view), any(), anyBoolean()))
                 .thenReturn(mKeyguardStatusView);
         when(mLayoutInflater.inflate(eq(R.layout.keyguard_user_switcher), any(), anyBoolean()))
@@ -490,9 +446,13 @@ public class NotificationPanelViewControllerTest extends SysuiTestCase {
                 .thenReturn(true);
         when(mInteractionJankMonitor.end(anyInt()))
                 .thenReturn(true);
-        reset(mView);
+        doAnswer(invocation -> {
+            ((Runnable) invocation.getArgument(0)).run();
+            return null;
+        }).when(mNotificationShadeWindowController).batchApplyWindowLayoutParams(any());
 
         mMainHandler = new Handler(Looper.getMainLooper());
+        mPanelEventsEmitter = new NotificationPanelViewController.PanelEventsEmitter();
 
         mNotificationPanelViewController = new NotificationPanelViewController(mView,
                 mResources,
@@ -501,13 +461,14 @@ public class NotificationPanelViewControllerTest extends SysuiTestCase {
                 mFeatureFlags,
                 coordinator, expansionHandler, mDynamicPrivacyController, mKeyguardBypassController,
                 mFalsingManager, new FalsingCollectorFake(),
-                mNotificationLockscreenUserManager, mNotificationEntryManager,
-                mCommunalStateController, mKeyguardStateController,
+                mNotificationEntryManager,
+                mKeyguardStateController,
                 mStatusBarStateController,
                 mStatusBarWindowStateController,
+                mNotificationShadeWindowController,
                 mDozeLog, mDozeParameters, mCommandQueue, mVibratorHelper,
                 mLatencyTracker, mPowerManager, mAccessibilityManager, 0, mUpdateMonitor,
-                mCommunalSourceMonitor, mMetricsLogger, mActivityManager, mConfigurationController,
+                mMetricsLogger, mActivityManager, mConfigurationController,
                 () -> flingAnimationUtilsBuilder, mStatusBarTouchableRegionManager,
                 mConversationNotificationManager, mMediaHiearchyManager,
                 mStatusBarKeyguardViewManager,
@@ -517,11 +478,7 @@ public class NotificationPanelViewControllerTest extends SysuiTestCase {
                 mKeyguardQsUserSwitchComponentFactory,
                 mKeyguardUserSwitcherComponentFactory,
                 mKeyguardStatusBarViewComponentFactory,
-                mCommunalViewComponentFactory,
-                mIdleViewComponentFactory,
                 mLockscreenShadeTransitionController,
-                mQSDetailDisplayer,
-                mGroupManager,
                 mNotificationAreaController,
                 mAuthController,
                 mScrimController,
@@ -541,7 +498,7 @@ public class NotificationPanelViewControllerTest extends SysuiTestCase {
                 mRecordingController,
                 mExecutor,
                 mSecureSettings,
-                mSplitShadeHeaderController,
+                mLargeScreenShadeHeaderController,
                 mScreenOffAnimationController,
                 mLockscreenGestureLogger,
                 new PanelExpansionStateManager(),
@@ -550,9 +507,13 @@ public class NotificationPanelViewControllerTest extends SysuiTestCase {
                 mControlsComponent,
                 mInteractionJankMonitor,
                 mQsFrameTranslateController,
-                mKeyguardUnlockAnimationController);
+                mSysUiState,
+                mKeyguardUnlockAnimationController,
+                mNotificationListContainer,
+                mPanelEventsEmitter,
+                mNotificationStackSizeCalculator);
         mNotificationPanelViewController.initDependencies(
-                mStatusBar,
+                mCentralSurfaces,
                 () -> {},
                 mNotificationShelfController);
         mNotificationPanelViewController.setHeadsUpManager(mHeadsUpManager);
@@ -709,31 +670,6 @@ public class NotificationPanelViewControllerTest extends SysuiTestCase {
     }
 
     @Test
-    public void testAllChildrenOfNotificationContainer_haveIds() {
-        enableSplitShade(/* enabled= */ true);
-        mNotificationContainerParent.removeAllViews();
-        mNotificationContainerParent.addView(newViewWithId(1));
-        mNotificationContainerParent.addView(newViewWithId(View.NO_ID));
-
-        mNotificationPanelViewController.updateResources();
-
-        assertThat(mNotificationContainerParent.getChildAt(0).getId()).isEqualTo(1);
-        assertThat(mNotificationContainerParent.getChildAt(1).getId()).isNotEqualTo(View.NO_ID);
-    }
-
-    @Test
-    public void testSinglePaneShadeLayout_isAlignedToParent() {
-        enableSplitShade(/* enabled= */ false);
-
-        mNotificationPanelViewController.updateResources();
-
-        assertThat(getConstraintSetLayout(R.id.qs_frame).endToEnd)
-                .isEqualTo(ConstraintSet.PARENT_ID);
-        assertThat(getConstraintSetLayout(R.id.notification_stack_scroller).startToStart)
-                .isEqualTo(ConstraintSet.PARENT_ID);
-    }
-
-    @Test
     public void testKeyguardStatusViewInSplitShade_changesConstraintsDependingOnNotifications() {
         mStatusBarStateController.setState(KEYGUARD);
         enableSplitShade(/* enabled= */ true);
@@ -779,40 +715,6 @@ public class NotificationPanelViewControllerTest extends SysuiTestCase {
         updateSmallestScreenWidth(800);
 
         verify(mUserSwitcherStubView).inflate();
-    }
-
-    @Test
-    public void testSplitShadeLayout_isAlignedToGuideline() {
-        enableSplitShade(/* enabled= */ true);
-
-        mNotificationPanelViewController.updateResources();
-
-        assertThat(getConstraintSetLayout(R.id.qs_frame).endToEnd)
-                .isEqualTo(R.id.qs_edge_guideline);
-        assertThat(getConstraintSetLayout(R.id.notification_stack_scroller).startToStart)
-                .isEqualTo(R.id.qs_edge_guideline);
-    }
-
-    @Test
-    public void testSinglePaneShadeLayout_childrenHaveConstantWidth() {
-        enableSplitShade(/* enabled= */ false);
-
-        mNotificationPanelViewController.updateResources();
-
-        assertThat(getConstraintSetLayout(R.id.qs_frame).mWidth)
-                .isEqualTo(mResources.getDimensionPixelSize(R.dimen.qs_panel_width));
-        assertThat(getConstraintSetLayout(R.id.notification_stack_scroller).mWidth)
-                .isEqualTo(mResources.getDimensionPixelSize(R.dimen.notification_panel_width));
-    }
-
-    @Test
-    public void testSplitShadeLayout_childrenHaveZeroWidth() {
-        enableSplitShade(/* enabled= */ true);
-
-        mNotificationPanelViewController.updateResources();
-
-        assertThat(getConstraintSetLayout(R.id.qs_frame).mWidth).isEqualTo(0);
-        assertThat(getConstraintSetLayout(R.id.notification_stack_scroller).mWidth).isEqualTo(0);
     }
 
     @Test
@@ -912,6 +814,7 @@ public class NotificationPanelViewControllerTest extends SysuiTestCase {
     public void testSwitchesToCorrectClockInSplitShade() {
         mStatusBarStateController.setState(KEYGUARD);
         enableSplitShade(/* enabled= */ true);
+        clearInvocations(mKeyguardStatusViewController);
 
         when(mNotificationStackScrollLayoutController.getVisibleNotificationCount()).thenReturn(0);
         triggerPositionClockAndNotifications();
@@ -926,11 +829,56 @@ public class NotificationPanelViewControllerTest extends SysuiTestCase {
     }
 
     @Test
+    public void testHasNotifications_switchesToLargeClockWhenEnteringSplitShade() {
+        mStatusBarStateController.setState(KEYGUARD);
+        when(mNotificationStackScrollLayoutController.getVisibleNotificationCount()).thenReturn(1);
+
+        enableSplitShade(/* enabled= */ true);
+
+        verify(mKeyguardStatusViewController).displayClock(LARGE, /* animate */ true);
+    }
+
+    @Test
+    public void testNoNotifications_switchesToLargeClockWhenEnteringSplitShade() {
+        mStatusBarStateController.setState(KEYGUARD);
+        when(mNotificationStackScrollLayoutController.getVisibleNotificationCount()).thenReturn(0);
+
+        enableSplitShade(/* enabled= */ true);
+
+        verify(mKeyguardStatusViewController).displayClock(LARGE, /* animate */ true);
+    }
+
+    @Test
+    public void testHasNotifications_switchesToSmallClockWhenExitingSplitShade() {
+        mStatusBarStateController.setState(KEYGUARD);
+        enableSplitShade(/* enabled= */ true);
+        clearInvocations(mKeyguardStatusViewController);
+        when(mNotificationStackScrollLayoutController.getVisibleNotificationCount()).thenReturn(1);
+
+        enableSplitShade(/* enabled= */ false);
+
+        verify(mKeyguardStatusViewController).displayClock(SMALL, /* animate */ true);
+    }
+
+    @Test
+    public void testNoNotifications_switchesToLargeClockWhenExitingSplitShade() {
+        mStatusBarStateController.setState(KEYGUARD);
+        enableSplitShade(/* enabled= */ true);
+        clearInvocations(mKeyguardStatusViewController);
+        when(mNotificationStackScrollLayoutController.getVisibleNotificationCount()).thenReturn(0);
+
+        enableSplitShade(/* enabled= */ false);
+
+        verify(mKeyguardStatusViewController).displayClock(LARGE, /* animate */ true);
+    }
+
+    @Test
     public void testSwitchesToBigClockInSplitShadeOnAod() {
         mStatusBarStateController.setState(KEYGUARD);
         enableSplitShade(/* enabled= */ true);
         when(mMediaDataManager.hasActiveMedia()).thenReturn(true);
         when(mNotificationStackScrollLayoutController.getVisibleNotificationCount()).thenReturn(2);
+        clearInvocations(mKeyguardStatusViewController);
 
         mNotificationPanelViewController.setDozing(true, false, null);
 
@@ -942,6 +890,7 @@ public class NotificationPanelViewControllerTest extends SysuiTestCase {
         when(mScreenOffAnimationController.shouldAnimateClockChange()).thenReturn(false);
         mStatusBarStateController.setState(KEYGUARD);
         enableSplitShade(/* enabled= */ true);
+        clearInvocations(mKeyguardStatusViewController);
         when(mMediaDataManager.hasActiveMedia()).thenReturn(true);
         when(mNotificationStackScrollLayoutController.getVisibleNotificationCount()).thenReturn(2);
 
@@ -954,6 +903,7 @@ public class NotificationPanelViewControllerTest extends SysuiTestCase {
     public void testDisplaysSmallClockOnLockscreenInSplitShadeWhenMediaIsPlaying() {
         mStatusBarStateController.setState(KEYGUARD);
         enableSplitShade(/* enabled= */ true);
+        clearInvocations(mKeyguardStatusViewController);
         when(mMediaDataManager.hasActiveMedia()).thenReturn(true);
 
         // one notification + media player visible
@@ -969,78 +919,32 @@ public class NotificationPanelViewControllerTest extends SysuiTestCase {
     }
 
     @Test
-    public void testCommunalhostViewControllerInit() {
-        verify(mCommunalHostViewController, times(1)).init();
-        clearInvocations(mCommunalHostViewController);
-        givenViewAttached();
-        verify(mCommunalHostViewController, never()).init();
+    public void testLargeScreenHeaderMadeActiveForLargeScreen() {
+        mStatusBarStateController.setState(SHADE);
+        when(mResources.getBoolean(R.bool.config_use_large_screen_shade_header)).thenReturn(true);
+        mNotificationPanelViewController.updateResources();
+        verify(mLargeScreenShadeHeaderController).setActive(true);
+
+        when(mResources.getBoolean(R.bool.config_use_large_screen_shade_header)).thenReturn(false);
+        mNotificationPanelViewController.updateResources();
+        verify(mLargeScreenShadeHeaderController).setActive(false);
     }
 
     @Test
-    public void testCommunalSourceListening() {
-        final ArgumentCaptor<CommunalSourceMonitor.Callback> monitorCallback =
-                ArgumentCaptor.forClass(CommunalSourceMonitor.Callback.class);
-
-        givenViewAttached();
-        verify(mCommunalSourceMonitor).addCallback(monitorCallback.capture());
-
-        final ArgumentCaptor<WeakReference<CommunalSource>> sourceCapture =
-                ArgumentCaptor.forClass(WeakReference.class);
-
-        monitorCallback.getValue().onSourceAvailable(new WeakReference<>(mCommunalSource));
-        mExecutor.runAllReady();
-        verify(mCommunalHostViewController).show(sourceCapture.capture());
-        assertThat(sourceCapture.getValue().get()).isEqualTo(mCommunalSource);
-
-        clearInvocations(mCommunalHostViewController);
-        givenViewDetached();
-        verify(mCommunalSourceMonitor).removeCallback(any());
+    public void testUnlockAnimationDoesNotAffectScrim() {
+        mNotificationPanelViewController.onUnlockHintStarted();
+        verify(mScrimController).setExpansionAffectsAlpha(false);
+        mNotificationPanelViewController.onUnlockHintFinished();
+        verify(mScrimController).setExpansionAffectsAlpha(true);
     }
 
     @Test
-    public void testKeyguardStatusViewUpdatedWithCommunalPresence() {
-        givenViewAttached();
+    public void setKeyguardStatusBarAlpha_setsAlphaOnKeyguardStatusBarController() {
+        float statusBarAlpha = 0.5f;
 
-        when(mResources.getBoolean(
-                com.android.internal.R.bool.config_keyguardUserSwitcher)).thenReturn(true);
-        updateMultiUserSetting(true);
+        mNotificationPanelViewController.setKeyguardStatusBarAlpha(statusBarAlpha);
 
-        ArgumentCaptor<CommunalStateController.Callback> communalCallbackCapture =
-                ArgumentCaptor.forClass(CommunalStateController.Callback.class);
-        verify(mCommunalStateController).addCallback(communalCallbackCapture.capture());
-        final CommunalStateController.Callback communalStateControllerCallback =
-                communalCallbackCapture.getValue();
-
-        clearInvocations(mKeyguardStatusViewController, mKeyguardUserSwitcherController);
-        // Ensure changes in communal visibility leads to setting the keyguard status view
-        // visibility.
-        communalStateControllerCallback.onCommunalViewShowingChanged();
-        verify(mKeyguardStatusViewController).setKeyguardStatusViewVisibility(anyInt(),
-                anyBoolean(), anyBoolean(), anyInt());
-        verify(mKeyguardUserSwitcherController).setKeyguardUserSwitcherVisibility(anyInt(),
-                anyBoolean(), anyBoolean(), anyInt());
-    }
-
-    @Test
-    public void testCommunalAlphaUpdate() {
-        // Verify keyguard content alpha changes are propagate. Note the actual value set is not
-        // checked since an interpolation is applied to the incoming value.
-        mNotificationPanelViewController.setKeyguardOnlyContentAlpha(0.8f);
-        verify(mCommunalHostViewController).setAlpha(anyFloat());
-    }
-
-    @Test
-    public void testCommunalPositionUpdate() {
-        // Verify that the communal position is updated on interaction with the
-        // NotificationPanelViewController. Note that there a number of paths where the position
-        // might be updated and therefore the check isn't strictly on a single invocation.
-        clearInvocations(mCommunalHostViewController);
-        final View.OnLayoutChangeListener layoutChangeListener =
-                mNotificationPanelViewController.createLayoutChangeListener();
-        mNotificationPanelViewController.mStatusBarStateController.setState(KEYGUARD);
-        layoutChangeListener.onLayoutChange(mView, 0, 0, 200, 200, 0, 0, 200, 200);
-        verify(mCommunalHostViewController, atLeast(1))
-                .updatePosition(anyInt(), anyBoolean());
+        verify(mKeyguardStatusBarViewController).setAlpha(statusBarAlpha);
     }
 
     private void triggerPositionClockAndNotifications() {
@@ -1065,17 +969,6 @@ public class NotificationPanelViewControllerTest extends SysuiTestCase {
         for (View.OnAttachStateChangeListener listener : mOnAttachStateChangeListeners) {
             listener.onViewDetachedFromWindow(mView);
         }
-    }
-
-
-    private View newViewWithId(int id) {
-        View view = new View(mContext);
-        view.setId(id);
-        ConstraintLayout.LayoutParams layoutParams = new ConstraintLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        // required as cloning ConstraintSet fails if view doesn't have layout params
-        view.setLayoutParams(layoutParams);
-        return view;
     }
 
     private ConstraintSet.Layout getConstraintSetLayout(@IdRes int id) {

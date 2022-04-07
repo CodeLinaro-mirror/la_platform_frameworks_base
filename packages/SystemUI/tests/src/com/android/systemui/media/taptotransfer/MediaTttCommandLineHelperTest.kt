@@ -16,34 +16,33 @@
 
 package com.android.systemui.media.taptotransfer
 
-import android.content.ComponentName
+import android.app.StatusBarManager
+import android.content.Context
+import android.media.MediaRoute2Info
 import androidx.test.filters.SmallTest
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.media.taptotransfer.receiver.ChipStateReceiver
-import com.android.systemui.media.taptotransfer.receiver.MediaTttChipControllerReceiver
-import com.android.systemui.media.taptotransfer.sender.MediaTttSenderService
-import com.android.systemui.shared.mediattt.DeviceInfo
-import com.android.systemui.shared.mediattt.IDeviceSenderService
+import com.android.systemui.media.taptotransfer.sender.ChipStateSender
 import com.android.systemui.statusbar.commandline.Command
 import com.android.systemui.statusbar.commandline.CommandRegistry
+import com.android.systemui.util.concurrency.FakeExecutor
 import com.android.systemui.util.mockito.any
 import com.android.systemui.util.mockito.argumentCaptor
 import com.android.systemui.util.mockito.capture
+import com.android.systemui.util.mockito.eq
+import com.android.systemui.util.mockito.nullable
+import com.android.systemui.util.time.FakeSystemClock
 import com.google.common.truth.Truth.assertThat
 import org.junit.Before
-import org.junit.Ignore
 import org.junit.Test
 import org.mockito.Mock
-import org.mockito.Mockito.anyString
 import org.mockito.Mockito.verify
-import org.mockito.Mockito.`when` as whenever
 import org.mockito.MockitoAnnotations
 import java.io.PrintWriter
 import java.io.StringWriter
 import java.util.concurrent.Executor
 
 @SmallTest
-@Ignore("b/216286227")
 class MediaTttCommandLineHelperTest : SysuiTestCase() {
 
     private val inlineExecutor = Executor { command -> command.run() }
@@ -53,25 +52,17 @@ class MediaTttCommandLineHelperTest : SysuiTestCase() {
     private lateinit var mediaTttCommandLineHelper: MediaTttCommandLineHelper
 
     @Mock
-    private lateinit var mediaTttChipControllerReceiver: MediaTttChipControllerReceiver
-    @Mock
-    private lateinit var mediaSenderService: IDeviceSenderService.Stub
-    private lateinit var mediaSenderServiceComponentName: ComponentName
+    private lateinit var statusBarManager: StatusBarManager
 
     @Before
     fun setUp() {
         MockitoAnnotations.initMocks(this)
-
-        mediaSenderServiceComponentName = ComponentName(context, MediaTttSenderService::class.java)
-        context.addMockService(mediaSenderServiceComponentName, mediaSenderService)
-        whenever(mediaSenderService.queryLocalInterface(anyString())).thenReturn(mediaSenderService)
-        whenever(mediaSenderService.asBinder()).thenReturn(mediaSenderService)
-
+        context.addMockSystemService(Context.STATUS_BAR_SERVICE, statusBarManager)
         mediaTttCommandLineHelper =
             MediaTttCommandLineHelper(
                 commandRegistry,
                 context,
-                mediaTttChipControllerReceiver,
+                FakeExecutor(FakeSystemClock()),
             )
     }
 
@@ -83,174 +74,172 @@ class MediaTttCommandLineHelperTest : SysuiTestCase() {
     }
 
     @Test(expected = IllegalStateException::class)
-    fun constructor_addReceiverCommandAlreadyRegistered() {
-        // Since creating the chip controller should automatically register the add command, it
+    fun constructor_receiverCommandAlreadyRegistered() {
+        // Since creating the chip controller should automatically register the receiver command, it
         // should throw when registering it again.
-        commandRegistry.registerCommand(
-            ADD_CHIP_COMMAND_RECEIVER_TAG
-        ) { EmptyCommand() }
-    }
-
-    @Test(expected = IllegalStateException::class)
-    fun constructor_removeReceiverCommandAlreadyRegistered() {
-        // Since creating the chip controller should automatically register the remove command, it
-        // should throw when registering it again.
-        commandRegistry.registerCommand(
-            REMOVE_CHIP_COMMAND_RECEIVER_TAG
-        ) { EmptyCommand() }
+        commandRegistry.registerCommand(RECEIVER_COMMAND) { EmptyCommand() }
     }
 
     @Test
-    fun sender_moveCloserToStartCast_serviceCallbackCalled() {
-        commandRegistry.onShellCommand(pw, getMoveCloserToStartCastCommand())
+    fun sender_almostCloseToStartCast_serviceCallbackCalled() {
+        commandRegistry.onShellCommand(
+            pw, getSenderCommand(ChipStateSender.ALMOST_CLOSE_TO_START_CAST.name)
+        )
 
-        assertThat(context.isBound(mediaSenderServiceComponentName)).isTrue()
-
-        val deviceInfoCaptor = argumentCaptor<DeviceInfo>()
-        verify(mediaSenderService).closeToReceiverToStartCast(any(), capture(deviceInfoCaptor))
-        assertThat(deviceInfoCaptor.value!!.name).isEqualTo(DEVICE_NAME)
+        val routeInfoCaptor = argumentCaptor<MediaRoute2Info>()
+        verify(statusBarManager).updateMediaTapToTransferSenderDisplay(
+            eq(StatusBarManager.MEDIA_TRANSFER_SENDER_STATE_ALMOST_CLOSE_TO_START_CAST),
+            capture(routeInfoCaptor),
+            nullable(),
+            nullable())
+        assertThat(routeInfoCaptor.value!!.name).isEqualTo(DEVICE_NAME)
     }
 
     @Test
-    fun sender_moveCloserToEndCast_serviceCallbackCalled() {
-        commandRegistry.onShellCommand(pw, getMoveCloserToEndCastCommand())
+    fun sender_almostCloseToEndCast_serviceCallbackCalled() {
+        commandRegistry.onShellCommand(
+            pw, getSenderCommand(ChipStateSender.ALMOST_CLOSE_TO_END_CAST.name)
+        )
 
-        assertThat(context.isBound(mediaSenderServiceComponentName)).isTrue()
-
-        val deviceInfoCaptor = argumentCaptor<DeviceInfo>()
-        verify(mediaSenderService).closeToReceiverToEndCast(any(), capture(deviceInfoCaptor))
-        assertThat(deviceInfoCaptor.value!!.name).isEqualTo(DEVICE_NAME)
+        val routeInfoCaptor = argumentCaptor<MediaRoute2Info>()
+        verify(statusBarManager).updateMediaTapToTransferSenderDisplay(
+            eq(StatusBarManager.MEDIA_TRANSFER_SENDER_STATE_ALMOST_CLOSE_TO_END_CAST),
+            capture(routeInfoCaptor),
+            nullable(),
+            nullable())
+        assertThat(routeInfoCaptor.value!!.name).isEqualTo(DEVICE_NAME)
     }
 
     @Test
     fun sender_transferToReceiverTriggered_chipDisplayWithCorrectState() {
-        commandRegistry.onShellCommand(pw, getTransferToReceiverTriggeredCommand())
+        commandRegistry.onShellCommand(
+            pw, getSenderCommand(ChipStateSender.TRANSFER_TO_RECEIVER_TRIGGERED.name)
+        )
 
-        assertThat(context.isBound(mediaSenderServiceComponentName)).isTrue()
-
-        val deviceInfoCaptor = argumentCaptor<DeviceInfo>()
-        verify(mediaSenderService).transferToReceiverTriggered(any(), capture(deviceInfoCaptor))
-        assertThat(deviceInfoCaptor.value!!.name).isEqualTo(DEVICE_NAME)
+        val routeInfoCaptor = argumentCaptor<MediaRoute2Info>()
+        verify(statusBarManager).updateMediaTapToTransferSenderDisplay(
+            eq(StatusBarManager.MEDIA_TRANSFER_SENDER_STATE_TRANSFER_TO_RECEIVER_TRIGGERED),
+            capture(routeInfoCaptor),
+            nullable(),
+            nullable())
+        assertThat(routeInfoCaptor.value!!.name).isEqualTo(DEVICE_NAME)
     }
 
     @Test
     fun sender_transferToThisDeviceTriggered_chipDisplayWithCorrectState() {
-        commandRegistry.onShellCommand(pw, getTransferToThisDeviceTriggeredCommand())
+        commandRegistry.onShellCommand(
+            pw, getSenderCommand(ChipStateSender.TRANSFER_TO_THIS_DEVICE_TRIGGERED.name)
+        )
 
-        assertThat(context.isBound(mediaSenderServiceComponentName)).isTrue()
-        verify(mediaSenderService).transferToThisDeviceTriggered(any(), any())
+        verify(statusBarManager).updateMediaTapToTransferSenderDisplay(
+            eq(StatusBarManager.MEDIA_TRANSFER_SENDER_STATE_TRANSFER_TO_THIS_DEVICE_TRIGGERED),
+            any(),
+            nullable(),
+            nullable())
     }
 
     @Test
     fun sender_transferToReceiverSucceeded_chipDisplayWithCorrectState() {
-        commandRegistry.onShellCommand(pw, getTransferToReceiverSucceededCommand())
+        commandRegistry.onShellCommand(
+            pw, getSenderCommand(ChipStateSender.TRANSFER_TO_RECEIVER_SUCCEEDED.name)
+        )
 
-        assertThat(context.isBound(mediaSenderServiceComponentName)).isTrue()
-
-        val deviceInfoCaptor = argumentCaptor<DeviceInfo>()
-        verify(mediaSenderService)
-            .transferToReceiverSucceeded(any(), capture(deviceInfoCaptor), any())
-        assertThat(deviceInfoCaptor.value!!.name).isEqualTo(DEVICE_NAME)
+        val routeInfoCaptor = argumentCaptor<MediaRoute2Info>()
+        verify(statusBarManager).updateMediaTapToTransferSenderDisplay(
+            eq(StatusBarManager.MEDIA_TRANSFER_SENDER_STATE_TRANSFER_TO_RECEIVER_SUCCEEDED),
+            capture(routeInfoCaptor),
+            nullable(),
+            nullable())
+        assertThat(routeInfoCaptor.value!!.name).isEqualTo(DEVICE_NAME)
     }
 
     @Test
     fun sender_transferToThisDeviceSucceeded_chipDisplayWithCorrectState() {
-        commandRegistry.onShellCommand(pw, getTransferToThisDeviceSucceededCommand())
+        commandRegistry.onShellCommand(
+            pw, getSenderCommand(ChipStateSender.TRANSFER_TO_THIS_DEVICE_SUCCEEDED.name)
+        )
 
-        assertThat(context.isBound(mediaSenderServiceComponentName)).isTrue()
-
-        val deviceInfoCaptor = argumentCaptor<DeviceInfo>()
-        verify(mediaSenderService)
-            .transferToThisDeviceSucceeded(any(), capture(deviceInfoCaptor), any())
-        assertThat(deviceInfoCaptor.value!!.name).isEqualTo(DEVICE_NAME)
+        val routeInfoCaptor = argumentCaptor<MediaRoute2Info>()
+        verify(statusBarManager).updateMediaTapToTransferSenderDisplay(
+            eq(StatusBarManager.MEDIA_TRANSFER_SENDER_STATE_TRANSFER_TO_THIS_DEVICE_SUCCEEDED),
+            capture(routeInfoCaptor),
+            nullable(),
+            nullable())
+        assertThat(routeInfoCaptor.value!!.name).isEqualTo(DEVICE_NAME)
     }
 
     @Test
-    fun sender_transferFailed_serviceCallbackCalled() {
-        commandRegistry.onShellCommand(pw, getTransferFailedCommand())
+    fun sender_transferToReceiverFailed_serviceCallbackCalled() {
+        commandRegistry.onShellCommand(
+            pw, getSenderCommand(ChipStateSender.TRANSFER_TO_RECEIVER_FAILED.name)
+        )
 
-        assertThat(context.isBound(mediaSenderServiceComponentName)).isTrue()
-        verify(mediaSenderService).transferFailed(any(), any())
+        verify(statusBarManager).updateMediaTapToTransferSenderDisplay(
+            eq(StatusBarManager.MEDIA_TRANSFER_SENDER_STATE_TRANSFER_TO_RECEIVER_FAILED),
+            any(),
+            nullable(),
+            nullable())
     }
 
     @Test
-    fun sender_noLongerCloseToReceiver_serviceCallbackCalledAndServiceUnbound() {
-        commandRegistry.onShellCommand(pw, getNoLongerCloseToReceiverCommand())
+    fun sender_transferToThisDeviceFailed_serviceCallbackCalled() {
+        commandRegistry.onShellCommand(
+            pw, getSenderCommand(ChipStateSender.TRANSFER_TO_THIS_DEVICE_FAILED.name)
+        )
 
-        // Once we're no longer close to the receiver, we should unbind the service.
-        assertThat(context.isBound(mediaSenderServiceComponentName)).isFalse()
-        verify(mediaSenderService).noLongerCloseToReceiver(any(), any())
+        verify(statusBarManager).updateMediaTapToTransferSenderDisplay(
+            eq(StatusBarManager.MEDIA_TRANSFER_SENDER_STATE_TRANSFER_TO_THIS_DEVICE_FAILED),
+            any(),
+            nullable(),
+            nullable())
     }
 
     @Test
-    fun receiver_addCommand_chipAdded() {
-        commandRegistry.onShellCommand(pw, arrayOf(ADD_CHIP_COMMAND_RECEIVER_TAG))
+    fun sender_farFromReceiver_serviceCallbackCalled() {
+        commandRegistry.onShellCommand(
+            pw, getSenderCommand(ChipStateSender.FAR_FROM_RECEIVER.name)
+        )
 
-        verify(mediaTttChipControllerReceiver).displayChip(any(ChipStateReceiver::class.java))
+        verify(statusBarManager).updateMediaTapToTransferSenderDisplay(
+            eq(StatusBarManager.MEDIA_TRANSFER_SENDER_STATE_FAR_FROM_RECEIVER),
+            any(),
+            nullable(),
+            nullable())
     }
 
     @Test
-    fun receiver_removeCommand_chipRemoved() {
-        commandRegistry.onShellCommand(pw, arrayOf(REMOVE_CHIP_COMMAND_RECEIVER_TAG))
+    fun receiver_closeToSender_serviceCallbackCalled() {
+        commandRegistry.onShellCommand(
+            pw, getReceiverCommand(ChipStateReceiver.CLOSE_TO_SENDER.name)
+        )
 
-        verify(mediaTttChipControllerReceiver).removeChip()
+        verify(statusBarManager).updateMediaTapToTransferReceiverDisplay(
+            eq(StatusBarManager.MEDIA_TRANSFER_RECEIVER_STATE_CLOSE_TO_SENDER),
+            any(),
+            nullable(),
+            nullable()
+        )
     }
 
-    private fun getMoveCloserToStartCastCommand(): Array<String> =
-        arrayOf(
-            SENDER_COMMAND,
-            DEVICE_NAME,
-            MOVE_CLOSER_TO_START_CAST_COMMAND_NAME
+    @Test
+    fun receiver_farFromSender_serviceCallbackCalled() {
+        commandRegistry.onShellCommand(
+            pw, getReceiverCommand(ChipStateReceiver.FAR_FROM_SENDER.name)
         )
 
-    private fun getMoveCloserToEndCastCommand(): Array<String> =
-        arrayOf(
-            SENDER_COMMAND,
-            DEVICE_NAME,
-            MOVE_CLOSER_TO_END_CAST_COMMAND_NAME
+        verify(statusBarManager).updateMediaTapToTransferReceiverDisplay(
+            eq(StatusBarManager.MEDIA_TRANSFER_RECEIVER_STATE_FAR_FROM_SENDER),
+            any(),
+            nullable(),
+            nullable()
         )
+    }
 
-    private fun getTransferToReceiverTriggeredCommand(): Array<String> =
-        arrayOf(
-            SENDER_COMMAND,
-            DEVICE_NAME,
-            TRANSFER_TO_RECEIVER_TRIGGERED_COMMAND_NAME
-        )
+    private fun getSenderCommand(displayState: String): Array<String> =
+        arrayOf(SENDER_COMMAND, DEVICE_NAME, displayState)
 
-    private fun getTransferToThisDeviceTriggeredCommand(): Array<String> =
-        arrayOf(
-            SENDER_COMMAND,
-            DEVICE_NAME,
-            TRANSFER_TO_THIS_DEVICE_TRIGGERED_COMMAND_NAME
-        )
-
-    private fun getTransferToReceiverSucceededCommand(): Array<String> =
-        arrayOf(
-            SENDER_COMMAND,
-            DEVICE_NAME,
-            TRANSFER_TO_RECEIVER_SUCCEEDED_COMMAND_NAME
-        )
-
-    private fun getTransferToThisDeviceSucceededCommand(): Array<String> =
-        arrayOf(
-            SENDER_COMMAND,
-            DEVICE_NAME,
-            TRANSFER_TO_THIS_DEVICE_SUCCEEDED_COMMAND_NAME
-        )
-
-    private fun getTransferFailedCommand(): Array<String> =
-        arrayOf(
-            SENDER_COMMAND,
-            DEVICE_NAME,
-            TRANSFER_FAILED_COMMAND_NAME
-        )
-
-    private fun getNoLongerCloseToReceiverCommand(): Array<String> =
-        arrayOf(
-            SENDER_COMMAND,
-            DEVICE_NAME,
-            NO_LONGER_CLOSE_TO_RECEIVER_COMMAND_NAME
-        )
+    private fun getReceiverCommand(displayState: String): Array<String> =
+        arrayOf(RECEIVER_COMMAND, displayState)
 
     class EmptyCommand : Command {
         override fun execute(pw: PrintWriter, args: List<String>) {

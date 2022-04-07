@@ -24,6 +24,7 @@ import static com.android.server.pm.PackageManagerService.DEBUG_INSTALL;
 import static com.android.server.pm.PackageManagerService.DEFAULT_UNUSED_STATIC_SHARED_LIB_MIN_CACHE_PERIOD;
 import static com.android.server.pm.PackageManagerService.DEFERRED_NO_KILL_INSTALL_OBSERVER;
 import static com.android.server.pm.PackageManagerService.DEFERRED_NO_KILL_POST_DELETE;
+import static com.android.server.pm.PackageManagerService.DEFERRED_PENDING_KILL_INSTALL_OBSERVER;
 import static com.android.server.pm.PackageManagerService.DOMAIN_VERIFICATION;
 import static com.android.server.pm.PackageManagerService.ENABLE_ROLLBACK_STATUS;
 import static com.android.server.pm.PackageManagerService.ENABLE_ROLLBACK_TIMEOUT;
@@ -34,9 +35,7 @@ import static com.android.server.pm.PackageManagerService.PACKAGE_VERIFIED;
 import static com.android.server.pm.PackageManagerService.POST_INSTALL;
 import static com.android.server.pm.PackageManagerService.PRUNE_UNUSED_STATIC_SHARED_LIBRARIES;
 import static com.android.server.pm.PackageManagerService.SEND_PENDING_BROADCAST;
-import static com.android.server.pm.PackageManagerService.SNAPSHOT_UNCORK;
 import static com.android.server.pm.PackageManagerService.TAG;
-import static com.android.server.pm.PackageManagerService.TRACE_SNAPSHOTS;
 import static com.android.server.pm.PackageManagerService.WRITE_PACKAGE_LIST;
 import static com.android.server.pm.PackageManagerService.WRITE_PACKAGE_RESTRICTIONS;
 import static com.android.server.pm.PackageManagerService.WRITE_SETTINGS;
@@ -128,10 +127,12 @@ final class PackageHandler extends Handler {
                     }
                 }
             } break;
-            case DEFERRED_NO_KILL_INSTALL_OBSERVER: {
-                String packageName = (String) msg.obj;
+            case DEFERRED_NO_KILL_INSTALL_OBSERVER:
+            case DEFERRED_PENDING_KILL_INSTALL_OBSERVER: {
+                final String packageName = (String) msg.obj;
                 if (packageName != null) {
-                    mPm.notifyInstallObserver(packageName);
+                    final boolean killApp = msg.what == DEFERRED_PENDING_KILL_INSTALL_OBSERVER;
+                    mPm.notifyInstallObserver(packageName, killApp);
                 }
             } break;
             case WRITE_SETTINGS: {
@@ -315,6 +316,8 @@ final class PackageHandler extends Handler {
             }
             case INSTANT_APP_RESOLUTION_PHASE_TWO: {
                 InstantAppResolver.doInstantAppResolutionPhaseTwo(mPm.mContext,
+                        mPm.snapshotComputer(),
+                        mPm.mUserManager,
                         mPm.mInstantAppResolverConnection,
                         (InstantAppRequest) msg.obj,
                         mPm.mInstantAppInstallerActivity,
@@ -379,16 +382,10 @@ final class PackageHandler extends Handler {
                 mPm.mDomainVerificationManager.runMessage(messageCode, object);
                 break;
             }
-            case SNAPSHOT_UNCORK: {
-                int corking = mPm.sSnapshotCorked.decrementAndGet();
-                if (TRACE_SNAPSHOTS && corking == 0) {
-                    Log.e(TAG, "snapshot: corking goes to zero in message handler");
-                }
-                break;
-            }
             case PRUNE_UNUSED_STATIC_SHARED_LIBRARIES: {
                 try {
                     mPm.mInjector.getSharedLibrariesImpl().pruneUnusedStaticSharedLibraries(
+                            mPm.snapshotComputer(),
                             Long.MAX_VALUE,
                             Settings.Global.getLong(mPm.mContext.getContentResolver(),
                                     Settings.Global.UNUSED_STATIC_SHARED_LIB_MIN_CACHE_PERIOD,

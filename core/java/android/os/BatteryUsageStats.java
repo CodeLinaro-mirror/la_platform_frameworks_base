@@ -109,6 +109,7 @@ public final class BatteryUsageStats implements Parcelable, Closeable {
     static final String XML_ATTR_DISCHARGE_PERCENT = "discharge_pct";
     static final String XML_ATTR_DISCHARGE_LOWER = "discharge_lower";
     static final String XML_ATTR_DISCHARGE_UPPER = "discharge_upper";
+    static final String XML_ATTR_DISCHARGE_DURATION = "discharge_duration";
     static final String XML_ATTR_BATTERY_REMAINING = "battery_remaining";
     static final String XML_ATTR_CHARGE_REMAINING = "charge_remaining";
     static final String XML_ATTR_HIGHEST_DRAIN_PACKAGE = "highest_drain_package";
@@ -127,6 +128,7 @@ public final class BatteryUsageStats implements Parcelable, Closeable {
     private final long mStatsDurationMs;
     private final double mDischargedPowerLowerBound;
     private final double mDischargedPowerUpperBound;
+    private final long mDischargeDurationMs;
     private final long mBatteryTimeRemainingMs;
     private final long mChargeTimeRemainingMs;
     private final String[] mCustomPowerComponentNames;
@@ -146,6 +148,7 @@ public final class BatteryUsageStats implements Parcelable, Closeable {
         mDischargePercentage = builder.mDischargePercentage;
         mDischargedPowerLowerBound = builder.mDischargedPowerLowerBoundMah;
         mDischargedPowerUpperBound = builder.mDischargedPowerUpperBoundMah;
+        mDischargeDurationMs = builder.mDischargeDurationMs;
         mBatteryStatsHistory = builder.mBatteryStatsHistory;
         mBatteryTimeRemainingMs = builder.mBatteryTimeRemainingMs;
         mChargeTimeRemainingMs = builder.mChargeTimeRemainingMs;
@@ -246,6 +249,13 @@ public final class BatteryUsageStats implements Parcelable, Closeable {
     }
 
     /**
+     * Returns the total amount of time the battery was discharging.
+     */
+    public long getDischargeDurationMs() {
+        return mDischargeDurationMs;
+    }
+
+    /**
      * Returns an approximation for how much run time (in milliseconds) is remaining on
      * the battery.  Returns -1 if no time can be computed: either there is not
      * enough current data to make a decision, or the battery is currently
@@ -321,6 +331,7 @@ public final class BatteryUsageStats implements Parcelable, Closeable {
         mDischargePercentage = source.readInt();
         mDischargedPowerLowerBound = source.readDouble();
         mDischargedPowerUpperBound = source.readDouble();
+        mDischargeDurationMs = source.readLong();
         mBatteryTimeRemainingMs = source.readLong();
         mChargeTimeRemainingMs = source.readLong();
         mCustomPowerComponentNames = source.readStringArray();
@@ -378,6 +389,7 @@ public final class BatteryUsageStats implements Parcelable, Closeable {
         dest.writeInt(mDischargePercentage);
         dest.writeDouble(mDischargedPowerLowerBound);
         dest.writeDouble(mDischargedPowerUpperBound);
+        dest.writeLong(mDischargeDurationMs);
         dest.writeLong(mBatteryTimeRemainingMs);
         dest.writeLong(mChargeTimeRemainingMs);
         dest.writeStringArray(mCustomPowerComponentNames);
@@ -447,6 +459,8 @@ public final class BatteryUsageStats implements Parcelable, Closeable {
         proto.write(BatteryUsageStatsAtomsProto.SESSION_DURATION_MILLIS, getStatsDuration());
         proto.write(BatteryUsageStatsAtomsProto.SESSION_DISCHARGE_PERCENTAGE,
                 getDischargePercentage());
+        proto.write(BatteryUsageStatsAtomsProto.DISCHARGE_DURATION_MILLIS,
+                getDischargeDurationMs());
         deviceBatteryConsumer.writeStatsProto(proto,
                 BatteryUsageStatsAtomsProto.DEVICE_BATTERY_CONSUMER);
         writeUidBatteryConsumersProto(proto, maxRawSize);
@@ -583,20 +597,21 @@ public final class BatteryUsageStats implements Parcelable, Closeable {
 
         dumpSortedBatteryConsumers(pw, prefix, getUidBatteryConsumers());
         dumpSortedBatteryConsumers(pw, prefix, getUserBatteryConsumers());
+        pw.println();
     }
 
     private void printPowerComponent(PrintWriter pw, String prefix, String label,
             double devicePowerMah, double appsPowerMah, int powerModel, long durationMs) {
         StringBuilder sb = new StringBuilder();
         sb.append(prefix).append("      ").append(label).append(": ")
-                .append(PowerCalculator.formatCharge(devicePowerMah));
+                .append(BatteryStats.formatCharge(devicePowerMah));
         if (powerModel != BatteryConsumer.POWER_MODEL_UNDEFINED
                 && powerModel != BatteryConsumer.POWER_MODEL_POWER_PROFILE) {
             sb.append(" [");
             sb.append(BatteryConsumer.powerModelToString(powerModel));
             sb.append("]");
         }
-        sb.append(" apps: ").append(PowerCalculator.formatCharge(appsPowerMah));
+        sb.append(" apps: ").append(BatteryStats.formatCharge(appsPowerMah));
         if (durationMs != 0) {
             sb.append(" duration: ");
             BatteryStats.formatTimeMs(sb, durationMs);
@@ -638,6 +653,7 @@ public final class BatteryUsageStats implements Parcelable, Closeable {
         serializer.attributeInt(null, XML_ATTR_DISCHARGE_PERCENT, mDischargePercentage);
         serializer.attributeDouble(null, XML_ATTR_DISCHARGE_LOWER, mDischargedPowerLowerBound);
         serializer.attributeDouble(null, XML_ATTR_DISCHARGE_UPPER, mDischargedPowerUpperBound);
+        serializer.attributeLong(null, XML_ATTR_DISCHARGE_DURATION, mDischargeDurationMs);
         serializer.attributeLong(null, XML_ATTR_BATTERY_REMAINING, mBatteryTimeRemainingMs);
         serializer.attributeLong(null, XML_ATTR_CHARGE_REMAINING, mChargeTimeRemainingMs);
 
@@ -693,6 +709,8 @@ public final class BatteryUsageStats implements Parcelable, Closeable {
                 builder.setDischargedPowerRange(
                         parser.getAttributeDouble(null, XML_ATTR_DISCHARGE_LOWER),
                         parser.getAttributeDouble(null, XML_ATTR_DISCHARGE_UPPER));
+                builder.setDischargeDurationMs(
+                        parser.getAttributeLong(null, XML_ATTR_DISCHARGE_DURATION));
                 builder.setBatteryTimeRemainingMs(
                         parser.getAttributeLong(null, XML_ATTR_BATTERY_REMAINING));
                 builder.setChargeTimeRemainingMs(
@@ -759,6 +777,7 @@ public final class BatteryUsageStats implements Parcelable, Closeable {
         private int mDischargePercentage;
         private double mDischargedPowerLowerBoundMah;
         private double mDischargedPowerUpperBoundMah;
+        private long mDischargeDurationMs;
         private long mBatteryTimeRemainingMs = -1;
         private long mChargeTimeRemainingMs = -1;
         private final AggregateBatteryConsumer.Builder[] mAggregateBatteryConsumersBuilders =
@@ -865,6 +884,15 @@ public final class BatteryUsageStats implements Parcelable, Closeable {
                 double dischargedPowerUpperBoundMah) {
             mDischargedPowerLowerBoundMah = dischargedPowerLowerBoundMah;
             mDischargedPowerUpperBoundMah = dischargedPowerUpperBoundMah;
+            return this;
+        }
+
+        /**
+         * Sets the total battery discharge time, in milliseconds.
+         */
+        @NonNull
+        public Builder setDischargeDurationMs(long durationMs) {
+            mDischargeDurationMs = durationMs;
             return this;
         }
 
@@ -994,6 +1022,7 @@ public final class BatteryUsageStats implements Parcelable, Closeable {
             mDischargedPowerLowerBoundMah += stats.mDischargedPowerLowerBound;
             mDischargedPowerUpperBoundMah += stats.mDischargedPowerUpperBound;
             mDischargePercentage += stats.mDischargePercentage;
+            mDischargeDurationMs += stats.mDischargeDurationMs;
 
             mStatsDurationMs = getStatsDuration() + stats.getStatsDuration();
 

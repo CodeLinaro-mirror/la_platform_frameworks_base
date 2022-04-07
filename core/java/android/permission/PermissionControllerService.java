@@ -40,6 +40,7 @@ import android.compat.annotation.Disabled;
 import android.content.Intent;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.os.Binder;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.ParcelFileDescriptor;
@@ -291,7 +292,7 @@ public abstract class PermissionControllerService extends Service {
 
     /**
      * Called when a package is considered inactive based on the criteria given by
-     * {@link PermissionManager#startOneTimePermissionSession(String, long, int, int)}.
+     * {@link PermissionManager#startOneTimePermissionSession(String, long, long, int, int)}.
      * This method is called at the end of a one-time permission session
      *
      * @param packageName The package that has been inactive
@@ -329,18 +330,20 @@ public abstract class PermissionControllerService extends Service {
      * Triggers the revocation of one or more permissions for a package. This should only be called
      * at the request of {@code packageName}.
      * <p>
-     * For every permission in {@code permissions}, the entire permission group it belongs to will
-     * be revoked. This revocation happens asynchronously and kills all processes running in the
-     * same UID as {@code packageName}. It will be triggered once it is safe to do so.
+     * Background permissions which have no corresponding foreground permission still granted once
+     * the revocation is effective will also be revoked.
+     * <p>
+     * This revocation happens asynchronously and kills all processes running in the same UID as
+     * {@code packageName}. It will be triggered once it is safe to do so.
      *
      * @param packageName The name of the package for which the permissions will be revoked.
      * @param permissions List of permissions to be revoked.
      * @param callback Callback waiting for operation to be complete.
      *
-     * @see PermissionManager#revokeOwnPermissionsOnKill(java.util.Collection)
+     * @see android.content.Context#revokeSelfPermissionsOnKill(java.util.Collection)
      */
     @BinderThread
-    public void onRevokeOwnPermissionsOnKill(@NonNull String packageName,
+    public void onRevokeSelfPermissionsOnKill(@NonNull String packageName,
             @NonNull List<String> permissions, @NonNull Runnable callback) {
         throw new AbstractMethodError("Must be overridden in implementing class");
     }
@@ -701,13 +704,19 @@ public abstract class PermissionControllerService extends Service {
             }
 
             @Override
-            public void revokeOwnPermissionsOnKill(@NonNull String packageName,
+            public void revokeSelfPermissionsOnKill(@NonNull String packageName,
                     @NonNull List<String> permissions, @NonNull AndroidFuture callback) {
                 try {
-                    enforceSomePermissionsGrantedToCaller(
-                            Manifest.permission.REVOKE_RUNTIME_PERMISSIONS);
                     Objects.requireNonNull(callback);
-                    onRevokeOwnPermissionsOnKill(packageName, permissions,
+
+                    final int callingUid = Binder.getCallingUid();
+                    int targetPackageUid = getPackageManager().getPackageUid(packageName,
+                            PackageManager.PackageInfoFlags.of(0));
+                    if (targetPackageUid != callingUid) {
+                        enforceSomePermissionsGrantedToCaller(
+                                Manifest.permission.REVOKE_RUNTIME_PERMISSIONS);
+                    }
+                    onRevokeSelfPermissionsOnKill(packageName, permissions,
                             () -> callback.complete(null));
                 } catch (Throwable t) {
                     callback.completeExceptionally(t);

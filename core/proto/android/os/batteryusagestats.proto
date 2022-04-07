@@ -76,6 +76,7 @@ message BatteryUsageStatsAtomsProto {
                 FOREGROUND = 1;
                 BACKGROUND = 2;
                 FOREGROUND_SERVICE = 3;
+                CACHED = 4;
             }
 
             optional ProcessState process_state = 2;
@@ -98,4 +99,7 @@ message BatteryUsageStatsAtomsProto {
 
     // Sum of all discharge percentage point drops during the reported session.
     optional int32 session_discharge_percentage = 6;
+
+    // Total amount of time battery was discharging during the reported session
+    optional int64 discharge_duration_millis = 7;
 }

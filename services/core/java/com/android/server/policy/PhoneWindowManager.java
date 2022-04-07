@@ -27,6 +27,7 @@ import static android.content.pm.PackageManager.FEATURE_LEANBACK;
 import static android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE;
 import static android.content.pm.PackageManager.FEATURE_WATCH;
 import static android.content.pm.PackageManager.PERMISSION_GRANTED;
+import static android.os.BatteryManager.BATTERY_PLUGGED_WIRELESS;
 import static android.os.Build.VERSION_CODES.M;
 import static android.os.Build.VERSION_CODES.O;
 import static android.provider.Settings.Secure.VOLUME_HUSH_OFF;
@@ -129,6 +130,7 @@ import android.media.AudioManagerInternal;
 import android.media.AudioSystem;
 import android.media.IAudioService;
 import android.media.session.MediaSessionLegacyHelper;
+import android.os.BatteryManagerInternal;
 import android.os.Binder;
 import android.os.Bundle;
 import android.os.DeviceIdleManager;
@@ -296,6 +298,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     // must match: config_doubleTapOnHomeBehavior in config.xml
     static final int DOUBLE_TAP_HOME_NOTHING = 0;
     static final int DOUBLE_TAP_HOME_RECENT_SYSTEM_UI = 1;
+    static final int DOUBLE_TAP_HOME_PIP_MENU = 2;
 
     static final int SHORT_PRESS_WINDOW_NOTHING = 0;
     static final int SHORT_PRESS_WINDOW_PICTURE_IN_PICTURE = 1;
@@ -327,6 +330,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     static public final String SYSTEM_DIALOG_REASON_HOME_KEY = "homekey";
     static public final String SYSTEM_DIALOG_REASON_ASSIST = "assist";
     static public final String SYSTEM_DIALOG_REASON_SCREENSHOT = "screenshot";
+    static public final String SYSTEM_DIALOG_REASON_GESTURE_NAV = "gestureNav";
 
     private static final String TALKBACK_LABEL = "TalkBack";
 
@@ -392,11 +396,12 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     PowerManagerInternal mPowerManagerInternal;
     IStatusBarService mStatusBarService;
     StatusBarManagerInternal mStatusBarManagerInternal;
+    BatteryManagerInternal mBatteryManagerInternal;
     AudioManagerInternal mAudioManagerInternal;
     DisplayManager mDisplayManager;
     DisplayManagerInternal mDisplayManagerInternal;
     boolean mPreloadedRecentApps;
-    final Object mServiceAquireLock = new Object();
+    final Object mServiceAcquireLock = new Object();
     Vibrator mVibrator; // Vibrator for giving feedback of orientation changes
     SearchManager mSearchManager;
     AccessibilityManager mAccessibilityManager;
@@ -632,6 +637,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     private static final int MSG_HIDE_BOOT_MESSAGE = 11;
     private static final int MSG_LAUNCH_VOICE_ASSIST_WITH_WAKE_LOCK = 12;
     private static final int MSG_SHOW_PICTURE_IN_PICTURE_MENU = 15;
+    private static final int MSG_SCREENSHOT_CHORD = 16;
     private static final int MSG_ACCESSIBILITY_SHORTCUT = 17;
     private static final int MSG_BUGREPORT_TV = 18;
     private static final int MSG_ACCESSIBILITY_TV = 19;
@@ -706,6 +712,9 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                     break;
                 case MSG_RINGER_TOGGLE_CHORD:
                     handleRingerChordGesture();
+                    break;
+                case MSG_SCREENSHOT_CHORD:
+                    handleScreenShot(msg.arg1, msg.arg2);
                     break;
             }
         }
@@ -782,7 +791,8 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         @Override
         public void onWakeUp() {
             synchronized (mLock) {
-                if (shouldEnableWakeGestureLp()) {
+                if (shouldEnableWakeGestureLp()
+                        && getBatteryManagerInternal().getPlugType() != BATTERY_PLUGGED_WIRELESS) {
                     performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY, false,
                             "Wake Up");
                     wakeUp(SystemClock.uptimeMillis(), mAllowTheaterModeWakeFromWakeGesture,
@@ -811,7 +821,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     }
 
     IStatusBarService getStatusBarService() {
-        synchronized (mServiceAquireLock) {
+        synchronized (mServiceAcquireLock) {
             if (mStatusBarService == null) {
                 mStatusBarService = IStatusBarService.Stub.asInterface(
                         ServiceManager.getService("statusbar"));
@@ -821,7 +831,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     }
 
     StatusBarManagerInternal getStatusBarManagerInternal() {
-        synchronized (mServiceAquireLock) {
+        synchronized (mServiceAcquireLock) {
             if (mStatusBarManagerInternal == null) {
                 mStatusBarManagerInternal =
                         LocalServices.getService(StatusBarManagerInternal.class);
@@ -831,7 +841,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     }
 
     AudioManagerInternal getAudioManagerInternal() {
-        synchronized (mServiceAquireLock) {
+        synchronized (mServiceAcquireLock) {
             if (mAudioManagerInternal == null) {
                 mAudioManagerInternal = LocalServices.getService(AudioManagerInternal.class);
             }
@@ -839,6 +849,15 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         }
     }
 
+    BatteryManagerInternal getBatteryManagerInternal() {
+        synchronized (mServiceAcquireLock) {
+            if (mBatteryManagerInternal == null) {
+                mBatteryManagerInternal =
+                        LocalServices.getService(BatteryManagerInternal.class);
+            }
+            return mBatteryManagerInternal;
+        }
+    }
 
     // returns true if the key was handled and should not be passed to the user
     private boolean backKeyPress() {
@@ -1004,7 +1023,8 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                     break;
                 }
                 case SHORT_PRESS_POWER_LOCK_OR_SLEEP: {
-                    if (keyguardOn()) {
+                    if (mKeyguardDelegate == null || !mKeyguardDelegate.hasKeyguard()
+                            || !mKeyguardDelegate.isSecure(mCurrentUserId) || keyguardOn()) {
                         sleepDefaultDisplayFromPowerButton(eventTime, 0);
                     } else {
                         lockNow(null /*options*/);
@@ -1452,11 +1472,10 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                 || mShortPressOnStemPrimaryBehavior != SHORT_PRESS_PRIMARY_NOTHING;
     }
 
-    private void interceptScreenshotChord() {
-        mHandler.removeCallbacks(mScreenshotRunnable);
-        mScreenshotRunnable.setScreenshotType(TAKE_SCREENSHOT_FULLSCREEN);
-        mScreenshotRunnable.setScreenshotSource(SCREENSHOT_KEY_CHORD);
-        mHandler.postDelayed(mScreenshotRunnable, getScreenshotChordLongPressDelay());
+    private void interceptScreenshotChord(int type, int source, long pressDelay) {
+        mHandler.removeMessages(MSG_SCREENSHOT_CHORD);
+        mHandler.sendMessageDelayed(mHandler.obtainMessage(MSG_SCREENSHOT_CHORD, type, source),
+                pressDelay);
     }
 
     private void interceptAccessibilityShortcutChord() {
@@ -1472,11 +1491,19 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     }
 
     private long getAccessibilityShortcutTimeout() {
-        ViewConfiguration config = ViewConfiguration.get(mContext);
-        return Settings.Secure.getIntForUser(mContext.getContentResolver(),
-                Settings.Secure.ACCESSIBILITY_SHORTCUT_DIALOG_SHOWN, 0, mCurrentUserId) == 0
-                ? config.getAccessibilityShortcutKeyTimeout()
-                : config.getAccessibilityShortcutKeyTimeoutAfterConfirmation();
+        final ViewConfiguration config = ViewConfiguration.get(mContext);
+        final boolean hasDialogShown = Settings.Secure.getIntForUser(mContext.getContentResolver(),
+                Settings.Secure.ACCESSIBILITY_SHORTCUT_DIALOG_SHOWN, 0, mCurrentUserId) != 0;
+        final boolean skipTimeoutRestriction =
+                Settings.Secure.getIntForUser(mContext.getContentResolver(),
+                        Settings.Secure.SKIP_ACCESSIBILITY_SHORTCUT_DIALOG_TIMEOUT_RESTRICTION, 0,
+                        mCurrentUserId) != 0;
+
+        // If users manually set the volume key shortcut for any accessibility service, the
+        // system would bypass the timeout restriction of the shortcut dialog.
+        return hasDialogShown || skipTimeoutRestriction
+                ? config.getAccessibilityShortcutKeyTimeoutAfterConfirmation()
+                : config.getAccessibilityShortcutKeyTimeout();
     }
 
     private long getScreenshotChordLongPressDelay() {
@@ -1496,7 +1523,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     }
 
     private void cancelPendingScreenshotChordAction() {
-        mHandler.removeCallbacks(mScreenshotRunnable);
+        mHandler.removeMessages(MSG_SCREENSHOT_CHORD);
     }
 
     private void cancelPendingAccessibilityShortcutAction() {
@@ -1517,25 +1544,10 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         }
     };
 
-    private class ScreenshotRunnable implements Runnable {
-        private int mScreenshotType = TAKE_SCREENSHOT_FULLSCREEN;
-        private int mScreenshotSource = SCREENSHOT_KEY_OTHER;
-
-        public void setScreenshotType(int screenshotType) {
-            mScreenshotType = screenshotType;
-        }
-
-        public void setScreenshotSource(int screenshotSource) {
-            mScreenshotSource = screenshotSource;
-        }
-
-        @Override
-        public void run() {
-            mDefaultDisplayPolicy.takeScreenshot(mScreenshotType, mScreenshotSource);
-        }
+    private void handleScreenShot(@WindowManager.ScreenshotType int type,
+            @WindowManager.ScreenshotSource int source) {
+        mDefaultDisplayPolicy.takeScreenshot(type, source);
     }
-
-    private final ScreenshotRunnable mScreenshotRunnable = new ScreenshotRunnable();
 
     @Override
     public void showGlobalActions() {
@@ -1742,11 +1754,15 @@ public class PhoneWindowManager implements WindowManagerPolicy {
 
                 // Delay handling home if a double-tap is possible.
                 if (mDoubleTapOnHomeBehavior != DOUBLE_TAP_HOME_NOTHING) {
-                    mHandler.removeCallbacks(mHomeDoubleTapTimeoutRunnable); // just in case
-                    mHomeDoubleTapPending = true;
-                    mHandler.postDelayed(mHomeDoubleTapTimeoutRunnable,
-                            ViewConfiguration.getDoubleTapTimeout());
-                    return -1;
+                    // For the picture-in-picture menu, only add the delay if a pip is there.
+                    if (mDoubleTapOnHomeBehavior != DOUBLE_TAP_HOME_PIP_MENU
+                            || mPictureInPictureVisible) {
+                        mHandler.removeCallbacks(mHomeDoubleTapTimeoutRunnable); // just in case
+                        mHomeDoubleTapPending = true;
+                        mHandler.postDelayed(mHomeDoubleTapTimeoutRunnable,
+                                ViewConfiguration.getDoubleTapTimeout());
+                        return -1;
+                    }
                 }
 
                 // Post to main thread to avoid blocking input pipeline.
@@ -1779,7 +1795,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                 if (mHomeDoubleTapPending) {
                     mHomeDoubleTapPending = false;
                     mHandler.removeCallbacks(mHomeDoubleTapTimeoutRunnable);
-                    handleDoubleTapOnHome();
+                    mHandler.post(this::handleDoubleTapOnHome);
                 // TODO(multi-display): Remove display id check once we support recents on
                 // multi-display
                 } else if (mDoubleTapOnHomeBehavior == DOUBLE_TAP_HOME_RECENT_SYSTEM_UI
@@ -1797,13 +1813,29 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         }
 
         private void handleDoubleTapOnHome() {
-            if (mDoubleTapOnHomeBehavior == DOUBLE_TAP_HOME_RECENT_SYSTEM_UI) {
-                mHomeConsumed = true;
-                toggleRecentApps();
+            if (mHomeConsumed) {
+                return;
+            }
+            switch (mDoubleTapOnHomeBehavior) {
+                case DOUBLE_TAP_HOME_RECENT_SYSTEM_UI:
+                    mHomeConsumed = true;
+                    toggleRecentApps();
+                    break;
+                case DOUBLE_TAP_HOME_PIP_MENU:
+                    mHomeConsumed = true;
+                    showPictureInPictureMenuInternal();
+                    break;
+                default:
+                    Log.w(TAG, "No action or undefined behavior for double tap home: "
+                            + mDoubleTapOnHomeBehavior);
+                    break;
             }
         }
 
         private void handleLongPressOnHome(int deviceId, long eventTime) {
+            if (mHomeConsumed) {
+                return;
+            }
             if (mLongPressOnHomeBehavior == LONG_PRESS_HOME_NOTHING) {
                 return;
             }
@@ -2101,7 +2133,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     }
 
     private void initKeyCombinationRules() {
-        mKeyCombinationManager = new KeyCombinationManager();
+        mKeyCombinationManager = new KeyCombinationManager(mHandler);
         final boolean screenshotChordEnabled = mContext.getResources().getBoolean(
                 com.android.internal.R.bool.config_enableScreenshotChord);
 
@@ -2111,7 +2143,8 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                         @Override
                         void execute() {
                             mPowerKeyHandled = true;
-                            interceptScreenshotChord();
+                            interceptScreenshotChord(TAKE_SCREENSHOT_FULLSCREEN,
+                                    SCREENSHOT_KEY_CHORD, getScreenshotChordLongPressDelay());
                         }
                         @Override
                         void cancel() {
@@ -2191,10 +2224,19 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                             mBackKeyHandled = true;
                             interceptAccessibilityGestureTv();
                         }
-
                         @Override
                         void cancel() {
                             cancelAccessibilityGestureTv();
+                        }
+                        @Override
+                        long getKeyInterceptDelayMs() {
+                            // Use a timeout of 0 to prevent additional latency in processing of
+                            // this key. This will potentially cause some unwanted UI actions if the
+                            // user does end up triggering the key combination later, but in most
+                            // cases, the user will simply hit a single key, and this will allow us
+                            // to process it without first waiting to see if the combination is
+                            // going to be triggered.
+                            return 0;
                         }
                     });
 
@@ -2205,10 +2247,13 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                             mBackKeyHandled = true;
                             interceptBugreportGestureTv();
                         }
-
                         @Override
                         void cancel() {
                             cancelBugreportGestureTv();
+                        }
+                        @Override
+                        long getKeyInterceptDelayMs() {
+                            return 0;
                         }
                     });
         }
@@ -2219,7 +2264,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
      */
     private final class PowerKeyRule extends SingleKeyGestureDetector.SingleKeyRule {
         PowerKeyRule(int gestures) {
-            super(mContext, KEYCODE_POWER, gestures);
+            super(KEYCODE_POWER, gestures);
         }
 
         @Override
@@ -2270,7 +2315,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
      */
     private final class BackKeyRule extends SingleKeyGestureDetector.SingleKeyRule {
         BackKeyRule(int gestures) {
-            super(mContext, KEYCODE_BACK, gestures);
+            super(KEYCODE_BACK, gestures);
         }
 
         @Override
@@ -2294,7 +2339,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
      */
     private final class StemPrimaryKeyRule extends SingleKeyGestureDetector.SingleKeyRule {
         StemPrimaryKeyRule(int gestures) {
-            super(mContext, KeyEvent.KEYCODE_STEM_PRIMARY, gestures);
+            super(KeyEvent.KEYCODE_STEM_PRIMARY, gestures);
         }
 
         @Override
@@ -2319,7 +2364,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     }
 
     private void initSingleKeyGestureRules() {
-        mSingleKeyGestureDetector = new SingleKeyGestureDetector();
+        mSingleKeyGestureDetector = SingleKeyGestureDetector.get(mContext);
 
         int powerKeyGestures = 0;
         if (hasVeryLongPressOnPowerBehavior()) {
@@ -2360,8 +2405,8 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         mDoubleTapOnHomeBehavior = res.getInteger(
                 com.android.internal.R.integer.config_doubleTapOnHomeBehavior);
         if (mDoubleTapOnHomeBehavior < DOUBLE_TAP_HOME_NOTHING ||
-                mDoubleTapOnHomeBehavior > DOUBLE_TAP_HOME_RECENT_SYSTEM_UI) {
-            mDoubleTapOnHomeBehavior = LONG_PRESS_HOME_NOTHING;
+                mDoubleTapOnHomeBehavior > DOUBLE_TAP_HOME_PIP_MENU) {
+            mDoubleTapOnHomeBehavior = DOUBLE_TAP_HOME_NOTHING;
         }
 
         mShortPressOnWindowBehavior = SHORT_PRESS_WINDOW_NOTHING;
@@ -2785,9 +2830,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                 if (down && event.isMetaPressed() && event.isCtrlPressed() && repeatCount == 0) {
                     int type = event.isShiftPressed() ? TAKE_SCREENSHOT_SELECTED_REGION
                             : TAKE_SCREENSHOT_FULLSCREEN;
-                    mScreenshotRunnable.setScreenshotType(type);
-                    mScreenshotRunnable.setScreenshotSource(SCREENSHOT_KEY_OTHER);
-                    mHandler.post(mScreenshotRunnable);
+                    interceptScreenshotChord(type, SCREENSHOT_KEY_OTHER, 0 /*pressDelay*/);
                     return key_consumed;
                 }
                 break;
@@ -2821,13 +2864,6 @@ public class PhoneWindowManager implements WindowManagerPolicy {
             case KeyEvent.KEYCODE_DEMO_APP_3:
             case KeyEvent.KEYCODE_DEMO_APP_4:
                 Slog.wtf(TAG, "KEYCODE_APP_X should be handled in interceptKeyBeforeQueueing");
-                return key_consumed;
-            case KeyEvent.KEYCODE_SYSRQ:
-                if (down && repeatCount == 0) {
-                    mScreenshotRunnable.setScreenshotType(TAKE_SCREENSHOT_FULLSCREEN);
-                    mScreenshotRunnable.setScreenshotSource(SCREENSHOT_KEY_OTHER);
-                    mHandler.post(mScreenshotRunnable);
-                }
                 return key_consumed;
             case KeyEvent.KEYCODE_BRIGHTNESS_UP:
             case KeyEvent.KEYCODE_BRIGHTNESS_DOWN:
@@ -3145,6 +3181,12 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                     }
                 }
                 break;
+            case KeyEvent.KEYCODE_SYSRQ:
+                if (down && repeatCount == 0) {
+                    interceptScreenshotChord(
+                            TAKE_SCREENSHOT_FULLSCREEN, SCREENSHOT_KEY_OTHER, 0 /*pressDelay*/);
+                }
+                return true;
         }
 
         return false;
@@ -3525,6 +3567,10 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     public void notifyCameraLensCoverSwitchChanged(long whenNanos, boolean lensCovered) {
         int lensCoverState = lensCovered ? CAMERA_LENS_COVERED : CAMERA_LENS_UNCOVERED;
         if (mCameraLensCoverState == lensCoverState) {
+            return;
+        }
+        if (!mContext.getResources().getBoolean(
+                R.bool.config_launchCameraOnCameraLensCoverToggle)) {
             return;
         }
         if (mCameraLensCoverState == CAMERA_LENS_COVERED &&
@@ -5408,8 +5454,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         VibrationAttributes attrs = getVibrationAttributes(effectId);
         if (always) {
             attrs = new VibrationAttributes.Builder(attrs)
-                    .setFlags(VibrationAttributes.FLAG_BYPASS_USER_VIBRATION_INTENSITY_OFF,
-                            VibrationAttributes.FLAG_BYPASS_USER_VIBRATION_INTENSITY_OFF)
+                    .setFlags(VibrationAttributes.FLAG_BYPASS_USER_VIBRATION_INTENSITY_OFF)
                     .build();
         }
         mVibrator.vibrate(uid, packageName, effect, reason, attrs);
@@ -5742,6 +5787,8 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                 return "DOUBLE_TAP_HOME_NOTHING";
             case DOUBLE_TAP_HOME_RECENT_SYSTEM_UI:
                 return "DOUBLE_TAP_HOME_RECENT_SYSTEM_UI";
+            case DOUBLE_TAP_HOME_PIP_MENU:
+                return "DOUBLE_TAP_HOME_PIP_MENU";
             default:
                 return Integer.toString(behavior);
         }

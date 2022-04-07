@@ -16,7 +16,6 @@
 package android.os;
 
 import static android.os.BatteryConsumer.POWER_COMPONENT_ANY;
-import static android.os.BatteryConsumer.POWER_COMPONENT_COUNT;
 import static android.os.BatteryConsumer.PROCESS_STATE_ANY;
 import static android.os.BatteryConsumer.PROCESS_STATE_UNSPECIFIED;
 import static android.os.BatteryConsumer.convertMahToDeciCoulombs;
@@ -26,8 +25,6 @@ import android.annotation.Nullable;
 import android.util.TypedXmlPullParser;
 import android.util.TypedXmlSerializer;
 import android.util.proto.ProtoOutputStream;
-
-import com.android.internal.os.PowerCalculator;
 
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
@@ -60,18 +57,15 @@ class PowerComponents {
             return mData.getDouble(mData.getKeyOrThrow(dimensions.powerComponent,
                     dimensions.processState).mPowerColumnIndex);
         } else if (dimensions.processState != PROCESS_STATE_ANY) {
-            boolean foundSome = false;
-            double totalPowerMah = 0;
-            for (int componentId = 0; componentId < POWER_COMPONENT_COUNT; componentId++) {
-                BatteryConsumer.Key key = mData.getKey(componentId, dimensions.processState);
-                if (key != null) {
-                    foundSome = true;
-                    totalPowerMah += mData.getDouble(key.mPowerColumnIndex);
-                }
-            }
-            if (!foundSome) {
+            if (!mData.layout.processStateDataIncluded) {
                 throw new IllegalArgumentException(
                         "No data included in BatteryUsageStats for " + dimensions);
+            }
+            final BatteryConsumer.Key[] keys =
+                    mData.layout.processStateKeys[dimensions.processState];
+            double totalPowerMah = 0;
+            for (int i = keys.length - 1; i >= 0; i--) {
+                totalPowerMah += mData.getDouble(keys[i].mPowerColumnIndex);
             }
             return totalPowerMah;
         } else {
@@ -174,7 +168,7 @@ class PowerComponents {
                 separator = " ";
                 sb.append(key.toShortString());
                 sb.append("=");
-                sb.append(PowerCalculator.formatCharge(componentPower));
+                sb.append(BatteryStats.formatCharge(componentPower));
 
                 if (durationMs != 0) {
                     sb.append(" (");
@@ -198,7 +192,7 @@ class PowerComponents {
             separator = " ";
             sb.append(getCustomPowerComponentName(customComponentId));
             sb.append("=");
-            sb.append(PowerCalculator.formatCharge(customComponentPower));
+            sb.append(BatteryStats.formatCharge(customComponentPower));
         }
 
         pw.print(sb);
@@ -297,6 +291,10 @@ class PowerComponents {
             case BatteryConsumer.PROCESS_STATE_FOREGROUND_SERVICE:
                 procState = BatteryUsageStatsAtomsProto.BatteryConsumerData.PowerComponentUsageSlice
                         .FOREGROUND_SERVICE;
+                break;
+            case BatteryConsumer.PROCESS_STATE_CACHED:
+                procState = BatteryUsageStatsAtomsProto.BatteryConsumerData.PowerComponentUsageSlice
+                        .CACHED;
                 break;
             default:
                 throw new IllegalArgumentException("Unknown process state: " + processState);

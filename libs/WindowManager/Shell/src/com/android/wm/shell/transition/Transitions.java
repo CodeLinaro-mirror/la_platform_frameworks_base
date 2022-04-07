@@ -33,6 +33,7 @@ import android.annotation.Nullable;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.database.ContentObserver;
+import android.os.Handler;
 import android.os.IBinder;
 import android.os.RemoteException;
 import android.os.SystemProperties;
@@ -72,7 +73,9 @@ public class Transitions implements RemoteCallable<Transitions> {
 
     /** Set to {@code true} to enable shell transitions. */
     public static final boolean ENABLE_SHELL_TRANSITIONS =
-            SystemProperties.getBoolean("persist.debug.shell_transit", false);
+            SystemProperties.getBoolean("persist.wm.debug.shell_transit", false);
+    public static final boolean SHELL_TRANSITIONS_ROTATION = ENABLE_SHELL_TRANSITIONS
+            && SystemProperties.getBoolean("persist.wm.debug.shell_transit_rotate", false);
 
     /** Transition type for exiting PIP via the Shell, via pressing the expand button. */
     public static final int TRANSIT_EXIT_PIP = TRANSIT_FIRST_CUSTOM + 1;
@@ -106,6 +109,9 @@ public class Transitions implements RemoteCallable<Transitions> {
     /** List of possible handlers. Ordered by specificity (eg. tapped back to front). */
     private final ArrayList<TransitionHandler> mHandlers = new ArrayList<>();
 
+    /** List of {@link Runnable} instances to run when the last active transition has finished.  */
+    private final ArrayList<Runnable> mRunWhenIdleQueue = new ArrayList<>();
+
     private float mTransitionAnimationScaleSetting = 1.0f;
 
     private static final class ActiveTransition {
@@ -123,7 +129,8 @@ public class Transitions implements RemoteCallable<Transitions> {
 
     public Transitions(@NonNull WindowOrganizer organizer, @NonNull TransactionPool pool,
             @NonNull DisplayController displayController, @NonNull Context context,
-            @NonNull ShellExecutor mainExecutor, @NonNull ShellExecutor animExecutor) {
+            @NonNull ShellExecutor mainExecutor, @NonNull Handler mainHandler,
+            @NonNull ShellExecutor animExecutor) {
         mOrganizer = organizer;
         mContext = context;
         mMainExecutor = mainExecutor;
@@ -132,7 +139,7 @@ public class Transitions implements RemoteCallable<Transitions> {
         mPlayerImpl = new TransitionPlayerImpl();
         // The very last handler (0 in the list) should be the default one.
         mHandlers.add(new DefaultTransitionHandler(displayController, pool, context, mainExecutor,
-                animExecutor));
+                mainHandler, animExecutor));
         // Next lowest priority is remote transitions.
         mRemoteTransitionHandler = new RemoteTransitionHandler(mainExecutor);
         mHandlers.add(mRemoteTransitionHandler);
@@ -218,6 +225,21 @@ public class Transitions implements RemoteCallable<Transitions> {
     /** Unregisters a remote transition and all associated filters */
     public void unregisterRemote(@NonNull RemoteTransition remoteTransition) {
         mRemoteTransitionHandler.removeFiltered(remoteTransition);
+    }
+
+    /**
+     * Runs the given {@code runnable} when the last active transition has finished, or immediately
+     * if there are currently no active transitions.
+     *
+     * <p>This method should be called on the Shell main-thread, where the given {@code runnable}
+     * will be executed when the last active transition is finished.
+     */
+    public void runOnIdle(Runnable runnable) {
+        if (mActiveTransitions.isEmpty()) {
+            runnable.run();
+        } else {
+            mRunWhenIdleQueue.add(runnable);
+        }
     }
 
     /** @return true if the transition was triggered by opening something vs closing something */
@@ -359,7 +381,9 @@ public class Transitions implements RemoteCallable<Transitions> {
             return;
         }
 
-        // apply transfer starting window directly if there is no other task change.
+        // apply transfer starting window directly if there is no other task change. Since this
+        // is an activity->activity situation, we can detect it by selecting transitions with only
+        // 2 changes where neither are tasks and one is a starting-window recipient.
         final int changeSize = info.getChanges().size();
         if (changeSize == 2) {
             boolean nonTaskChange = true;
@@ -376,7 +400,9 @@ public class Transitions implements RemoteCallable<Transitions> {
             }
             if (nonTaskChange && transferStartingWindow) {
                 t.apply();
-                onFinish(transitionToken, null /* wct */, null /* wctCB */);
+                // Treat this as an abort since we are bypassing any merge logic and effectively
+                // finishing immediately.
+                onAbort(transitionToken);
                 return;
             }
         }
@@ -512,6 +538,11 @@ public class Transitions implements RemoteCallable<Transitions> {
         if (mActiveTransitions.size() <= activeIdx) {
             ProtoLog.v(ShellProtoLogGroup.WM_SHELL_TRANSITIONS, "All active transition animations "
                     + "finished");
+            // Run all runnables from the run-when-idle queue.
+            for (int i = 0; i < mRunWhenIdleQueue.size(); i++) {
+                mRunWhenIdleQueue.get(i).run();
+            }
+            mRunWhenIdleQueue.clear();
             return;
         }
         // Start animating the next active transition
