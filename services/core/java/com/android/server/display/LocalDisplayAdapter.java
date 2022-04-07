@@ -138,9 +138,9 @@ final class LocalDisplayAdapter extends DisplayAdapter {
             LocalDisplayDevice device = mDevices.get(physicalDisplayId);
             if (device == null) {
                 // Display was added.
-                final boolean isDefaultDisplay = mDevices.size() == 0;
+                final boolean isFirstDisplay = mDevices.size() == 0;
                 device = new LocalDisplayDevice(displayToken, physicalDisplayId, staticInfo,
-                        dynamicInfo, modeSpecs, isDefaultDisplay);
+                        dynamicInfo, modeSpecs, isFirstDisplay);
                 mDevices.put(physicalDisplayId, device);
                 sendDisplayDeviceEventLocked(device, DISPLAY_DEVICE_EVENT_ADDED);
             } else if (device.updateDisplayPropertiesLocked(staticInfo, dynamicInfo,
@@ -182,7 +182,7 @@ final class LocalDisplayAdapter extends DisplayAdapter {
         private final long mPhysicalDisplayId;
         private final SparseArray<DisplayModeRecord> mSupportedModes = new SparseArray<>();
         private final ArrayList<Integer> mSupportedColorModes = new ArrayList<>();
-        private final boolean mIsDefaultDisplay;
+        private final boolean mIsFirstDisplay;
         private final BacklightAdapter mBacklightAdapter;
 
         private DisplayDeviceInfo mInfo;
@@ -218,14 +218,14 @@ final class LocalDisplayAdapter extends DisplayAdapter {
         LocalDisplayDevice(IBinder displayToken, long physicalDisplayId,
                 SurfaceControl.StaticDisplayInfo staticDisplayInfo,
                 SurfaceControl.DynamicDisplayInfo dynamicInfo,
-                SurfaceControl.DesiredDisplayModeSpecs modeSpecs, boolean isDefaultDisplay) {
+                SurfaceControl.DesiredDisplayModeSpecs modeSpecs, boolean isFirstDisplay) {
             super(LocalDisplayAdapter.this, displayToken, UNIQUE_ID_PREFIX + physicalDisplayId,
                     getContext());
             mPhysicalDisplayId = physicalDisplayId;
-            mIsDefaultDisplay = isDefaultDisplay;
+            mIsFirstDisplay = isFirstDisplay;
             updateDisplayPropertiesLocked(staticDisplayInfo, dynamicInfo, modeSpecs);
             mSidekickInternal = LocalServices.getService(SidekickInternal.class);
-            mBacklightAdapter = new BacklightAdapter(displayToken, isDefaultDisplay,
+            mBacklightAdapter = new BacklightAdapter(displayToken, isFirstDisplay,
                     mSurfaceControlProxy);
             mDisplayDeviceConfig = null;
         }
@@ -418,7 +418,7 @@ final class LocalDisplayAdapter extends DisplayAdapter {
             // Load display device config
             final Context context = getOverlayContext();
             mDisplayDeviceConfig = DisplayDeviceConfig.create(context, mPhysicalDisplayId,
-                    mIsDefaultDisplay);
+            mIsFirstDisplay);
             if (mDisplayDeviceConfig == null) {
                 return;
             }
@@ -593,9 +593,8 @@ final class LocalDisplayAdapter extends DisplayAdapter {
 
                 final Resources res = getOverlayContext().getResources();
 
-                if (mIsDefaultDisplay) {
-                    mInfo.flags |= DisplayDeviceInfo.FLAG_DEFAULT_DISPLAY;
-
+                mInfo.flags |= DisplayDeviceInfo.FLAG_ALLOWED_TO_BE_DEFAULT_DISPLAY;
+                if (mIsFirstDisplay) {
                     if (res.getBoolean(com.android.internal.R.bool.config_mainBuiltInDisplayIsRound)
                             || (Build.IS_EMULATOR
                             && SystemProperties.getBoolean(PROPERTY_EMULATOR_CIRCULAR, false))) {
@@ -1285,9 +1284,9 @@ final class LocalDisplayAdapter extends DisplayAdapter {
 
         /**
          * @param displayToken Token for display associated with this backlight.
-         * @param isDefaultDisplay {@code true} if it is the default display.
+         * @param isFirstDisplay {@code true} if it is the first display.
          */
-        BacklightAdapter(IBinder displayToken, boolean isDefaultDisplay,
+        BacklightAdapter(IBinder displayToken, boolean isFirstDisplay,
                 SurfaceControlProxy surfaceControlProxy) {
             mDisplayToken = displayToken;
             mSurfaceControlProxy = surfaceControlProxy;
@@ -1295,7 +1294,7 @@ final class LocalDisplayAdapter extends DisplayAdapter {
             mUseSurfaceControlBrightness = mSurfaceControlProxy
                     .getDisplayBrightnessSupport(mDisplayToken);
 
-            if (!mUseSurfaceControlBrightness && isDefaultDisplay) {
+            if (!mUseSurfaceControlBrightness && isFirstDisplay) {
                 LightsManager lights = LocalServices.getService(LightsManager.class);
                 mBacklight = lights.getLight(LightsManager.LIGHT_ID_BACKLIGHT);
             } else {
