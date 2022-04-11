@@ -236,6 +236,13 @@ public class DisplayRotation {
                     "org.codeaurora.intent.action.WIFI_DISPLAY_VIDEO";
 
     /**
+     * Broadcast Permission for Wifi Display
+     */
+
+    private static final String WIFI_DISPLAY_PERMISSION =
+                    "com.qualcomm.permission.wfd.QC_WFD";
+
+    /**
      * Wifi Display specific variables
      */
     private boolean mWifiDisplayConnected = false;
@@ -308,7 +315,9 @@ public class DisplayRotation {
                                         false/* forceRelayout */);
                             }
                         }
-                    }, new IntentFilter(ACTION_WIFI_DISPLAY_VIDEO), null, UiThread.getHandler());
+                    }, new IntentFilter(ACTION_WIFI_DISPLAY_VIDEO),
+                        WIFI_DISPLAY_PERMISSION,
+                        UiThread.getHandler());
                 }
             };
             t.start();
