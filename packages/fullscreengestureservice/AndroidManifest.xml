@@ -35,14 +35,14 @@ IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 -->
 
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.qualcomm.qti.fullscreengestureservice"
-    android:sharedUserId="com.android.systemui">
+    package="com.qualcomm.qti.fullscreengestureservice">
 
     <uses-permission android:name="android.permission.MONITOR_INPUT"
                        android:protectionLevel="signature"/>
     <uses-permission android:name="android.permission.READ_DEVICE_CONFIG" />
 
     <application
+        android:allowBackup="false"
         android:supportsRtl="true" >
 
         <service

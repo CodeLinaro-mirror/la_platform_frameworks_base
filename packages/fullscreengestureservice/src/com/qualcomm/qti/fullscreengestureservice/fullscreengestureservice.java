@@ -71,6 +71,8 @@ import com.android.systemui.shared.system.InputConsumerController;
 public class fullscreengestureservice extends Service {
     public final String TAG = "fullscreengestureservice";
 
+    public final boolean DEBUG = Log.isLoggable(TAG, Log.DEBUG);
+
     private static boolean sIsInitialized = false;
 
     private InputMonitor mInputMonitor;
@@ -238,27 +240,27 @@ public class fullscreengestureservice extends Service {
     }
 
     private void HandleInputEvent(MotionEvent ev) {
-        Log.d(TAG, "HandleInputEvent ev=" + ev);
+        if(DEBUG) Log.d(TAG, "HandleInputEvent ev=" + ev);
         switch (ev.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
-                Log.d(TAG, "ACTION_DOWN");
+                if(DEBUG) Log.d(TAG, "ACTION_DOWN");
                 mStartPoint.x = (int) ev.getX();
                 mStartPoint.y = (int) ev.getY();
                 mStartTime = ev.getEventTime();
                 if (isInBottomRegoin(ev) && !mSwipeUpStart) {
-                    Log.d(TAG, "mSwipeUpStart");
+                    if(DEBUG) Log.d(TAG, "mSwipeUpStart");
                     mSwipeUpStart = true;
                     swipe_result = SWIPE_NONE;
                 }
                 break;
             case MotionEvent.ACTION_MOVE:
-                Log.d(TAG, "ACTION_MOVE");
+                if(DEBUG) Log.d(TAG, "ACTION_MOVE");
                 if (mSwipeUpStart) {
                     long elapsed = ev.getEventTime() - mStartTime;
                     int swipeDistance = mStartPoint.y - (int) ev.getY();
-                    Log.d(TAG, "elapsed=" + elapsed + ", swipeDistance=" + swipeDistance);
+                    if(DEBUG) Log.d(TAG, "elapsed=" + elapsed + ", swipeDistance=" + swipeDistance);
                     if (swipeDistance > (mBottomGestureHeight/2)  && elapsed > SWIPE_THRESHOLD_MS) {
-                        Log.d(TAG, "swipe from bottom");
+                        if(DEBUG) Log.d(TAG, "swipe from bottom");
                         swipe_result = SWIPE_FROM_BOTTOM;
                     }
                 }

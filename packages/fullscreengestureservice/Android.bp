@@ -8,5 +8,6 @@ android_app {
     ],
     platform_apis: true,
     privileged: true,
+    certificate: "platform",
     system_ext_specific: true,
 }
