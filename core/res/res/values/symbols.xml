@@ -1861,6 +1861,8 @@
   <java-symbol type="string" name="fp_power_button_enrollment_message" />
   <java-symbol type="string" name="fp_power_button_enrollment_button_text" />
   <java-symbol type="string" name="global_actions" />
+  <java-symbol type="string" name="global_action_deepsleep" />
+  <java-symbol type="string" name="global_action_deepsleep_failed_toast" />
   <java-symbol type="string" name="global_action_power_off" />
   <java-symbol type="string" name="global_action_power_options" />
   <java-symbol type="string" name="global_action_restart" />
@@ -1877,6 +1879,7 @@
   <java-symbol type="string" name="global_action_assist" />
   <java-symbol type="string" name="global_action_screenshot" />
   <java-symbol type="string" name="global_action_twm" />
+  <java-symbol type="string" name="global_action_twm_failed_toast" />
   <java-symbol type="string" name="invalidPuk" />
   <java-symbol type="string" name="lockscreen_carrier_default" />
   <java-symbol type="style" name="Animation.LockScreen" />
@@ -5183,4 +5186,5 @@
 
   <java-symbol type="drawable" name="focus_event_pressed_key_background" />
   <java-symbol type="string" name="lockscreen_too_many_failed_attempts_countdown" />
+
 </resources>

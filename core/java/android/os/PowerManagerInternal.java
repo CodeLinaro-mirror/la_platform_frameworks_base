@@ -347,4 +347,14 @@ public abstract class PowerManagerInternal {
      * return false if ambient display is not available.
      */
     public abstract boolean isAmbientDisplaySuppressed();
+
+    /**
+     * Forces the device to go to sleep, even if there are currently wakelocks being held.
+     */
+    public abstract void forceSleep();
+
+    /**
+     * Wakeup the device from a previous force sleep.
+     */
+    public abstract void wakeupFromForceSleep();
 }

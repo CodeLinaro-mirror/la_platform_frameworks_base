@@ -121,6 +121,8 @@ import java.io.FileDescriptor;
 import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.concurrent.TimeUnit;
+import android.widget.Toast;
+import android.os.BatteryManager;
 
 /**
  * A note on locking:  We rely on the fact that calls onto mBar are oneway or
@@ -1568,10 +1570,25 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
         long identity = Binder.clearCallingIdentity();
         try {
             mNotificationDelegate.prepareForPossibleShutdown();
+            BatteryManager batteryManager =
+                    (BatteryManager) mContext.getSystemService(Context.BATTERY_SERVICE);
+            if ((batteryManager == null) || batteryManager.isCharging()) {
+                Slog.i(TAG, "Can't enter TWM when charging ");
+                Handler handler = new Handler(mContext.getMainLooper());
+                handler.post(() -> {
+                    Toast ts = Toast.makeText(
+                        mContext, R.string.global_action_twm_failed_toast, Toast.LENGTH_LONG);
+                    ts.show();
+                });
+                return ;
+            } else {
+                Slog.i(TAG, "Can enter TWM when discharging ");
+            }
             // ShutdownThread displays UI, so give it a UI context.
-            int shutdownBehavior = mContext.getResources().getInteger(
-                 com.android.internal.R.integer.config_shutdownBehavior);
-            if (shutdownBehavior == 1) {
+            final int TWM_POWEROFF = 1;
+            int twmBehavior = mContext.getResources().getInteger(
+                 com.android.internal.R.integer.config_twm);
+            if (twmBehavior == TWM_POWEROFF) {
                 mHandler.post(() ->
                     ShutdownThread.reboot(getUiContext(),
                             PowerManager.REBOOT_TWM, false));
@@ -1579,6 +1596,29 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
         } finally {
             Binder.restoreCallingIdentity(identity);
         }
+    }
+
+    /**
+     * Allows the status bar to deepsleep the device.
+     */
+    @Override
+    public boolean deepsleep() {
+        enforceStatusBarService();
+        long identity = Binder.clearCallingIdentity();
+        try {
+            return true;
+        } finally {
+            Binder.restoreCallingIdentity(identity);
+        }
+    }
+
+    private void toastDeepSleepFailed() {
+        Handler handler = new Handler(mContext.getMainLooper());
+        handler.post(() -> {
+            Toast ts = Toast.makeText(
+                        mContext, R.string.global_action_deepsleep_failed_toast, Toast.LENGTH_LONG);
+            ts.show();
+        });
     }
 
     @Override

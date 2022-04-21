@@ -6890,6 +6890,29 @@ public final class PowerManagerService extends SystemService
         }
     }
 
+    private void forceSleepInternal() {
+        synchronized (mLock) {
+            mForceSuspendActive = true;
+            goToSleepInternal(DEFAULT_DISPLAY_GROUP_IDS,
+                            mClock.uptimeMillis(),
+                            PowerManager.GO_TO_SLEEP_REASON_FORCE_SUSPEND,
+                            0);
+        }
+    }
+
+    private void wakeupFromForceSleepInternal() {
+        synchronized (mLock) {
+            mForceSuspendActive = false;
+            wakePowerGroupLocked(mPowerGroups.get(Display.DEFAULT_DISPLAY_GROUP),
+                            mClock.uptimeMillis(),
+                            PowerManager.WAKE_REASON_UNKNOWN,
+                            "wakeupFromForceSleepInternal",
+                            Process.SYSTEM_UID,
+                            mContext.getOpPackageName(),
+                            Process.SYSTEM_UID);
+       }
+    }
+
     @VisibleForTesting
     final class LocalService extends PowerManagerInternal {
         @Override
@@ -7050,6 +7073,16 @@ public final class PowerManagerService extends SystemService
         @Override
         public boolean isAmbientDisplaySuppressed() {
             return mAmbientDisplaySuppressionController.isSuppressed();
+        }
+
+        @Override
+        public void forceSleep() {
+            forceSleepInternal();
+        }
+
+        @Override
+        public void wakeupFromForceSleep() {
+            wakeupFromForceSleepInternal();
         }
     }
 
