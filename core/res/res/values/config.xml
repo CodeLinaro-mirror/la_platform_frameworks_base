@@ -4465,4 +4465,17 @@
     <!-- Whether Wrist Rotation is supported, used for DisplayRotation rotate per
          mUserRotation. -->
     <bool name="config_supportWristRotation">false</bool>
+
+    <!-- The number of config used to decide DeepSleep behavior.
+         A value of 0 means no DeepSleep behavior.
+         A value of 1 means an auto trigger or user trigger DeepSleep behavior.-->
+    <integer name="config_deepsleep">0</integer>
+    <!-- The number of config used to decide TWM behavior.
+         A value of 0 means no TWM behavior.
+         A value of 1 means an auto trigger or user trigger TWM power off behavior.
+         A value of 2 means an auto trigger or user trigger TWM Hibernate behavior.-->
+    <integer name="config_twm">0</integer>
+    <!-- Auto trigger TWM if battery level drops below this value.
+         This value must be between 0 and 100. -->
+    <integer name="config_autoTriggerTWMThreshold">0</integer>
 </resources>

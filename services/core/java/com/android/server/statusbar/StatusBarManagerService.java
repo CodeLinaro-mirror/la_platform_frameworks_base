@@ -1229,11 +1229,14 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
                     ts.show();
                 });
                 return ;
+            } else {
+                Slog.i(TAG, "Can enter TWM when discharging ");
             }
             // ShutdownThread displays UI, so give it a UI context.
-            int shutdownBehavior = mContext.getResources().getInteger(
-                 com.android.internal.R.integer.config_shutdownBehavior);
-            if (shutdownBehavior == 1) {
+            final int TWM_POWEROFF = 1;
+            int twmBehavior = mContext.getResources().getInteger(
+                 com.android.internal.R.integer.config_twm);
+            if (twmBehavior == TWM_POWEROFF) {
                 mHandler.post(() ->
                     ShutdownThread.reboot(getUiContext(),
                             PowerManager.REBOOT_TWM, false));
@@ -1241,6 +1244,29 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
         } finally {
             Binder.restoreCallingIdentity(identity);
         }
+    }
+
+    /**
+     * Allows the status bar to deepsleep the device.
+     */
+    @Override
+    public boolean deepsleep() {
+        enforceStatusBarService();
+        long identity = Binder.clearCallingIdentity();
+        try {
+            return true;
+        } finally {
+            Binder.restoreCallingIdentity(identity);
+        }
+    }
+
+    private void toastDeepSleepFailed() {
+        Handler handler = new Handler(mContext.getMainLooper());
+        handler.post(() -> {
+            Toast ts = Toast.makeText(
+                        mContext, R.string.global_action_deepsleep_failed_toast, Toast.LENGTH_LONG);
+            ts.show();
+        });
     }
 
     @Override

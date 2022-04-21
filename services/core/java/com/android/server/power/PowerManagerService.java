@@ -5465,6 +5465,23 @@ public final class PowerManagerService extends SystemService
         return false;
     }
 
+    private void forceSleepInternal() {
+        synchronized (mLock) {
+            mForceSuspendActive = true;
+            goToSleepInternal(mClock.uptimeMillis(),
+                        PowerManager.GO_TO_SLEEP_REASON_FORCE_SUSPEND, 0, Process.SYSTEM_UID);
+        }
+    }
+
+    private void wakeupFromForceSleepInternal() {
+        synchronized (mLock) {
+            mForceSuspendActive = false;
+            wakeUpInternal(mClock.uptimeMillis(), PowerManager.WAKE_REASON_UNKNOWN,
+                        "wakeupFromForceSleepInternal", Process.SYSTEM_UID,
+                        mContext.getOpPackageName(), Process.SYSTEM_UID);
+        }
+    }
+
     @VisibleForTesting
     final class LocalService extends PowerManagerInternal {
         @Override
@@ -5605,6 +5622,16 @@ public final class PowerManagerService extends SystemService
         @Override
         public boolean interceptPowerKeyDown(KeyEvent event) {
             return interceptPowerKeyDownInternal(event);
+        }
+
+        @Override
+        public void forceSleep() {
+            forceSleepInternal();
+        }
+
+        @Override
+        public void wakeupFromForceSleep() {
+            wakeupFromForceSleepInternal();
         }
     }
 }
