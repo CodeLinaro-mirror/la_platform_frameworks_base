@@ -1062,6 +1062,8 @@ public final class SystemServer {
         boolean enableVrService = context.getPackageManager().hasSystemFeature(
                 PackageManager.FEATURE_VR_MODE_HIGH_PERFORMANCE);
 
+        boolean enable1GLowMem = SystemProperties.get("ro.product.1G.enable").equals("1");  
+
         // For debugging RescueParty
         if (Build.IS_DEBUGGABLE && SystemProperties.getBoolean("debug.crash_system", false)) {
             throw new RuntimeException();
@@ -1138,10 +1140,12 @@ public final class SystemServer {
             mSystemServiceManager.startService(DropBoxManagerService.class);
             t.traceEnd();
 
-            t.traceBegin("StartVibratorService");
-            vibrator = new VibratorService(context);
-            ServiceManager.addService("vibrator", vibrator);
-            t.traceEnd();
+            if(enable1GLowMem){
+                t.traceBegin("StartVibratorService");
+                vibrator = new VibratorService(context);
+                ServiceManager.addService("vibrator", vibrator);
+                t.traceEnd();
+            }
 
             t.traceBegin("StartDynamicSystemService");
             dynamicSystem = new DynamicSystemService(context);
@@ -1193,11 +1197,13 @@ public final class SystemServer {
                 traceLog.traceEnd();
             }, START_HIDL_SERVICES);
 
+	    if(!enable1GLowMem){
             if (!isWatch && enableVrService) {
                 t.traceBegin("StartVrManagerService");
                 mSystemServiceManager.startService(VrManagerService.class);
                 t.traceEnd();
             }
+            }		
 
             t.traceBegin("StartInputManager");
             inputManager.setWindowManagerCallbacks(wm.getInputManagerCallback());
@@ -1227,10 +1233,12 @@ public final class SystemServer {
             t.traceBegin("NetworkWatchlistService");
             mSystemServiceManager.startService(NetworkWatchlistService.Lifecycle.class);
             t.traceEnd();
-
-            t.traceBegin("PinnerService");
-            mSystemServiceManager.startService(PinnerService.class);
-            t.traceEnd();
+          
+	    if(!enable1GLowMem){
+                t.traceBegin("PinnerService");
+                mSystemServiceManager.startService(PinnerService.class);
+                t.traceEnd();
+            }
 
             t.traceBegin("IorapForwardingService");
             mSystemServiceManager.startService(IorapForwardingService.class);
@@ -1370,9 +1378,11 @@ public final class SystemServer {
                 t.traceEnd();
             }
 
-            t.traceBegin("StartTestHarnessMode");
-            mSystemServiceManager.startService(TestHarnessModeService.class);
-            t.traceEnd();
+	    if(!enable1GLowMem){
+                t.traceBegin("StartTestHarnessMode");
+                mSystemServiceManager.startService(TestHarnessModeService.class);
+                t.traceEnd();
+            }
 
             if (hasPdb || OemLockService.isHalPresent()) {
                 // Implementation depends on pdb or the OemLock HAL
@@ -1558,6 +1568,9 @@ public final class SystemServer {
             }
             t.traceEnd();
 
+            if(!enable1GLowMem)
+	        enableWigig=false;
+
             if (enableWigig) {
                 try {
                     Slog.i(TAG, "Wigig Service");
@@ -1655,15 +1668,17 @@ public final class SystemServer {
             }
             t.traceEnd();
 
-            if (!isWatch) {
-                t.traceBegin("StartSearchManagerService");
-                try {
-                    mSystemServiceManager.startService(SEARCH_MANAGER_SERVICE_CLASS);
-                } catch (Throwable e) {
-                    reportWtf("starting Search Service", e);
+            if(!enable1GLowMem){
+	       if (!isWatch) {
+                    t.traceBegin("StartSearchManagerService");
+                    try {
+                        mSystemServiceManager.startService(SEARCH_MANAGER_SERVICE_CLASS);
+                    } catch (Throwable e) {
+                        reportWtf("starting Search Service", e);
+                    }
+                    t.traceEnd();
                 }
-                t.traceEnd();
-            }
+	    }
 
             if (context.getResources().getBoolean(R.bool.config_enableWallpaperService)) {
                 t.traceBegin("StartWallpaperManagerService");
@@ -1697,9 +1712,11 @@ public final class SystemServer {
                 t.traceEnd();
             }
 
-            t.traceBegin("StartDockObserver");
-            mSystemServiceManager.startService(DockObserver.class);
-            t.traceEnd();
+	    if(!enable1GLowMem){
+                t.traceBegin("StartDockObserver");
+                mSystemServiceManager.startService(DockObserver.class);
+                t.traceEnd();
+	    }    
 
             if (isWatch) {
                 t.traceBegin("StartThermalObserver");
@@ -1707,21 +1724,24 @@ public final class SystemServer {
                 t.traceEnd();
             }
 
-            t.traceBegin("StartWiredAccessoryManager");
-            try {
+	    if(!enable1GLowMem){
+                t.traceBegin("StartWiredAccessoryManager");
+                try {
                 // Listen for wired headset changes
-                inputManager.setWiredAccessoryCallbacks(
-                        new WiredAccessoryManager(context, inputManager));
-            } catch (Throwable e) {
-                reportWtf("starting WiredAccessoryManager", e);
-            }
-            t.traceEnd();
+                    inputManager.setWiredAccessoryCallbacks(new WiredAccessoryManager(context, inputManager));
+                } catch (Throwable e) {
+                    reportWtf("starting WiredAccessoryManager", e);
+                }
+                t.traceEnd();
+	    }
 
             if (mPackageManager.hasSystemFeature(PackageManager.FEATURE_MIDI)) {
                 // Start MIDI Manager service
-                t.traceBegin("StartMidiManager");
-                mSystemServiceManager.startService(MIDI_SERVICE_CLASS);
-                t.traceEnd();
+                if(!enable1GLowMem){
+		    t.traceBegin("StartMidiManager");
+                    mSystemServiceManager.startService(MIDI_SERVICE_CLASS);
+                    t.traceEnd();
+		}    
             }
 
             // Start ADB Debugging Service
@@ -1809,9 +1829,11 @@ public final class SystemServer {
             // FEATURE_VOICE_RECOGNIZERS feature is set, because it needs to take care
             // of initializing various settings.  It will internally modify its behavior
             // based on that feature.
-            t.traceBegin("StartVoiceRecognitionManager");
-            mSystemServiceManager.startService(VOICE_RECOGNITION_MANAGER_SERVICE_CLASS);
-            t.traceEnd();
+            if(!enable1GLowMem){
+	        t.traceBegin("StartVoiceRecognitionManager");
+                mSystemServiceManager.startService(VOICE_RECOGNITION_MANAGER_SERVICE_CLASS);
+                t.traceEnd();
+            }
 
             if (GestureLauncherService.isGestureLauncherEnabled(context.getResources())) {
                 t.traceBegin("StartGestureLauncher");
@@ -1907,10 +1929,12 @@ public final class SystemServer {
             }
 
             if (mPackageManager.hasSystemFeature(PackageManager.FEATURE_PRINTING)) {
-                t.traceBegin("StartPrintManager");
-                mSystemServiceManager.startService(PRINT_MANAGER_SERVICE_CLASS);
-                t.traceEnd();
-            }
+                if(!enable1GLowMem){    
+		   t.traceBegin("StartPrintManager");
+                   mSystemServiceManager.startService(PRINT_MANAGER_SERVICE_CLASS);
+                   t.traceEnd();
+                } 
+	    }
 
             if (mPackageManager.hasSystemFeature(PackageManager.FEATURE_COMPANION_DEVICE_SETUP)) {
                 t.traceBegin("StartCompanionDeviceManager");
@@ -1927,9 +1951,11 @@ public final class SystemServer {
             t.traceEnd();
 
             if (mPackageManager.hasSystemFeature(PackageManager.FEATURE_HDMI_CEC)) {
-                t.traceBegin("StartHdmiControlService");
-                mSystemServiceManager.startService(HdmiControlService.class);
-                t.traceEnd();
+                if(!enable1GLowMem){
+		   t.traceBegin("StartHdmiControlService");
+                   mSystemServiceManager.startService(HdmiControlService.class);
+                   t.traceEnd();
+                }
             }
 
             if (mPackageManager.hasSystemFeature(PackageManager.FEATURE_LIVE_TV)
@@ -1973,33 +1999,34 @@ public final class SystemServer {
             final boolean hasFeatureFingerprint
                     = mPackageManager.hasSystemFeature(PackageManager.FEATURE_FINGERPRINT);
 
-            if (hasFeatureFace) {
-                t.traceBegin("StartFaceSensor");
-                mSystemServiceManager.startService(FaceService.class);
-                t.traceEnd();
+	    if(!enable1GLowMem){
+                 if (hasFeatureFace) {
+                     t.traceBegin("StartFaceSensor");
+                     mSystemServiceManager.startService(FaceService.class);
+                      t.traceEnd();
+                 }
+
+                 if (hasFeatureIris) {
+                     t.traceBegin("StartIrisSensor");
+                     mSystemServiceManager.startService(IrisService.class);
+                     t.traceEnd();
+                 }
+
+                 if (hasFeatureFingerprint) {
+                     t.traceBegin("StartFingerprintSensor");
+                     mSystemServiceManager.startService(FingerprintService.class);
+                     t.traceEnd();
+                 }
+
+                 // Start this service after all biometric services.
+                 t.traceBegin("StartBiometricService");
+                 mSystemServiceManager.startService(BiometricService.class);
+                 t.traceEnd();
+
+                 t.traceBegin("StartAuthService");
+                 mSystemServiceManager.startService(AuthService.class);
+                 t.traceEnd();
             }
-
-            if (hasFeatureIris) {
-                t.traceBegin("StartIrisSensor");
-                mSystemServiceManager.startService(IrisService.class);
-                t.traceEnd();
-            }
-
-            if (hasFeatureFingerprint) {
-                t.traceBegin("StartFingerprintSensor");
-                mSystemServiceManager.startService(FingerprintService.class);
-                t.traceEnd();
-            }
-
-            // Start this service after all biometric services.
-            t.traceBegin("StartBiometricService");
-            mSystemServiceManager.startService(BiometricService.class);
-            t.traceEnd();
-
-            t.traceBegin("StartAuthService");
-            mSystemServiceManager.startService(AuthService.class);
-            t.traceEnd();
-
 
             t.traceBegin("StartBackgroundDexOptService");
             try {
@@ -2134,23 +2161,26 @@ public final class SystemServer {
         }
 
         // NOTE: ClipboardService depends on ContentCapture and Autofill
-        t.traceBegin("StartClipboardService");
-        mSystemServiceManager.startService(ClipboardService.class);
-        t.traceEnd();
-
+        if(!enable1GLowMem){
+	    t.traceBegin("StartClipboardService");
+            mSystemServiceManager.startService(ClipboardService.class);
+            t.traceEnd();
+        }
+	    
         t.traceBegin("AppServiceManager");
         mSystemServiceManager.startService(AppBindingService.Lifecycle.class);
         t.traceEnd();
 
         // It is now time to start up the app processes...
-
-        t.traceBegin("MakeVibratorServiceReady");
-        try {
-            vibrator.systemReady();
-        } catch (Throwable e) {
-            reportWtf("making Vibrator Service ready", e);
+        if(!enable1GLowMem){
+            t.traceBegin("MakeVibratorServiceReady");
+            try {
+               vibrator.systemReady();
+            } catch (Throwable e) {
+               reportWtf("making Vibrator Service ready", e);
+            }
+            t.traceEnd();
         }
-        t.traceEnd();
 
         t.traceBegin("MakeLockSettingsServiceReady");
         if (lockSettings != null) {
@@ -2173,7 +2203,10 @@ public final class SystemServer {
 
         // Wigig services are not registered as system services because of class loader
         // limitations, send boot phase notification separately
-        if (enableWigig) {
+        if(!enable1GLowMem)
+            enableWigig=false;
+
+	if (enableWigig) {
             try {
                 Slog.i(TAG, "calling onBootPhase for Wigig Services");
                 Class wigigP2pClass = wigigP2pService.getClass();
