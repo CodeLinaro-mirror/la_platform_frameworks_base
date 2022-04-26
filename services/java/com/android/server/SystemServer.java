@@ -1445,6 +1445,8 @@ public final class SystemServer implements Dumpable {
         boolean enableVrService = context.getPackageManager().hasSystemFeature(
                 PackageManager.FEATURE_VR_MODE_HIGH_PERFORMANCE);
 
+        boolean enable1GLowMem = SystemProperties.get("ro.product.1G.enable").equals("1");  
+
         // For debugging RescueParty
         if (Build.IS_DEBUGGABLE && SystemProperties.getBoolean("debug.crash_system", false)) {
             throw new RuntimeException();
@@ -1543,9 +1545,11 @@ public final class SystemServer implements Dumpable {
             mSystemServiceManager.startService(ROLE_SERVICE_CLASS);
             t.traceEnd();
 
-            t.traceBegin("StartVibratorManagerService");
-            mSystemServiceManager.startService(VibratorManagerService.Lifecycle.class);
-            t.traceEnd();
+            if(enable1GLowMem){
+                t.traceBegin("StartVibratorManagerService");
+                mSystemServiceManager.startService(VibratorManagerService.Lifecycle.class);
+                t.traceEnd();
+            }
 
             t.traceBegin("StartDynamicSystemService");
             dynamicSystem = new DynamicSystemService(context);
@@ -1612,10 +1616,12 @@ public final class SystemServer implements Dumpable {
                 traceLog.traceEnd();
             }, START_HIDL_SERVICES);
 
-            if (!isWatch && enableVrService) {
-                t.traceBegin("StartVrManagerService");
-                mSystemServiceManager.startService(VrManagerService.class);
-                t.traceEnd();
+            if(!enable1GLowMem){
+                if (!isWatch && enableVrService) {
+                    t.traceBegin("StartVrManagerService");
+                    mSystemServiceManager.startService(VrManagerService.class);
+                    t.traceEnd();
+                }
             }
 
             t.traceBegin("StartInputManager");
@@ -1646,10 +1652,12 @@ public final class SystemServer implements Dumpable {
             t.traceBegin("NetworkWatchlistService");
             mSystemServiceManager.startService(NetworkWatchlistService.Lifecycle.class);
             t.traceEnd();
-
-            t.traceBegin("PinnerService");
-            mSystemServiceManager.startService(PinnerService.class);
-            t.traceEnd();
+          
+            if(!enable1GLowMem){
+                t.traceBegin("PinnerService");
+                mSystemServiceManager.startService(PinnerService.class);
+                t.traceEnd();
+            }
 
             mSystemServiceManager.startService(ActivityTriggerService.class);
 
@@ -1804,9 +1812,11 @@ public final class SystemServer implements Dumpable {
                 t.traceEnd();
             }
 
-            t.traceBegin("StartTestHarnessMode");
-            mSystemServiceManager.startService(TestHarnessModeService.class);
-            t.traceEnd();
+            if(!enable1GLowMem){
+                t.traceBegin("StartTestHarnessMode");
+                mSystemServiceManager.startService(TestHarnessModeService.class);
+                t.traceEnd();
+            }
 
             if (hasPdb || OemLockService.isHalPresent()) {
                 // Implementation depends on pdb or the OemLock HAL
@@ -2030,6 +2040,9 @@ public final class SystemServer implements Dumpable {
             }
             t.traceEnd();
 
+            if(!enable1GLowMem)
+                enableWigig=false;
+
             if (enableWigig) {
                 try {
                     Slog.i(TAG, "Wigig Service");
@@ -2135,14 +2148,16 @@ public final class SystemServer implements Dumpable {
                 t.traceEnd();
             }
 
-            if (!isWatch) {
-                t.traceBegin("StartSearchManagerService");
-                try {
-                    mSystemServiceManager.startService(SEARCH_MANAGER_SERVICE_CLASS);
-                } catch (Throwable e) {
-                    reportWtf("starting Search Service", e);
+            if(!enable1GLowMem){
+                if (!isWatch) {
+                    t.traceBegin("StartSearchManagerService");
+                    try {
+                        mSystemServiceManager.startService(SEARCH_MANAGER_SERVICE_CLASS);
+                    } catch (Throwable e) {
+                        reportWtf("starting Search Service", e);
+                    }
+                    t.traceEnd();
                 }
-                t.traceEnd();
             }
 
             if (context.getResources().getBoolean(R.bool.config_enableWallpaperService)) {
@@ -2185,9 +2200,11 @@ public final class SystemServer implements Dumpable {
                 t.traceEnd();
             }
 
-            t.traceBegin("StartDockObserver");
-            mSystemServiceManager.startService(DockObserver.class);
-            t.traceEnd();
+            if(!enable1GLowMem){
+                t.traceBegin("StartDockObserver");
+                mSystemServiceManager.startService(DockObserver.class);
+                t.traceEnd();
+            }    
 
             if (isWatch) {
                 t.traceBegin("StartThermalObserver");
@@ -2195,12 +2212,11 @@ public final class SystemServer implements Dumpable {
                 t.traceEnd();
             }
 
-            if (!isWatch) {
+            if(!enable1GLowMem){
                 t.traceBegin("StartWiredAccessoryManager");
                 try {
-                    // Listen for wired headset changes
-                    inputManager.setWiredAccessoryCallbacks(
-                            new WiredAccessoryManager(context, inputManager));
+                // Listen for wired headset changes
+                    inputManager.setWiredAccessoryCallbacks(new WiredAccessoryManager(context, inputManager));
                 } catch (Throwable e) {
                     reportWtf("starting WiredAccessoryManager", e);
                 }
@@ -2209,9 +2225,11 @@ public final class SystemServer implements Dumpable {
 
             if (mPackageManager.hasSystemFeature(PackageManager.FEATURE_MIDI)) {
                 // Start MIDI Manager service
-                t.traceBegin("StartMidiManager");
-                mSystemServiceManager.startService(MIDI_SERVICE_CLASS);
-                t.traceEnd();
+                if(!enable1GLowMem){
+                    t.traceBegin("StartMidiManager");
+                    mSystemServiceManager.startService(MIDI_SERVICE_CLASS);
+                    t.traceEnd();
+                } 
             }
 
             // Start ADB Debugging Service
@@ -2295,9 +2313,11 @@ public final class SystemServer implements Dumpable {
             // FEATURE_VOICE_RECOGNIZERS feature is set, because it needs to take care
             // of initializing various settings.  It will internally modify its behavior
             // based on that feature.
-            t.traceBegin("StartVoiceRecognitionManager");
-            mSystemServiceManager.startService(VOICE_RECOGNITION_MANAGER_SERVICE_CLASS);
-            t.traceEnd();
+            if(!enable1GLowMem){
+                t.traceBegin("StartVoiceRecognitionManager");
+                mSystemServiceManager.startService(VOICE_RECOGNITION_MANAGER_SERVICE_CLASS);
+                t.traceEnd();
+            }
 
             t.traceBegin("StartAppHibernationService");
             mSystemServiceManager.startService(APP_HIBERNATION_SERVICE_CLASS);
@@ -2394,9 +2414,11 @@ public final class SystemServer implements Dumpable {
             }
 
             if (mPackageManager.hasSystemFeature(PackageManager.FEATURE_PRINTING)) {
-                t.traceBegin("StartPrintManager");
-                mSystemServiceManager.startService(PRINT_MANAGER_SERVICE_CLASS);
-                t.traceEnd();
+                if(!enable1GLowMem){    
+                   t.traceBegin("StartPrintManager");
+                   mSystemServiceManager.startService(PRINT_MANAGER_SERVICE_CLASS);
+                   t.traceEnd();
+                } 
             }
 
             t.traceBegin("StartAttestationVerificationService");
@@ -2423,9 +2445,11 @@ public final class SystemServer implements Dumpable {
             t.traceEnd();
 
             if (mPackageManager.hasSystemFeature(PackageManager.FEATURE_HDMI_CEC)) {
-                t.traceBegin("StartHdmiControlService");
-                mSystemServiceManager.startService(HdmiControlService.class);
-                t.traceEnd();
+                if(!enable1GLowMem){
+                   t.traceBegin("StartHdmiControlService");
+                   mSystemServiceManager.startService(HdmiControlService.class);
+                   t.traceEnd();
+                }
             }
 
             if (mPackageManager.hasSystemFeature(PackageManager.FEATURE_LIVE_TV)
@@ -2476,18 +2500,18 @@ public final class SystemServer implements Dumpable {
             final boolean hasFeatureFingerprint
                     = mPackageManager.hasSystemFeature(PackageManager.FEATURE_FINGERPRINT);
 
-            if (hasFeatureFace) {
-                t.traceBegin("StartFaceSensor");
-                final FaceService faceService =
-                        mSystemServiceManager.startService(FaceService.class);
-                t.traceEnd();
-            }
+            if(!enable1GLowMem){
+                if (hasFeatureFace) {
+                    t.traceBegin("StartFaceSensor");
+                    mSystemServiceManager.startService(FaceService.class);
+                    t.traceEnd();
+                 }
 
-            if (hasFeatureIris) {
-                t.traceBegin("StartIrisSensor");
-                mSystemServiceManager.startService(IrisService.class);
-                t.traceEnd();
-            }
+                 if (hasFeatureIris) {
+                     t.traceBegin("StartIrisSensor");
+                     mSystemServiceManager.startService(IrisService.class);
+                     t.traceEnd();
+                 }
 
             if (hasFeatureFingerprint) {
                 t.traceBegin("StartFingerprintSensor");
@@ -2504,6 +2528,8 @@ public final class SystemServer implements Dumpable {
             t.traceBegin("StartAuthService");
             mSystemServiceManager.startService(AuthService.class);
             t.traceEnd();
+
+        }
 
             if (!isWatch) {
                 // We don't run this on watches as there are no plans to use the data logged
@@ -2698,6 +2724,9 @@ public final class SystemServer implements Dumpable {
 
         // Wigig services are not registered as system services because of class loader
         // limitations, send boot phase notification separately
+        if(!enable1GLowMem)
+            enableWigig=false;
+
         if (enableWigig) {
             try {
                 Slog.i(TAG, "calling onBootPhase for Wigig Services");
