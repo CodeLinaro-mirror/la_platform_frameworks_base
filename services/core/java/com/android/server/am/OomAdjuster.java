@@ -1717,7 +1717,7 @@ public class OomAdjuster {
         int schedGroup;
         int procState;
         int cachedAdjSeq;
-        int capability = 0;
+        int capability = cycleReEval ? app.mState.getCurCapability() : 0;
 
         boolean foregroundActivities = false;
         boolean hasVisibleActivities = false;
@@ -2121,10 +2121,6 @@ public class OomAdjuster {
                     }
 
                     if ((cr.flags & Context.BIND_WAIVE_PRIORITY) == 0) {
-                        if (shouldSkipDueToCycle(app, cstate, procState, adj, cycleReEval)) {
-                            continue;
-                        }
-
                         if (cr.hasFlag(Context.BIND_INCLUDE_CAPABILITIES)) {
                             capability |= cstate.getCurCapability();
                         }
@@ -2143,6 +2139,10 @@ public class OomAdjuster {
                             } else {
                                 capability |= PROCESS_CAPABILITY_NETWORK;
                             }
+                        }
+
+                        if (shouldSkipDueToCycle(app, cstate, procState, adj, cycleReEval)) {
+                            continue;
                         }
 
                         if (clientProcState >= PROCESS_STATE_CACHED_ACTIVITY) {
@@ -2693,6 +2693,10 @@ public class OomAdjuster {
         }
     }
 
+    void onWakefulnessChanged(int wakefulness) {
+        mCachedAppOptimizer.onWakefulnessChanged(wakefulness);
+    }
+
     /** Applies the computed oomadj, procstate and sched group values and freezes them in set* */
     @GuardedBy({"mService", "mProcLock"})
     private boolean applyOomAdjLSP(ProcessRecord app, boolean doingAll, long now,
@@ -2709,18 +2713,9 @@ public class OomAdjuster {
         // don't compact during bootup
         if (mCachedAppOptimizer.useCompaction() && mService.mBooted) {
             // Cached and prev/home compaction
+            // reminder: here, setAdj is previous state, curAdj is upcoming state
             if (state.getCurAdj() != state.getSetAdj()) {
-                // Perform a minor compaction when a perceptible app becomes the prev/home app
-                // Perform a major compaction when any app enters cached
-                // reminder: here, setAdj is previous state, curAdj is upcoming state
-                if (state.getSetAdj() <= ProcessList.PERCEPTIBLE_APP_ADJ
-                        && (state.getCurAdj() == ProcessList.PREVIOUS_APP_ADJ
-                            || state.getCurAdj() == ProcessList.HOME_APP_ADJ)) {
-                    mCachedAppOptimizer.compactAppSome(app);
-                } else if (state.getCurAdj() >= ProcessList.CACHED_APP_MIN_ADJ
-                        && state.getCurAdj() <= ProcessList.CACHED_APP_MAX_ADJ) {
-                    mCachedAppOptimizer.compactAppFull(app);
-                }
+                mCachedAppOptimizer.onOomAdjustChanged(state.getSetAdj(), state.getCurAdj(), app);
             } else if (mService.mWakefulness.get() != PowerManagerInternal.WAKEFULNESS_AWAKE
                     && state.getSetAdj() < ProcessList.FOREGROUND_APP_ADJ
                     // Because these can fire independent of oom_adj/procstate changes, we need
