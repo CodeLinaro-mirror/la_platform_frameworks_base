@@ -71,6 +71,8 @@ import com.android.server.UiThread;
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
 import java.util.ArrayList;
+import android.widget.Toast;
+import android.os.BatteryManager;
 
 /**
  * A note on locking:  We rely on the fact that calls onto mBar are oneway or
@@ -1216,6 +1218,18 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
         long identity = Binder.clearCallingIdentity();
         try {
             mNotificationDelegate.prepareForPossibleShutdown();
+            BatteryManager batteryManager =
+                    (BatteryManager) mContext.getSystemService(Context.BATTERY_SERVICE);
+            if ((batteryManager == null) || batteryManager.isCharging()) {
+                Slog.i(TAG, "Can't enter TWM when charging ");
+                Handler handler = new Handler(mContext.getMainLooper());
+                handler.post(() -> {
+                    Toast ts = Toast.makeText(
+                        mContext, R.string.global_action_twm_failed_toast, Toast.LENGTH_LONG);
+                    ts.show();
+                });
+                return ;
+            }
             // ShutdownThread displays UI, so give it a UI context.
             int shutdownBehavior = mContext.getResources().getInteger(
                  com.android.internal.R.integer.config_shutdownBehavior);

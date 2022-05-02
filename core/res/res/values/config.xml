@@ -4444,4 +4444,8 @@
          A value of 0 means no change by default.
          A value of 1 means enter TWM power off mode after shutdown.-->
     <integer name="config_shutdownBehavior">0</integer>
+
+    <!-- Whether Wrist Rotation is supported, used for DisplayRotation rotate per
+         mUserRotation. -->
+    <bool name="config_supportWristRotation">false</bool>
 </resources>
