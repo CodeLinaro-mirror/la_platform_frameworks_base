@@ -137,4 +137,7 @@ public interface StatusBarManagerInternal {
 
     /** @see com.android.internal.statusbar.IStatusBar#hideToast(String, IBinder)  */
     void hideToast(String packageName, IBinder token);
+
+    void onEnterSuspendState(int suspendState, boolean result);
+    void onExitSuspendState(int suspendState);
 }

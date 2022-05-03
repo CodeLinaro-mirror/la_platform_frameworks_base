@@ -73,6 +73,7 @@ import java.io.PrintWriter;
 import java.util.ArrayList;
 import android.widget.Toast;
 import android.os.BatteryManager;
+import android.content.Intent;
 
 /**
  * A note on locking:  We rely on the fact that calls onto mBar are oneway or
@@ -98,6 +99,9 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
     private final DeathRecipient mDeathRecipient = new DeathRecipient();
     private int mCurrentUserId;
     private boolean mTracingEnabled;
+    private static final String ACTION_TRIGGER_DEEPSLEEP =
+               "com.qualcomm.qti.intent.action.ACTION_TRIGGER_DEEPSLEEP";
+    private static final int SUSPEND_STATE_DEEPSLEEP = 1;
 
     private SparseArray<UiState> mDisplayUiState = new SparseArray<>();
 
@@ -523,6 +527,25 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
                 try {
                     mBar.hideToast(packageName, token);
                 } catch (RemoteException ex) { }
+            }
+        }
+
+        @Override
+        public void onEnterSuspendState(int suspendState, boolean result) {
+            if (suspendState == SUSPEND_STATE_DEEPSLEEP) {
+                if (result) {
+                    Slog.i(TAG,"Enter DeepSleep success");
+                } else {
+                    Slog.i(TAG,"Enter DeepSleep failed");
+                    toastDeepSleepFailed();
+                }
+            }
+        }
+
+        @Override
+        public void onExitSuspendState(int suspendState) {
+            if (suspendState == SUSPEND_STATE_DEEPSLEEP) {
+                Slog.i(TAG,"Exit DeepSleep");
             }
         }
     };
@@ -1254,6 +1277,10 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
         enforceStatusBarService();
         long identity = Binder.clearCallingIdentity();
         try {
+            Intent intent = new Intent(ACTION_TRIGGER_DEEPSLEEP);
+            intent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY);
+            intent.setPackage("android");
+            mContext.sendBroadcastAsUser(intent, UserHandle.ALL);
             return true;
         } finally {
             Binder.restoreCallingIdentity(identity);

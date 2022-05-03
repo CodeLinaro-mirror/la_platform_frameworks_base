@@ -703,6 +703,7 @@
 
     <!-- For DeepSleep -->
     <protected-broadcast android:name="com.qualcomm.qti.intent.action.ACTION_FORCE_DEEPSLEEP" />
+    <protected-broadcast android:name="com.qualcomm.qti.intent.action.ACTION_TRIGGER_DEEPSLEEP" />
     <!-- ====================================================================== -->
     <!--                          RUNTIME PERMISSIONS                           -->
     <!-- ====================================================================== -->
