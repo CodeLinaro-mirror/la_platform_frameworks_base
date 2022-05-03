@@ -227,4 +227,6 @@ public interface StatusBarManagerInternal {
      * @see com.android.internal.statusbar.IStatusBar#showMediaOutputSwitcher
      */
     void showMediaOutputSwitcher(String packageName);
+    void onEnterSuspendState(int suspendState, boolean result);
+    void onExitSuspendState(int suspendState);
 }
