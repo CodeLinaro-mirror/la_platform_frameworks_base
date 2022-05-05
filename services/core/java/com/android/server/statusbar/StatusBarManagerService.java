@@ -74,6 +74,8 @@ import java.util.ArrayList;
 import android.widget.Toast;
 import android.os.BatteryManager;
 import android.content.Intent;
+import android.content.BroadcastReceiver;
+import android.content.IntentFilter;
 
 /**
  * A note on locking:  We rely on the fact that calls onto mBar are oneway or
@@ -102,6 +104,7 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
     private static final String ACTION_TRIGGER_DEEPSLEEP =
                "com.qualcomm.qti.intent.action.ACTION_TRIGGER_DEEPSLEEP";
     private static final int SUSPEND_STATE_DEEPSLEEP = 1;
+    private boolean mCharging;
 
     private SparseArray<UiState> mDisplayUiState = new SparseArray<>();
 
@@ -200,6 +203,7 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
         final DisplayManager displayManager =
                 (DisplayManager) context.getSystemService(Context.DISPLAY_SERVICE);
         displayManager.registerDisplayListener(this, mHandler);
+        new ChargingReceiver();
     }
 
     @Override
@@ -1243,17 +1247,17 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
             mNotificationDelegate.prepareForPossibleShutdown();
             BatteryManager batteryManager =
                     (BatteryManager) mContext.getSystemService(Context.BATTERY_SERVICE);
-            if ((batteryManager == null) || batteryManager.isCharging()) {
-                Slog.i(TAG, "Can't enter TWM when charging ");
+            if (((batteryManager == null) || batteryManager.isCharging()) || mCharging) {
+                Slog.i(TAG, "Can't enter TWM when charging.");
                 Handler handler = new Handler(mContext.getMainLooper());
                 handler.post(() -> {
                     Toast ts = Toast.makeText(
                         mContext, R.string.global_action_twm_failed_toast, Toast.LENGTH_LONG);
                     ts.show();
                 });
-                return ;
+                return;
             } else {
-                Slog.i(TAG, "Can enter TWM when discharging ");
+                Slog.i(TAG, "Can enter TWM when discharging.");
             }
             // ShutdownThread displays UI, so give it a UI context.
             final int TWM_POWEROFF = 1;
@@ -1267,6 +1271,27 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
         } finally {
             Binder.restoreCallingIdentity(identity);
         }
+    }
+
+    class ChargingReceiver extends BroadcastReceiver {
+        ChargingReceiver() {
+            IntentFilter filter = new IntentFilter();
+            filter.addAction(Intent.ACTION_POWER_CONNECTED);
+            filter.addAction(Intent.ACTION_POWER_DISCONNECTED);
+            mContext.registerReceiver(this, filter);
+         }
+
+         @Override
+         public void onReceive(Context context, Intent intent) {
+             final String action = intent.getAction();
+             if (Intent.ACTION_POWER_CONNECTED.equals(action)) {
+                 Slog.i(TAG, "Device is charging.");
+                 mCharging = true;
+             } else if (Intent.ACTION_POWER_DISCONNECTED.equals(action)) {
+                 Slog.i(TAG, "Disconnected from power.");
+                 mCharging = false;
+             }
+         }
     }
 
     /**
