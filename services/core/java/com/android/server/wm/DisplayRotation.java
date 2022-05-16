@@ -95,6 +95,7 @@ public class DisplayRotation {
 
     public final boolean isDefaultDisplay;
     private final boolean mSupportAutoRotation;
+
     private final int mLidOpenRotation;
     private final int mCarDockRotation;
     private final int mDeskDockRotation;
@@ -102,6 +103,8 @@ public class DisplayRotation {
     private final int mForceLandscapeRotation;
     private final boolean mSupportForceLandscapeMode;
     private final RotationAnimationPair mTmpRotationAnim = new RotationAnimationPair();
+
+    private final boolean mSupportWristRotation;
 
     private OrientationListener mOrientationListener;
     private StatusBarManagerInternal mStatusBarManagerInternal;
@@ -238,6 +241,13 @@ public class DisplayRotation {
                     "org.codeaurora.intent.action.WIFI_DISPLAY_VIDEO";
 
     /**
+     * Broadcast Permission for Wifi Display
+     */
+
+    private static final String WIFI_DISPLAY_PERMISSION =
+                    "com.qualcomm.permission.wfd.QC_WFD";
+
+    /**
      * Wifi Display specific variables
      */
     private boolean mWifiDisplayConnected = false;
@@ -269,6 +279,9 @@ public class DisplayRotation {
         mForceLandscapeRotation = readRotation(R.integer.config_forceLandscapeRotation);
         mSupportForceLandscapeMode =
                 mContext.getResources().getBoolean(R.bool.config_supportForceLandscapeMode);
+        mSupportWristRotation =
+                mContext.getResources().getBoolean(R.bool.config_supportWristRotation);
+
         if (mSupportForceLandscapeMode && mForceLandscapeRotation != -1) {
             mRotation = mForceLandscapeRotation;
         }
@@ -316,7 +329,9 @@ public class DisplayRotation {
                                         false/* forceRelayout */);
                             }
                         }
-                    }, new IntentFilter(ACTION_WIFI_DISPLAY_VIDEO), null, UiThread.getHandler());
+                    }, new IntentFilter(ACTION_WIFI_DISPLAY_VIDEO),
+                        WIFI_DISPLAY_PERMISSION,
+                        UiThread.getHandler());
                 }
             };
             t.start();
@@ -1205,9 +1220,16 @@ public class DisplayRotation {
         } else if (mSupportForceLandscapeMode) {
             preferredRotation = mForceLandscapeRotation;
         } else if (!mSupportAutoRotation) {
-            // If we don't support auto-rotation then bail out here and ignore
-            // the sensor and any rotation lock settings.
-            preferredRotation = -1;
+            boolean watchProduct = SystemProperties.getBoolean("ro.product.qti.qcom_watch", false);
+            if (mUserRotationMode == WindowManagerPolicy.USER_ROTATION_LOCKED
+                    && mSupportWristRotation && watchProduct) {
+                // Prefer mUserRotation, when wrist roation is supported
+                preferredRotation = mUserRotation;
+            } else {
+                // If we don't support auto-rotation then bail out here and ignore
+                // the sensor and any rotation lock settings.
+                preferredRotation = -1;
+            }
         } else if ((mUserRotationMode == WindowManagerPolicy.USER_ROTATION_FREE
                         && (orientation == ActivityInfo.SCREEN_ORIENTATION_USER
                                 || orientation == ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED

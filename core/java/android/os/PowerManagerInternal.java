@@ -323,4 +323,14 @@ public abstract class PowerManagerInternal {
 
     /** Allows power button to intercept a power key button press. */
     public abstract boolean interceptPowerKeyDown(KeyEvent event);
+
+    /**
+     * Forces the device to go to sleep, even if there are currently wakelocks being held.
+     */
+    public abstract void forceSleep();
+
+    /**
+     * Wakeup the device from a previous force sleep.
+     */
+    public abstract void wakeupFromForceSleep();
 }

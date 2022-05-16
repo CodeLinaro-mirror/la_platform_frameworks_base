@@ -71,6 +71,11 @@ import com.android.server.UiThread;
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
 import java.util.ArrayList;
+import android.widget.Toast;
+import android.os.BatteryManager;
+import android.content.Intent;
+import android.content.BroadcastReceiver;
+import android.content.IntentFilter;
 
 /**
  * A note on locking:  We rely on the fact that calls onto mBar are oneway or
@@ -96,6 +101,10 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
     private final DeathRecipient mDeathRecipient = new DeathRecipient();
     private int mCurrentUserId;
     private boolean mTracingEnabled;
+    private static final String ACTION_TRIGGER_DEEPSLEEP =
+               "com.qualcomm.qti.intent.action.ACTION_TRIGGER_DEEPSLEEP";
+    private static final int SUSPEND_STATE_DEEPSLEEP = 1;
+    private boolean mCharging;
 
     private SparseArray<UiState> mDisplayUiState = new SparseArray<>();
 
@@ -194,6 +203,7 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
         final DisplayManager displayManager =
                 (DisplayManager) context.getSystemService(Context.DISPLAY_SERVICE);
         displayManager.registerDisplayListener(this, mHandler);
+        new ChargingReceiver();
     }
 
     @Override
@@ -521,6 +531,25 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
                 try {
                     mBar.hideToast(packageName, token);
                 } catch (RemoteException ex) { }
+            }
+        }
+
+        @Override
+        public void onEnterSuspendState(int suspendState, boolean result) {
+            if (suspendState == SUSPEND_STATE_DEEPSLEEP) {
+                if (result) {
+                    Slog.i(TAG,"Enter DeepSleep success");
+                } else {
+                    Slog.i(TAG,"Enter DeepSleep failed");
+                    toastDeepSleepFailed();
+                }
+            }
+        }
+
+        @Override
+        public void onExitSuspendState(int suspendState) {
+            if (suspendState == SUSPEND_STATE_DEEPSLEEP) {
+                Slog.i(TAG,"Exit DeepSleep");
             }
         }
     };
@@ -1216,10 +1245,25 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
         long identity = Binder.clearCallingIdentity();
         try {
             mNotificationDelegate.prepareForPossibleShutdown();
+            BatteryManager batteryManager =
+                    (BatteryManager) mContext.getSystemService(Context.BATTERY_SERVICE);
+            if (((batteryManager == null) || batteryManager.isCharging()) || mCharging) {
+                Slog.i(TAG, "Can't enter TWM when charging.");
+                Handler handler = new Handler(mContext.getMainLooper());
+                handler.post(() -> {
+                    Toast ts = Toast.makeText(
+                        mContext, R.string.global_action_twm_failed_toast, Toast.LENGTH_LONG);
+                    ts.show();
+                });
+                return;
+            } else {
+                Slog.i(TAG, "Can enter TWM when discharging.");
+            }
             // ShutdownThread displays UI, so give it a UI context.
-            int shutdownBehavior = mContext.getResources().getInteger(
-                 com.android.internal.R.integer.config_shutdownBehavior);
-            if (shutdownBehavior == 1) {
+            final int TWM_POWEROFF = 1;
+            int twmBehavior = mContext.getResources().getInteger(
+                 com.android.internal.R.integer.config_twm);
+            if (twmBehavior == TWM_POWEROFF) {
                 mHandler.post(() ->
                     ShutdownThread.reboot(getUiContext(),
                             PowerManager.REBOOT_TWM, false));
@@ -1227,6 +1271,54 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
         } finally {
             Binder.restoreCallingIdentity(identity);
         }
+    }
+
+    class ChargingReceiver extends BroadcastReceiver {
+        ChargingReceiver() {
+            IntentFilter filter = new IntentFilter();
+            filter.addAction(Intent.ACTION_POWER_CONNECTED);
+            filter.addAction(Intent.ACTION_POWER_DISCONNECTED);
+            mContext.registerReceiver(this, filter);
+         }
+
+         @Override
+         public void onReceive(Context context, Intent intent) {
+             final String action = intent.getAction();
+             if (Intent.ACTION_POWER_CONNECTED.equals(action)) {
+                 Slog.i(TAG, "Device is charging.");
+                 mCharging = true;
+             } else if (Intent.ACTION_POWER_DISCONNECTED.equals(action)) {
+                 Slog.i(TAG, "Disconnected from power.");
+                 mCharging = false;
+             }
+         }
+    }
+
+    /**
+     * Allows the status bar to deepsleep the device.
+     */
+    @Override
+    public boolean deepsleep() {
+        enforceStatusBarService();
+        long identity = Binder.clearCallingIdentity();
+        try {
+            Intent intent = new Intent(ACTION_TRIGGER_DEEPSLEEP);
+            intent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY);
+            intent.setPackage("android");
+            mContext.sendBroadcastAsUser(intent, UserHandle.ALL);
+            return true;
+        } finally {
+            Binder.restoreCallingIdentity(identity);
+        }
+    }
+
+    private void toastDeepSleepFailed() {
+        Handler handler = new Handler(mContext.getMainLooper());
+        handler.post(() -> {
+            Toast ts = Toast.makeText(
+                        mContext, R.string.global_action_deepsleep_failed_toast, Toast.LENGTH_LONG);
+            ts.show();
+        });
     }
 
     @Override

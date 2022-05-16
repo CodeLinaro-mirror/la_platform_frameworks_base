@@ -1818,6 +1818,9 @@
   <java-symbol type="string" name="global_action_assist" />
   <java-symbol type="string" name="global_action_screenshot" />
   <java-symbol type="string" name="global_action_twm" />
+  <java-symbol type="string" name="global_action_twm_failed_toast" />
+  <java-symbol type="string" name="global_action_deepsleep" />
+  <java-symbol type="string" name="global_action_deepsleep_failed_toast" />
   <java-symbol type="string" name="invalidPuk" />
   <java-symbol type="string" name="lockscreen_carrier_default" />
   <java-symbol type="style" name="Animation.LockScreen" />
@@ -4095,4 +4098,16 @@
   <java-symbol type="integer" name="config_offloadBrightenAlpha" />
   <java-symbol type="integer" name="config_offloadDimmingAlpha" />
   <java-symbol type="integer" name="config_shutdownBehavior" />
+  <java-symbol type="string" name="config_defaultOffloadAlarmRingtoneFilePath" />
+  <java-symbol type="integer" name="config_defaultOffloadAlarmSnoozeButtoneId" />
+  <java-symbol type="integer" name="config_defaultOffloadAlarmDismissButtoneId" />
+  <java-symbol type="integer" name="config_defaultOffloadAlarmVibrationId" />
+  <java-symbol type="bool" name="config_supportWristRotation" />
+
+  <!-- For DeepSleep feature -->
+  <java-symbol type="integer" name="config_deepsleep" />
+  <!-- For TWM feature -->
+  <java-symbol type="integer" name="config_twm" />
+  <!-- Auto trigger TWM if battery level drops below this value -->
+  <java-symbol type="integer" name="config_autoTriggerTWMThreshold" />
 </resources>
