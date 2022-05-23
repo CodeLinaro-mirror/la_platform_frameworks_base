@@ -328,7 +328,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
         }
 
         boolean isBtScoRequested = isBluetoothScoRequested();
-        if (isBtScoRequested && !wasBtScoRequested) {
+        if (isBtScoRequested && (!wasBtScoRequested || !isBluetoothScoActive())) {
             if (!mBtHelper.startBluetoothSco(scoAudioMode, eventSource)) {
                 Log.w(TAG, "setCommunicationRouteForClient: failure to start BT SCO for pid: "
                         + pid);
@@ -585,7 +585,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
     /** remove all previously scheduled connection and state change events for the given device */
     @GuardedBy("mDeviceStateLock")
     private void removeScheduledA2dpEvents(@NonNull BluetoothDevice device, int profile) {
-        mBrokerHandler.removeEqualMessages(MSG_L_A2DP_DEVICE_CONFIG_CHANGE, device);
+        if (profile == BluetoothProfile.A2DP) {
+            mBrokerHandler.removeEqualMessages(MSG_L_A2DP_DEVICE_CONFIG_CHANGE, device);
+        }
 
         final BtDeviceConnectionInfo connectionInfoToRemove = new BtDeviceConnectionInfo(device,
                 // the next parameters of the constructor will be ignored when finding the message
