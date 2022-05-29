@@ -12,6 +12,11 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear.
  */
 
 package android.provider;
@@ -6371,6 +6376,13 @@ public final class Settings {
         public static final String BLUETOOTH_NAME = "bluetooth_name";
 
         /**
+         * This is used by Bluetooth Manager to store new adapter name
+         * @hide
+         */
+        @Readable(maxTargetSdk = Build.VERSION_CODES.S)
+        public static final String BLUETOOTH_NAME1 = "bluetooth_name1";
+
+        /**
          * This is used by Bluetooth Manager to store adapter address
          * @hide
          */
@@ -6378,11 +6390,25 @@ public final class Settings {
         public static final String BLUETOOTH_ADDRESS = "bluetooth_address";
 
         /**
+         * This is used by Bluetooth Manager to store new adapter address
+         * @hide
+         */
+        @Readable(maxTargetSdk = Build.VERSION_CODES.S)
+        public static final String BLUETOOTH_ADDRESS1 = "bluetooth_address1";
+
+        /**
          * This is used by Bluetooth Manager to store whether adapter address is valid
          * @hide
          */
         @Readable(maxTargetSdk = Build.VERSION_CODES.S)
         public static final String BLUETOOTH_ADDR_VALID = "bluetooth_addr_valid";
+
+        /**
+         * This is used by Bluetooth Manager to store whether new adapter address is valid
+         * @hide
+         */
+        @Readable(maxTargetSdk = Build.VERSION_CODES.S)
+        public static final String BLUETOOTH_ADDR_VALID1 = "bluetooth_addr_valid1";
 
         /**
          * Setting to indicate that on device captions are enabled.

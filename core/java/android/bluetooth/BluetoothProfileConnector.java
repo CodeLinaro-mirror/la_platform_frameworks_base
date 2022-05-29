@@ -12,6 +12,11 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear.
  */
 
 package android.bluetooth;
@@ -45,6 +50,8 @@ public abstract class BluetoothProfileConnector<T> {
     private final String mProfileName;
     private final String mServiceName;
     private volatile T mService;
+    private BluetoothAdapter mAdapter = null;
+    private boolean mProfileSupported;
 
     private final IBluetoothStateChangeCallback mBluetoothStateChangeCallback =
             new IBluetoothStateChangeCallback.Stub() {
@@ -135,7 +142,6 @@ public abstract class BluetoothProfileConnector<T> {
     void connect(Context context, BluetoothProfile.ServiceListener listener) {
         mContext = context;
         mServiceListener = listener;
-        IBluetoothManager mgr = BluetoothAdapter.getDefaultAdapter().getBluetoothManager();
 
         // Preserve legacy compatibility where apps were depending on
         // registerStateChangeCallback() performing a permissions check which
@@ -146,27 +152,27 @@ public abstract class BluetoothProfileConnector<T> {
             throw new SecurityException("Need BLUETOOTH permission");
         }
 
-        if (mgr != null) {
-            try {
-                mgr.registerStateChangeCallback(mBluetoothStateChangeCallback);
-            } catch (RemoteException re) {
-                logError("Failed to register state change callback. " + re);
-            }
+        mAdapter = BluetoothAdapterUtil.getAdapter(
+                BluetoothAdapterUtil.getAdapterIndex(mProfileId));
+        mProfileSupported = (mAdapter != null);
+
+        // Bind Bluetooth profile service only if Bluetooth adapter supports the profile
+        if (mProfileSupported) {
+            registerStateChangeCallback(mBluetoothStateChangeCallback);
+            doBind();
+        } else {
+            logError("Bluetooth profile(" + mProfileId + "): " +
+                    BluetoothProfile.getProfileName(mProfileId) +
+                    " isn't supported in adapter");
         }
-        doBind();
     }
 
     void disconnect() {
         mServiceListener = null;
-        IBluetoothManager mgr = BluetoothAdapter.getDefaultAdapter().getBluetoothManager();
-        if (mgr != null) {
-            try {
-                mgr.unregisterStateChangeCallback(mBluetoothStateChangeCallback);
-            } catch (RemoteException re) {
-                logError("Failed to unregister state change callback" + re);
-            }
+        if (mProfileSupported) {
+            unregisterStateChangeCallback(mBluetoothStateChangeCallback);
+            doUnbind();
         }
-        doUnbind();
     }
 
     T getService() {
@@ -181,6 +187,42 @@ public abstract class BluetoothProfileConnector<T> {
      * @hide
      */
     public abstract T getServiceInterface(IBinder service);
+
+    public boolean isEnabled() {
+        return mAdapter != null ? mAdapter.isEnabled() : false;
+    }
+
+    public boolean isDisabled() {
+        return mAdapter != null ?
+                mAdapter.getState() == BluetoothAdapter.STATE_OFF :
+                true;
+    }
+
+    protected void registerStateChangeCallback(IBluetoothStateChangeCallback callback) {
+        IBluetoothManager mgr = getBluetoothManager();
+        if (mgr != null) {
+            try {
+                mgr.registerStateChangeCallback(callback);
+            } catch (RemoteException re) {
+                logError("Failed to register state change callback: " + re);
+            }
+        }
+    }
+
+    protected void unregisterStateChangeCallback(IBluetoothStateChangeCallback callback) {
+        IBluetoothManager mgr = getBluetoothManager();
+        if (mgr != null) {
+            try {
+                mgr.unregisterStateChangeCallback(callback);
+            } catch (RemoteException re) {
+                logError("Failed to unregister state change callback: " + re);
+            }
+        }
+    }
+
+    private IBluetoothManager getBluetoothManager() {
+        return mAdapter != null ? mAdapter.getBluetoothManager() : null;
+    }
 
     private void logDebug(String log) {
         Log.d(mProfileName, log);

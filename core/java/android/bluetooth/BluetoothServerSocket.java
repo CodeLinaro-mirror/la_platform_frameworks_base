@@ -12,6 +12,11 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear.
  */
 
 package android.bluetooth;
@@ -76,6 +81,7 @@ public final class BluetoothServerSocket implements Closeable {
 
     private static final String TAG = "BluetoothServerSocket";
     private static final boolean DBG = false;
+    private static final int ADAPTER_DEFAULT = BluetoothAdapterCommon.ADAPTER_DEFAULT;
     @UnsupportedAppUsage(publicAlternatives = "Use public {@link BluetoothServerSocket} API "
             + "instead.")
     /*package*/ final BluetoothSocket mSocket;
@@ -95,8 +101,25 @@ public final class BluetoothServerSocket implements Closeable {
      */
     /*package*/ BluetoothServerSocket(int type, boolean auth, boolean encrypt, int port)
             throws IOException {
+        this(type, auth, encrypt, port, ADAPTER_DEFAULT);
+    }
+
+    /**
+     * Construct a socket for incoming connections.
+     *
+     * @param type type of socket
+     * @param auth require the remote device to be authenticated
+     * @param encrypt require the connection to be encrypted
+     * @param port remote port
+     * @param int Bluetooth adapter index
+     * @throws IOException On error, for example Bluetooth not available, or insufficient
+     * privileges
+     */
+    /*package*/ BluetoothServerSocket(int type, boolean auth, boolean encrypt, int port,
+            int adapterIndex) throws IOException {
         mChannel = port;
-        mSocket = new BluetoothSocket(type, -1, auth, encrypt, null, port, null);
+        mSocket = new BluetoothSocket(type, -1, auth, encrypt, null, port, null,
+                false, false, adapterIndex);
         if (port == BluetoothAdapter.SOCKET_CHANNEL_AUTO_STATIC_NO_SDP) {
             mSocket.setExcludeSdp(true);
         }
@@ -117,9 +140,15 @@ public final class BluetoothServerSocket implements Closeable {
     /*package*/ BluetoothServerSocket(int type, boolean auth, boolean encrypt, int port,
             boolean mitm, boolean min16DigitPin)
             throws IOException {
+        this(type, auth, encrypt, port, mitm, min16DigitPin, ADAPTER_DEFAULT);
+    }
+
+    /*package*/ BluetoothServerSocket(int type, boolean auth, boolean encrypt, int port,
+            boolean mitm, boolean min16DigitPin, int adapterIndex)
+            throws IOException {
         mChannel = port;
         mSocket = new BluetoothSocket(type, -1, auth, encrypt, null, port, null, mitm,
-                min16DigitPin);
+                min16DigitPin, adapterIndex);
         if (port == BluetoothAdapter.SOCKET_CHANNEL_AUTO_STATIC_NO_SDP) {
             mSocket.setExcludeSdp(true);
         }
@@ -137,7 +166,24 @@ public final class BluetoothServerSocket implements Closeable {
      */
     /*package*/ BluetoothServerSocket(int type, boolean auth, boolean encrypt, ParcelUuid uuid)
             throws IOException {
-        mSocket = new BluetoothSocket(type, -1, auth, encrypt, null, -1, uuid);
+        this(type, auth, encrypt, uuid, ADAPTER_DEFAULT);
+    }
+
+    /**
+     * Construct a socket for incoming connections.
+     *
+     * @param type type of socket
+     * @param auth require the remote device to be authenticated
+     * @param encrypt require the connection to be encrypted
+     * @param uuid uuid
+     * @param int Bluetooth adapter index
+     * @throws IOException On error, for example Bluetooth not available, or insufficient
+     * privileges
+     */
+    /*package*/ BluetoothServerSocket(int type, boolean auth, boolean encrypt, ParcelUuid uuid,
+            int adapterIndex) throws IOException {
+        mSocket = new BluetoothSocket(type, -1, auth, encrypt, null, -1, uuid,
+                false, false, adapterIndex);
         // TODO: This is the same as mChannel = -1 - is this intentional?
         mChannel = mSocket.getPort();
     }

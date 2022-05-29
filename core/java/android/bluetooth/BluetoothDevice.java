@@ -12,6 +12,11 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear.
  */
 
 package android.bluetooth;
@@ -48,6 +53,7 @@ import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
+import java.util.HashMap;
 import java.util.UUID;
 
 /**
@@ -1206,37 +1212,71 @@ public final class BluetoothDevice implements Parcelable, Attributable {
      */
     public static final int LKEY_TYPE_NO_LINK = -1;
 
+    private static final int ADAPTER_DEFAULT = BluetoothAdapterCommon.ADAPTER_DEFAULT;
+    private static final int ADAPTER_1 = BluetoothAdapterCommon.ADAPTER_1;
+    private static final int ADAPTER_NUMBER = BluetoothAdapterCommon.ADAPTER_NUMBER;
+
     /**
      * Lazy initialization. Guaranteed final after first object constructed, or
      * getService() called.
      * TODO: Unify implementation of sService amongst BluetoothFoo API's
      */
-    private static volatile IBluetooth sService;
+    private static volatile HashMap<Integer, IBluetooth> sService;
+
+    private static HashMap<Integer, IBluetoothManagerCallback> sStateChangeCallback;
 
     private final String mAddress;
     @AddressType private final int mAddressType;
 
     private AttributionSource mAttributionSource;
 
+    private final int mAdapterIndex;
+
+    static {
+        classInit();
+    }
+
+    private static void classInit() {
+        sService = new HashMap<Integer, IBluetooth>(ADAPTER_NUMBER);
+        sService.put(ADAPTER_DEFAULT, null);
+        sService.put(ADAPTER_1, null);
+
+        sStateChangeCallback = new HashMap<Integer, IBluetoothManagerCallback>(ADAPTER_NUMBER);
+        sStateChangeCallback.put(ADAPTER_DEFAULT,
+                new BluetoothManagerCallback(ADAPTER_DEFAULT));
+        sStateChangeCallback.put(ADAPTER_1,
+                new BluetoothManagerCallback(ADAPTER_1));
+    }
+
     /*package*/
     @UnsupportedAppUsage
     static IBluetooth getService() {
-        synchronized (BluetoothDevice.class) {
-            if (sService == null) {
-                BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
-                sService = adapter.getBluetoothService(sStateChangeCallback);
-            }
-        }
-        return sService;
+        return getService(ADAPTER_DEFAULT);
     }
 
-    static IBluetoothManagerCallback sStateChangeCallback = new IBluetoothManagerCallback.Stub() {
+    private static IBluetooth getService(int adapterIndex) {
+        synchronized (BluetoothDevice.class) {
+            if (sService.get(adapterIndex) == null) {
+                BluetoothAdapter adapter = getAdapter(adapterIndex);
+                IBluetoothManagerCallback managerCallback = sStateChangeCallback.get(adapterIndex);
+                sService.put(adapterIndex, adapter.getBluetoothService(managerCallback));
+            }
+        }
+        return sService.get(adapterIndex);
+    }
+
+    static class BluetoothManagerCallback extends IBluetoothManagerCallback.Stub {
+        private final int mAdapterIndex;
+
+        BluetoothManagerCallback(int adapterIndex) {
+            mAdapterIndex = adapterIndex;
+        }
 
         public void onBluetoothServiceUp(IBluetooth bluetoothService)
                 throws RemoteException {
             synchronized (BluetoothDevice.class) {
-                if (sService == null) {
-                    sService = bluetoothService;
+                if (sService.get(mAdapterIndex) == null) {
+                    sService.put(mAdapterIndex, bluetoothService);
                 }
             }
         }
@@ -1244,7 +1284,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
         public void onBluetoothServiceDown()
                 throws RemoteException {
             synchronized (BluetoothDevice.class) {
-                sService = null;
+                sService.put(mAdapterIndex, null);
             }
         }
 
@@ -1263,14 +1303,33 @@ public final class BluetoothDevice implements Parcelable, Attributable {
      * and is validated in this constructor.
      *
      * @param address valid Bluetooth MAC address
-     * @param attributionSource attribution for permission-protected calls
      * @throws RuntimeException Bluetooth is not available on this platform
      * @throws IllegalArgumentException address is invalid
      * @hide
      */
     @UnsupportedAppUsage
     /*package*/ BluetoothDevice(String address) {
-        getService();  // ensures sService is initialized
+        this(address, ADAPTER_DEFAULT);
+    }
+
+    /**
+     * Create a new BluetoothDevice
+     * Bluetooth MAC address must be upper case, such as "00:11:22:33:AA:BB",
+     * and is validated in this constructor.
+     *
+     * @param address valid Bluetooth MAC address
+     * @param Bluetooth adapter index
+     * @throws RuntimeException Bluetooth is not available on this platform
+     * @throws IllegalArgumentException address is invalid
+     * @hide
+     */
+    @UnsupportedAppUsage
+    /*package*/ BluetoothDevice(String address, int adapterIndex) {
+        if (!BluetoothAdapterCommon.validAdapter(adapterIndex)) {
+            throw new IllegalArgumentException("Invalid adapter index: " + adapterIndex);
+        }
+        mAdapterIndex = adapterIndex;
+        getService(mAdapterIndex);  // ensures sService is initialized
         if (!BluetoothAdapter.checkBluetoothAddress(address)) {
             throw new IllegalArgumentException(address + " is not a valid Bluetooth address");
         }
@@ -1278,6 +1337,11 @@ public final class BluetoothDevice implements Parcelable, Attributable {
         mAddress = address;
         mAddressType = ADDRESS_TYPE_PUBLIC;
         mAttributionSource = BluetoothManager.resolveAttributionSource(null);
+    }
+
+    /** {@hide} */
+    public int getAdapterIndex() {
+        return mAdapterIndex;
     }
 
     /** {@hide} */
@@ -1314,7 +1378,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
      */
     @Override
     public String toString() {
-        return mAddress;
+        return mAdapterIndex == 0 ? mAddress : mAddress + " in new adapter";
     }
 
     @Override
@@ -1325,7 +1389,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
     public static final @android.annotation.NonNull Parcelable.Creator<BluetoothDevice> CREATOR =
             new Parcelable.Creator<BluetoothDevice>() {
                 public BluetoothDevice createFromParcel(Parcel in) {
-                    return new BluetoothDevice(in.readString());
+                    return new BluetoothDevice(in.readString(), in.readInt());
                 }
 
                 public BluetoothDevice[] newArray(int size) {
@@ -1336,6 +1400,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
     @Override
     public void writeToParcel(Parcel out, int flags) {
         out.writeString(mAddress);
+        out.writeInt(mAdapterIndex);
     }
 
     /**
@@ -1374,7 +1439,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
     @RequiresBluetoothConnectPermission
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     public String getName() {
-        final IBluetooth service = sService;
+        final IBluetooth service = getBluetooth();
         if (service == null) {
             Log.e(TAG, "BT not enabled. Cannot get Remote Device name");
             return null;
@@ -1405,7 +1470,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
     @RequiresBluetoothConnectPermission
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     public int getType() {
-        final IBluetooth service = sService;
+        final IBluetooth service = getBluetooth();
         if (service == null) {
             Log.e(TAG, "BT not enabled. Cannot get Remote Device type");
             return DEVICE_TYPE_UNKNOWN;
@@ -1429,7 +1494,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
     @RequiresBluetoothConnectPermission
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     public String getAlias() {
-        final IBluetooth service = sService;
+        final IBluetooth service = getBluetooth();
         if (service == null) {
             Log.e(TAG, "BT not enabled. Cannot get Remote Device Alias");
             return null;
@@ -1485,7 +1550,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
         if (alias != null && alias.isEmpty()) {
             throw new IllegalArgumentException("alias cannot be the empty string");
         }
-        final IBluetooth service = sService;
+        final IBluetooth service = getBluetooth();
         if (service == null) {
             Log.e(TAG, "BT not enabled. Cannot set Remote Device name");
             return BluetoothStatusCodes.ERROR_BLUETOOTH_NOT_ENABLED;
@@ -1511,7 +1576,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
     @RequiresBluetoothConnectPermission
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     public int getBatteryLevel() {
-        final IBluetooth service = sService;
+        final IBluetooth service = getBluetooth();
         if (service == null) {
             Log.e(TAG, "Bluetooth disabled. Cannot get remote device battery level");
             return BATTERY_LEVEL_BLUETOOTH_OFF;
@@ -1601,7 +1666,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     private boolean createBondInternal(int transport, @Nullable OobData remoteP192Data,
             @Nullable OobData remoteP256Data) {
-        final IBluetooth service = sService;
+        final IBluetooth service = getBluetooth();
         if (service == null) {
             Log.w(TAG, "BT not enabled, createBondOutOfBand failed");
             return false;
@@ -1627,7 +1692,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
      */
      @RequiresPermission(android.Manifest.permission.BLUETOOTH_PRIVILEGED)
      public void getLinkKey(@NonNull Context context) {
-         final IBluetooth service = sService;
+         final IBluetooth service = getBluetooth();
          if (service == null) {
              Log.w(TAG, "BT not enabled, getLinkKey failed");
              return;
@@ -1663,7 +1728,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
                 + "  using normal in-bind bond.");
         }
 
-        final IBluetooth service = sService;
+        final IBluetooth service = getBluetooth();
         if (service == null) {
             Log.w(TAG, "BT not enabled, loadRemoteOobDataInternal failed");
             return false;
@@ -1687,7 +1752,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
      */
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     public boolean getRssi(int transport) {
-        final IBluetooth service = sService;
+        final IBluetooth service = getBluetooth();
         if (service == null) {
             Log.w(TAG, "BT not enabled, getRssi failed");
             return false;
@@ -1712,7 +1777,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
     @RequiresBluetoothConnectPermission
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     public boolean isBondingInitiatedLocally() {
-        final IBluetooth service = sService;
+        final IBluetooth service = getBluetooth();
         if (service == null) {
             Log.w(TAG, "BT not enabled, isBondingInitiatedLocally failed");
             return false;
@@ -1734,7 +1799,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
     @SystemApi
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     public boolean cancelBondProcess() {
-        final IBluetooth service = sService;
+        final IBluetooth service = getBluetooth();
         if (service == null) {
             Log.e(TAG, "BT not enabled. Cannot cancel Remote Device bond");
             return false;
@@ -1762,7 +1827,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
     @SystemApi
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     public boolean removeBond() {
-        final IBluetooth service = sService;
+        final IBluetooth service = getBluetooth();
         if (service == null) {
             Log.e(TAG, "BT not enabled. Cannot remove Remote Device bond");
             return false;
@@ -1787,7 +1852,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
                 @SuppressLint("AndroidFrameworkRequiresPermission")
                 protected Integer recompute(BluetoothDevice query) {
                     try {
-                        return sService.getBondState(query, mAttributionSource);
+                        return getBluetooth().getBondState(query, mAttributionSource);
                     } catch (RemoteException e) {
                         throw e.rethrowAsRuntimeException();
                     }
@@ -1818,7 +1883,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     @SuppressLint("AndroidFrameworkRequiresPermission")
     public int getBondState() {
-        final IBluetooth service = sService;
+        final IBluetooth service = getBluetooth();
         if (service == null) {
             Log.e(TAG, "BT not enabled. Cannot get bond state");
             return BOND_NONE;
@@ -1849,7 +1914,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
             android.Manifest.permission.BLUETOOTH_PRIVILEGED,
     })
     public boolean canBondWithoutDialog() {
-        final IBluetooth service = sService;
+        final IBluetooth service = getBluetooth();
         if (service == null) {
             Log.e(TAG, "BT not enabled. Cannot check if we can skip pairing dialog");
             return false;
@@ -1874,7 +1939,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
     @RequiresBluetoothConnectPermission
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     public boolean isConnected() {
-        final IBluetooth service = sService;
+        final IBluetooth service = getBluetooth();
         if (service == null) {
             // BT is not enabled, we cannot be connected.
             return false;
@@ -1900,7 +1965,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
     @RequiresBluetoothConnectPermission
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     public boolean isEncrypted() {
-        final IBluetooth service = sService;
+        final IBluetooth service = getBluetooth();
         if (service == null) {
             // BT is not enabled, we cannot be connected.
             return false;
@@ -1923,7 +1988,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
     @RequiresBluetoothConnectPermission
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     public BluetoothClass getBluetoothClass() {
-        final IBluetooth service = sService;
+        final IBluetooth service = getBluetooth();
         if (service == null) {
             Log.e(TAG, "BT not enabled. Cannot get Bluetooth Class");
             return null;
@@ -1952,7 +2017,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
     @RequiresBluetoothConnectPermission
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     public ParcelUuid[] getUuids() {
-        final IBluetooth service = sService;
+        final IBluetooth service = getBluetooth();
         if (service == null || !isBluetoothEnabled()) {
             Log.e(TAG, "BT not enabled. Cannot get remote device Uuids");
             return null;
@@ -1983,7 +2048,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
     @RequiresBluetoothConnectPermission
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     public boolean fetchUuidsWithSdp() {
-        final IBluetooth service = sService;
+        final IBluetooth service = getBluetooth();
         if (service == null || !isBluetoothEnabled()) {
             Log.e(TAG, "BT not enabled. Cannot fetchUuidsWithSdp");
             return false;
@@ -2020,7 +2085,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
     @RequiresBluetoothConnectPermission
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     public boolean sdpSearch(ParcelUuid uuid) {
-        final IBluetooth service = sService;
+        final IBluetooth service = getBluetooth();
         if (service == null) {
             Log.e(TAG, "BT not enabled. Cannot query remote device sdp records");
             return false;
@@ -2042,7 +2107,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
     @RequiresBluetoothConnectPermission
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     public boolean setPin(byte[] pin) {
-        final IBluetooth service = sService;
+        final IBluetooth service = getBluetooth();
         if (service == null) {
             Log.e(TAG, "BT not enabled. Cannot set Remote Device pin");
             return false;
@@ -2083,7 +2148,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
             android.Manifest.permission.BLUETOOTH_PRIVILEGED,
     })
     public boolean setPairingConfirmation(boolean confirm) {
-        final IBluetooth service = sService;
+        final IBluetooth service = getBluetooth();
         if (service == null) {
             Log.e(TAG, "BT not enabled. Cannot set pairing confirmation");
             return false;
@@ -2108,7 +2173,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
     @RequiresBluetoothConnectPermission
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     public boolean cancelPairing() {
-        final IBluetooth service = sService;
+        final IBluetooth service = getBluetooth();
         if (service == null) {
             Log.e(TAG, "BT not enabled. Cannot cancel pairing");
             return false;
@@ -2123,7 +2188,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
 
     boolean isBluetoothEnabled() {
         boolean ret = false;
-        BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
+        BluetoothAdapter adapter = getAdapter();
         if (adapter != null && adapter.isEnabled()) {
             ret = true;
         }
@@ -2142,7 +2207,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
     @RequiresBluetoothConnectPermission
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     public @AccessPermission int getPhonebookAccessPermission() {
-        final IBluetooth service = sService;
+        final IBluetooth service = getBluetooth();
         if (service == null) {
             return ACCESS_UNKNOWN;
         }
@@ -2183,7 +2248,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
             android.Manifest.permission.BLUETOOTH_PRIVILEGED,
     })
     public boolean setSilenceMode(boolean silence) {
-        final IBluetooth service = sService;
+        final IBluetooth service = getBluetooth();
         if (service == null) {
             throw new IllegalStateException("Bluetooth is not turned ON");
         }
@@ -2208,7 +2273,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
             android.Manifest.permission.BLUETOOTH_PRIVILEGED,
     })
     public boolean isInSilenceMode() {
-        final IBluetooth service = sService;
+        final IBluetooth service = getBluetooth();
         if (service == null) {
             throw new IllegalStateException("Bluetooth is not turned ON");
         }
@@ -2234,7 +2299,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
             android.Manifest.permission.BLUETOOTH_PRIVILEGED,
     })
     public boolean setPhonebookAccessPermission(@AccessPermission int value) {
-        final IBluetooth service = sService;
+        final IBluetooth service = getBluetooth();
         if (service == null) {
             return false;
         }
@@ -2257,7 +2322,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
     @RequiresBluetoothConnectPermission
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     public @AccessPermission int getMessageAccessPermission() {
-        final IBluetooth service = sService;
+        final IBluetooth service = getBluetooth();
         if (service == null) {
             return ACCESS_UNKNOWN;
         }
@@ -2288,7 +2353,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
         if (value != ACCESS_ALLOWED && value != ACCESS_REJECTED && value != ACCESS_UNKNOWN) {
             throw new IllegalArgumentException(value + "is not a valid AccessPermission value");
         }
-        final IBluetooth service = sService;
+        final IBluetooth service = getBluetooth();
         if (service == null) {
             return false;
         }
@@ -2311,7 +2376,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
     @RequiresBluetoothConnectPermission
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     public @AccessPermission int getSimAccessPermission() {
-        final IBluetooth service = sService;
+        final IBluetooth service = getBluetooth();
         if (service == null) {
             return ACCESS_UNKNOWN;
         }
@@ -2338,7 +2403,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
             android.Manifest.permission.BLUETOOTH_PRIVILEGED,
     })
     public boolean setSimAccessPermission(int value) {
-        final IBluetooth service = sService;
+        final IBluetooth service = getBluetooth();
         if (service == null) {
             return false;
         }
@@ -2380,12 +2445,45 @@ public final class BluetoothDevice implements Parcelable, Attributable {
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     @SuppressLint("AndroidFrameworkRequiresPermission")
     public BluetoothSocket createRfcommSocket(int channel) throws IOException {
+        return createRfcommSocket(channel, mAdapterIndex);
+    }
+
+    /**
+     * Create an RFCOMM {@link BluetoothSocket} ready to start a secure
+     * outgoing connection to this remote device on given channel.
+     * <p>The remote device will be authenticated and communication on this
+     * socket will be encrypted.
+     * <p> Use this socket only if an authenticated socket link is possible.
+     * Authentication refers to the authentication of the link key to
+     * prevent person-in-the-middle type of attacks.
+     * For example, for Bluetooth 2.1 devices, if any of the devices does not
+     * have an input and output capability or just has the ability to
+     * display a numeric key, a secure socket connection is not possible.
+     * In such a case, use {@link createInsecureRfcommSocket}.
+     * For more details, refer to the Security Model section 5.2 (vol 3) of
+     * Bluetooth Core Specification version 2.1 + EDR.
+     * <p>Use {@link BluetoothSocket#connect} to initiate the outgoing
+     * connection.
+     * <p>Valid RFCOMM channels are in range 1 to 30.
+     *
+     * @param channel RFCOMM channel to connect to
+     * @return a RFCOMM BluetoothServerSocket ready for an outgoing connection
+     * @throws IOException on error, for example Bluetooth not available, or insufficient
+     * permissions
+     * @hide
+     */
+    @UnsupportedAppUsage
+    @RequiresLegacyBluetoothPermission
+    @RequiresBluetoothConnectPermission
+    @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
+    @SuppressLint("AndroidFrameworkRequiresPermission")
+    public @NonNull BluetoothSocket createRfcommSocket(int channel, int adapterIndex) throws IOException {
         if (!isBluetoothEnabled()) {
             Log.e(TAG, "Bluetooth is not enabled");
             throw new IOException();
         }
         return new BluetoothSocket(BluetoothSocket.TYPE_RFCOMM, -1, true, true, this, channel,
-                null);
+                null, adapterIndex);
     }
 
     /**
@@ -2407,7 +2505,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
      * <p>Valid L2CAP PSM channels are in range 1 to 2^16.
      *
      * @param channel L2cap PSM/channel to connect to
-     * @return a RFCOMM BluetoothServerSocket ready for an outgoing connection
+     * @return a L2cap BluetoothServerSocket ready for an outgoing connection
      * @throws IOException on error, for example Bluetooth not available, or insufficient
      * permissions
      * @hide
@@ -2417,8 +2515,40 @@ public final class BluetoothDevice implements Parcelable, Attributable {
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     @SuppressLint("AndroidFrameworkRequiresPermission")
     public BluetoothSocket createL2capSocket(int channel) throws IOException {
+        return createL2capSocket(channel, mAdapterIndex);
+    }
+
+    /**
+     * Create an L2cap {@link BluetoothSocket} ready to start a secure
+     * outgoing connection to this remote device on given channel.
+     * <p>The remote device will be authenticated and communication on this
+     * socket will be encrypted.
+     * <p> Use this socket only if an authenticated socket link is possible.
+     * Authentication refers to the authentication of the link key to
+     * prevent person-in-the-middle type of attacks.
+     * For example, for Bluetooth 2.1 devices, if any of the devices does not
+     * have an input and output capability or just has the ability to
+     * display a numeric key, a secure socket connection is not possible.
+     * In such a case, use {@link createInsecureRfcommSocket}.
+     * For more details, refer to the Security Model section 5.2 (vol 3) of
+     * Bluetooth Core Specification version 2.1 + EDR.
+     * <p>Use {@link BluetoothSocket#connect} to initiate the outgoing
+     * connection.
+     * <p>Valid L2CAP PSM channels are in range 1 to 2^16.
+     *
+     * @param channel L2cap PSM/channel to connect to
+     * @return a L2cap BluetoothServerSocket ready for an outgoing connection
+     * @throws IOException on error, for example Bluetooth not available, or insufficient
+     * permissions
+     * @hide
+     */
+    @RequiresLegacyBluetoothPermission
+    @RequiresBluetoothConnectPermission
+    @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
+    @SuppressLint("AndroidFrameworkRequiresPermission")
+    public @NonNull BluetoothSocket createL2capSocket(int channel, int adapterIndex) throws IOException {
         return new BluetoothSocket(BluetoothSocket.TYPE_L2CAP, -1, true, true, this, channel,
-                null);
+                null, adapterIndex);
     }
 
     /**
@@ -2431,7 +2561,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
      * <p>Valid L2CAP PSM channels are in range 1 to 2^16.
      *
      * @param channel L2cap PSM/channel to connect to
-     * @return a RFCOMM BluetoothServerSocket ready for an outgoing connection
+     * @return a L2cap BluetoothServerSocket ready for an outgoing connection
      * @throws IOException on error, for example Bluetooth not available, or insufficient
      * permissions
      * @hide
@@ -2441,8 +2571,31 @@ public final class BluetoothDevice implements Parcelable, Attributable {
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     @SuppressLint("AndroidFrameworkRequiresPermission")
     public BluetoothSocket createInsecureL2capSocket(int channel) throws IOException {
+        return createInsecureL2capSocket(channel, mAdapterIndex);
+    }
+
+    /**
+     * Create an L2cap {@link BluetoothSocket} ready to start an insecure
+     * outgoing connection to this remote device on given channel.
+     * <p>The remote device will be not authenticated and communication on this
+     * socket will not be encrypted.
+     * <p>Use {@link BluetoothSocket#connect} to initiate the outgoing
+     * connection.
+     * <p>Valid L2CAP PSM channels are in range 1 to 2^16.
+     *
+     * @param channel L2cap PSM/channel to connect to
+     * @return a L2cap BluetoothServerSocket ready for an outgoing connection
+     * @throws IOException on error, for example Bluetooth not available, or insufficient
+     * permissions
+     * @hide
+     */
+    @RequiresLegacyBluetoothPermission
+    @RequiresBluetoothConnectPermission
+    @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
+    @SuppressLint("AndroidFrameworkRequiresPermission")
+    public @NonNull BluetoothSocket createInsecureL2capSocket(int channel, int adapterIndex) throws IOException {
         return new BluetoothSocket(BluetoothSocket.TYPE_L2CAP, -1, false, false, this, channel,
-                null);
+                null, adapterIndex);
     }
 
     /**
@@ -2480,13 +2633,52 @@ public final class BluetoothDevice implements Parcelable, Attributable {
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     @SuppressLint("AndroidFrameworkRequiresPermission")
     public BluetoothSocket createRfcommSocketToServiceRecord(UUID uuid) throws IOException {
+        return createRfcommSocketToServiceRecord(uuid, mAdapterIndex);
+    }
+
+    /**
+     * Create an RFCOMM {@link BluetoothSocket} ready to start a secure
+     * outgoing connection to this remote device using SDP lookup of uuid.
+     * <p>This is designed to be used with {@link
+     * BluetoothAdapter#listenUsingRfcommWithServiceRecord} for peer-peer
+     * Bluetooth applications.
+     * <p>Use {@link BluetoothSocket#connect} to initiate the outgoing
+     * connection. This will also perform an SDP lookup of the given uuid to
+     * determine which channel to connect to.
+     * <p>The remote device will be authenticated and communication on this
+     * socket will be encrypted.
+     * <p> Use this socket only if an authenticated socket link is possible.
+     * Authentication refers to the authentication of the link key to
+     * prevent person-in-the-middle type of attacks.
+     * For example, for Bluetooth 2.1 devices, if any of the devices does not
+     * have an input and output capability or just has the ability to
+     * display a numeric key, a secure socket connection is not possible.
+     * In such a case, use {@link #createInsecureRfcommSocketToServiceRecord}.
+     * For more details, refer to the Security Model section 5.2 (vol 3) of
+     * Bluetooth Core Specification version 2.1 + EDR.
+     * <p>Hint: If you are connecting to a Bluetooth serial board then try
+     * using the well-known SPP UUID 00001101-0000-1000-8000-00805F9B34FB.
+     * However if you are connecting to an Android peer then please generate
+     * your own unique UUID.
+     *
+     * @param uuid service record uuid to lookup RFCOMM channel
+     * @return a RFCOMM BluetoothServerSocket ready for an outgoing connection
+     * @throws IOException on error, for example Bluetooth not available, or insufficient
+     * permissions
+     * @hide
+     */
+    @RequiresLegacyBluetoothPermission
+    @RequiresBluetoothConnectPermission
+    @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
+    @SuppressLint("AndroidFrameworkRequiresPermission")
+    public @NonNull BluetoothSocket createRfcommSocketToServiceRecord(UUID uuid, int adapterIndex) throws IOException {
         if (!isBluetoothEnabled()) {
             Log.e(TAG, "Bluetooth is not enabled");
             throw new IOException();
         }
 
         return new BluetoothSocket(BluetoothSocket.TYPE_RFCOMM, -1, true, true, this, -1,
-                new ParcelUuid(uuid));
+                new ParcelUuid(uuid), adapterIndex);
     }
 
     /**
@@ -2521,12 +2713,48 @@ public final class BluetoothDevice implements Parcelable, Attributable {
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     @SuppressLint("AndroidFrameworkRequiresPermission")
     public BluetoothSocket createInsecureRfcommSocketToServiceRecord(UUID uuid) throws IOException {
+        return createInsecureRfcommSocketToServiceRecord(uuid, mAdapterIndex);
+    }
+
+    /**
+     * Create an RFCOMM {@link BluetoothSocket} socket ready to start an insecure
+     * outgoing connection to this remote device using SDP lookup of uuid.
+     * <p> The communication channel will not have an authenticated link key
+     * i.e it will be subject to person-in-the-middle attacks. For Bluetooth 2.1
+     * devices, the link key will be encrypted, as encryption is mandatory.
+     * For legacy devices (pre Bluetooth 2.1 devices) the link key will
+     * be not be encrypted. Use {@link #createRfcommSocketToServiceRecord} if an
+     * encrypted and authenticated communication channel is desired.
+     * <p>This is designed to be used with {@link
+     * BluetoothAdapter#listenUsingInsecureRfcommWithServiceRecord} for peer-peer
+     * Bluetooth applications.
+     * <p>Use {@link BluetoothSocket#connect} to initiate the outgoing
+     * connection. This will also perform an SDP lookup of the given uuid to
+     * determine which channel to connect to.
+     * <p>The remote device will be authenticated and communication on this
+     * socket will be encrypted.
+     * <p>Hint: If you are connecting to a Bluetooth serial board then try
+     * using the well-known SPP UUID 00001101-0000-1000-8000-00805F9B34FB.
+     * However if you are connecting to an Android peer then please generate
+     * your own unique UUID.
+     *
+     * @param uuid service record uuid to lookup RFCOMM channel
+     * @return a RFCOMM BluetoothServerSocket ready for an outgoing connection
+     * @throws IOException on error, for example Bluetooth not available, or insufficient
+     * permissions
+     * @hide
+     */
+    @RequiresLegacyBluetoothPermission
+    @RequiresBluetoothConnectPermission
+    @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
+    @SuppressLint("AndroidFrameworkRequiresPermission")
+    public @NonNull BluetoothSocket createInsecureRfcommSocketToServiceRecord(UUID uuid, int adapterIndex) throws IOException {
         if (!isBluetoothEnabled()) {
             Log.e(TAG, "Bluetooth is not enabled");
             throw new IOException();
         }
         return new BluetoothSocket(BluetoothSocket.TYPE_RFCOMM, -1, false, false, this, -1,
-                new ParcelUuid(uuid));
+                new ParcelUuid(uuid), adapterIndex);
     }
 
     /**
@@ -2549,12 +2777,35 @@ public final class BluetoothDevice implements Parcelable, Attributable {
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     @SuppressLint("AndroidFrameworkRequiresPermission")
     public BluetoothSocket createInsecureRfcommSocket(int port) throws IOException {
+        return createInsecureRfcommSocket(port, mAdapterIndex);
+    }
+
+    /**
+     * Construct an insecure RFCOMM socket ready to start an outgoing
+     * connection.
+     * Call #connect on the returned #BluetoothSocket to begin the connection.
+     * The remote device will not be authenticated and communication on this
+     * socket will not be encrypted.
+     *
+     * @param port remote port
+     * @return An RFCOMM BluetoothSocket
+     * @throws IOException On error, for example Bluetooth not available, or insufficient
+     * permissions.
+     * @hide
+     */
+    @UnsupportedAppUsage(publicAlternatives = "Use "
+            + "{@link #createInsecureRfcommSocketToServiceRecord} instead.")
+    @RequiresLegacyBluetoothAdminPermission
+    @RequiresBluetoothConnectPermission
+    @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
+    @SuppressLint("AndroidFrameworkRequiresPermission")
+    public @NonNull BluetoothSocket createInsecureRfcommSocket(int port, int adapterIndex) throws IOException {
         if (!isBluetoothEnabled()) {
             Log.e(TAG, "Bluetooth is not enabled");
             throw new IOException();
         }
         return new BluetoothSocket(BluetoothSocket.TYPE_RFCOMM, -1, false, false, this, port,
-                null);
+                null, adapterIndex);
     }
 
     /**
@@ -2572,11 +2823,29 @@ public final class BluetoothDevice implements Parcelable, Attributable {
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     @SuppressLint("AndroidFrameworkRequiresPermission")
     public BluetoothSocket createScoSocket() throws IOException {
+        return createScoSocket(mAdapterIndex);
+    }
+
+    /**
+     * Construct a SCO socket ready to start an outgoing connection.
+     * Call #connect on the returned #BluetoothSocket to begin the connection.
+     *
+     * @return a SCO BluetoothSocket
+     * @throws IOException on error, for example Bluetooth not available, or insufficient
+     * permissions.
+     * @hide
+     */
+    @UnsupportedAppUsage
+    @RequiresLegacyBluetoothAdminPermission
+    @RequiresBluetoothConnectPermission
+    @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
+    @SuppressLint("AndroidFrameworkRequiresPermission")
+    public @NonNull BluetoothSocket createScoSocket(int adapterIndex) throws IOException {
         if (!isBluetoothEnabled()) {
             Log.e(TAG, "Bluetooth is not enabled");
             throw new IOException();
         }
-        return new BluetoothSocket(BluetoothSocket.TYPE_SCO, -1, true, true, this, -1, null);
+        return new BluetoothSocket(BluetoothSocket.TYPE_SCO, -1, true, true, this, -1, null, adapterIndex);
     }
 
     /**
@@ -2740,7 +3009,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
 
         // TODO(Bluetooth) check whether platform support BLE
         //     Do the check here or in GattServer?
-        BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
+        BluetoothAdapter adapter = getAdapter();
         IBluetoothManager managerService = adapter.getBluetoothManager();
         try {
             IBluetoothGatt iGatt = managerService.getBluetoothGatt();
@@ -2781,18 +3050,45 @@ public final class BluetoothDevice implements Parcelable, Attributable {
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     @SuppressLint("AndroidFrameworkRequiresPermission")
     public @NonNull BluetoothSocket createL2capChannel(int psm) throws IOException {
+        return createL2capChannel(psm, mAdapterIndex);
+    }
+
+    /**
+     * Create a Bluetooth L2CAP Connection-oriented Channel (CoC) {@link BluetoothSocket} that can
+     * be used to start a secure outgoing connection to the remote device with the same dynamic
+     * protocol/service multiplexer (PSM) value. The supported Bluetooth transport is LE only.
+     * <p>This is designed to be used with {@link BluetoothAdapter#listenUsingL2capChannel()} for
+     * peer-peer Bluetooth applications.
+     * <p>Use {@link BluetoothSocket#connect} to initiate the outgoing connection.
+     * <p>Application using this API is responsible for obtaining PSM value from remote device.
+     * <p>The remote device will be authenticated and communication on this socket will be
+     * encrypted.
+     * <p> Use this socket if an authenticated socket link is possible. Authentication refers
+     * to the authentication of the link key to prevent person-in-the-middle type of attacks.
+     *
+     * @param psm dynamic PSM value from remote device
+     * @return a CoC #BluetoothSocket ready for an outgoing connection
+     * @throws IOException on error, for example Bluetooth not available, or insufficient
+     * permissions
+     * @hide
+     */
+    @RequiresLegacyBluetoothPermission
+    @RequiresBluetoothConnectPermission
+    @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
+    @SuppressLint("AndroidFrameworkRequiresPermission")
+    public @NonNull BluetoothSocket createL2capChannel(int psm, int adapterIndex) throws IOException {
         if (!isBluetoothEnabled()) {
             Log.e(TAG, "createL2capChannel: Bluetooth is not enabled");
             throw new IOException();
         }
         if (DBG) Log.d(TAG, "createL2capChannel: psm=" + psm);
         return new BluetoothSocket(BluetoothSocket.TYPE_L2CAP_LE, -1, true, true, this, psm,
-                null);
+                null, adapterIndex);
     }
 
     /**
      * Create a Bluetooth L2CAP Connection-oriented Channel (CoC) {@link BluetoothSocket} that can
-     * be used to start a secure outgoing connection to the remote device with the same dynamic
+     * be used to start an insecure outgoing connection to the remote device with the same dynamic
      * protocol/service multiplexer (PSM) value. The supported Bluetooth transport is LE only.
      * <p>This is designed to be used with {@link
      * BluetoothAdapter#listenUsingInsecureL2capChannel()} for peer-peer Bluetooth applications.
@@ -2812,6 +3108,32 @@ public final class BluetoothDevice implements Parcelable, Attributable {
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     @SuppressLint("AndroidFrameworkRequiresPermission")
     public @NonNull BluetoothSocket createInsecureL2capChannel(int psm) throws IOException {
+        return createInsecureL2capChannel(psm, mAdapterIndex);
+    }
+
+    /**
+     * Create a Bluetooth L2CAP Connection-oriented Channel (CoC) {@link BluetoothSocket} that can
+     * be used to start an insecure outgoing connection to the remote device with the same dynamic
+     * protocol/service multiplexer (PSM) value. The supported Bluetooth transport is LE only.
+     * <p>This is designed to be used with {@link
+     * BluetoothAdapter#listenUsingInsecureL2capChannel()} for peer-peer Bluetooth applications.
+     * <p>Use {@link BluetoothSocket#connect} to initiate the outgoing connection.
+     * <p>Application using this API is responsible for obtaining PSM value from remote device.
+     * <p> The communication channel may not have an authenticated link key, i.e. it may be subject
+     * to person-in-the-middle attacks. Use {@link #createL2capChannel(int)} if an encrypted and
+     * authenticated communication channel is possible.
+     *
+     * @param psm dynamic PSM value from remote device
+     * @return a CoC #BluetoothSocket ready for an outgoing connection
+     * @throws IOException on error, for example Bluetooth not available, or insufficient
+     * permissions
+     * @hide
+     */
+    @RequiresLegacyBluetoothPermission
+    @RequiresBluetoothConnectPermission
+    @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
+    @SuppressLint("AndroidFrameworkRequiresPermission")
+    public @NonNull BluetoothSocket createInsecureL2capChannel(int psm, int adapterIndex) throws IOException {
         if (!isBluetoothEnabled()) {
             Log.e(TAG, "createInsecureL2capChannel: Bluetooth is not enabled");
             throw new IOException();
@@ -2820,7 +3142,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
             Log.d(TAG, "createInsecureL2capChannel: psm=" + psm);
         }
         return new BluetoothSocket(BluetoothSocket.TYPE_L2CAP_LE, -1, false, false, this, psm,
-                null);
+                null, adapterIndex);
     }
 
     /**
@@ -2843,7 +3165,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
             android.Manifest.permission.BLUETOOTH_PRIVILEGED,
     })
     public boolean setMetadata(@MetadataKey int key, @NonNull byte[] value) {
-        final IBluetooth service = sService;
+        final IBluetooth service = getBluetooth();
         if (service == null) {
             Log.e(TAG, "Bluetooth is not enabled. Cannot set metadata");
             return false;
@@ -2874,7 +3196,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
             android.Manifest.permission.BLUETOOTH_PRIVILEGED,
     })
     public byte[] getMetadata(@MetadataKey int key) {
-        final IBluetooth service = sService;
+        final IBluetooth service = getBluetooth();
         if (service == null) {
             Log.e(TAG, "Bluetooth is not enabled. Cannot get metadata");
             return null;
@@ -2895,5 +3217,21 @@ public final class BluetoothDevice implements Parcelable, Attributable {
      */
     public static @MetadataKey int getMaxMetadataKey() {
         return METADATA_UNTETHERED_CASE_LOW_BATTERY_THRESHOLD;
+    }
+
+    private static BluetoothAdapter getAdapter(int adapterIndex) {
+        BluetoothAdapter adapter = BluetoothAdapterUtil.getAdapter(adapterIndex);
+        if (adapter == null) {
+            throw new IllegalArgumentException("Null Bluetooth adapter");
+        }
+        return adapter;
+    }
+
+    private BluetoothAdapter getAdapter() {
+        return getAdapter(mAdapterIndex);
+    }
+
+    private IBluetooth getBluetooth() {
+        return getService(mAdapterIndex);
     }
 }

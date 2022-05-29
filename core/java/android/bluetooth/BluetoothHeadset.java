@@ -12,6 +12,11 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear.
  */
 
 package android.bluetooth;
@@ -337,29 +342,21 @@ public final class BluetoothHeadset implements BluetoothProfile {
     public static final String EXTRA_HF_INDICATORS_IND_VALUE =
             "android.bluetooth.headset.extra.HF_INDICATORS_IND_VALUE";
 
-    private static final int MESSAGE_HEADSET_SERVICE_CONNECTED = 100;
-    private static final int MESSAGE_HEADSET_SERVICE_DISCONNECTED = 101;
-
     private final CloseGuard mCloseGuard = new CloseGuard();
 
     private Context mContext;
     private ServiceListener mServiceListener;
-    private volatile IBluetoothHeadset mService;
     private final BluetoothAdapter mAdapter;
     private final AttributionSource mAttributionSource;
 
-    @SuppressLint("AndroidFrameworkBluetoothPermission")
-    private final IBluetoothStateChangeCallback mBluetoothStateChangeCallback =
-            new IBluetoothStateChangeCallback.Stub() {
-                public void onBluetoothStateChange(boolean up) {
-                    if (DBG) Log.d(TAG, "onBluetoothStateChange: up=" + up);
-                    if (!up) {
-                        doUnbind();
-                    } else {
-                        doBind();
-                    }
+    private final BluetoothProfileConnector<IBluetoothHeadset> mProfileConnector =
+            new BluetoothProfileConnector(this, BluetoothProfile.HEADSET,
+                    "BluetoothHeadset", IBluetoothHeadset.class.getName()) {
+                @Override
+                public IBluetoothHeadset getServiceInterface(IBinder service) {
+                    return IBluetoothHeadset.Stub.asInterface(Binder.allowBlocking(service));
                 }
-            };
+    };
 
     /**
      * Create a BluetoothHeadset proxy object.
@@ -379,48 +376,8 @@ public final class BluetoothHeadset implements BluetoothProfile {
             throw new SecurityException("Need BLUETOOTH permission");
         }
 
-        IBluetoothManager mgr = mAdapter.getBluetoothManager();
-        if (mgr != null) {
-            try {
-                mgr.registerStateChangeCallback(mBluetoothStateChangeCallback);
-            } catch (RemoteException e) {
-                Log.e(TAG, "", e);
-            }
-        }
-
-        doBind();
+        mProfileConnector.connect(context, l);
         mCloseGuard.open("close");
-    }
-
-    private boolean doBind() {
-        synchronized (mConnection) {
-            if (mService == null) {
-                if (VDBG) Log.d(TAG, "Binding service...");
-                try {
-                    return mAdapter.getBluetoothManager().bindBluetoothProfileService(
-                            BluetoothProfile.HEADSET, mConnection);
-                } catch (RemoteException e) {
-                    Log.e(TAG, "Unable to bind HeadsetService", e);
-                }
-            }
-        }
-        return false;
-    }
-
-    private void doUnbind() {
-        synchronized (mConnection) {
-            if (mService != null) {
-                if (VDBG) Log.d(TAG, "Unbinding service...");
-                try {
-                    mAdapter.getBluetoothManager().unbindBluetoothProfileService(
-                            BluetoothProfile.HEADSET, mConnection);
-                } catch (RemoteException e) {
-                    Log.e(TAG, "Unable to unbind HeadsetService", e);
-                } finally {
-                    mService = null;
-                }
-            }
-        }
     }
 
     /**
@@ -433,16 +390,8 @@ public final class BluetoothHeadset implements BluetoothProfile {
     /*package*/ void close() {
         if (VDBG) log("close()");
 
-        IBluetoothManager mgr = mAdapter.getBluetoothManager();
-        if (mgr != null) {
-            try {
-                mgr.unregisterStateChangeCallback(mBluetoothStateChangeCallback);
-            } catch (RemoteException re) {
-                Log.e(TAG, "", re);
-            }
-        }
+        mProfileConnector.disconnect();
         mServiceListener = null;
-        doUnbind();
         mCloseGuard.close();
     }
 
@@ -451,6 +400,10 @@ public final class BluetoothHeadset implements BluetoothProfile {
     protected void finalize() throws Throwable {
         mCloseGuard.warnIfOpen();
         close();
+    }
+
+    private IBluetoothHeadset getService() {
+        return mProfileConnector.getService();
     }
 
     /**
@@ -480,7 +433,7 @@ public final class BluetoothHeadset implements BluetoothProfile {
     })
     public boolean connect(BluetoothDevice device) {
         if (DBG) log("connect(" + device + ")");
-        final IBluetoothHeadset service = mService;
+        final IBluetoothHeadset service = getService();
         if (service != null && isEnabled() && isValidDevice(device)) {
             try {
                 return service.connect(device);
@@ -521,7 +474,7 @@ public final class BluetoothHeadset implements BluetoothProfile {
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     public boolean disconnect(BluetoothDevice device) {
         if (DBG) log("disconnect(" + device + ")");
-        final IBluetoothHeadset service = mService;
+        final IBluetoothHeadset service = getService();
         if (service != null && isEnabled() && isValidDevice(device)) {
             try {
                 return service.disconnect(device);
@@ -542,7 +495,7 @@ public final class BluetoothHeadset implements BluetoothProfile {
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     public List<BluetoothDevice> getConnectedDevices() {
         if (VDBG) log("getConnectedDevices()");
-        final IBluetoothHeadset service = mService;
+        final IBluetoothHeadset service = getService();
         if (service != null && isEnabled()) {
             try {
                 return Attributable.setAttributionSource(
@@ -565,7 +518,7 @@ public final class BluetoothHeadset implements BluetoothProfile {
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     public List<BluetoothDevice> getDevicesMatchingConnectionStates(int[] states) {
         if (VDBG) log("getDevicesMatchingStates()");
-        final IBluetoothHeadset service = mService;
+        final IBluetoothHeadset service = getService();
         if (service != null && isEnabled()) {
             try {
                 return Attributable.setAttributionSource(
@@ -588,7 +541,7 @@ public final class BluetoothHeadset implements BluetoothProfile {
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     public int getConnectionState(BluetoothDevice device) {
         if (VDBG) log("getConnectionState(" + device + ")");
-        final IBluetoothHeadset service = mService;
+        final IBluetoothHeadset service = getService();
         if (service != null && isEnabled() && isValidDevice(device)) {
             try {
                 return service.getConnectionState(device);
@@ -625,7 +578,7 @@ public final class BluetoothHeadset implements BluetoothProfile {
     })
     public boolean setPriority(BluetoothDevice device, int priority) {
         if (DBG) log("setPriority(" + device + ", " + priority + ")");
-        final IBluetoothHeadset service = mService;
+        final IBluetoothHeadset service = getService();
         if (service != null && isEnabled() && isValidDevice(device)) {
             if (priority != BluetoothProfile.PRIORITY_OFF
                     && priority != BluetoothProfile.PRIORITY_ON) {
@@ -666,7 +619,7 @@ public final class BluetoothHeadset implements BluetoothProfile {
     public boolean setConnectionPolicy(@NonNull BluetoothDevice device,
             @ConnectionPolicy int connectionPolicy) {
         if (DBG) log("setConnectionPolicy(" + device + ", " + connectionPolicy + ")");
-        final IBluetoothHeadset service = mService;
+        final IBluetoothHeadset service = getService();
         if (service != null && isEnabled() && isValidDevice(device)) {
             if (connectionPolicy != BluetoothProfile.CONNECTION_POLICY_FORBIDDEN
                     && connectionPolicy != BluetoothProfile.CONNECTION_POLICY_ALLOWED) {
@@ -700,7 +653,7 @@ public final class BluetoothHeadset implements BluetoothProfile {
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     public int getPriority(BluetoothDevice device) {
         if (VDBG) log("getPriority(" + device + ")");
-        final IBluetoothHeadset service = mService;
+        final IBluetoothHeadset service = getService();
         if (service != null && isEnabled() && isValidDevice(device)) {
             try {
                 return BluetoothAdapter.connectionPolicyToPriority(
@@ -733,7 +686,7 @@ public final class BluetoothHeadset implements BluetoothProfile {
     })
     public @ConnectionPolicy int getConnectionPolicy(@NonNull BluetoothDevice device) {
         if (VDBG) log("getConnectionPolicy(" + device + ")");
-        final IBluetoothHeadset service = mService;
+        final IBluetoothHeadset service = getService();
         if (service != null && isEnabled() && isValidDevice(device)) {
             try {
                 return service.getConnectionPolicy(device, mAttributionSource);
@@ -757,7 +710,7 @@ public final class BluetoothHeadset implements BluetoothProfile {
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     public boolean isNoiseReductionSupported(@NonNull BluetoothDevice device) {
         if (DBG) log("isNoiseReductionSupported()");
-        final IBluetoothHeadset service = mService;
+        final IBluetoothHeadset service = getService();
         if (service != null && isEnabled() && isValidDevice(device)) {
             try {
                 return service.isNoiseReductionSupported(device, mAttributionSource);
@@ -780,7 +733,7 @@ public final class BluetoothHeadset implements BluetoothProfile {
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     public boolean isVoiceRecognitionSupported(@NonNull BluetoothDevice device) {
         if (DBG) log("isVoiceRecognitionSupported()");
-        final IBluetoothHeadset service = mService;
+        final IBluetoothHeadset service = getService();
         if (service != null && isEnabled() && isValidDevice(device)) {
             try {
                 return service.isVoiceRecognitionSupported(device, mAttributionSource);
@@ -819,7 +772,7 @@ public final class BluetoothHeadset implements BluetoothProfile {
     })
     public boolean startVoiceRecognition(BluetoothDevice device) {
         if (DBG) log("startVoiceRecognition()");
-        final IBluetoothHeadset service = mService;
+        final IBluetoothHeadset service = getService();
         if (service != null && isEnabled() && isValidDevice(device)) {
             try {
                 return service.startVoiceRecognition(device, mAttributionSource);
@@ -848,7 +801,7 @@ public final class BluetoothHeadset implements BluetoothProfile {
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     public boolean stopVoiceRecognition(BluetoothDevice device) {
         if (DBG) log("stopVoiceRecognition()");
-        final IBluetoothHeadset service = mService;
+        final IBluetoothHeadset service = getService();
         if (service != null && isEnabled() && isValidDevice(device)) {
             try {
                 return service.stopVoiceRecognition(device, mAttributionSource);
@@ -871,7 +824,7 @@ public final class BluetoothHeadset implements BluetoothProfile {
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     public boolean isAudioConnected(BluetoothDevice device) {
         if (VDBG) log("isAudioConnected()");
-        final IBluetoothHeadset service = mService;
+        final IBluetoothHeadset service = getService();
         if (service != null && isEnabled() && isValidDevice(device)) {
             try {
                 return service.isAudioConnected(device, mAttributionSource);
@@ -905,7 +858,7 @@ public final class BluetoothHeadset implements BluetoothProfile {
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     public int getAudioState(BluetoothDevice device) {
         if (VDBG) log("getAudioState");
-        final IBluetoothHeadset service = mService;
+        final IBluetoothHeadset service = getService();
         if (service != null && !isDisabled()) {
             try {
                 return service.getAudioState(device, mAttributionSource);
@@ -933,7 +886,7 @@ public final class BluetoothHeadset implements BluetoothProfile {
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     public void setAudioRouteAllowed(boolean allowed) {
         if (VDBG) log("setAudioRouteAllowed");
-        final IBluetoothHeadset service = mService;
+        final IBluetoothHeadset service = getService();
         if (service != null && isEnabled()) {
             try {
                 service.setAudioRouteAllowed(allowed, mAttributionSource);
@@ -956,7 +909,7 @@ public final class BluetoothHeadset implements BluetoothProfile {
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     public boolean getAudioRouteAllowed() {
         if (VDBG) log("getAudioRouteAllowed");
-        final IBluetoothHeadset service = mService;
+        final IBluetoothHeadset service = getService();
         if (service != null && isEnabled()) {
             try {
                 return service.getAudioRouteAllowed(mAttributionSource);
@@ -981,7 +934,7 @@ public final class BluetoothHeadset implements BluetoothProfile {
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     public void setForceScoAudio(boolean forced) {
         if (VDBG) log("setForceScoAudio " + String.valueOf(forced));
-        final IBluetoothHeadset service = mService;
+        final IBluetoothHeadset service = getService();
         if (service != null && isEnabled()) {
             try {
                 service.setForceScoAudio(forced, mAttributionSource);
@@ -1006,7 +959,7 @@ public final class BluetoothHeadset implements BluetoothProfile {
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     public boolean isAudioOn() {
         if (VDBG) log("isAudioOn()");
-        final IBluetoothHeadset service = mService;
+        final IBluetoothHeadset service = getService();
         if (service != null && isEnabled()) {
             try {
                 return service.isAudioOn(mAttributionSource);
@@ -1041,7 +994,7 @@ public final class BluetoothHeadset implements BluetoothProfile {
     @RequiresBluetoothConnectPermission
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     public boolean connectAudio() {
-        final IBluetoothHeadset service = mService;
+        final IBluetoothHeadset service = getService();
         if (service != null && isEnabled()) {
             try {
                 return service.connectAudio(mAttributionSource);
@@ -1070,7 +1023,7 @@ public final class BluetoothHeadset implements BluetoothProfile {
     @RequiresBluetoothConnectPermission
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     public boolean disconnectAudio() {
-        final IBluetoothHeadset service = mService;
+        final IBluetoothHeadset service = getService();
         if (service != null && isEnabled()) {
             try {
                 return service.disconnectAudio(mAttributionSource);
@@ -1114,7 +1067,7 @@ public final class BluetoothHeadset implements BluetoothProfile {
     @UnsupportedAppUsage
     public boolean startScoUsingVirtualVoiceCall() {
         if (DBG) log("startScoUsingVirtualVoiceCall()");
-        final IBluetoothHeadset service = mService;
+        final IBluetoothHeadset service = getService();
         if (service != null && isEnabled()) {
             try {
                 return service.startScoUsingVirtualVoiceCall(mAttributionSource);
@@ -1149,7 +1102,7 @@ public final class BluetoothHeadset implements BluetoothProfile {
     @UnsupportedAppUsage
     public boolean stopScoUsingVirtualVoiceCall() {
         if (DBG) log("stopScoUsingVirtualVoiceCall()");
-        final IBluetoothHeadset service = mService;
+        final IBluetoothHeadset service = getService();
         if (service != null && isEnabled()) {
             try {
                 return service.stopScoUsingVirtualVoiceCall(mAttributionSource);
@@ -1179,7 +1132,7 @@ public final class BluetoothHeadset implements BluetoothProfile {
     })
     public void phoneStateChanged(int numActive, int numHeld, int callState, String number,
             int type, String name) {
-        final IBluetoothHeadset service = mService;
+        final IBluetoothHeadset service = getService();
         if (service != null && isEnabled()) {
             try {
                 service.phoneStateChanged(numActive, numHeld, callState, number, type, name,
@@ -1205,7 +1158,7 @@ public final class BluetoothHeadset implements BluetoothProfile {
     })
     public void clccResponse(int index, int direction, int status, int mode, boolean mpty,
             String number, int type) {
-        final IBluetoothHeadset service = mService;
+        final IBluetoothHeadset service = getService();
         if (service != null && isEnabled()) {
             try {
                 service.clccResponse(index, direction, status, mode, mpty, number, type,
@@ -1246,7 +1199,7 @@ public final class BluetoothHeadset implements BluetoothProfile {
         if (command == null) {
             throw new IllegalArgumentException("command is null");
         }
-        final IBluetoothHeadset service = mService;
+        final IBluetoothHeadset service = getService();
         if (service != null && isEnabled() && isValidDevice(device)) {
             try {
                 return service.sendVendorSpecificResultCode(device, command, arg,
@@ -1291,7 +1244,7 @@ public final class BluetoothHeadset implements BluetoothProfile {
         if (DBG) {
             Log.d(TAG, "setActiveDevice: " + device);
         }
-        final IBluetoothHeadset service = mService;
+        final IBluetoothHeadset service = getService();
         if (service != null && isEnabled() && (device == null || isValidDevice(device))) {
             try {
                 return service.setActiveDevice(device, mAttributionSource);
@@ -1321,7 +1274,7 @@ public final class BluetoothHeadset implements BluetoothProfile {
         if (VDBG) {
             Log.d(TAG, "getActiveDevice");
         }
-        final IBluetoothHeadset service = mService;
+        final IBluetoothHeadset service = getService();
         if (service != null && isEnabled()) {
             try {
                 return Attributable.setAttributionSource(
@@ -1350,7 +1303,7 @@ public final class BluetoothHeadset implements BluetoothProfile {
         if (DBG) {
             log("isInbandRingingEnabled()");
         }
-        final IBluetoothHeadset service = mService;
+        final IBluetoothHeadset service = getService();
         if (service != null && isEnabled()) {
             try {
                 return service.isInbandRingingEnabled(mAttributionSource);
@@ -1375,33 +1328,13 @@ public final class BluetoothHeadset implements BluetoothProfile {
                 com.android.internal.R.bool.config_bluetooth_hfp_inband_ringing_support);
     }
 
-    @SuppressLint("AndroidFrameworkBluetoothPermission")
-    private final IBluetoothProfileServiceConnection mConnection =
-            new IBluetoothProfileServiceConnection.Stub() {
-        @Override
-        public void onServiceConnected(ComponentName className, IBinder service) {
-            if (DBG) Log.d(TAG, "Proxy object connected");
-            mService = IBluetoothHeadset.Stub.asInterface(Binder.allowBlocking(service));
-            mHandler.sendMessage(mHandler.obtainMessage(
-                    MESSAGE_HEADSET_SERVICE_CONNECTED));
-        }
-
-        @Override
-        public void onServiceDisconnected(ComponentName className) {
-            if (DBG) Log.d(TAG, "Proxy object disconnected");
-            doUnbind();
-            mHandler.sendMessage(mHandler.obtainMessage(
-                    MESSAGE_HEADSET_SERVICE_DISCONNECTED));
-        }
-    };
-
     @UnsupportedAppUsage
     private boolean isEnabled() {
-        return mAdapter.getState() == BluetoothAdapter.STATE_ON;
+        return mProfileConnector.isEnabled();
     }
 
     private boolean isDisabled() {
-        return mAdapter.getState() == BluetoothAdapter.STATE_OFF;
+        return mProfileConnector.isDisabled();
     }
 
     private static boolean isValidDevice(BluetoothDevice device) {
@@ -1411,26 +1344,4 @@ public final class BluetoothHeadset implements BluetoothProfile {
     private static void log(String msg) {
         Log.d(TAG, msg);
     }
-
-    @SuppressLint("AndroidFrameworkBluetoothPermission")
-    private final Handler mHandler = new Handler(Looper.getMainLooper()) {
-        @Override
-        public void handleMessage(Message msg) {
-            switch (msg.what) {
-                case MESSAGE_HEADSET_SERVICE_CONNECTED: {
-                    if (mServiceListener != null) {
-                        mServiceListener.onServiceConnected(BluetoothProfile.HEADSET,
-                                BluetoothHeadset.this);
-                    }
-                    break;
-                }
-                case MESSAGE_HEADSET_SERVICE_DISCONNECTED: {
-                    if (mServiceListener != null) {
-                        mServiceListener.onServiceDisconnected(BluetoothProfile.HEADSET);
-                    }
-                    break;
-                }
-            }
-        }
-    };
 }
