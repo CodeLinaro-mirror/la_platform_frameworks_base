@@ -2161,12 +2161,10 @@ public final class SystemServer {
         }
 
         // NOTE: ClipboardService depends on ContentCapture and Autofill
-        if(!enable1GLowMem){
-	    t.traceBegin("StartClipboardService");
-            mSystemServiceManager.startService(ClipboardService.class);
-            t.traceEnd();
-        }
-	    
+        t.traceBegin("StartClipboardService");
+        mSystemServiceManager.startService(ClipboardService.class);
+        t.traceEnd();
+
         t.traceBegin("AppServiceManager");
         mSystemServiceManager.startService(AppBindingService.Lifecycle.class);
         t.traceEnd();
