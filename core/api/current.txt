@@ -21826,6 +21826,7 @@ package android.media {
     field public static final String FEATURE_PartialFrame = "partial-frame";
     field public static final String FEATURE_QpBounds = "qp-bounds";
     field public static final String FEATURE_SecurePlayback = "secure-playback";
+    field public static final String FEATURE_SecureRecord = "secure-record";
     field public static final String FEATURE_TunneledPlayback = "tunneled-playback";
     field public int[] colorFormats;
     field public android.media.MediaCodecInfo.CodecProfileLevel[] profileLevels;

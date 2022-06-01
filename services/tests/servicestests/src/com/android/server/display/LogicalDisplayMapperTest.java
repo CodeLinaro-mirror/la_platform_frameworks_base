@@ -33,7 +33,6 @@ import android.app.PropertyInvalidatedCache;
 import android.content.Context;
 import android.content.res.Resources;
 import android.os.Handler;
-import android.os.Parcel;
 import android.os.Process;
 import android.os.test.TestLooper;
 import android.platform.test.annotations.Presubmit;
@@ -118,8 +117,7 @@ public class LogicalDisplayMapperTest {
     @Test
     public void testDisplayDeviceAddAndRemove_Internal() {
         DisplayDevice device = createDisplayDevice(Display.TYPE_INTERNAL, 600, 800,
-                DisplayDeviceInfo.FLAG_DEFAULT_DISPLAY);
-
+	DisplayDeviceInfo.FLAG_ALLOWED_TO_BE_DEFAULT_DISPLAY);
         // add
         LogicalDisplay displayAdded = add(device);
         assertEquals(info(displayAdded).address, info(device).address);
@@ -151,7 +149,7 @@ public class LogicalDisplayMapperTest {
     public void testDisplayDeviceAdd_TwoInternalOneDefault() {
         DisplayDevice device1 = createDisplayDevice(Display.TYPE_INTERNAL, 600, 800, 0);
         DisplayDevice device2 = createDisplayDevice(Display.TYPE_INTERNAL, 600, 800,
-                DisplayDeviceInfo.FLAG_DEFAULT_DISPLAY);
+		DisplayDeviceInfo.FLAG_ALLOWED_TO_BE_DEFAULT_DISPLAY);		
 
         LogicalDisplay display1 = add(device1);
         assertEquals(info(display1).address, info(device1).address);
@@ -165,9 +163,9 @@ public class LogicalDisplayMapperTest {
     @Test
     public void testDisplayDeviceAdd_TwoInternalBothDefault() {
         DisplayDevice device1 = createDisplayDevice(Display.TYPE_INTERNAL, 600, 800,
-                DisplayDeviceInfo.FLAG_DEFAULT_DISPLAY);
+	  DisplayDeviceInfo.FLAG_ALLOWED_TO_BE_DEFAULT_DISPLAY);
         DisplayDevice device2 = createDisplayDevice(Display.TYPE_INTERNAL, 600, 800,
-                DisplayDeviceInfo.FLAG_DEFAULT_DISPLAY);
+	  DisplayDeviceInfo.FLAG_ALLOWED_TO_BE_DEFAULT_DISPLAY);
 
         LogicalDisplay display1 = add(device1);
         assertEquals(info(display1).address, info(device1).address);
@@ -180,9 +178,57 @@ public class LogicalDisplayMapperTest {
     }
 
     @Test
+    public void testDisplayDeviceAddAndRemove_OneExternalDefault() {
+        DisplayDevice device = createDisplayDevice(Display.TYPE_EXTERNAL, 600, 800,
+                DisplayDeviceInfo.FLAG_ALLOWED_TO_BE_DEFAULT_DISPLAY);
+
+        // add
+        LogicalDisplay displayAdded = add(device);
+        assertEquals(info(displayAdded).address, info(device).address);
+        assertEquals(Display.DEFAULT_DISPLAY, id(displayAdded));
+
+        // remove
+        mDisplayDeviceRepo.onDisplayDeviceEvent(device, DISPLAY_DEVICE_EVENT_REMOVED);
+        verify(mListenerMock).onLogicalDisplayEventLocked(
+                mDisplayCaptor.capture(), eq(LOGICAL_DISPLAY_EVENT_REMOVED));
+        LogicalDisplay displayRemoved = mDisplayCaptor.getValue();
+        assertEquals(DEFAULT_DISPLAY, id(displayRemoved));
+        assertEquals(displayAdded, displayRemoved);
+    }
+
+    @Test
+    public void testDisplayDeviceAddAndRemove_SwitchDefault() {
+        DisplayDevice device1 = createDisplayDevice(Display.TYPE_INTERNAL, 600, 800,
+                DisplayDeviceInfo.FLAG_ALLOWED_TO_BE_DEFAULT_DISPLAY);
+        DisplayDevice device2 = createDisplayDevice(Display.TYPE_INTERNAL, 600, 800,
+                DisplayDeviceInfo.FLAG_ALLOWED_TO_BE_DEFAULT_DISPLAY);
+
+        LogicalDisplay display1 = add(device1);
+        assertEquals(info(display1).address, info(device1).address);
+        assertEquals(DEFAULT_DISPLAY, id(display1));
+
+        LogicalDisplay display2 = add(device2);
+        assertEquals(info(display2).address, info(device2).address);
+        // We can only have one default display
+        assertEquals(DEFAULT_DISPLAY, id(display1));
+
+        // remove
+        mDisplayDeviceRepo.onDisplayDeviceEvent(device1, DISPLAY_DEVICE_EVENT_REMOVED);
+
+        verify(mListenerMock).onLogicalDisplayEventLocked(
+                mDisplayCaptor.capture(), eq(LOGICAL_DISPLAY_EVENT_REMOVED));
+        LogicalDisplay displayRemoved = mDisplayCaptor.getValue();
+        // Display 1 is still the default logical display
+        assertEquals(DEFAULT_DISPLAY, id(display1));
+        // The logical displays had their devices swapped and Display 2 was removed
+        assertEquals(display2, displayRemoved);
+        assertEquals(info(display1).address, info(device2).address);
+    }
+
+    @Test
     public void testGetDisplayIdsLocked() {
         add(createDisplayDevice(Display.TYPE_INTERNAL, 600, 800,
-                DisplayDeviceInfo.FLAG_DEFAULT_DISPLAY));
+	DisplayDeviceInfo.FLAG_ALLOWED_TO_BE_DEFAULT_DISPLAY));
         add(createDisplayDevice(Display.TYPE_EXTERNAL, 600, 800, 0));
         add(createDisplayDevice(Display.TYPE_VIRTUAL, 600, 800, 0));
 
@@ -195,7 +241,7 @@ public class LogicalDisplayMapperTest {
     @Test
     public void testSingleDisplayGroup() {
         LogicalDisplay display1 = add(createDisplayDevice(Display.TYPE_INTERNAL, 600, 800,
-                DisplayDeviceInfo.FLAG_DEFAULT_DISPLAY));
+	DisplayDeviceInfo.FLAG_ALLOWED_TO_BE_DEFAULT_DISPLAY));
         LogicalDisplay display2 = add(createDisplayDevice(Display.TYPE_INTERNAL, 600, 800, 0));
         LogicalDisplay display3 = add(createDisplayDevice(Display.TYPE_VIRTUAL, 600, 800, 0));
 
@@ -210,7 +256,7 @@ public class LogicalDisplayMapperTest {
     @Test
     public void testMultipleDisplayGroups() {
         LogicalDisplay display1 = add(createDisplayDevice(Display.TYPE_INTERNAL, 600, 800,
-                DisplayDeviceInfo.FLAG_DEFAULT_DISPLAY));
+	DisplayDeviceInfo.FLAG_ALLOWED_TO_BE_DEFAULT_DISPLAY));
         LogicalDisplay display2 = add(createDisplayDevice(Display.TYPE_INTERNAL, 600, 800, 0));
 
 
@@ -241,7 +287,7 @@ public class LogicalDisplayMapperTest {
     /////////////////
 
     private TestDisplayDevice createDisplayDevice(int type, int width, int height, int flags) {
-        return createDisplayDevice(new DisplayAddressImpl(), type, width, height, flags);
+	return createDisplayDevice(new TestUtils.TestDisplayAddress(), type, width, height, flags);
     }
 
     private TestDisplayDevice createDisplayDevice(
@@ -255,7 +301,7 @@ public class LogicalDisplayMapperTest {
         displayDeviceInfo.supportedModes = new Display.Mode[1];
         displayDeviceInfo.supportedModes[0] = new Display.Mode(1, width, height, 60f);
         displayDeviceInfo.modeId = 1;
-        displayDeviceInfo.address = new DisplayAddressImpl();
+	displayDeviceInfo.address = address;
         return device;
     }
 
@@ -297,18 +343,9 @@ public class LogicalDisplayMapperTest {
         assertNotEquals(Display.DEFAULT_DISPLAY, id(displayRemoved));
     }
 
-    /**
-     * Create a custom {@link DisplayAddress} to ensure we're not relying on any specific
-     * display-address implementation in our code. Intentionally uses default object (reference)
-     * equality rules.
-     */
-    class DisplayAddressImpl extends DisplayAddress {
-        @Override
-        public void writeToParcel(Parcel out, int flags) { }
-    }
 
     class TestDisplayDevice extends DisplayDevice {
-        private DisplayDeviceInfo mInfo = new DisplayDeviceInfo();
+	private DisplayDeviceInfo mInfo;
         private DisplayDeviceInfo mSentInfo;
 
         TestDisplayDevice() {
