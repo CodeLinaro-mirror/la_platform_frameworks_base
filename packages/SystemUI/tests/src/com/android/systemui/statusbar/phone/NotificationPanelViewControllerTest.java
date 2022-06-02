@@ -81,6 +81,7 @@ import com.android.keyguard.dagger.KeyguardQsUserSwitchComponent;
 import com.android.keyguard.dagger.KeyguardStatusBarViewComponent;
 import com.android.keyguard.dagger.KeyguardStatusViewComponent;
 import com.android.keyguard.dagger.KeyguardUserSwitcherComponent;
+import com.android.systemui.DejankUtils;
 import com.android.systemui.R;
 import com.android.systemui.SysuiTestCase;
 import com.android.systemui.biometrics.AuthController;
@@ -334,6 +335,8 @@ public class NotificationPanelViewControllerTest extends SysuiTestCase {
     private NotificationListContainer mNotificationListContainer;
     @Mock
     private NotificationStackSizeCalculator mNotificationStackSizeCalculator;
+    @Mock
+    private UnlockedScreenOffAnimationController mUnlockedScreenOffAnimationController;
     private NotificationPanelViewController.PanelEventsEmitter mPanelEventsEmitter;
     private Optional<SysUIUnfoldComponent> mSysUIUnfoldComponent = Optional.empty();
     private SysuiStatusBarStateController mStatusBarStateController;
@@ -353,6 +356,7 @@ public class NotificationPanelViewControllerTest extends SysuiTestCase {
 
         mKeyguardStatusView = new KeyguardStatusView(mContext);
         mKeyguardStatusView.setId(R.id.keyguard_status_view);
+        DejankUtils.setImmediate(true);
 
         when(mAuthController.isUdfpsEnrolled(anyInt())).thenReturn(false);
         when(mHeadsUpCallback.getContext()).thenReturn(mContext);
@@ -515,6 +519,7 @@ public class NotificationPanelViewControllerTest extends SysuiTestCase {
                 mNotificationListContainer,
                 mPanelEventsEmitter,
                 mNotificationStackSizeCalculator,
+                mUnlockedScreenOffAnimationController,
                 mEmergencyButtonControllerFactory);
         mNotificationPanelViewController.initDependencies(
                 mCentralSurfaces,
@@ -880,7 +885,7 @@ public class NotificationPanelViewControllerTest extends SysuiTestCase {
     public void testSwitchesToBigClockInSplitShadeOnAod() {
         mStatusBarStateController.setState(KEYGUARD);
         enableSplitShade(/* enabled= */ true);
-        when(mMediaDataManager.hasActiveMedia()).thenReturn(true);
+        when(mMediaDataManager.hasActiveMediaOrRecommendation()).thenReturn(true);
         when(mNotificationStackScrollLayoutController.getVisibleNotificationCount()).thenReturn(2);
         clearInvocations(mKeyguardStatusViewController);
 
@@ -908,7 +913,7 @@ public class NotificationPanelViewControllerTest extends SysuiTestCase {
         mStatusBarStateController.setState(KEYGUARD);
         enableSplitShade(/* enabled= */ true);
         clearInvocations(mKeyguardStatusViewController);
-        when(mMediaDataManager.hasActiveMedia()).thenReturn(true);
+        when(mMediaDataManager.hasActiveMediaOrRecommendation()).thenReturn(true);
 
         // one notification + media player visible
         when(mNotificationStackScrollLayoutController.getVisibleNotificationCount()).thenReturn(1);
@@ -943,12 +948,44 @@ public class NotificationPanelViewControllerTest extends SysuiTestCase {
     }
 
     @Test
+    public void testUnlockHintAnimation_runs_whenNotInPowerSaveMode_andDozeAmountIsZero() {
+        when(mPowerManager.isPowerSaveMode()).thenReturn(false);
+        when(mAmbientState.getDozeAmount()).thenReturn(0f);
+        mNotificationPanelViewController.startUnlockHintAnimation();
+        assertThat(mNotificationPanelViewController.mHintAnimationRunning).isTrue();
+    }
+
+    @Test
+    public void testUnlockHintAnimation_doesNotRun_inPowerSaveMode() {
+        when(mPowerManager.isPowerSaveMode()).thenReturn(true);
+        mNotificationPanelViewController.startUnlockHintAnimation();
+        assertThat(mNotificationPanelViewController.mHintAnimationRunning).isFalse();
+    }
+
+    @Test
+    public void testUnlockHintAnimation_doesNotRun_whenDozeAmountNotZero() {
+        when(mPowerManager.isPowerSaveMode()).thenReturn(false);
+        when(mAmbientState.getDozeAmount()).thenReturn(0.5f);
+        mNotificationPanelViewController.startUnlockHintAnimation();
+        assertThat(mNotificationPanelViewController.mHintAnimationRunning).isFalse();
+    }
+
+    @Test
     public void setKeyguardStatusBarAlpha_setsAlphaOnKeyguardStatusBarController() {
         float statusBarAlpha = 0.5f;
 
         mNotificationPanelViewController.setKeyguardStatusBarAlpha(statusBarAlpha);
 
         verify(mKeyguardStatusBarViewController).setAlpha(statusBarAlpha);
+    }
+
+    @Test
+    public void testQsToBeImmediatelyExpandedInSplitShade() {
+        enableSplitShade(/* enabled= */ true);
+
+        mNotificationPanelViewController.onTrackingStarted();
+
+        assertThat(mNotificationPanelViewController.mQsExpandImmediate).isTrue();
     }
 
     private void triggerPositionClockAndNotifications() {
