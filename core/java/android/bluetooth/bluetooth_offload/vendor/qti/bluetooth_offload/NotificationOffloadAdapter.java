@@ -50,6 +50,7 @@ import android.os.ServiceManager;
 import android.os.SynchronousResultReceiver;
 import android.os.SystemProperties;
 import vendor.qti.bluetooth_offload.IBluetoothOffloadApp;
+import vendor.qti.bluetooth_offload.IBluetoothOffloadLpm;
 import vendor.qti.bluetooth_offload.IBluetoothOffloadAppCallback;
 import vendor.qti.bluetooth_offload.INotificationOffloadMgr;
 import vendor.qti.bluetooth_offload.INotificationOffloadMgrCallback;
@@ -64,6 +65,8 @@ public final class NotificationOffloadAdapter {
 
     /** @hide */
     public static final String NOTIFICATION_OFFLOAD_MGR_SERVICE = "notification_offload_mgr";
+
+    public static final String BLUETOOTH_OFFLOAD_APP_BINDING = "vendor.qti.bluetooth_offload.IBluetoothOffloadApp";
 
     @UnsupportedAppUsage
     private INotificationOffloadMgr mManagerService;
@@ -374,7 +377,7 @@ public final class NotificationOffloadAdapter {
 
     private final INotificationOffloadMgrCallback mManagerCallback =
         new INotificationOffloadMgrCallback.Stub() {
-                public void onBluetoothOffloadServiceUp(IBluetoothOffloadApp bluetoothOffloadService) {
+                public void onBluetoothOffloadServiceUp(IBluetoothOffloadApp bluetoothOffloadService, IBluetoothOffloadLpm lpmOffloadService) {
                     Log.d(TAG, "onBluetoothOffloadServiceUp: " + bluetoothOffloadService);
 
                     mServiceLock.writeLock().lock();
