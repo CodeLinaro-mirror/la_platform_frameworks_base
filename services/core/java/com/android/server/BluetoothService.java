@@ -20,7 +20,7 @@ import android.bluetooth.BluetoothAdapter;
 import android.content.Context;
 import android.os.UserManager;
 
-import vendor.qti.bluetooth_offload.NotificationOffloadAdapter;
+import vendor.qti.bluetooth_offload.NotificationOffloadMgr;
 
 class BluetoothService extends SystemService {
     private BluetoothManagerService mBluetoothManagerService;
@@ -50,7 +50,7 @@ class BluetoothService extends SystemService {
         if (phase == SystemService.PHASE_SYSTEM_SERVICES_READY) {
             publishBinderService(BluetoothAdapter.BLUETOOTH_MANAGER_SERVICE,
                     mBluetoothManagerService);
-            publishBinderService(NotificationOffloadAdapter.NOTIFICATION_OFFLOAD_MGR_SERVICE,
+            publishBinderService(NotificationOffloadMgr.NOTIFICATION_OFFLOAD_MGR_SERVICE,
                     mNotificationOffloadMgrService);
         } else if (phase == SystemService.PHASE_ACTIVITY_MANAGER_READY &&
                 !UserManager.isHeadlessSystemUserMode()) {

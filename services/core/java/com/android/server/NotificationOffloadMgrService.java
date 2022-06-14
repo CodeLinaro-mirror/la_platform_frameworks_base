@@ -54,7 +54,7 @@ package com.android.server;
 
 import static android.os.UserHandle.USER_SYSTEM;
 
-import vendor.qti.bluetooth_offload.NotificationOffloadAdapter;
+import vendor.qti.bluetooth_offload.NotificationOffloadMgr;
 import vendor.qti.bluetooth_offload.BluetoothPowerStateMgr;
 import vendor.qti.bluetooth_offload.INotificationOffloadMgr;
 import vendor.qti.bluetooth_offload.INotificationOffloadMgrCallback;
@@ -594,7 +594,7 @@ class NotificationOffloadMgrService extends INotificationOffloadMgr.Stub {
                 Message timeoutMsg = mHandler.obtainMessage(MESSAGE_TIMEOUT_BIND);
                 mHandler.sendMessageDelayed(timeoutMsg, TIMEOUT_BIND_MS);
                 Intent i = new Intent(IBluetoothOffloadApp.class.getName());
-                i.setAction(NotificationOffloadAdapter.BLUETOOTH_OFFLOAD_APP_BINDING);
+                i.setAction(NotificationOffloadMgr.BLUETOOTH_OFFLOAD_APP_BINDING);
                 if (!doBind(i, mConnection, Context.BIND_AUTO_CREATE | Context.BIND_IMPORTANT,
                         UserHandle.CURRENT)) {
                     mHandler.removeMessages(MESSAGE_TIMEOUT_BIND);
