@@ -217,6 +217,14 @@ filegroup {
 }
 
 filegroup {
+    name: "framework-bluetooth_offload-adapter-srcs",
+    srcs: [
+        "core/java/android/bluetooth/bluetooth_offload/vendor/qti/bluetooth_offload/*.java",
+    ],
+    path: "core/java/android/bluetooth/bluetooth_offload/vendor/qti/bluetooth_offload",
+}
+
+filegroup {
     name: "framework-non-updatable-sources",
     srcs: [
         // Java/AIDL sources under frameworks/base
@@ -242,6 +250,7 @@ filegroup {
         ":framework-telephony-sources",
         ":framework-wifi-annotations",
         ":framework-wifi-non-updatable-sources",
+        ":framework-bluetooth_offload-adapter-srcs",
         ":PacProcessor-aidl-sources",
         ":ProxyHandler-aidl-sources",
         ":net-utils-framework-common-srcs",
@@ -264,6 +273,7 @@ filegroup {
         ":libcamera_client_aidl",
         ":libcamera_client_framework_aidl",
         ":libupdate_engine_aidl",
+        ":libbluetooth_offload-binder-aidl",
         ":resourcemanager_aidl",
         ":storaged_aidl",
         ":vold_aidl",
