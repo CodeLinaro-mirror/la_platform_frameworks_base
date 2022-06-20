@@ -567,6 +567,8 @@ public class Ringtone {
                 sActiveRingtones.remove(Ringtone.this);
             }
             mp.setOnCompletionListener(null); // Help the Java GC: break the refcount cycle.
+            //fix ringtone player memory leak
+            stop();
         }
     }
 }
