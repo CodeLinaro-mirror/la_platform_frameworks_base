@@ -61,7 +61,7 @@ public final class BluetoothPowerStateMgr {
   @UnsupportedAppUsage
   private INotificationOffloadMgr mManagerService;
   @UnsupportedAppUsage
-  private IBluetoothOffloadLpm mService;
+  private IBluetoothOffloadLpm mService = null;
   private Context mContext;
   private final ReentrantReadWriteLock mServiceLock =
     new ReentrantReadWriteLock();
@@ -79,6 +79,9 @@ public final class BluetoothPowerStateMgr {
         try {
           mServiceLock.writeLock().lock();
           mService = mManagerService.registerLPMAdapter(mManagerCallback);
+          if (mService == null) {
+            Log.e(TAG, "IBluetoothOffloadLpm service is null");
+          }
         } catch (RemoteException e) {
           Log.e(TAG, "", e);
         } finally {
