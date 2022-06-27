@@ -60,8 +60,8 @@ import java.util.List;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /** @hide */
-public final class NotificationOffloadAdapter {
-    private static final String TAG = "NotificationOffloadAdapter";
+public final class NotificationOffloadMgr {
+    private static final String TAG = "NotificationOffloadMgr";
 
     /** @hide */
     public static final String NOTIFICATION_OFFLOAD_MGR_SERVICE = "notification_offload_mgr";
@@ -97,9 +97,9 @@ public final class NotificationOffloadAdapter {
     private boolean mRegisterStatus = false;
 
     /**
-     * Use {@link #getDefaultAdapter} to get the NotificationOffloadAdapter instance.
+     * Use {@link #getDefaultAdapter} to get the NotificationOffloadMgr instance.
      */
-    public NotificationOffloadAdapter(@NonNull Context context) {
+    public NotificationOffloadMgr(@NonNull Context context) {
         IBinder b = ServiceManager.getService(NOTIFICATION_OFFLOAD_MGR_SERVICE);
         if (b != null) {
             mManagerService = INotificationOffloadMgr.Stub.asInterface(b);
