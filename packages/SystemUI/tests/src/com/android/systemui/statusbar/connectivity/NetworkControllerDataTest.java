@@ -37,6 +37,7 @@ import android.testing.TestableLooper.RunWithLooper;
 
 import com.android.settingslib.mobile.TelephonyIcons;
 import com.android.settingslib.net.DataUsageController;
+import com.android.systemui.dump.DumpManager;
 import com.android.systemui.statusbar.policy.DeviceProvisionedController;
 import com.android.systemui.util.CarrierConfigTracker;
 
@@ -126,12 +127,15 @@ public class NetworkControllerDataTest extends NetworkControllerBaseTest {
         mConfig.show4gForLte = true;
         mNetworkController = new NetworkControllerImpl(mContext, mMockCm, mMockTm,
                 mTelephonyListenerManager, mMockWm,
-                mMockNsm, mMockSm, mConfig, Looper.getMainLooper(), mFakeExecutor, mCallbackHandler,
+                mMockSm, mConfig, Looper.getMainLooper(), mFakeExecutor, mCallbackHandler,
                 mock(AccessPointControllerImpl.class),
                 mock(DataUsageController.class), mMockSubDefaults,
                 mock(DeviceProvisionedController.class), mMockBd, mDemoModeController,
-                mock(CarrierConfigTracker.class), new Handler(TestableLooper.get(this).getLooper()),
-                mFeatureFlags);
+                mock(CarrierConfigTracker.class),
+                mWifiStatusTrackerFactory,
+                new Handler(TestableLooper.get(this).getLooper()),
+                mFeatureFlags,
+                mock(DumpManager.class));
         setupNetworkController();
 
         setupDefaultSignal();

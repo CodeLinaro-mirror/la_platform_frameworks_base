@@ -192,6 +192,15 @@ public class StatusBarKeyguardViewManagerTest extends SysuiTestCase {
     }
 
     @Test
+    public void onPanelExpansionChanged_propagatesToBouncer_evenAfterHidden() {
+        mStatusBarKeyguardViewManager.hide(0, 0);
+        when(mBouncer.inTransit()).thenReturn(true);
+
+        mStatusBarKeyguardViewManager.onPanelExpansionChanged(EXPANSION_EVENT);
+        verify(mBouncer).setExpansion(eq(EXPANSION_EVENT.getFraction()));
+    }
+
+    @Test
     public void onPanelExpansionChanged_showsBouncerWhenSwiping() {
         when(mKeyguardStateController.canDismissLockScreen()).thenReturn(false);
         mStatusBarKeyguardViewManager.onPanelExpansionChanged(EXPANSION_EVENT);
@@ -303,8 +312,23 @@ public class StatusBarKeyguardViewManagerTest extends SysuiTestCase {
         mStatusBarKeyguardViewManager.dismissWithAction(
                 action, cancelAction, true /* afterKeyguardGone */);
 
+        when(mBouncer.isShowing()).thenReturn(false);
         mStatusBarKeyguardViewManager.hideBouncer(true);
         mStatusBarKeyguardViewManager.hide(0, 30);
+        verify(action, never()).onDismiss();
+        verify(cancelAction).run();
+    }
+
+    @Test
+    public void testHidingBouncer_cancelsGoneRunnable() {
+        OnDismissAction action = mock(OnDismissAction.class);
+        Runnable cancelAction = mock(Runnable.class);
+        mStatusBarKeyguardViewManager.dismissWithAction(
+                action, cancelAction, true /* afterKeyguardGone */);
+
+        when(mBouncer.isShowing()).thenReturn(false);
+        mStatusBarKeyguardViewManager.hideBouncer(true);
+
         verify(action, never()).onDismiss();
         verify(cancelAction).run();
     }

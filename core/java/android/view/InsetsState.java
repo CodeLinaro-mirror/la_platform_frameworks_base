@@ -294,9 +294,16 @@ public class InsetsState implements Parcelable {
             return RoundedCorners.NO_ROUNDED_CORNERS;
         }
         // If mRoundedCornerFrame is set, we should calculate the new RoundedCorners based on this
-        // frame. It's used for split-screen mode and devices with a task bar.
-        if (!mRoundedCornerFrame.isEmpty() && !mRoundedCornerFrame.equals(mDisplayFrame)) {
-            return mRoundedCorners.insetWithFrame(frame, mRoundedCornerFrame);
+        // frame.
+        final Rect roundedCornerFrame = new Rect(mRoundedCornerFrame);
+        for (InsetsSource source : mSources) {
+            if (source != null && source.getInsetsRoundedCornerFrame()) {
+                final Insets insets = source.calculateInsets(roundedCornerFrame, false);
+                roundedCornerFrame.inset(insets);
+            }
+        }
+        if (!roundedCornerFrame.isEmpty() && !roundedCornerFrame.equals(mDisplayFrame)) {
+            return mRoundedCorners.insetWithFrame(frame, roundedCornerFrame);
         }
         if (mDisplayFrame.equals(frame)) {
             return mRoundedCorners;
@@ -541,7 +548,8 @@ public class InsetsState implements Parcelable {
     }
 
     public void getDisplayCutoutSafe(Rect outBounds) {
-        outBounds.set(Integer.MIN_VALUE, Integer.MIN_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE);
+        outBounds.set(
+                WindowLayout.MIN_X, WindowLayout.MIN_Y, WindowLayout.MAX_X, WindowLayout.MAX_Y);
         final DisplayCutout cutout = mDisplayCutout.get();
         final Rect displayFrame = mDisplayFrame;
         if (!cutout.isEmpty()) {

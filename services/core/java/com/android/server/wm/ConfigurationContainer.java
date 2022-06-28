@@ -126,6 +126,10 @@ public abstract class ConfigurationContainer<E extends ConfigurationContainer> {
         mResolvedTmpConfig.setTo(mResolvedOverrideConfiguration);
         resolveOverrideConfiguration(newParentConfig);
         mFullConfiguration.setTo(newParentConfig);
+        // Do not inherit always-on-top property from parent, otherwise the always-on-top
+        // property is propagated to all children. In that case, newly added child is
+        // always being positioned at bottom (behind the always-on-top siblings).
+        mFullConfiguration.windowConfiguration.unsetAlwaysOnTop();
         mFullConfiguration.updateFrom(mResolvedOverrideConfiguration);
         onMergedOverrideConfigurationChanged();
         if (!mResolvedTmpConfig.equals(mResolvedOverrideConfiguration)) {
@@ -228,6 +232,10 @@ public abstract class ConfigurationContainer<E extends ConfigurationContainer> {
         final ConfigurationContainer parent = getParent();
         if (parent != null) {
             mMergedOverrideConfiguration.setTo(parent.getMergedOverrideConfiguration());
+            // Do not inherit always-on-top property from parent, otherwise the always-on-top
+            // property is propagated to all children. In that case, newly added child is
+            // always being positioned at bottom (behind the always-on-top siblings).
+            mMergedOverrideConfiguration.windowConfiguration.unsetAlwaysOnTop();
             mMergedOverrideConfiguration.updateFrom(mResolvedOverrideConfiguration);
         } else {
             mMergedOverrideConfiguration.setTo(mResolvedOverrideConfiguration);
@@ -637,12 +645,19 @@ public abstract class ConfigurationContainer<E extends ConfigurationContainer> {
     }
 
     void registerConfigurationChangeListener(ConfigurationContainerListener listener) {
+        registerConfigurationChangeListener(listener, true /* shouldDispatchConfig */);
+    }
+
+    void registerConfigurationChangeListener(ConfigurationContainerListener listener,
+            boolean shouldDispatchConfig) {
         if (mChangeListeners.contains(listener)) {
             return;
         }
         mChangeListeners.add(listener);
-        listener.onRequestedOverrideConfigurationChanged(mResolvedOverrideConfiguration);
-        listener.onMergedOverrideConfigurationChanged(mMergedOverrideConfiguration);
+        if (shouldDispatchConfig) {
+            listener.onRequestedOverrideConfigurationChanged(mResolvedOverrideConfiguration);
+            listener.onMergedOverrideConfigurationChanged(mMergedOverrideConfiguration);
+        }
     }
 
     void unregisterConfigurationChangeListener(ConfigurationContainerListener listener) {

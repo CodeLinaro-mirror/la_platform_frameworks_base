@@ -70,6 +70,7 @@ import android.util.Slog;
 import android.util.SparseArray;
 import android.view.autofill.AutofillId;
 import android.view.autofill.AutofillManager;
+import android.view.autofill.AutofillManager.AutofillCommitReason;
 import android.view.autofill.AutofillManager.SmartSuggestionMode;
 import android.view.autofill.AutofillValue;
 import android.view.autofill.IAutoFillManagerClient;
@@ -423,7 +424,7 @@ final class AutofillManagerServiceImpl
     }
 
     @GuardedBy("mLock")
-    void finishSessionLocked(int sessionId, int uid) {
+    void finishSessionLocked(int sessionId, int uid, @AutofillCommitReason int commitReason) {
         if (!isEnabledLocked()) {
             return;
         }
@@ -438,7 +439,7 @@ final class AutofillManagerServiceImpl
 
         final Session.SaveResult saveResult = session.showSaveLocked();
 
-        session.logContextCommitted(saveResult.getNoSaveUiReason());
+        session.logContextCommitted(saveResult.getNoSaveUiReason(), commitReason);
 
         if (saveResult.isLogSaveShown()) {
             session.logSaveUiShown();
@@ -805,12 +806,13 @@ final class AutofillManagerServiceImpl
      * Updates the last fill response when a dataset was selected.
      */
     void logDatasetSelected(@Nullable String selectedDataset, int sessionId,
-            @Nullable Bundle clientState) {
+            @Nullable Bundle clientState,  int presentationType) {
         synchronized (mLock) {
             if (isValidEventLocked("logDatasetSelected()", sessionId)) {
                 mEventHistory.addEvent(
                         new Event(Event.TYPE_DATASET_SELECTED, selectedDataset, clientState, null,
-                                null, null, null, null, null, null, null));
+                                null, null, null, null, null, null, null, NO_SAVE_UI_REASON_NONE,
+                                presentationType));
             }
         }
     }

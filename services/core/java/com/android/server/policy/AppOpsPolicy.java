@@ -87,8 +87,8 @@ public final class AppOpsPolicy implements AppOpsManagerInternal.CheckOpsDelegat
     private final VoiceInteractionManagerInternal mVoiceInteractionManagerInternal;
 
     /**
-     * Whether this device allows only the HotwordDetectionService to use OP_RECORD_AUDIO_HOTWORD
-     * which doesn't incur the privacy indicator.
+     * Whether this device allows only the HotwordDetectionService to use
+     * OP_RECORD_AUDIO_HOTWORD which doesn't incur the privacy indicator.
      */
     private final boolean mIsHotwordDetectionServiceRequired;
 
@@ -202,9 +202,8 @@ public final class AppOpsPolicy implements AppOpsManagerInternal.CheckOpsDelegat
     }
 
     private static boolean isHotwordDetectionServiceRequired(PackageManager pm) {
-        // The HotwordDetectionService APIs aren't ready yet for Auto or TV.
-        return !(pm.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE)
-                || pm.hasSystemFeature(PackageManager.FEATURE_LEANBACK));
+        // Usage of the HotwordDetectionService won't be enforced until a later release.
+        return false;
     }
 
     @Override
@@ -428,8 +427,8 @@ public final class AppOpsPolicy implements AppOpsManagerInternal.CheckOpsDelegat
             if (!mIsHotwordDetectionServiceRequired) {
                 return code;
             }
-            // Only the HotwordDetectionService can use the HOTWORD op which doesn't incur the
-            // privacy indicator. Downgrade to standard RECORD_AUDIO for other processes.
+            // Only the HotwordDetectionService can use the RECORD_AUDIO_HOTWORD op which doesn't
+            // incur the privacy indicator. Downgrade to standard RECORD_AUDIO for other processes.
             final HotwordDetectionServiceIdentity hotwordDetectionServiceIdentity =
                     mVoiceInteractionManagerInternal.getHotwordDetectionServiceIdentity();
             if (hotwordDetectionServiceIdentity != null

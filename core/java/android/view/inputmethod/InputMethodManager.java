@@ -33,6 +33,7 @@ import static android.view.inputmethod.InputMethodManagerProto.CUR_ID;
 import static android.view.inputmethod.InputMethodManagerProto.FULLSCREEN_MODE;
 import static android.view.inputmethod.InputMethodManagerProto.SERVED_CONNECTING;
 
+import static com.android.internal.inputmethod.StartInputReason.BOUND_TO_IMMS;
 import static com.android.internal.inputmethod.StartInputReason.WINDOW_FOCUS_GAIN_REPORT_WITHOUT_CONNECTION;
 import static com.android.internal.inputmethod.StartInputReason.WINDOW_FOCUS_GAIN_REPORT_WITH_CONNECTION;
 
@@ -72,6 +73,7 @@ import android.os.Trace;
 import android.os.UserHandle;
 import android.provider.Settings;
 import android.text.style.SuggestionSpan;
+import android.util.BoostFramework;
 import android.util.Log;
 import android.util.Pools.Pool;
 import android.util.Pools.SimplePool;
@@ -90,6 +92,8 @@ import android.view.View;
 import android.view.ViewRootImpl;
 import android.view.WindowManager.LayoutParams.SoftInputModeFlags;
 import android.view.autofill.AutofillManager;
+import android.window.ImeOnBackInvokedDispatcher;
+import android.window.WindowOnBackInvokedDispatcher;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.inputmethod.DirectBootAwareness;
@@ -104,6 +108,7 @@ import com.android.internal.inputmethod.StartInputFlags;
 import com.android.internal.inputmethod.StartInputReason;
 import com.android.internal.inputmethod.UnbindReason;
 import com.android.internal.os.SomeArgs;
+import com.android.internal.view.IInputContext;
 import com.android.internal.view.IInputMethodClient;
 import com.android.internal.view.IInputMethodManager;
 import com.android.internal.view.IInputMethodSession;
@@ -277,6 +282,26 @@ public final class InputMethodManager {
      */
     private static final String SUBTYPE_MODE_VOICE = "voice";
 
+    //Perf
+    static BoostFramework mPerfBoost = null;
+    static boolean IME_BOOST_ENABLED = false;
+    static boolean isImeBoostPropertyRead = false;
+
+    /**
+     * Provide this to {@link IInputMethodManager#startInputOrWindowGainedFocus(
+     * int, IInputMethodClient, IBinder, int, int, int, EditorInfo, IInputContext, int)} to receive
+     * {@link android.window.OnBackInvokedCallback} registrations from IME.
+     */
+    private final ImeOnBackInvokedDispatcher mImeDispatcher =
+            new ImeOnBackInvokedDispatcher(Handler.getMain()) {
+        @Override
+        public WindowOnBackInvokedDispatcher getReceivingDispatcher() {
+            synchronized (mH) {
+                return mCurRootView != null ? mCurRootView.getOnBackInvokedDispatcher() : null;
+            }
+        }
+    };
+
     /**
      * Ensures that {@link #sInstance} becomes non-{@code null} for application that have directly
      * or indirectly relied on {@link #sInstance} via reflection or something like that.
@@ -448,6 +473,11 @@ public final class InputMethodManager {
     int mCursorCandEnd;
     int mInitialSelStart;
     int mInitialSelEnd;
+
+    /**
+     * Handler for {@link RemoteInputConnectionImpl#getInputConnection()}.
+     */
+    private Handler mServedInputConnectionHandler;
 
     /**
      * The instance that has previously been sent to the input method.
@@ -632,6 +662,20 @@ public final class InputMethodManager {
             ImeTracing.getInstance().triggerClientDump(
                     "InputMethodManager.DelegateImpl#startInput", InputMethodManager.this,
                     null /* icProto */);
+
+            if (isImeBoostPropertyRead == false) {
+                mPerfBoost = new BoostFramework();
+
+                if (mPerfBoost != null) {
+                    IME_BOOST_ENABLED = Boolean.parseBoolean(mPerfBoost.perfGetProp("ro.vendor.qti.sys.fw.use_ime_boost", "false"));
+                }
+                isImeBoostPropertyRead = true;
+            }
+
+            if (IME_BOOST_ENABLED == true && mPerfBoost != null) {
+                mPerfBoost.perfEvent(BoostFramework.VENDOR_HINT_IME_LAUNCH_EVENT, null);
+            }
+
             synchronized (mH) {
                 mCurrentTextBoxAttribute = null;
                 mCompletions = null;
@@ -734,7 +778,8 @@ public final class InputMethodManager {
                             windowFlags,
                             null,
                             null, null,
-                            mCurRootView.mContext.getApplicationInfo().targetSdkVersion);
+                            mCurRootView.mContext.getApplicationInfo().targetSdkVersion,
+                            mImeDispatcher);
                 } catch (RemoteException e) {
                     throw e.rethrowFromSystemServer();
                 }
@@ -757,6 +802,7 @@ public final class InputMethodManager {
         @Override
         public void setCurrentRootView(ViewRootImpl rootView) {
             synchronized (mH) {
+                mImeDispatcher.switchRootView(mCurRootView, rootView);
                 mCurRootView = rootView;
             }
         }
@@ -1658,6 +1704,7 @@ public final class InputMethodManager {
         if (mServedInputConnection != null) {
             mServedInputConnection.deactivate();
             mServedInputConnection = null;
+            mServedInputConnectionHandler = null;
         }
     }
 
@@ -1680,6 +1727,8 @@ public final class InputMethodManager {
             mServedConnecting = false;
             clearConnectionLocked();
         }
+        // Clear the back callbacks held by the ime dispatcher to avoid memory leaks.
+        mImeDispatcher.clear();
     }
 
     public void displayCompletions(View view, CompletionInfo[] completions) {
@@ -2289,6 +2338,13 @@ public final class InputMethodManager {
                         "Starting input: finished by someone else. view=" + dumpViewInfo(view)
                         + " servedView=" + dumpViewInfo(servedView)
                         + " mServedConnecting=" + mServedConnecting);
+                if (mServedInputConnection != null && startInputReason == BOUND_TO_IMMS) {
+                    // This is not an error. Once IME binds (MSG_BIND), InputConnection is fully
+                    // established. So we report this to interested recipients.
+                    reportInputConnectionOpened(
+                            mServedInputConnection.getInputConnection(), mCurrentTextBoxAttribute,
+                            mServedInputConnectionHandler, view);
+                }
                 return false;
             }
 
@@ -2305,6 +2361,7 @@ public final class InputMethodManager {
             if (mServedInputConnection != null) {
                 mServedInputConnection.deactivate();
                 mServedInputConnection = null;
+                mServedInputConnectionHandler = null;
             }
             RemoteInputConnectionImpl servedInputConnection;
             if (ic != null) {
@@ -2323,11 +2380,13 @@ public final class InputMethodManager {
                     // TODO(b/199934664): See if we can remove this by providing a default impl.
                 }
                 icHandler = handler;
+                mServedInputConnectionHandler = icHandler;
                 servedInputConnection = new RemoteInputConnectionImpl(
                         icHandler != null ? icHandler.getLooper() : vh.getLooper(), ic, this, view);
             } else {
                 servedInputConnection = null;
                 icHandler = null;
+                mServedInputConnectionHandler = null;
             }
             mServedInputConnection = servedInputConnection;
 
@@ -2342,7 +2401,8 @@ public final class InputMethodManager {
                         softInputMode, windowFlags, tba, servedInputConnection,
                         servedInputConnection == null ? null
                                 : servedInputConnection.asIRemoteAccessibilityInputConnection(),
-                        view.getContext().getApplicationInfo().targetSdkVersion);
+                        view.getContext().getApplicationInfo().targetSdkVersion,
+                        mImeDispatcher);
             } catch (RemoteException e) {
                 throw e.rethrowFromSystemServer();
             }
@@ -2397,14 +2457,19 @@ public final class InputMethodManager {
                 Log.v(TAG, "Calling View.onInputConnectionOpened: view= " + view
                         + ", ic=" + ic + ", tba=" + tba + ", handler=" + icHandler);
             }
-            view.onInputConnectionOpenedInternal(ic, tba, icHandler);
-            final ViewRootImpl viewRoot = view.getViewRootImpl();
-            if (viewRoot != null) {
-                viewRoot.getHandwritingInitiator().onInputConnectionCreated(view);
-            }
+            reportInputConnectionOpened(ic, tba, icHandler, view);
         }
 
         return true;
+    }
+
+    private void reportInputConnectionOpened(
+            InputConnection ic, EditorInfo tba, Handler icHandler, View view) {
+        view.onInputConnectionOpenedInternal(ic, tba, icHandler);
+        final ViewRootImpl viewRoot = view.getViewRootImpl();
+        if (viewRoot != null) {
+            viewRoot.getHandwritingInitiator().onInputConnectionCreated(view);
+        }
     }
 
     /**
@@ -3550,6 +3615,7 @@ public final class InputMethodManager {
             p.println("  mCurrentTextBoxAttribute: null");
         }
         p.println("  mServedInputConnection=" + mServedInputConnection);
+        p.println("  mServedInputConnectionHandler=" + mServedInputConnectionHandler);
         p.println("  mCompletions=" + Arrays.toString(mCompletions));
         p.println("  mCursorRect=" + mCursorRect);
         p.println("  mCursorSelStart=" + mCursorSelStart

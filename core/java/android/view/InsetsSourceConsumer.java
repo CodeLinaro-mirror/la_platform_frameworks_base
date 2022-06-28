@@ -25,6 +25,7 @@ import static android.view.InsetsSourceConsumerProto.IS_REQUESTED_VISIBLE;
 import static android.view.InsetsSourceConsumerProto.PENDING_FRAME;
 import static android.view.InsetsSourceConsumerProto.PENDING_VISIBLE_FRAME;
 import static android.view.InsetsSourceConsumerProto.SOURCE_CONTROL;
+import static android.view.InsetsSourceControl.INVALID_HINTS;
 import static android.view.InsetsState.ITYPE_IME;
 import static android.view.InsetsState.getDefaultVisibility;
 import static android.view.InsetsState.toPublicType;
@@ -35,6 +36,7 @@ import android.annotation.IntDef;
 import android.annotation.Nullable;
 import android.graphics.Insets;
 import android.graphics.Rect;
+import android.util.ArraySet;
 import android.util.Log;
 import android.util.proto.ProtoOutputStream;
 import android.view.InsetsState.InternalInsetsType;
@@ -121,8 +123,9 @@ public class InsetsSourceConsumer {
      *                  animation should be run after setting the control.
      * @param hideTypes An integer array with a single entry that determines which types a hide
      *                  animation should be run after setting the control.
+     * @return Whether the control has changed from the server
      */
-    public void setControl(@Nullable InsetsSourceControl control,
+    public boolean setControl(@Nullable InsetsSourceControl control,
             @InsetsType int[] showTypes, @InsetsType int[] hideTypes) {
         if (mType == ITYPE_IME) {
             ImeTracing.getInstance().triggerClientDump("InsetsSourceConsumer#setControl",
@@ -133,7 +136,7 @@ public class InsetsSourceConsumer {
                 mSourceControl.release(SurfaceControl::release);
                 mSourceControl = control;
             }
-            return;
+            return false;
         }
         SurfaceControl oldLeash = mSourceControl != null ? mSourceControl.getLeash() : null;
 
@@ -163,8 +166,10 @@ public class InsetsSourceConsumer {
             // We are gaining control, and need to run an animation since previous state
             // didn't match
             final boolean requestedVisible = isRequestedVisibleAwaitingControl();
-            final boolean needAnimation = requestedVisible != mState.getSource(mType).isVisible();
-            if (control.getLeash() != null && (needAnimation || mIsAnimationPending)) {
+            final boolean fakeControl = INVALID_HINTS.equals(control.getInsetsHint());
+            final boolean needsAnimation = requestedVisible != mState.getSource(mType).isVisible()
+                    && !fakeControl;
+            if (control.getLeash() != null && (needsAnimation || mIsAnimationPending)) {
                 if (DEBUG) Log.d(TAG, String.format("Gaining control in %s, requestedVisible: %b",
                         mController.getHost().getRootViewTitle(), requestedVisible));
                 if (requestedVisible) {
@@ -174,7 +179,7 @@ public class InsetsSourceConsumer {
                 }
                 mIsAnimationPending = false;
             } else {
-                if (needAnimation) {
+                if (needsAnimation) {
                     // We need animation but we haven't had a leash yet. Set this flag that when we
                     // get the leash we can play the deferred animation.
                     mIsAnimationPending = true;
@@ -198,6 +203,7 @@ public class InsetsSourceConsumer {
         if (lastControl != null) {
             lastControl.release(SurfaceControl::release);
         }
+        return true;
     }
 
     @VisibleForTesting
@@ -267,11 +273,7 @@ public class InsetsSourceConsumer {
                     mController.getHost().getInputMethodManager(), null /* icProto */);
         }
 
-        // We still need to let the legacy app know the visibility change even if we don't have the
-        // control. If we don't have the source, we don't change the requested visibility for making
-        // the callback behavior compatible.
-        mController.updateCompatSysUiVisibility(
-                mType, (hasControl || source == null) ? mRequestedVisible : isVisible, hasControl);
+        updateCompatSysUiVisibility(hasControl, source, isVisible);
 
         // If we don't have control, we are not able to change the visibility.
         if (!hasControl) {
@@ -287,6 +289,36 @@ public class InsetsSourceConsumer {
                 mController.getHost().getRootViewTitle(), mRequestedVisible));
         mState.getSource(mType).setVisible(mRequestedVisible);
         return true;
+    }
+
+    private void updateCompatSysUiVisibility(boolean hasControl, InsetsSource source,
+            boolean visible) {
+        final @InsetsType int publicType = InsetsState.toPublicType(mType);
+        if (publicType != WindowInsets.Type.statusBars()
+                && publicType != WindowInsets.Type.navigationBars()) {
+            // System UI visibility only controls status bars and navigation bars.
+            return;
+        }
+        final boolean compatVisible;
+        if (hasControl) {
+            compatVisible = mRequestedVisible;
+        } else if (source != null && !source.getFrame().isEmpty()) {
+            compatVisible = visible;
+        } else {
+            final ArraySet<Integer> types = InsetsState.toInternalType(publicType);
+            for (int i = types.size() - 1; i >= 0; i--) {
+                final InsetsSource s = mState.peekSource(types.valueAt(i));
+                if (s != null && !s.getFrame().isEmpty()) {
+                    // The compat system UI visibility would be updated by another consumer which
+                    // handles the same public insets type.
+                    return;
+                }
+            }
+            // No one provides the public type. Use the requested visibility for making the callback
+            // behavior compatible.
+            compatVisible = mRequestedVisible;
+        }
+        mController.updateCompatSysUiVisibility(mType, compatVisible, hasControl);
     }
 
     @VisibleForTesting

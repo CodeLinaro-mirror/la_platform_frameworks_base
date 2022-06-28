@@ -2007,7 +2007,10 @@ public class RootWindowContainer extends WindowContainer<DisplayContent>
             final Task rootPinnedTask = taskDisplayArea.getRootPinnedTask();
             if (rootPinnedTask != null) {
                 transitionController.collect(rootPinnedTask);
-                rootPinnedTask.dismissPip();
+                // The new ActivityRecord should replace the existing PiP, so it's more desirable
+                // that the old PiP disappears instead of turning to full-screen at the same time,
+                // as the Task#dismissPip is trying to do.
+                removeRootTasksInWindowingModes(WINDOWING_MODE_PINNED);
             }
 
             // Set a transition to ensure that we don't immediately try and update the visibility
@@ -2119,6 +2122,11 @@ public class RootWindowContainer extends WindowContainer<DisplayContent>
             rootTask.setWindowingMode(WINDOWING_MODE_PINNED);
             // Set the launch bounds for launch-into-pip Activity on the root task.
             if (r.getOptions() != null && r.getOptions().isLaunchIntoPip()) {
+                // Record the snapshot now, it will be later fetched for content-pip animation.
+                // We do this early in the process to make sure the right snapshot is used for
+                // entering content-pip animation.
+                mWindowManager.mTaskSnapshotController.recordTaskSnapshot(
+                        task, false /* allowSnapshotHome */);
                 rootTask.setBounds(r.getOptions().getLaunchBounds());
             }
             rootTask.setDeferTaskAppear(false);
@@ -2241,19 +2249,15 @@ public class RootWindowContainer extends WindowContainer<DisplayContent>
             // Start IOP
             if(r.info.applicationInfo != null &&
                 r.info.applicationInfo.sourceDir != null) {
-                mPerfBoost.perfIOPrefetchStart(-1,r.packageName,
-                    r.info.applicationInfo.sourceDir.substring(
+                  if (mPerfBoost.board_first_api_lvl < BoostFramework.VENDOR_T_API_LEVEL &&
+                    mPerfBoost.board_api_lvl < BoostFramework.VENDOR_T_API_LEVEL) {
+                      mPerfBoost.perfIOPrefetchStart(-1,r.packageName,
+                      r.info.applicationInfo.sourceDir.substring(
                         0, r.info.applicationInfo.sourceDir.lastIndexOf('/')));
+                  }
             }
         }
     }
-
-    void acquireUxPerfLock(int opcode, String packageName) {
-         mUxPerf = new BoostFramework();
-         if (mUxPerf != null) {
-             mUxPerf.perfUXEngine_events(opcode, 0, packageName, 0);
-         }
-     }
 
     @Nullable
     ActivityRecord findTask(ActivityRecord r, TaskDisplayArea preferredTaskDisplayArea) {
@@ -2281,8 +2285,15 @@ public class RootWindowContainer extends WindowContainer<DisplayContent>
 
                 if(mTmpFindTaskResult.mIdealRecord.getState() == STOPPED) {
                      /*Warm launch */
-                     acquireUxPerfLock(BoostFramework.UXE_EVENT_SUB_LAUNCH,
-                         r.packageName);
+                     mUxPerf = new BoostFramework();
+                     if (mUxPerf != null) {
+                         if (mUxPerf.board_first_api_lvl < BoostFramework.VENDOR_T_API_LEVEL &&
+                             mUxPerf.board_api_lvl < BoostFramework.VENDOR_T_API_LEVEL) {
+                             mUxPerf.perfUXEngine_events(BoostFramework.UXE_EVENT_SUB_LAUNCH, 0, r.packageName, 0);
+                         } else {
+                             mUxPerf.perfEvent(BoostFramework.VENDOR_HINT_WARM_LAUNCH, r.packageName, 2, 0, 0);
+                         }
+                     }
                 }
                 return mTmpFindTaskResult.mIdealRecord;
             } else if (mTmpFindTaskResult.mCandidateRecord != null) {
@@ -3336,7 +3347,7 @@ public class RootWindowContainer extends WindowContainer<DisplayContent>
             if (task.getActivity(activity -> !activity.finishing && activity.mUserId == userId)
                     != null) {
                 mService.getTaskChangeNotificationController().notifyTaskProfileLocked(
-                        task.mTaskId, userId);
+                        task.getTaskInfo());
             }
         }, true /* traverseTopToBottom */);
     }
@@ -3490,7 +3501,7 @@ public class RootWindowContainer extends WindowContainer<DisplayContent>
             if (record != null && record.isUid(uid)
                     && Objects.equals(pkgName, record.packageName)
                     && pPi.shouldShowNotificationDialogForTask(record.getTask().getTaskInfo(),
-                    pkgName, record.intent)) {
+                    pkgName, record.launchedFromPackage, record.intent, record.getName())) {
                 validTaskId[0] = record.getTask().mTaskId;
                 return true;
             }

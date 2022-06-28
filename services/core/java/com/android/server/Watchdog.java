@@ -19,6 +19,8 @@ package com.android.server;
 import static com.android.server.Watchdog.HandlerCheckerAndTimeout.withCustomTimeout;
 import static com.android.server.Watchdog.HandlerCheckerAndTimeout.withDefaultTimeout;
 
+import android.annotation.NonNull;
+import android.annotation.Nullable;
 import android.app.IActivityController;
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -43,6 +45,7 @@ import android.os.SystemProperties;
 import android.os.UserHandle;
 import android.provider.Settings;
 import android.sysprop.WatchdogProperties;
+import android.util.Dumpable;
 import android.util.EventLog;
 import android.util.Log;
 import android.util.Slog;
@@ -66,6 +69,7 @@ import java.io.FileWriter;
 import java.io.FileReader;
 import java.io.IOException;
 import java.io.BufferedReader;
+import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -81,7 +85,7 @@ import java.text.SimpleDateFormat;
 /**
  * This class calls its monitor every minute. Killing this process if they don't return
  **/
-public class Watchdog {
+public class Watchdog implements Dumpable {
     static final String TAG = "Watchdog";
 
     /** Debug flag. */
@@ -149,10 +153,12 @@ public class Watchdog {
             "android.hardware.media.omx@1.0::IOmx",
             "android.hardware.media.omx@1.0::IOmxStore",
             "android.hardware.neuralnetworks@1.0::IDevice",
+            "android.hardware.power@1.0::IPower",
             "android.hardware.power.stats@1.0::IPowerStats",
             "android.hardware.sensors@1.0::ISensors",
             "android.hardware.sensors@2.0::ISensors",
             "android.hardware.sensors@2.1::ISensors",
+            "android.hardware.vibrator@1.0::IVibrator",
             "android.hardware.vr@1.0::IVr",
             "android.system.suspend@1.0::ISystemSuspend"
     );
@@ -161,7 +167,10 @@ public class Watchdog {
             "android.hardware.biometrics.face.IFace/",
             "android.hardware.biometrics.fingerprint.IFingerprint/",
             "android.hardware.light.ILights/",
+            "android.hardware.power.IPower/",
             "android.hardware.power.stats.IPowerStats/",
+            "android.hardware.vibrator.IVibrator/",
+            "android.hardware.vibrator.IVibratorManager/"
     };
 
     private static Watchdog sWatchdog;
@@ -713,7 +722,6 @@ public class Watchdog {
 
     private void run() {
         boolean waitedHalf = false;
-        File initialStack = null;
         while (true) {
             List<HandlerChecker> blockedCheckers = Collections.emptyList();
             String subject = "";
@@ -864,6 +872,7 @@ public class Watchdog {
     }
 
     private void logWatchog(boolean halfWatchdog, String subject, ArrayList<Integer> pids) {
+        File initialStack = null;
         ArrayList<Integer> nativePids = getInterestingNativePids();
         // Get critical event log before logging the half watchdog so that it doesn't
         // occur in the log.
@@ -879,7 +888,16 @@ public class Watchdog {
         if (halfWatchdog) {
             dropboxTag = "pre_watchdog";
             CriticalEventLog.getInstance().logHalfWatchdog(subject);
-        } else {
+            // We've waited half the deadlock-detection interval.  Pull a stack
+            // trace and wait another half.
+            initialStack = ActivityManagerService.dumpStackTraces(pids, null, null,
+                    nativePids, null, subject, criticalEvents);
+            if (initialStack != null){
+                SmartTraceUtils.dumpStackTraces(Process.myPid(), pids,
+                    nativePids, initialStack);
+            }
+        }
+        else {
             dropboxTag = "watchdog";
             CriticalEventLog.getInstance().logWatchdog(subject, errorId);
             EventLog.writeEvent(EventLogTags.WATCHDOG, subject);
@@ -911,7 +929,54 @@ public class Watchdog {
         processCpuTracker.update();
         report.append(processCpuTracker.printCurrentState(anrTime));
         report.append(tracesFileException.getBuffer());
+        File watchdogTraces;
+        String newTracesPath = "traces_SystemServer_WDT"
+                + mTraceDateFormat.format(new Date()) + "_pid"
+                + String.valueOf(Process.myPid());
+        File tracesDir = new File(ActivityManagerService.ANR_TRACE_DIR);
+        watchdogTraces = new File(tracesDir, newTracesPath);
+        try {
+            if (watchdogTraces.createNewFile()) {
+                FileUtils.setPermissions(watchdogTraces.getAbsolutePath(),
+                        0600, -1, -1); // -rw------- permissions
 
+                // Append both traces from the first and second half
+                // to a new file, making it easier to debug Watchdog timeouts
+                // dumpStackTraces() can return a null instance, so check the same
+                if (initialStack != null) {
+                    // check the last-modified time of this file.
+                    // we are interested in this only it was written to in the
+                    // last 5 minutes or so
+                    final long age = System.currentTimeMillis()
+                            - initialStack.lastModified();
+                    final long FIVE_MINUTES_IN_MILLIS = 1000 * 60 * 5;
+                    if (age < FIVE_MINUTES_IN_MILLIS) {
+                        Slog.e(TAG, "First set of traces taken from "
+                                + initialStack.getAbsolutePath());
+                        appendFile(watchdogTraces, initialStack);
+                    } else {
+                        Slog.e(TAG, "First set of traces were collected more than "
+                                + "5 minutes ago, ignoring ...");
+                    }
+                } else {
+                    Slog.e(TAG, "First set of traces are empty!");
+                }
+
+                if (finalStack != null) {
+                    Slog.e(TAG, "Second set of traces taken from "
+                            + finalStack.getAbsolutePath());
+                    appendFile(watchdogTraces, finalStack);
+                } else {
+                    Slog.e(TAG, "Second set of traces are empty!");
+                }
+            } else {
+                    Slog.w(TAG, "Unable to create Watchdog dump file: createNewFile failed");
+            }
+        } catch (Exception e) {
+                // catch any exception that happens here;
+                // why kill the system when it is going to die anyways?
+                Slog.e(TAG, "Exception creating Watchdog dump file:", e);
+        }
         if (!halfWatchdog) {
             // Trigger the kernel to dump all blocked threads, and backtraces on all CPUs to the
             // kernel log
@@ -938,6 +1003,23 @@ public class Watchdog {
         try {
             dropboxThread.join(2000);  // wait up to 2 seconds for it to return.
         } catch (InterruptedException ignored) { }
+        // At times, when user space watchdog traces don't give an indication on
+        // which component held a lock, because of which other threads are blocked,
+        // (thereby causing Watchdog), trigger kernel panic
+        boolean crashOnWatchdog = SystemProperties
+                                    .getBoolean("persist.sys.crashOnWatchdog", false);
+        if (crashOnWatchdog) {
+            // Trigger the kernel to dump all blocked threads, and backtraces
+            // on all CPUs to the kernel log
+            Slog.e(TAG, "Triggering SysRq for system_server watchdog,s");
+            doSysRq('w');
+            doSysRq('l');
+
+            // wait until the above blocked threads be dumped into kernel log
+            SystemClock.sleep(3000);
+
+            doSysRq('c');
+        }
     }
 
     private void doSysRq(char c) {
@@ -1051,6 +1133,12 @@ public class Watchdog {
             Slog.w(TAG, "Failed to append to kmsg", e);
         }
         doSysRq('c');
+    }
+
+    @Override
+    public void dump(@NonNull PrintWriter pw, @Nullable String[] args) {
+        pw.print("WatchdogTimeoutMillis=");
+        pw.println(mWatchdogTimeoutMillis);
     }
 
     private void appendFile (File writeTo, File copyFrom) {

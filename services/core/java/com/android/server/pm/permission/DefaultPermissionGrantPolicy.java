@@ -21,6 +21,7 @@ import static android.os.Process.FIRST_APPLICATION_UID;
 import android.Manifest;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.annotation.UserIdInt;
 import android.app.ActivityManager;
 import android.app.DownloadManager;
 import android.app.SearchManager;
@@ -56,7 +57,6 @@ import android.provider.Telephony.Sms.Intents;
 import android.security.Credentials;
 import android.speech.RecognitionService;
 import android.telephony.TelephonyManager;
-import android.text.TextUtils;
 import android.util.ArrayMap;
 import android.util.ArraySet;
 import android.util.Log;
@@ -603,18 +603,17 @@ final class DefaultPermissionGrantPolicy {
         final String setupWizardPackage = ArrayUtils.firstOrNull(getKnownPackages(
                 KnownPackages.PACKAGE_SETUP_WIZARD, userId));
         grantPermissionsToSystemPackage(pm, setupWizardPackage, userId, PHONE_PERMISSIONS,
-                CONTACTS_PERMISSIONS, ALWAYS_LOCATION_PERMISSIONS, CAMERA_PERMISSIONS);
+                CONTACTS_PERMISSIONS, ALWAYS_LOCATION_PERMISSIONS, CAMERA_PERMISSIONS,
+                NEARBY_DEVICES_PERMISSIONS);
         grantSystemFixedPermissionsToSystemPackage(pm, setupWizardPackage, userId,
                 NOTIFICATION_PERMISSIONS);
-        if (mContext.getPackageManager().hasSystemFeature(PackageManager.FEATURE_WATCH, 0)
-                || mContext.getPackageManager().hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE,
-                0)) {
-            grantPermissionsToSystemPackage(
-                    pm, setupWizardPackage, userId, NEARBY_DEVICES_PERMISSIONS);
-        }
 
         // SearchSelector
         grantPermissionsToSystemPackage(pm, getDefaultSearchSelectorPackage(), userId,
+                NOTIFICATION_PERMISSIONS);
+
+        // Captive Portal Login
+        grantPermissionsToSystemPackage(pm, getDefaultCaptivePortalLoginPackage(), userId,
                 NOTIFICATION_PERMISSIONS);
 
         // Camera
@@ -903,26 +902,10 @@ final class DefaultPermissionGrantPolicy {
                     COARSE_BACKGROUND_LOCATION_PERMISSIONS, CONTACTS_PERMISSIONS);
         }
 
-        // Attention Service
-        String attentionServicePackageName =
-                mContext.getPackageManager().getAttentionServicePackageName();
-        if (!TextUtils.isEmpty(attentionServicePackageName)) {
-            grantPermissionsToSystemPackage(pm, attentionServicePackageName, userId,
-                    CAMERA_PERMISSIONS);
-        }
-
         // There is no real "marker" interface to identify the shared storage backup, it is
         // hardcoded in BackupManagerService.SHARED_BACKUP_AGENT_PACKAGE.
         grantSystemFixedPermissionsToSystemPackage(pm, "com.android.sharedstoragebackup", userId,
                 STORAGE_PERMISSIONS);
-
-        // System Captions Service
-        String systemCaptionsServicePackageName =
-                mContext.getPackageManager().getSystemCaptionsServicePackageName();
-        if (!TextUtils.isEmpty(systemCaptionsServicePackageName)) {
-            grantPermissionsToSystemPackage(pm, systemCaptionsServicePackageName, userId,
-                    MICROPHONE_PERMISSIONS);
-        }
 
         // Bluetooth MIDI Service
         grantSystemFixedPermissionsToSystemPackage(pm,
@@ -938,6 +921,10 @@ final class DefaultPermissionGrantPolicy {
 
     private String getDefaultSearchSelectorPackage() {
         return mContext.getString(R.string.config_defaultSearchSelectorPackageName);
+    }
+
+    private String getDefaultCaptivePortalLoginPackage() {
+        return mContext.getString(R.string.config_defaultCaptivePortalLoginPackageName);
     }
 
     @SafeVarargs
@@ -1025,8 +1012,6 @@ final class DefaultPermissionGrantPolicy {
         for (String packageName : packageNames) {
             grantPermissionsToSystemPackage(NO_PM_CACHE, packageName, userId,
                     PHONE_PERMISSIONS, ALWAYS_LOCATION_PERMISSIONS, SMS_PERMISSIONS);
-            grantPermissionsToPackage(NO_PM_CACHE, packageName, userId, false, false,
-                    NOTIFICATION_PERMISSIONS);
         }
     }
 
@@ -1091,6 +1076,14 @@ final class DefaultPermissionGrantPolicy {
                         userId);
             }
         }
+    }
+
+    public void grantDefaultPermissionsToCarrierServiceApp(@NonNull String packageName,
+            @UserIdInt int userId) {
+        Log.i(TAG, "Grant permissions to Carrier Service app " + packageName + " for user:"
+                + userId);
+        grantPermissionsToPackage(NO_PM_CACHE, packageName, userId, /* ignoreSystemPackage */ false,
+               /* whitelistRestricted */ true, NOTIFICATION_PERMISSIONS);
     }
 
     private String getDefaultSystemHandlerActivityPackage(PackageManagerWrapper pm,
