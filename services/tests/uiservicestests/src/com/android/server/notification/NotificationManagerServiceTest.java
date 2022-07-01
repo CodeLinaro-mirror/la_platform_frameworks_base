@@ -2716,19 +2716,80 @@ public class NotificationManagerServiceTest extends UiServiceTestCase {
     }
 
     @Test
+    public void testSnoozeRunnable_tooManySnoozed_singleNotification() {
+        final NotificationRecord notification = generateNotificationRecord(
+                mTestNotificationChannel, 1, null, true);
+        mService.addNotification(notification);
+
+        when(mSnoozeHelper.canSnooze(anyInt())).thenReturn(true);
+        when(mSnoozeHelper.canSnooze(1)).thenReturn(false);
+
+        NotificationManagerService.SnoozeNotificationRunnable snoozeNotificationRunnable =
+                mService.new SnoozeNotificationRunnable(
+                        notification.getKey(), 100, null);
+        snoozeNotificationRunnable.run();
+
+        verify(mSnoozeHelper, never()).snooze(any(NotificationRecord.class), anyLong());
+        assertEquals(1, mService.getNotificationRecordCount());
+    }
+
+    @Test
+    public void testSnoozeRunnable_tooManySnoozed_singleGroupChildNotification() {
+        final NotificationRecord notification = generateNotificationRecord(
+                mTestNotificationChannel, 1, "group", true);
+        final NotificationRecord notificationChild = generateNotificationRecord(
+                mTestNotificationChannel, 1, "group", false);
+        mService.addNotification(notification);
+        mService.addNotification(notificationChild);
+
+        when(mSnoozeHelper.canSnooze(anyInt())).thenReturn(true);
+        when(mSnoozeHelper.canSnooze(2)).thenReturn(false);
+
+        NotificationManagerService.SnoozeNotificationRunnable snoozeNotificationRunnable =
+                mService.new SnoozeNotificationRunnable(
+                        notificationChild.getKey(), 100, null);
+        snoozeNotificationRunnable.run();
+
+        verify(mSnoozeHelper, never()).snooze(any(NotificationRecord.class), anyLong());
+        assertEquals(2, mService.getNotificationRecordCount());
+    }
+
+    @Test
+    public void testSnoozeRunnable_tooManySnoozed_summaryNotification() {
+        final NotificationRecord notification = generateNotificationRecord(
+                mTestNotificationChannel, 1, "group", true);
+        final NotificationRecord notificationChild = generateNotificationRecord(
+                mTestNotificationChannel, 12, "group", false);
+        final NotificationRecord notificationChild2 = generateNotificationRecord(
+                mTestNotificationChannel, 13, "group", false);
+        mService.addNotification(notification);
+        mService.addNotification(notificationChild);
+        mService.addNotification(notificationChild2);
+
+        when(mSnoozeHelper.canSnooze(anyInt())).thenReturn(true);
+        when(mSnoozeHelper.canSnooze(3)).thenReturn(false);
+
+        NotificationManagerService.SnoozeNotificationRunnable snoozeNotificationRunnable =
+                mService.new SnoozeNotificationRunnable(
+                        notification.getKey(), 100, null);
+        snoozeNotificationRunnable.run();
+
+        verify(mSnoozeHelper, never()).snooze(any(NotificationRecord.class), anyLong());
+        assertEquals(3, mService.getNotificationRecordCount());
+    }
+
+    @Test
     public void testSnoozeRunnable_reSnoozeASingleSnoozedNotification() throws Exception {
         final NotificationRecord notification = generateNotificationRecord(
                 mTestNotificationChannel, 1, null, true);
         mService.addNotification(notification);
         when(mSnoozeHelper.getNotification(any())).thenReturn(notification);
+        when(mSnoozeHelper.canSnooze(anyInt())).thenReturn(true);
 
         NotificationManagerService.SnoozeNotificationRunnable snoozeNotificationRunnable =
                 mService.new SnoozeNotificationRunnable(
                 notification.getKey(), 100, null);
         snoozeNotificationRunnable.run();
-        NotificationManagerService.SnoozeNotificationRunnable snoozeNotificationRunnable2 =
-                mService.new SnoozeNotificationRunnable(
-                notification.getKey(), 100, null);
         snoozeNotificationRunnable.run();
 
         // snooze twice
@@ -2736,19 +2797,17 @@ public class NotificationManagerServiceTest extends UiServiceTestCase {
     }
 
     @Test
-    public void testSnoozeRunnable_reSnoozeASnoozedNotificationWithGroupKey() throws Exception {
+    public void testSnoozeRunnable_reSnoozeASnoozedNotificationWithGroupKey() {
         final NotificationRecord notification = generateNotificationRecord(
                 mTestNotificationChannel, 1, "group", true);
         mService.addNotification(notification);
         when(mSnoozeHelper.getNotification(any())).thenReturn(notification);
+        when(mSnoozeHelper.canSnooze(anyInt())).thenReturn(true);
 
         NotificationManagerService.SnoozeNotificationRunnable snoozeNotificationRunnable =
                 mService.new SnoozeNotificationRunnable(
                 notification.getKey(), 100, null);
         snoozeNotificationRunnable.run();
-        NotificationManagerService.SnoozeNotificationRunnable snoozeNotificationRunnable2 =
-                mService.new SnoozeNotificationRunnable(
-                notification.getKey(), 100, null);
         snoozeNotificationRunnable.run();
 
         // snooze twice
@@ -2766,6 +2825,7 @@ public class NotificationManagerServiceTest extends UiServiceTestCase {
         when(mSnoozeHelper.getNotification(any())).thenReturn(notification);
         when(mSnoozeHelper.getNotifications(
                 anyString(), anyString(), anyInt())).thenReturn(new ArrayList<>());
+        when(mSnoozeHelper.canSnooze(anyInt())).thenReturn(true);
 
         NotificationManagerService.SnoozeNotificationRunnable snoozeNotificationRunnable =
                 mService.new SnoozeNotificationRunnable(
@@ -2775,8 +2835,8 @@ public class NotificationManagerServiceTest extends UiServiceTestCase {
                 .thenReturn(new ArrayList<>(Arrays.asList(notification, notification2)));
         NotificationManagerService.SnoozeNotificationRunnable snoozeNotificationRunnable2 =
                 mService.new SnoozeNotificationRunnable(
-                        notification.getKey(), 100, null);
-        snoozeNotificationRunnable.run();
+                        notification2.getKey(), 100, null);
+        snoozeNotificationRunnable2.run();
 
         // snooze twice
         verify(mSnoozeHelper, times(4)).snooze(any(NotificationRecord.class), anyLong());
@@ -2790,6 +2850,7 @@ public class NotificationManagerServiceTest extends UiServiceTestCase {
                 mTestNotificationChannel, 2, "group", false);
         mService.addNotification(grouped);
         mService.addNotification(nonGrouped);
+        when(mSnoozeHelper.canSnooze(anyInt())).thenReturn(true);
 
         NotificationManagerService.SnoozeNotificationRunnable snoozeNotificationRunnable =
                 mService.new SnoozeNotificationRunnable(
@@ -2819,6 +2880,7 @@ public class NotificationManagerServiceTest extends UiServiceTestCase {
         mService.addNotification(parent);
         mService.addNotification(child);
         mService.addNotification(child2);
+        when(mSnoozeHelper.canSnooze(anyInt())).thenReturn(true);
 
         NotificationManagerService.SnoozeNotificationRunnable snoozeNotificationRunnable =
                 mService.new SnoozeNotificationRunnable(
@@ -2840,6 +2902,7 @@ public class NotificationManagerServiceTest extends UiServiceTestCase {
         mService.addNotification(parent);
         mService.addNotification(child);
         mService.addNotification(child2);
+        when(mSnoozeHelper.canSnooze(anyInt())).thenReturn(true);
 
         NotificationManagerService.SnoozeNotificationRunnable snoozeNotificationRunnable =
                 mService.new SnoozeNotificationRunnable(
@@ -2865,6 +2928,7 @@ public class NotificationManagerServiceTest extends UiServiceTestCase {
                 mTestNotificationChannel, 2, "group", false);
         mService.addNotification(parent);
         mService.addNotification(child);
+        when(mSnoozeHelper.canSnooze(anyInt())).thenReturn(true);
 
         NotificationManagerService.SnoozeNotificationRunnable snoozeNotificationRunnable =
                 mService.new SnoozeNotificationRunnable(
@@ -2892,6 +2956,7 @@ public class NotificationManagerServiceTest extends UiServiceTestCase {
         final NotificationRecord child = generateNotificationRecord(
                 mTestNotificationChannel, 2, "group", false);
         mService.addNotification(child);
+        when(mSnoozeHelper.canSnooze(anyInt())).thenReturn(true);
 
         NotificationManagerService.SnoozeNotificationRunnable snoozeNotificationRunnable =
                 mService.new SnoozeNotificationRunnable(
