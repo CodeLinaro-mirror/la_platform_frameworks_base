@@ -243,7 +243,8 @@ public class DozeParameters implements
     }
 
     public void setControlScreenOffAnimation(boolean controlScreenOffAnimation) {
-        if (mControlScreenOffAnimation == controlScreenOffAnimation) {
+        boolean isWatch = SystemProperties.getBoolean("ro.product.qti.qcom_watch", false);
+        if (mControlScreenOffAnimation == controlScreenOffAnimation || isWatch) {
             return;
         }
         mControlScreenOffAnimation = controlScreenOffAnimation;
