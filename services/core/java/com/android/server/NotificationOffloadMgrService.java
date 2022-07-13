@@ -54,10 +54,12 @@ package com.android.server;
 
 import static android.os.UserHandle.USER_SYSTEM;
 
-import vendor.qti.bluetooth_offload.NotificationOffloadAdapter;
+import vendor.qti.bluetooth_offload.NotificationOffloadMgr;
+import vendor.qti.bluetooth_offload.BluetoothPowerStateMgr;
 import vendor.qti.bluetooth_offload.INotificationOffloadMgr;
 import vendor.qti.bluetooth_offload.INotificationOffloadMgrCallback;
 import vendor.qti.bluetooth_offload.IBluetoothOffloadApp;
+import vendor.qti.bluetooth_offload.IBluetoothOffloadLpm;
 import android.content.ComponentName;
 import android.content.ContentResolver;
 import android.content.Context;
@@ -99,10 +101,14 @@ class NotificationOffloadMgrService extends INotificationOffloadMgr.Stub {
     private static final int TIMEOUT_BIND_MS = 3000; //Maximum msec to wait for a bind
 
     private static final int MESSAGE_INFORM_ADAPTER_SERVICE_UP = 22;
+    private static final int MESSAGE_INFORM_LPM_ADAPTER_SERVICE_UP = 23;
     private static final int MESSAGE_BLUETOOTH_OFFLOAD_SERVICE_CONNECTED = 40;
     private static final int MESSAGE_BLUETOOTH_OFFLOAD_SERVICE_DISCONNECTED = 41;
+    private static final int MESSAGE_BLUETOOTH_OFFLOAD_LPM_SERVICE_CONNECTED = 43;
+    private static final int MESSAGE_BLUETOOTH_OFFLOAD_LPM_SERVICE_DISCONNECTED = 44;
     private static final int MESSAGE_TIMEOUT_BIND = 100;
     private static final int MESSAGE_TIMEOUT_UNBIND = 101;
+    private static final int MESSAGE_TIMEOUT_LPM_BIND = 102;
     private static final int MESSAGE_USER_SWITCHED = 300;
     private static final int MESSAGE_USER_UNLOCKED = 301;
 
@@ -117,6 +123,12 @@ class NotificationOffloadMgrService extends INotificationOffloadMgr.Stub {
     private boolean mBinding;
     private boolean mUnbinding;
     private boolean mTryBindOnBindTimeout = false;
+
+    private IBluetoothOffloadLpm mLpmBluetoothOffload;
+    private final ReentrantReadWriteLock mLpmBluetoothOffloadLock = new ReentrantReadWriteLock();
+    private boolean mLpmBinding;
+    private boolean mLpmUnbinding;
+    private boolean mLpmTryBindOnBindTimeout = false;
 
     // used inside handler thread
     private boolean mQuietEnable = false;
@@ -137,8 +149,10 @@ class NotificationOffloadMgrService extends INotificationOffloadMgr.Stub {
 
         mCrashes = 0;
         mBluetoothOffload = null;
+        mLpmBluetoothOffload = null;
         mBluetoothBinder = null;
         mBinding = false;
+        mLpmBinding = false;
         mTryBindOnBindTimeout = false;
         mUnbinding = false;
 
@@ -156,6 +170,18 @@ class NotificationOffloadMgrService extends INotificationOffloadMgr.Stub {
         }
         /* Madhu: To Confirm */
         return mBluetoothOffload;
+    }
+
+    public IBluetoothOffloadLpm registerLPMAdapter(INotificationOffloadMgrCallback callback) {
+        Slog.w(TAG, "registerLPMAdapter");
+        if (callback == null) {
+            Slog.w(TAG, "Callback is null in registerLPMAdapter");
+            return null;
+        }
+        synchronized (mCallbacks) {
+            mCallbacks.register(callback);
+        }
+        return mLpmBluetoothOffload;
     }
 
     public void unregisterAdapter(INotificationOffloadMgrCallback callback) {
@@ -180,6 +206,13 @@ class NotificationOffloadMgrService extends INotificationOffloadMgr.Stub {
                 return;
             }
             mUnbinding = true;
+            if (mLpmBluetoothOffload != null) {
+                mLpmBluetoothOffload = null;
+                mLpmBinding = false;
+                mLpmUnbinding = false;
+                mLpmTryBindOnBindTimeout = false;
+                mContext.unbindService(mLpmConnection);
+            }
             if (mBluetoothOffload != null) {
                 mBluetoothBinder = null;
                 mBluetoothOffload = null;
@@ -236,7 +269,7 @@ class NotificationOffloadMgrService extends INotificationOffloadMgr.Stub {
                 Slog.d(TAG, "Broadcasting onBluetoothOffloadServiceUp() to " + n + " receivers.");
                 for (int i = 0; i < n; i++) {
                     try {
-                        mCallbacks.getBroadcastItem(i).onBluetoothOffloadServiceUp(mBluetoothOffload);
+                        mCallbacks.getBroadcastItem(i).onBluetoothOffloadServiceUp(mBluetoothOffload, null);
                     } catch (RemoteException e) {
                         Slog.e(TAG, "Unable to call onBluetoothOffloadServiceUp() on callback #" + i, e);
                     }
@@ -244,6 +277,26 @@ class NotificationOffloadMgrService extends INotificationOffloadMgr.Stub {
             } finally {
                 mCallbacks.finishBroadcast();
                 mBluetoothOffloadLock.writeLock().unlock();
+            }
+        }
+    }
+
+    private void sendBluetoothLPMServiceUpCallback() {
+        synchronized (mCallbacks) {
+            try {
+                mLpmBluetoothOffloadLock.writeLock().lock();
+                int n = mCallbacks.beginBroadcast();
+                Slog.d(TAG, "Broadcasting onBluetoothOffloadServiceUp() to " + n + " receivers.");
+                for (int i = 0; i < n; i++) {
+                    try {
+                        mCallbacks.getBroadcastItem(i).onBluetoothOffloadServiceUp(null, mLpmBluetoothOffload);
+                    } catch (RemoteException e) {
+                        Slog.e(TAG, "Unable to call onBluetoothOffloadServiceUp() on callback #" + i, e);
+                    }
+                }
+            } finally {
+                mCallbacks.finishBroadcast();
+                mLpmBluetoothOffloadLock.writeLock().unlock();
             }
         }
     }
@@ -306,6 +359,43 @@ class NotificationOffloadMgrService extends INotificationOffloadMgr.Stub {
 
     private BluetoothOffloadServiceConnection mConnection = new BluetoothOffloadServiceConnection();
 
+    private class BluetoothOffloadLPMServiceConnection implements ServiceConnection {
+        public void onServiceConnected(ComponentName componentName, IBinder service) {
+            String name = componentName.getClassName();
+            if (DBG) {
+                Slog.d(TAG, "BluetoothOffloadLPMServiceConnection: " + name);
+            }
+            Message msg = mHandler.obtainMessage(MESSAGE_BLUETOOTH_OFFLOAD_LPM_SERVICE_CONNECTED);
+            if (name.equals("vendor.qti.bluetooth_offload.btservice.BluetoothOffloadService")) {
+                msg.arg1 = SERVICE_IBLUETOOTH_OFFLOAD;
+                mHandler.removeMessages(MESSAGE_TIMEOUT_LPM_BIND);
+            } else {
+                Slog.e(TAG, "Unknown service connected: " + name);
+                return;
+            }
+            msg.obj = service;
+            mHandler.sendMessage(msg);
+        }
+
+        public void onServiceDisconnected(ComponentName componentName) {
+            // Called if we unexpectedly disconnect.
+            String name = componentName.getClassName();
+            if (DBG) {
+                Slog.d(TAG, "BluetoothOffloadServiceDiscConnection, disconnected: " + name);
+            }
+            Message msg = mHandler.obtainMessage(MESSAGE_BLUETOOTH_OFFLOAD_LPM_SERVICE_DISCONNECTED);
+            if (!name.equals("vendor.qti.bluetooth_offload.btservice.BluetoothOffloadService")) {
+                msg.arg1 = SERVICE_IBLUETOOTH_OFFLOAD;
+            } else {
+                Slog.e(TAG, "Unknown service disconnected: " + name);
+                return;
+            }
+            mHandler.sendMessage(msg);
+        }
+    }
+
+    private BluetoothOffloadLPMServiceConnection mLpmConnection = new BluetoothOffloadLPMServiceConnection();
+
     private class BluetoothOffloadHandler extends Handler {
         boolean mGetNameAddressOnly = false;
 
@@ -319,6 +409,11 @@ class NotificationOffloadMgrService extends INotificationOffloadMgr.Stub {
                 case MESSAGE_INFORM_ADAPTER_SERVICE_UP: {
                     if (DBG) Slog.d(TAG,"MESSAGE_INFORM_ADAPTER_SERVICE_UP");
                     sendBluetoothServiceUpCallback();
+                    break;
+                }
+                case MESSAGE_INFORM_LPM_ADAPTER_SERVICE_UP: {
+                    if (DBG) Slog.d(TAG,"MESSAGE_INFORM_LPM_ADAPTER_SERVICE_UP");
+                    sendBluetoothLPMServiceUpCallback();
                     break;
                 }
                 case MESSAGE_BLUETOOTH_OFFLOAD_SERVICE_CONNECTED: {
@@ -346,6 +441,30 @@ class NotificationOffloadMgrService extends INotificationOffloadMgr.Stub {
                     break;
                 }
 
+                case MESSAGE_BLUETOOTH_OFFLOAD_LPM_SERVICE_CONNECTED: {
+                    if (DBG) {
+                        Slog.d(TAG, "MESSAGE_BLUETOOTH_OFFLOAD_LPM_SERVICE_CONNECTED: " + msg.arg1);
+                    }
+
+                    IBinder service = (IBinder) msg.obj;
+                    try {
+                        mLpmBluetoothOffloadLock.writeLock().lock();
+
+                        mLpmBinding = false;
+                        mLpmTryBindOnBindTimeout = false;
+                        mLpmBluetoothOffload = IBluetoothOffloadLpm.Stub.asInterface(Binder.allowBlocking(service));
+
+                        //Inform BluetoothAdapter instances that service is up
+                        Message informMsg =
+                                    mHandler.obtainMessage(MESSAGE_INFORM_LPM_ADAPTER_SERVICE_UP);
+                        mHandler.sendMessage(informMsg);
+
+                    } finally {
+                        mLpmBluetoothOffloadLock.writeLock().unlock();
+                    }
+                    break;
+                }
+
                 case MESSAGE_BLUETOOTH_OFFLOAD_SERVICE_DISCONNECTED: {
                     Slog.e(TAG, "MESSAGE_BLUETOOTH_OFFLOAD_SERVICE_DISCONNECTED(" + msg.arg1 + ")");
                     try {
@@ -369,6 +488,30 @@ class NotificationOffloadMgrService extends INotificationOffloadMgr.Stub {
                     sendBluetoothServiceDownCallback();
                     break;
                 }
+
+                case MESSAGE_BLUETOOTH_OFFLOAD_LPM_SERVICE_DISCONNECTED: {
+                    Slog.e(TAG, "MESSAGE_BLUETOOTH_OFFLOAD_LPM_SERVICE_DISCONNECTED(" + msg.arg1 + ")");
+                    try {
+                        mLpmBluetoothOffloadLock.writeLock().lock();
+                        if (msg.arg1 == SERVICE_IBLUETOOTH_OFFLOAD) {
+                            // if service is unbinded already, do nothing and return
+                            if (mLpmBluetoothOffload == null) {
+                                break;
+                            }
+                            mLpmBluetoothOffload = null;
+                        } else {
+                            Slog.e(TAG, "Unknown argument for service disconnect!");
+                            break;
+                        }
+                    } finally {
+                        mLpmBluetoothOffloadLock.writeLock().unlock();
+                    }
+
+                    // log the unexpected crash
+                    addCrashLog();
+                    sendBluetoothServiceDownCallback();
+                    break;
+                }
                 case MESSAGE_TIMEOUT_BIND: {
                     Slog.e(TAG, "MESSAGE_TIMEOUT_BIND");
                     mBluetoothOffloadLock.writeLock().lock();
@@ -382,6 +525,22 @@ class NotificationOffloadMgrService extends INotificationOffloadMgr.Stub {
                     } else {
                         Slog.e(TAG, "Bind trails excedded");
                         mTryBindOnBindTimeout = false;
+                    }
+                    break;
+                }
+                case MESSAGE_TIMEOUT_LPM_BIND: {
+                    Slog.e(TAG, "MESSAGE_TIMEOUT_LPM_BIND");
+                    mLpmBluetoothOffloadLock.writeLock().lock();
+                    mLpmBinding = false;
+                    mLpmBluetoothOffloadLock.writeLock().unlock();
+                    // Ensure try BIND for one more time
+                    if(!mLpmTryBindOnBindTimeout) {
+                        Slog.e(TAG, " Trying to Bind again for Lpm");
+                        mLpmTryBindOnBindTimeout = true;
+                        handleEnable(mQuietEnable);
+                    } else {
+                        Slog.e(TAG, "Bind trails excedded for LPM");
+                        mLpmTryBindOnBindTimeout = false;
                     }
                     break;
                 }
@@ -413,6 +572,11 @@ class NotificationOffloadMgrService extends INotificationOffloadMgr.Stub {
                             Slog.d(TAG, "Enabled but not bound; retrying after unlock");
                         }
                         handleEnable(mQuietEnable);
+                    } else if (!mLpmBinding && (mLpmBluetoothOffload == null)) {
+                        if (DBG) {
+                            Slog.d(TAG, "Enabled but LPM not bound; retrying after unlock");
+                        }
+                        handleEnable(mQuietEnable);
                     }
                 }
             }
@@ -430,6 +594,7 @@ class NotificationOffloadMgrService extends INotificationOffloadMgr.Stub {
                 Message timeoutMsg = mHandler.obtainMessage(MESSAGE_TIMEOUT_BIND);
                 mHandler.sendMessageDelayed(timeoutMsg, TIMEOUT_BIND_MS);
                 Intent i = new Intent(IBluetoothOffloadApp.class.getName());
+                i.setAction(NotificationOffloadMgr.BLUETOOTH_OFFLOAD_APP_BINDING);
                 if (!doBind(i, mConnection, Context.BIND_AUTO_CREATE | Context.BIND_IMPORTANT,
                         UserHandle.CURRENT)) {
                     mHandler.removeMessages(MESSAGE_TIMEOUT_BIND);
@@ -439,6 +604,26 @@ class NotificationOffloadMgrService extends INotificationOffloadMgr.Stub {
             }
         } finally {
             mBluetoothOffloadLock.writeLock().unlock();
+        }
+
+        try {
+            mLpmBluetoothOffloadLock.writeLock().lock();
+            if ((mLpmBluetoothOffload == null) && (!mLpmBinding)) {
+                Slog.d(TAG, "binding Bluetooth Lpm service");
+                //Start bind timeout and bind
+                Message timeoutMsg = mHandler.obtainMessage(MESSAGE_TIMEOUT_LPM_BIND);
+                mHandler.sendMessageDelayed(timeoutMsg, TIMEOUT_BIND_MS);
+                Intent i = new Intent(IBluetoothOffloadLpm.class.getName());
+                i.setAction(BluetoothPowerStateMgr.BLUETOOTH_OFFLOAD_LPM_BINDING);
+                if (!doBind(i, mLpmConnection, Context.BIND_AUTO_CREATE | Context.BIND_IMPORTANT,
+                            UserHandle.CURRENT)) {
+                    mHandler.removeMessages(MESSAGE_TIMEOUT_LPM_BIND);
+                } else {
+                    mLpmBinding = true;
+                }
+            }
+        } finally {
+            mLpmBluetoothOffloadLock.writeLock().unlock();
         }
     }
 

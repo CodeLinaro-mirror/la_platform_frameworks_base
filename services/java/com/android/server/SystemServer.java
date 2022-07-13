@@ -839,6 +839,9 @@ public final class SystemServer {
             }
         }
 
+        //create new property for power test, we can disable ds feature when power test
+        boolean disableDeepSleep =
+            SystemProperties.getBoolean("persist.sys.suspend.debug.disable", false);
         //DeepSleep feature can be disabled with overlay
         final int DEEPSLEEP_ENABLE = 1;
         final int deepsleepBehavior =
@@ -849,7 +852,7 @@ public final class SystemServer {
              SystemProperties.getBoolean("ro.product.qti.qcom_watch", false);
         final String SUSPEND_SERVICE_CLASS =
             "com.qualcomm.qti.server.suspendservice.SuspendManagerService";
-        if (startSuspendService) {
+        if (!disableDeepSleep && startSuspendService) {
             try {
                 t.traceBegin("StartSuspendService");
                 mSystemServiceManager.startService(SUSPEND_SERVICE_CLASS);

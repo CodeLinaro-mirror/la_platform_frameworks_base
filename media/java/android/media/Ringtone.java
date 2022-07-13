@@ -522,10 +522,9 @@ public class Ringtone {
             synchronized (sActiveRingtones) {
                 sActiveRingtones.remove(Ringtone.this);
             }
-            mLocalPlayer.reset();
-            mLocalPlayer.release();
             mp.setOnCompletionListener(null); // Help the Java GC: break the refcount cycle.
-            mLocalPlayer = null;
+            //fix ringtone player memory leak
+            stop();
         }
     }
 }

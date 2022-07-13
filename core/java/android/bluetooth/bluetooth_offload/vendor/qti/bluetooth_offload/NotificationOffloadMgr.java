@@ -50,6 +50,7 @@ import android.os.ServiceManager;
 import android.os.SynchronousResultReceiver;
 import android.os.SystemProperties;
 import vendor.qti.bluetooth_offload.IBluetoothOffloadApp;
+import vendor.qti.bluetooth_offload.IBluetoothOffloadLpm;
 import vendor.qti.bluetooth_offload.IBluetoothOffloadAppCallback;
 import vendor.qti.bluetooth_offload.INotificationOffloadMgr;
 import vendor.qti.bluetooth_offload.INotificationOffloadMgrCallback;
@@ -59,11 +60,13 @@ import java.util.List;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /** @hide */
-public final class NotificationOffloadAdapter {
-    private static final String TAG = "NotificationOffloadAdapter";
+public final class NotificationOffloadMgr {
+    private static final String TAG = "NotificationOffloadMgr";
 
     /** @hide */
     public static final String NOTIFICATION_OFFLOAD_MGR_SERVICE = "notification_offload_mgr";
+
+    public static final String BLUETOOTH_OFFLOAD_APP_BINDING = "vendor.qti.bluetooth_offload.IBluetoothOffloadApp";
 
     @UnsupportedAppUsage
     private INotificationOffloadMgr mManagerService;
@@ -94,9 +97,9 @@ public final class NotificationOffloadAdapter {
     private boolean mRegisterStatus = false;
 
     /**
-     * Use {@link #getDefaultAdapter} to get the NotificationOffloadAdapter instance.
+     * Use {@link #getDefaultAdapter} to get the NotificationOffloadMgr instance.
      */
-    public NotificationOffloadAdapter(@NonNull Context context) {
+    public NotificationOffloadMgr(@NonNull Context context) {
         IBinder b = ServiceManager.getService(NOTIFICATION_OFFLOAD_MGR_SERVICE);
         if (b != null) {
             mManagerService = INotificationOffloadMgr.Stub.asInterface(b);
@@ -374,7 +377,7 @@ public final class NotificationOffloadAdapter {
 
     private final INotificationOffloadMgrCallback mManagerCallback =
         new INotificationOffloadMgrCallback.Stub() {
-                public void onBluetoothOffloadServiceUp(IBluetoothOffloadApp bluetoothOffloadService) {
+                public void onBluetoothOffloadServiceUp(IBluetoothOffloadApp bluetoothOffloadService, IBluetoothOffloadLpm lpmOffloadService) {
                     Log.d(TAG, "onBluetoothOffloadServiceUp: " + bluetoothOffloadService);
 
                     mServiceLock.writeLock().lock();
