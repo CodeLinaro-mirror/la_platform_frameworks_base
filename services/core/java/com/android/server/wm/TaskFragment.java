@@ -96,6 +96,7 @@ import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.protolog.common.ProtoLog;
 import com.android.internal.util.function.pooled.PooledLambda;
 import com.android.internal.util.function.pooled.PooledPredicate;
+import com.android.server.am.HostingRecord;
 import com.android.server.pm.parsing.pkg.AndroidPackage;
 
 import java.io.FileDescriptor;
@@ -103,7 +104,6 @@ import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Objects;
 import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
@@ -191,6 +191,12 @@ class TaskFragment extends WindowContainer<WindowContainer> {
      * an activity in the Task.
      */
     boolean mClearedTaskForReuse;
+
+    /**
+     * The last running activity of the TaskFragment was reparented to a different Task because it
+     * is entering PiP.
+     */
+    boolean mClearedTaskFragmentForPip;
 
     /**
      * When we are in the process of pausing an activity, before starting the
@@ -339,7 +345,7 @@ class TaskFragment extends WindowContainer<WindowContainer> {
         }
     }
 
-    private void resetAdjacentTaskFragment() {
+    void resetAdjacentTaskFragment() {
         // Reset the adjacent TaskFragment if its adjacent TaskFragment is also this TaskFragment.
         if (mAdjacentTaskFragment != null && mAdjacentTaskFragment.mAdjacentTaskFragment == this) {
             mAdjacentTaskFragment.mAdjacentTaskFragment = null;
@@ -513,15 +519,20 @@ class TaskFragment extends WindowContainer<WindowContainer> {
         return false;
     }
 
+    boolean isAllowedToEmbedActivity(@NonNull ActivityRecord a) {
+        return isAllowedToEmbedActivity(a, mTaskFragmentOrganizerUid);
+    }
+
     /**
      * Checks if the organized task fragment is allowed to have the specified activity, which is
      * allowed if an activity allows embedding in untrusted mode, or if the trusted mode can be
      * enabled.
      * @see #isAllowedToEmbedActivityInTrustedMode(ActivityRecord)
+     * @param uid   uid of the TaskFragment organizer.
      */
-    boolean isAllowedToEmbedActivity(@NonNull ActivityRecord a) {
+    boolean isAllowedToEmbedActivity(@NonNull ActivityRecord a, int uid) {
         return isAllowedToEmbedActivityInUntrustedMode(a)
-                || isAllowedToEmbedActivityInTrustedMode(a);
+                || isAllowedToEmbedActivityInTrustedMode(a, uid);
     }
 
     /**
@@ -538,21 +549,20 @@ class TaskFragment extends WindowContainer<WindowContainer> {
                 == FLAG_ALLOW_UNTRUSTED_ACTIVITY_EMBEDDING;
     }
 
+    boolean isAllowedToEmbedActivityInTrustedMode(@NonNull ActivityRecord a) {
+        return isAllowedToEmbedActivityInTrustedMode(a, mTaskFragmentOrganizerUid);
+    }
+
     /**
      * Checks if the organized task fragment is allowed to embed activity in fully trusted mode,
      * which means that all transactions are allowed. This is supported in the following cases:
      * <li>the activity belongs to the same app as the organizer host;</li>
      * <li>the activity has declared the organizer host as trusted explicitly via known
      * certificate.</li>
+     * @param uid   uid of the TaskFragment organizer.
      */
-    boolean isAllowedToEmbedActivityInTrustedMode(@NonNull ActivityRecord a) {
-        if (UserHandle.getAppId(mTaskFragmentOrganizerUid) == SYSTEM_UID) {
-            // The system is trusted to embed other apps securely and for all users.
-            return true;
-        }
-
-        if (mTaskFragmentOrganizerUid == a.getUid()) {
-            // Activities from the same UID can be embedded freely by the host.
+    boolean isAllowedToEmbedActivityInTrustedMode(@NonNull ActivityRecord a, int uid) {
+        if (isFullyTrustedEmbedding(a, uid)) {
             return true;
         }
 
@@ -564,10 +574,32 @@ class TaskFragment extends WindowContainer<WindowContainer> {
         }
 
         AndroidPackage hostPackage = mAtmService.getPackageManagerInternalLocked()
-                .getPackage(mTaskFragmentOrganizerUid);
+                .getPackage(uid);
 
         return hostPackage != null && hostPackage.getSigningDetails().hasAncestorOrSelfWithDigest(
                 knownActivityEmbeddingCerts);
+    }
+
+    /**
+     * It is fully trusted for embedding in the system app or embedding in the same app. This is
+     * different from {@link #isAllowedToBeEmbeddedInTrustedMode()} since there may be a small
+     * chance for a previous trusted app to start doing something bad.
+     */
+    private static boolean isFullyTrustedEmbedding(@NonNull ActivityRecord a, int uid) {
+        // The system is trusted to embed other apps securely and for all users.
+        return UserHandle.getAppId(uid) == SYSTEM_UID
+                // Activities from the same UID can be embedded freely by the host.
+                || uid == a.getUid();
+    }
+
+    /**
+     * Checks if all activities in the task fragment are embedded as fully trusted.
+     * @see #isFullyTrustedEmbedding(ActivityRecord, int)
+     * @param uid   uid of the TaskFragment organizer.
+     */
+    boolean isFullyTrustedEmbedding(int uid) {
+        // Traverse all activities to see if any of them are not fully trusted embedding.
+        return !forAllActivities(r -> !isFullyTrustedEmbedding(r, uid));
     }
 
     /**
@@ -575,7 +607,8 @@ class TaskFragment extends WindowContainer<WindowContainer> {
      * @see #isAllowedToEmbedActivityInTrustedMode(ActivityRecord)
      */
     boolean isAllowedToBeEmbeddedInTrustedMode() {
-        return forAllActivities(this::isAllowedToEmbedActivityInTrustedMode);
+        // Traverse all activities to see if any of them are not in the trusted mode.
+        return !forAllActivities(r -> !isAllowedToEmbedActivityInTrustedMode(r));
     }
 
     /**
@@ -847,6 +880,16 @@ class TaskFragment extends WindowContainer<WindowContainer> {
         return getActivity((r) -> r.canBeTopRunning() && r.getTask() == this.getTask());
     }
 
+    int getNonFinishingActivityCount() {
+        final int[] runningActivityCount = new int[1];
+        forAllActivities(a -> {
+            if (!a.finishing) {
+                runningActivityCount[0]++;
+            }
+        });
+        return runningActivityCount[0];
+    }
+
     boolean isTopActivityFocusable() {
         final ActivityRecord r = topRunningActivity();
         return r != null ? r.isFocusable()
@@ -1018,19 +1061,19 @@ class TaskFragment extends WindowContainer<WindowContainer> {
         // If the top activity is the resumed one, nothing to do.
         if (mResumedActivity == next && next.isState(RESUMED)
                 && taskDisplayArea.allResumedActivitiesComplete()) {
+            // Ensure the visibility gets updated before execute app transition.
+            taskDisplayArea.ensureActivitiesVisible(null /* starting */, 0 /* configChanges */,
+                    false /* preserveWindows */, true /* notifyClients */);
             // Make sure we have executed any pending transitions, since there
             // should be nothing left to do at this point.
             executeAppTransition(options);
-            // For devices that are not in fullscreen mode (e.g. freeform windows), it's possible
-            // we still want to check if the visibility of other windows have changed (e.g. bringing
-            // a fullscreen window forward to cover another freeform activity.)
-            if (taskDisplayArea.inMultiWindowMode()) {
-                if (taskDisplayArea.mDisplayContent != null
-                        && taskDisplayArea.mDisplayContent.mFocusedApp != next) {
-                    taskDisplayArea.mDisplayContent.setFocusedApp(next);
-                }
-                taskDisplayArea.ensureActivitiesVisible(null /* starting */, 0 /* configChanges */,
-                        false /* preserveWindows */, true /* notifyClients */);
+
+            // In a multi-resumed environment, like in a freeform device, the top
+            // activity can be resumed, but it might not be the focused app.
+            // Set focused app when top activity is resumed
+            if (taskDisplayArea.inMultiWindowMode() && taskDisplayArea.mDisplayContent != null
+                    && taskDisplayArea.mDisplayContent.mFocusedApp != next) {
+                taskDisplayArea.mDisplayContent.setFocusedApp(next);
             }
             ProtoLog.d(WM_DEBUG_STATES, "resumeTopActivity: Top activity "
                     + "resumed %s", next);
@@ -1105,7 +1148,8 @@ class TaskFragment extends WindowContainer<WindowContainer> {
                 // for the current activity to be paused.
                 final boolean isTop = this == taskDisplayArea.getFocusedRootTask();
                 mAtmService.startProcessAsync(next, false /* knownToBeDead */, isTop,
-                        isTop ? "pre-top-activity" : "pre-activity");
+                        isTop ? HostingRecord.HOSTING_TYPE_NEXT_TOP_ACTIVITY
+                                : HostingRecord.HOSTING_TYPE_NEXT_ACTIVITY);
             }
             if (lastResumed != null) {
                 lastResumed.setWillCloseOrEnterPip(true);
@@ -1232,6 +1276,7 @@ class TaskFragment extends WindowContainer<WindowContainer> {
 
             // This activity is now becoming visible.
             if (!next.mVisibleRequested || next.stopped || lastActivityTranslucent) {
+                next.app.addToPendingTop();
                 next.setVisibility(true);
             }
 
@@ -1708,12 +1753,13 @@ class TaskFragment extends WindowContainer<WindowContainer> {
     void addChild(WindowContainer child, int index) {
         ActivityRecord r = topRunningActivity();
         mClearedTaskForReuse = false;
+        mClearedTaskFragmentForPip = false;
 
         boolean isAddingActivity = child.asActivityRecord() != null;
         final Task task = isAddingActivity ? getTask() : null;
 
         // If this task had any activity before we added this one.
-        boolean taskHadActivity = task != null && task.getActivity(Objects::nonNull) != null;
+        boolean taskHadActivity = task != null && task.getTopMostActivity() != null;
         // getActivityType() looks at the top child, so we need to read the type before adding
         // a new child in case the new child is on top and UNDEFINED.
         final int activityType = task != null ? task.getActivityType() : ACTIVITY_TYPE_UNDEFINED;
@@ -1825,8 +1871,6 @@ class TaskFragment extends WindowContainer<WindowContainer> {
             return false;
         }
         if (tda == null) {
-            Slog.w(TAG, "Can't find TaskDisplayArea to determine support for multi"
-                    + " window. Task id=" + getTaskId() + " attached=" + isAttached());
             return false;
         }
         if (!getTask().isResizeable() && !tda.supportsNonResizableMultiWindow()) {
@@ -2128,7 +2172,8 @@ class TaskFragment extends WindowContainer<WindowContainer> {
         if (applicationType != ACTIVITY_TYPE_UNDEFINED || !hasChild()) {
             return applicationType;
         }
-        return getTopChild().getActivityType();
+        final ActivityRecord activity = getTopMostActivity();
+        return activity != null ? activity.getActivityType() : getTopChild().getActivityType();
     }
 
     @Override
@@ -2254,22 +2299,16 @@ class TaskFragment extends WindowContainer<WindowContainer> {
         }
         final Point positionInParent = new Point();
         getRelativePosition(positionInParent);
-        final int[] runningActivityCount = new int[1];
-        forAllActivities(a -> {
-            if (!a.finishing) {
-                runningActivityCount[0]++;
-            }
-        });
         return new TaskFragmentInfo(
                 mFragmentToken,
                 mRemoteToken.toWindowContainerToken(),
                 getConfiguration(),
-                getChildCount() == 0,
-                runningActivityCount[0],
+                getNonFinishingActivityCount(),
                 isVisible(),
                 childActivities,
                 positionInParent,
-                mClearedTaskForReuse);
+                mClearedTaskForReuse,
+                mClearedTaskFragmentForPip);
     }
 
     @Nullable
@@ -2292,11 +2331,32 @@ class TaskFragment extends WindowContainer<WindowContainer> {
         return mTaskFragmentOrganizer != null;
     }
 
+    /** Whether the Task should be visible. */
+    boolean isTaskVisibleRequested() {
+        final Task task = getTask();
+        return task != null && task.isVisibleRequested();
+    }
+
     boolean isReadyToTransit() {
+        // We only wait when this is organized to give the organizer a chance to update.
+        if (!isOrganizedTaskFragment()) {
+            return true;
+        }
         // We don't want to start the transition if the organized TaskFragment is empty, unless
         // it is requested to be removed.
-        return !isOrganizedTaskFragment() || getTopNonFinishingActivity() != null
-                || mIsRemovalRequested;
+        if (getTopNonFinishingActivity() != null || mIsRemovalRequested) {
+            return true;
+        }
+        // Organizer shouldn't change embedded TaskFragment in PiP.
+        if (isEmbeddedTaskFragmentInPip()) {
+            return true;
+        }
+        // The TaskFragment becomes empty because the last running activity enters PiP when the Task
+        // is minimized.
+        if (mClearedTaskFragmentForPip && !isTaskVisibleRequested()) {
+            return true;
+        }
+        return false;
     }
 
     /** Clear {@link #mLastPausedActivity} for all {@link TaskFragment} children */
@@ -2316,6 +2376,14 @@ class TaskFragment extends WindowContainer<WindowContainer> {
         }
         mMinWidth = minWidth;
         mMinHeight = minHeight;
+    }
+
+    /**
+     * Whether this is an embedded TaskFragment in PIP Task. We don't allow any client config
+     * override for such TaskFragment to prevent flight with PipTaskOrganizer.
+     */
+    boolean isEmbeddedTaskFragmentInPip() {
+        return isOrganizedTaskFragment() && getTask() != null && getTask().inPinnedWindowingMode();
     }
 
     boolean shouldRemoveSelfOnLastChildRemoval() {
@@ -2406,8 +2474,19 @@ class TaskFragment extends WindowContainer<WindowContainer> {
         mIsRemovalRequested = false;
         resetAdjacentTaskFragment();
         cleanUp();
+        final boolean shouldExecuteAppTransition =
+                mClearedTaskFragmentForPip && isTaskVisibleRequested();
         super.removeImmediately();
         sendTaskFragmentVanished();
+        if (shouldExecuteAppTransition && mDisplayContent != null) {
+            // When the Task is still visible, and the TaskFragment is removed because the last
+            // running activity is reparenting to PiP, it is possible that no activity is getting
+            // paused or resumed (having an embedded activity in split), thus we need to relayout
+            // and execute it explicitly.
+            mAtmService.addWindowLayoutReasons(
+                    ActivityTaskManagerService.LAYOUT_REASON_VISIBILITY_CHANGED);
+            mDisplayContent.executeAppTransition();
+        }
     }
 
     /** Called on remove to cleanup. */

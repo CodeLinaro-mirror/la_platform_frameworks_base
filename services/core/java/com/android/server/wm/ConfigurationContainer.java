@@ -126,6 +126,10 @@ public abstract class ConfigurationContainer<E extends ConfigurationContainer> {
         mResolvedTmpConfig.setTo(mResolvedOverrideConfiguration);
         resolveOverrideConfiguration(newParentConfig);
         mFullConfiguration.setTo(newParentConfig);
+        // Do not inherit always-on-top property from parent, otherwise the always-on-top
+        // property is propagated to all children. In that case, newly added child is
+        // always being positioned at bottom (behind the always-on-top siblings).
+        mFullConfiguration.windowConfiguration.unsetAlwaysOnTop();
         mFullConfiguration.updateFrom(mResolvedOverrideConfiguration);
         onMergedOverrideConfigurationChanged();
         if (!mResolvedTmpConfig.equals(mResolvedOverrideConfiguration)) {
@@ -190,6 +194,14 @@ public abstract class ConfigurationContainer<E extends ConfigurationContainer> {
      * @see #mFullConfiguration
      */
     public void onRequestedOverrideConfigurationChanged(Configuration overrideConfiguration) {
+        updateRequestedOverrideConfiguration(overrideConfiguration);
+        // Update full configuration of this container and all its children.
+        final ConfigurationContainer parent = getParent();
+        onConfigurationChanged(parent != null ? parent.getConfiguration() : Configuration.EMPTY);
+    }
+
+    /** Updates override configuration without recalculate full config. */
+    void updateRequestedOverrideConfiguration(Configuration overrideConfiguration) {
         // Pre-compute this here, so we don't need to go through the entire Configuration when
         // writing to proto (which has significant cost if we write a lot of empty configurations).
         mHasOverrideConfiguration = !Configuration.EMPTY.equals(overrideConfiguration);
@@ -199,9 +211,6 @@ public abstract class ConfigurationContainer<E extends ConfigurationContainer> {
                 && diffRequestedOverrideMaxBounds(newBounds) != BOUNDS_CHANGE_NONE) {
             mRequestedOverrideConfiguration.windowConfiguration.setMaxBounds(newBounds);
         }
-        // Update full configuration of this container and all its children.
-        final ConfigurationContainer parent = getParent();
-        onConfigurationChanged(parent != null ? parent.getConfiguration() : Configuration.EMPTY);
     }
 
     /**
@@ -223,6 +232,10 @@ public abstract class ConfigurationContainer<E extends ConfigurationContainer> {
         final ConfigurationContainer parent = getParent();
         if (parent != null) {
             mMergedOverrideConfiguration.setTo(parent.getMergedOverrideConfiguration());
+            // Do not inherit always-on-top property from parent, otherwise the always-on-top
+            // property is propagated to all children. In that case, newly added child is
+            // always being positioned at bottom (behind the always-on-top siblings).
+            mMergedOverrideConfiguration.windowConfiguration.unsetAlwaysOnTop();
             mMergedOverrideConfiguration.updateFrom(mResolvedOverrideConfiguration);
         } else {
             mMergedOverrideConfiguration.setTo(mResolvedOverrideConfiguration);
@@ -632,12 +645,19 @@ public abstract class ConfigurationContainer<E extends ConfigurationContainer> {
     }
 
     void registerConfigurationChangeListener(ConfigurationContainerListener listener) {
+        registerConfigurationChangeListener(listener, true /* shouldDispatchConfig */);
+    }
+
+    void registerConfigurationChangeListener(ConfigurationContainerListener listener,
+            boolean shouldDispatchConfig) {
         if (mChangeListeners.contains(listener)) {
             return;
         }
         mChangeListeners.add(listener);
-        listener.onRequestedOverrideConfigurationChanged(mResolvedOverrideConfiguration);
-        listener.onMergedOverrideConfigurationChanged(mMergedOverrideConfiguration);
+        if (shouldDispatchConfig) {
+            listener.onRequestedOverrideConfigurationChanged(mResolvedOverrideConfiguration);
+            listener.onMergedOverrideConfigurationChanged(mMergedOverrideConfiguration);
+        }
     }
 
     void unregisterConfigurationChangeListener(ConfigurationContainerListener listener) {

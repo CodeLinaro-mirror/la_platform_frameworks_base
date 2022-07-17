@@ -136,6 +136,8 @@ class DreamSmartspaceControllerTest : SysuiTestCase() {
 
         override fun setPrimaryTextColor(color: Int) {}
 
+        override fun setIsDreaming(isDreaming: Boolean) {}
+
         override fun setDozeAmount(amount: Float) {}
 
         override fun setIntentStarter(intentStarter: BcSmartspaceDataPlugin.IntentStarter?) {}
@@ -149,6 +151,8 @@ class DreamSmartspaceControllerTest : SysuiTestCase() {
         override fun setMediaTarget(target: SmartspaceTarget?) {}
 
         override fun getSelectedPage(): Int { return 0; }
+
+        override fun getCurrentCardTopPadding(): Int { return 0; }
     }
 
     /**
@@ -173,6 +177,7 @@ class DreamSmartspaceControllerTest : SysuiTestCase() {
         stateChangeListener.onViewAttachedToWindow(mockView)
 
         verify(smartspaceManager).createSmartspaceSession(any())
+        verify(mockView).setDozeAmount(0f)
 
         stateChangeListener.onViewDetachedFromWindow(mockView)
 

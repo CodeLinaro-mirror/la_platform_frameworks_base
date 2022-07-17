@@ -146,6 +146,7 @@ import com.android.internal.util.function.pooled.PooledConsumer;
 import com.android.internal.util.function.pooled.PooledLambda;
 import com.android.server.LocalServices;
 import com.android.server.am.ActivityManagerService;
+import com.android.server.am.HostingRecord;
 import com.android.server.am.UserState;
 import com.android.server.utils.Slogf;
 import com.android.server.wm.ActivityMetricsLogger.LaunchingState;
@@ -897,6 +898,7 @@ public class ActivityTaskSupervisor implements RecentTasks.Callbacks {
                         proc.getThread(), r.token);
 
                 final boolean isTransitionForward = r.isTransitionForward();
+                final IBinder fragmentToken = r.getTaskFragment().getFragmentToken();
                 clientTransaction.addCallback(LaunchActivityItem.obtain(new Intent(r.intent),
                         System.identityHashCode(r), r.info,
                         // TODO: Have this take the merged configuration instead of separate global
@@ -907,7 +909,7 @@ public class ActivityTaskSupervisor implements RecentTasks.Callbacks {
                         proc.getReportedProcState(), r.getSavedState(), r.getPersistentSavedState(),
                         results, newIntents, r.takeOptions(), isTransitionForward,
                         proc.createProfilerInfoIfNeeded(), r.assistToken, activityClientController,
-                        r.shareableActivityToken, r.getLaunchedFromBubble()));
+                        r.shareableActivityToken, r.getLaunchedFromBubble(), fragmentToken));
 
                 // Set desired final state.
                 final ActivityLifecycleItem lifecycleItem;
@@ -1055,7 +1057,9 @@ public class ActivityTaskSupervisor implements RecentTasks.Callbacks {
         r.notifyUnknownVisibilityLaunchedForKeyguardTransition();
 
         final boolean isTop = andResume && r.isTopRunningActivity();
-        mService.startProcessAsync(r, knownToBeDead, isTop, isTop ? "top-activity" : "activity");
+        mService.startProcessAsync(r, knownToBeDead, isTop,
+                isTop ? HostingRecord.HOSTING_TYPE_TOP_ACTIVITY
+                        : HostingRecord.HOSTING_TYPE_ACTIVITY);
     }
 
     boolean checkStartAnyActivityPermission(Intent intent, ActivityInfo aInfo, String resultWho,

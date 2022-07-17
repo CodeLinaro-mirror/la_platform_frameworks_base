@@ -30,6 +30,7 @@ import android.os.Looper;
 import android.os.PowerManager;
 import android.os.SystemProperties;
 import android.os.Trace;
+import android.util.DisplayUtils;
 import android.util.LongSparseArray;
 import android.util.Slog;
 import android.util.SparseArray;
@@ -75,6 +76,8 @@ final class LocalDisplayAdapter extends DisplayAdapter {
     private final SurfaceControlProxy mSurfaceControlProxy;
 
     private final boolean mIsBootDisplayModeSupported;
+
+    private Context mOverlayContext;
 
     // Called with SyncRoot lock held.
     public LocalDisplayAdapter(DisplayManagerService.SyncRoot syncRoot,
@@ -469,12 +472,12 @@ final class LocalDisplayAdapter extends DisplayAdapter {
         }
 
         private int getLogicalDensity() {
-            DensityMap densityMap = getDisplayDeviceConfig().getDensityMap();
-            if (densityMap == null) {
+            DensityMapping densityMapping = getDisplayDeviceConfig().getDensityMapping();
+            if (densityMapping == null) {
                 return (int) (mStaticDisplayInfo.density * 160 + 0.5);
             }
 
-            return densityMap.getDensityForResolution(mInfo.width, mInfo.height);
+            return densityMapping.getDensityForResolution(mInfo.width, mInfo.height);
         }
 
         private void loadDisplayDeviceConfig() {
@@ -675,11 +678,18 @@ final class LocalDisplayAdapter extends DisplayAdapter {
                 if (DisplayCutout.getMaskBuiltInDisplayCutout(res, mInfo.uniqueId)) {
                     mInfo.flags |= DisplayDeviceInfo.FLAG_MASK_DISPLAY_CUTOUT;
                 }
+
+                final Display.Mode maxDisplayMode =
+                        DisplayUtils.getMaximumResolutionDisplayMode(mInfo.supportedModes);
+                final int maxWidth =
+                        maxDisplayMode == null ? mInfo.width : maxDisplayMode.getPhysicalWidth();
+                final int maxHeight =
+                        maxDisplayMode == null ? mInfo.height : maxDisplayMode.getPhysicalHeight();
                 mInfo.displayCutout = DisplayCutout.fromResourcesRectApproximation(res,
-                        mInfo.uniqueId, mInfo.width, mInfo.height);
+                        mInfo.uniqueId, maxWidth, maxHeight, mInfo.width, mInfo.height);
 
                 mInfo.roundedCorners = RoundedCorners.fromResources(
-                        res, mInfo.uniqueId, mInfo.width, mInfo.height);
+                        res, mInfo.uniqueId, maxWidth, maxHeight, mInfo.width, mInfo.height);
                 mInfo.installOrientation = mStaticDisplayInfo.installOrientation;
 
                 if (mStaticDisplayInfo.isInternal) {
@@ -1222,7 +1232,10 @@ final class LocalDisplayAdapter extends DisplayAdapter {
 
     /** Supplies a context whose Resources apply runtime-overlays */
     Context getOverlayContext() {
-        return ActivityThread.currentActivityThread().getSystemUiContext();
+        if (mOverlayContext == null) {
+            mOverlayContext = ActivityThread.currentActivityThread().getSystemUiContext();
+        }
+        return mOverlayContext;
     }
 
     /**

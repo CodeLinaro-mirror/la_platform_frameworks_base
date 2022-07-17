@@ -34,10 +34,7 @@ import android.graphics.Rect;
 import android.os.Build;
 import android.os.IBinder;
 import android.os.Parcel;
-import android.os.RemoteException;
-import android.util.Log;
 import android.view.DisplayCutout;
-import android.window.TaskSnapshot;
 import android.window.WindowContainerToken;
 
 import java.lang.annotation.Retention;
@@ -355,20 +352,6 @@ public class TaskInfo {
         return isVisible;
     }
 
-    /**
-     * @param isLowResolution
-     * @return
-     * @hide
-     */
-    public TaskSnapshot getTaskSnapshot(boolean isLowResolution) {
-        try {
-            return ActivityTaskManager.getService().getTaskSnapshot(taskId, isLowResolution);
-        } catch (RemoteException e) {
-            Log.e(TAG, "Failed to get task snapshot, taskId=" + taskId, e);
-            return null;
-        }
-    }
-
     /** @hide */
     @NonNull
     @TestApi
@@ -472,7 +455,8 @@ public class TaskInfo {
                 && isFocused == that.isFocused
                 && isVisible == that.isVisible
                 && isSleeping == that.isSleeping
-                && Objects.equals(mTopActivityLocusId, that.mTopActivityLocusId);
+                && Objects.equals(mTopActivityLocusId, that.mTopActivityLocusId)
+                && parentTaskId == that.parentTaskId;
     }
 
     /**
