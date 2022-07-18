@@ -1096,6 +1096,9 @@ public class VoiceInteractionManagerService extends SystemService {
 
         @Override
         public ModuleProperties getDspModuleProperties() {
+            // Allow the call if it is granted CAPTURE_AUDIO_HOTWORD.
+            enforceCallingPermission(Manifest.permission.CAPTURE_AUDIO_HOTWORD);
+
             // Allow the call if this is the current voice interaction service.
             synchronized (this) {
                 enforceIsCurrentVoiceInteractionService();
@@ -1112,6 +1115,9 @@ public class VoiceInteractionManagerService extends SystemService {
         @Override
         public int startRecognition(int keyphraseId, String bcp47Locale,
                 IRecognitionStatusCallback callback, RecognitionConfig recognitionConfig) {
+            // Allow the call if it is granted RECORD_AUDIO and CAPTURE_AUDIO_HOTWORD.
+            enforceAlwaysOnHotwordPermissions();
+
             // Allow the call if this is the current voice interaction service.
             synchronized (this) {
                 enforceIsCurrentVoiceInteractionService();
@@ -1147,6 +1153,9 @@ public class VoiceInteractionManagerService extends SystemService {
 
         @Override
         public int stopRecognition(int keyphraseId, IRecognitionStatusCallback callback) {
+            // Allow the call if it is granted RECORD_AUDIO and CAPTURE_AUDIO_HOTWORD.
+            enforceAlwaysOnHotwordPermissions();
+
             // Allow the call if this is the current voice interaction service.
             synchronized (this) {
                 enforceIsCurrentVoiceInteractionService();
@@ -1162,6 +1171,9 @@ public class VoiceInteractionManagerService extends SystemService {
 
         @Override
         public int setParameter(int keyphraseId, @ModelParams int modelParam, int value) {
+            // Allow the call if it is granted RECORD_AUDIO and CAPTURE_AUDIO_HOTWORD.
+            enforceAlwaysOnHotwordPermissions();
+
             // Allow the call if this is the current voice interaction service.
             synchronized (this) {
                 enforceIsCurrentVoiceInteractionService();
@@ -1177,6 +1189,9 @@ public class VoiceInteractionManagerService extends SystemService {
 
         @Override
         public int getParameter(int keyphraseId, @ModelParams int modelParam) {
+            // Allow the call if it is granted RECORD_AUDIO and CAPTURE_AUDIO_HOTWORD.
+            enforceAlwaysOnHotwordPermissions();
+
             // Allow the call if this is the current voice interaction service.
             synchronized (this) {
                 enforceIsCurrentVoiceInteractionService();
@@ -1193,6 +1208,9 @@ public class VoiceInteractionManagerService extends SystemService {
         @Override
         @Nullable
         public ModelParamRange queryParameter(int keyphraseId, @ModelParams int modelParam) {
+            // Allow the call if it is granted RECORD_AUDIO and CAPTURE_AUDIO_HOTWORD.
+            enforceAlwaysOnHotwordPermissions();
+
             // Allow the call if this is the current voice interaction service.
             synchronized (this) {
                 enforceIsCurrentVoiceInteractionService();
@@ -1461,6 +1479,11 @@ public class VoiceInteractionManagerService extends SystemService {
         private boolean isCallerHoldingPermission(String permission) {
             return mContext.checkCallingOrSelfPermission(permission)
                     == PackageManager.PERMISSION_GRANTED;
+        }
+
+        private void enforceAlwaysOnHotwordPermissions() {
+            enforceCallingPermission(Manifest.permission.RECORD_AUDIO);
+            enforceCallingPermission(Manifest.permission.CAPTURE_AUDIO_HOTWORD);
         }
 
         private void enforceCallingPermission(String permission) {
