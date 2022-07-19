@@ -961,16 +961,15 @@ class Task extends WindowContainer<WindowContainer> {
             mCallingPackage = r.launchedFromPackage;
             mCallingFeatureId = r.launchedFromFeatureId;
             setIntent(intent != null ? intent : r.intent, info != null ? info : r.info);
-        }
-        setLockTaskAuth(r);
-
-        final WindowContainer parent = getParent();
-        if (parent != null) {
-            final Task t = parent.asTask();
-            if (t != null) {
-                t.setIntent(r);
+            final WindowContainer parent = getParent();
+            if (parent != null) {
+                final Task t = parent.asTask();
+                if (t != null) {
+                    t.setIntent(r);
+                }
             }
         }
+        setLockTaskAuth(r);
     }
 
     /** Sets the original intent, _without_ updating the calling uid or package. */
@@ -3687,6 +3686,17 @@ class Task extends WindowContainer<WindowContainer> {
      */
     boolean shouldBeVisible(ActivityRecord starting) {
         return getVisibility(starting) != STACK_VISIBILITY_INVISIBLE;
+    }
+
+    /**
+     * Returns {@code true} is the activity in this Task can be resumed.
+     *
+     * @param starting The currently starting activity or {@code null} if there is none.
+     */
+    boolean canBeResumed(@Nullable ActivityRecord starting) {
+        // No need to resume activity in Task that is not visible.
+        return isTopActivityFocusable()
+                && getVisibility(starting) == STACK_VISIBILITY_VISIBLE;
     }
 
     /**
