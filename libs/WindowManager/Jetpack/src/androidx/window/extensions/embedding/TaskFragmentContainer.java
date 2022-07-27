@@ -26,6 +26,7 @@ import android.content.Intent;
 import android.graphics.Rect;
 import android.os.Binder;
 import android.os.IBinder;
+import android.util.Size;
 import android.window.TaskFragmentInfo;
 import android.window.WindowContainerTransaction;
 
@@ -280,6 +281,9 @@ class TaskFragmentContainer {
      * Adds a container that should be finished when this container is finished.
      */
     void addContainerToFinishOnExit(@NonNull TaskFragmentContainer containerToFinish) {
+        if (mIsFinished) {
+            return;
+        }
         mContainersToFinishOnExit.add(containerToFinish);
     }
 
@@ -287,6 +291,9 @@ class TaskFragmentContainer {
      * Removes a container that should be finished when this container is finished.
      */
     void removeContainerToFinishOnExit(@NonNull TaskFragmentContainer containerToRemove) {
+        if (mIsFinished) {
+            return;
+        }
         mContainersToFinishOnExit.remove(containerToRemove);
     }
 
@@ -294,6 +301,9 @@ class TaskFragmentContainer {
      * Adds an activity that should be finished when this container is finished.
      */
     void addActivityToFinishOnExit(@NonNull Activity activityToFinish) {
+        if (mIsFinished) {
+            return;
+        }
         mActivitiesToFinishOnExit.add(activityToFinish);
     }
 
@@ -301,11 +311,17 @@ class TaskFragmentContainer {
      * Removes an activity that should be finished when this container is finished.
      */
     void removeActivityToFinishOnExit(@NonNull Activity activityToRemove) {
+        if (mIsFinished) {
+            return;
+        }
         mActivitiesToFinishOnExit.remove(activityToRemove);
     }
 
     /** Removes all dependencies that should be finished when this container is finished. */
     void resetDependencies() {
+        if (mIsFinished) {
+            return;
+        }
         mContainersToFinishOnExit.clear();
         mActivitiesToFinishOnExit.clear();
     }
@@ -399,6 +415,11 @@ class TaskFragmentContainer {
         }
     }
 
+    @NonNull
+    Rect getLastRequestedBounds() {
+        return mLastRequestedBounds;
+    }
+
     /**
      * Checks if last requested windowing mode is equal to the provided value.
      */
@@ -422,6 +443,31 @@ class TaskFragmentContainer {
     @NonNull
     TaskContainer getTaskContainer() {
         return mTaskContainer;
+    }
+
+    @Nullable
+    Size getMinDimensions() {
+        if (mInfo == null) {
+            return null;
+        }
+        int maxMinWidth = mInfo.getMinimumWidth();
+        int maxMinHeight = mInfo.getMinimumHeight();
+        for (Activity activity : mPendingAppearedActivities) {
+            final Size minDimensions = SplitPresenter.getMinDimensions(activity);
+            if (minDimensions == null) {
+                continue;
+            }
+            maxMinWidth = Math.max(maxMinWidth, minDimensions.getWidth());
+            maxMinHeight = Math.max(maxMinHeight, minDimensions.getHeight());
+        }
+        if (mPendingAppearedIntent != null) {
+            final Size minDimensions = SplitPresenter.getMinDimensions(mPendingAppearedIntent);
+            if (minDimensions != null) {
+                maxMinWidth = Math.max(maxMinWidth, minDimensions.getWidth());
+                maxMinHeight = Math.max(maxMinHeight, minDimensions.getHeight());
+            }
+        }
+        return new Size(maxMinWidth, maxMinHeight);
     }
 
     @Override
