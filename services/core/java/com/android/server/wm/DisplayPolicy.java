@@ -950,20 +950,6 @@ public class DisplayPolicy {
                 }
                 break;
         }
-
-        // Check if alternate bars positions were updated.
-        if (mStatusBarAlt == win) {
-            mStatusBarAltPosition = getAltBarPosition(attrs);
-        }
-        if (mNavigationBarAlt == win) {
-            mNavigationBarAltPosition = getAltBarPosition(attrs);
-        }
-        if (mClimateBarAlt == win) {
-            mClimateBarAltPosition = getAltBarPosition(attrs);
-        }
-        if (mExtraNavBarAlt == win) {
-            mExtraNavBarAltPosition = getAltBarPosition(attrs);
-        }
     }
 
     /**
