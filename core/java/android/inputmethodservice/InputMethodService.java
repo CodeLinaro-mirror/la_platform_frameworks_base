@@ -106,6 +106,7 @@ import java.io.PrintWriter;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
+import android.os.SystemProperties;
 
 /**
  * InputMethodService provides a standard implementation of an InputMethod,
@@ -1202,6 +1203,7 @@ public class InputMethodService extends AbstractInputMethodService {
         mImm = (InputMethodManager)getSystemService(INPUT_METHOD_SERVICE);
         mSettingsObserver = SettingsObserver.createAndRegister(this);
 
+        boolean watchProduct = SystemProperties.getBoolean("ro.product.qti.qcom_watch", false);
         mIsAutomotive = isAutomotive();
         mAutomotiveHideNavBarForKeyboard = getApplicationContext().getResources().getBoolean(
                 com.android.internal.R.bool.config_automotiveHideNavBarForKeyboard);
@@ -1225,6 +1227,18 @@ public class InputMethodService extends AbstractInputMethodService {
         if (mIsAutomotive && mAutomotiveHideNavBarForKeyboard) {
             mWindow.getWindow().setDecorFitsSystemWindows(false);
         }
+        if (watchProduct) {
+            final int flags = View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                            | View.SYSTEM_UI_FLAG_FULLSCREEN
+                            | WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION
+                            | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
+
+            mWindow.getWindow().getDecorView().setSystemUiVisibility(flags);
+        }
+
         mWindow.getWindow().getDecorView().setOnApplyWindowInsetsListener(
                 (v, insets) -> v.onApplyWindowInsets(
                         new WindowInsets.Builder(insets).setInsets(
