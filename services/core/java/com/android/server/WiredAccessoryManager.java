@@ -517,6 +517,8 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
                                 state = Integer.parseInt(
                                             state_str.substring(equals + 1,
                                                                 equals + 2));
+                                if(state == 1)
+                                    break;
                             }
                         }
 
