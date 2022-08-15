@@ -101,6 +101,11 @@ public final class BluetoothPowerStateMgr {
         bluetoothOffloadService, IBluetoothOffloadLpm lpmOffloadService) {
       Log.d(TAG, "onBluetoothOffloadServiceUp: " + lpmOffloadService);
 
+      //Added check to avoid assigning service object to null when we receive onServiceUp for App Service
+      if (lpmOffloadService == null) {
+          Log.d(TAG, "onBluetoothOffloadServiceUp received on App service up");
+          return;
+      }
       mServiceLock.writeLock().lock();
       mService = lpmOffloadService;
       mServiceLock.writeLock().unlock();

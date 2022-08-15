@@ -380,6 +380,11 @@ public final class NotificationOffloadMgr {
                 public void onBluetoothOffloadServiceUp(IBluetoothOffloadApp bluetoothOffloadService, IBluetoothOffloadLpm lpmOffloadService) {
                     Log.d(TAG, "onBluetoothOffloadServiceUp: " + bluetoothOffloadService);
 
+                    //Added check to avoid assigning service object to null when we receive onServiceUp for LPM Service
+                    if (bluetoothOffloadService == null) {
+                        Log.d(TAG, "onBluetoothOffloadServiceUp received on LPM service up");
+                        return;
+                    }
                     mServiceLock.writeLock().lock();
                     mService = bluetoothOffloadService;
                     mServiceLock.writeLock().unlock();

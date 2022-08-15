@@ -623,7 +623,7 @@ public class TaskRecordTests extends ActivityTestsBase {
 
         assertEquals("The first non-finishing activity and non-relinquishing task identity "
                 + "must be reported.", task.getChildAt(2), task.getRootActivity(
-                false /*ignoreRelinquishIdentity*/, true /*setToBottomIfNone*/));
+                        false /*ignoreRelinquishIdentity*/, true /*setToBottomIfNone*/));
     }
 
     /**
@@ -939,7 +939,6 @@ public class TaskRecordTests extends ActivityTestsBase {
         task.updateEffectiveIntent();
         verify(task).setIntent(eq(activity2));
     }
-
 
     @Test
     public void testSaveLaunchingStateWhenConfigurationChanged() {
