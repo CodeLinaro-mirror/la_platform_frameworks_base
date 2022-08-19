@@ -78,12 +78,11 @@ public class UserManagerServiceTest extends AndroidTestCase {
         assertEquals(accountName, um.getUserAccount(tempUserId));
     }
 
-    public void testUserSystemPackageWhitelist() throws Exception {
-        String cmd = "cmd user report-system-user-package-whitelist-problems --critical-only";
-        final String result = runShellCommand(cmd);
-        if (!TextUtils.isEmpty(result)) {
-            fail("Command '" + cmd + " reported errors:\n" + result);
-        }
+    public void testValidateName() {
+        assertNull(UserManagerService.validateName("android"));
+        assertNull(UserManagerService.validateName("com.company.myapp"));
+        assertNotNull(UserManagerService.validateName("/../../data"));
+        assertNotNull(UserManagerService.validateName("/dir"));
     }
 
     private Bundle createBundle() {
