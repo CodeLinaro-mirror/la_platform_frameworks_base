@@ -1,0 +1,13 @@
+android_app {
+    name: "FullScreenGestureService",
+    srcs: ["src/**/*.java"],
+    libs: ["framework"],
+    static_libs:[
+        "SystemUI-statsd",
+        "SystemUISharedLib",
+    ],
+    platform_apis: true,
+    privileged: true,
+    certificate: "platform",
+    system_ext_specific: true,
+}

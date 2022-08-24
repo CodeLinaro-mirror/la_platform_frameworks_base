@@ -217,6 +217,14 @@ filegroup {
 }
 
 filegroup {
+    name: "framework-bluetooth_offload-adapter-srcs",
+    srcs: [
+        "core/java/android/bluetooth/bluetooth_offload/vendor/qti/bluetooth_offload/*.java",
+    ],
+    path: "core/java/android/bluetooth/bluetooth_offload/vendor/qti/bluetooth_offload",
+}
+
+filegroup {
     name: "framework-non-updatable-sources",
     srcs: [
         // Java/AIDL sources under frameworks/base
@@ -242,6 +250,7 @@ filegroup {
         ":framework-telephony-sources",
         ":framework-wifi-annotations",
         ":framework-wifi-non-updatable-sources",
+        ":framework-bluetooth_offload-adapter-srcs",
         ":PacProcessor-aidl-sources",
         ":ProxyHandler-aidl-sources",
         ":net-utils-framework-common-srcs",
@@ -264,6 +273,7 @@ filegroup {
         ":libcamera_client_aidl",
         ":libcamera_client_framework_aidl",
         ":libupdate_engine_aidl",
+        ":libbluetooth_offload-binder-aidl",
         ":resourcemanager_aidl",
         ":storaged_aidl",
         ":vold_aidl",
@@ -474,11 +484,27 @@ filegroup {
     path: "core/java",
 }
 
-soong_config_module_type_import {
-    from: "device/qcom/common/Android.bp",
-    module_types: [
-         "bredr_vs_btadva_java_defaults",
-    ],
+soong_config_module_type {
+    name: "bredr_vs_btadva_cc_defaults",
+    module_type: "cc_defaults",
+    config_namespace: "bredr_vs_btadva",
+    variables: ["bredr_or_btadva"],
+    // Properties can be extended to other properties as well
+    properties: ["cflags", "include_dirs", "static_libs", "whole_static_libs", "srcs"],
+}
+
+soong_config_module_type {
+    name: "bredr_vs_btadva_java_defaults",
+    module_type: "java_defaults",
+    config_namespace: "bredr_vs_btadva",
+    variables: ["bredr_or_btadva"],
+    // Properties can be extended to other properties as well
+    properties: ["cflags", "include_dirs", "static_libs", "whole_static_libs", "srcs"],
+}
+
+soong_config_string_variable {
+    name: "bredr_or_btadva",
+    values: ["bredr", "btadva"],
 }
 
 bredr_vs_btadva_java_defaults {

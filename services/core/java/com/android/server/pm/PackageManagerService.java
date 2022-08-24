@@ -5175,6 +5175,10 @@ public class PackageManagerService extends IPackageManager.Stub
                             InstantAppRegistry.DEFAULT_UNINSTALLED_INSTANT_APP_MIN_CACHE_PERIOD))) {
                 return;
             }
+
+            // 12. Clear temp install session files
+            mInstallerService.freeStageDirs(volumeUuid);
+
         } else {
             try {
                 mInstaller.freeCache(volumeUuid, bytes, 0, 0);
@@ -18635,6 +18639,16 @@ public class PackageManagerService extends IPackageManager.Stub
                 Slog.w(TAG, "Not removing package " + packageName + " with versionCode "
                         + uninstalledPs.versionCode + " != " + versionCode);
                 return PackageManager.DELETE_FAILED_INTERNAL_ERROR;
+            }
+
+            if (isSystemApp(uninstalledPs)) {
+                UserInfo userInfo = mUserManager.getUserInfo(userId);
+                if (userInfo == null || !userInfo.isAdmin()) {
+                    Slog.w(TAG, "Not removing package " + packageName
+                            + " as only admin user may downgrade system apps");
+                    EventLog.writeEvent(0x534e4554, "170646036", -1, packageName);
+                    return PackageManager.DELETE_FAILED_USER_RESTRICTED;
+                }
             }
 
             disabledSystemPs = mSettings.getDisabledSystemPkgLPr(packageName);
