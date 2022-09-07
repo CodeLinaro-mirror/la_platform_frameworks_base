@@ -1998,7 +1998,9 @@ final class ActivityRecord extends ConfigurationContainer implements AppWindowCo
     public void stopFreezingScreenLocked(boolean force) {
         if (force || frozenBeforeDestroy) {
             frozenBeforeDestroy = false;
-            mWindowContainerController.stopFreezingScreen(force);
+	    if (mWindowContainerController != null) {
+		mWindowContainerController.stopFreezingScreen(force);
+	    }
         }
     }
 
