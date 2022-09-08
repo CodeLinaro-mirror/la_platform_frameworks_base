@@ -176,11 +176,11 @@ public final class PbapClientProfile implements LocalBluetoothProfile {
 
     public int getNameResource(BluetoothDevice device) {
         // we need to have same string in UI as the server side.
-        return R.string.bluetooth_profile_pbap;
+        return R.string.bluetooth_profile_pbap_client;
     }
 
     public int getSummaryResourceForDevice(BluetoothDevice device) {
-        return R.string.bluetooth_profile_pbap_summary;
+        return R.string.bluetooth_profile_pbap_client_summary;
     }
 
     public int getDrawableResource(BluetoothClass btClass) {
