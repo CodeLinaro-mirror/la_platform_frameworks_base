@@ -78,8 +78,9 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
                                                      NAME_DP_AUDIO + "/1/0",
                                                      NAME_DP_AUDIO + "/0/0"
                                                    };
-    private static final String NAME_HDMI = "hdmi";
 
+    private static final String NAME_HDMI = "hdmi";
+    private static final String NAME_DP = "DP";
     private static final int MSG_NEW_DEVICE_STATE = 1;
     private static final int MSG_SYSTEM_READY = 2;
 
@@ -90,7 +91,7 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
 
     private int mHeadsetState;
     private int mDpCount;
-
+    private String mDetectedIntf = NAME_DP;
     private int mSwitchValues;
 
     private final WiredAccessoryObserver mObserver;
@@ -517,8 +518,10 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
                                 state = Integer.parseInt(
                                             state_str.substring(equals + 1,
                                                                 equals + 2));
-                                if (state == 1)
+                                if (state == 1) {
+                                    mDetectedIntf = intf_name;
                                     break;
+                                }
                             }
                         }
 
@@ -575,6 +578,10 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
                 }
 
                 if (devPath.equals(uei.getDevPath())) {
+                    if (state == 1) {
+                        int newControllerIdx = (mDetectedIntf.equals(NAME_DP)) ? 0 : 1;
+                        uei.setCableIndex(newControllerIdx);
+                    }
                     updateLocked(name, uei.getDevAddress(),
                                  uei.computeNewHeadsetState(mHeadsetState,
                                                             state));
@@ -696,6 +703,13 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
                         break;
                     }
                 }
+            }
+
+            public void setCableIndex(int cableIndex) {
+                int index = mDevAddress.indexOf("=");
+                String changeControllerIdx = mDevAddress.substring(0, index + 1) + cableIndex
+                                              + mDevAddress.substring(index + 2);
+                mDevAddress = changeControllerIdx;
             }
 
             public String getDevName() {
