@@ -72,6 +72,8 @@ public final class ClientSession extends ObexSession {
 
     private final ObexTransport mTransport;
 
+    public boolean mAborting = false;
+
     public ClientSession(final ObexTransport trans) throws IOException {
         mInput = trans.openInputStream();
         mOutput = trans.openOutputStream();
@@ -510,8 +512,16 @@ public final class ClientSession extends ObexSession {
 
         if (!skipReceive) {
             header.responseCode = mInput.read();
-
             int length = ((mInput.read() << 8) | (mInput.read()));
+            while (mAborting && length > 3) {
+                byte[] data = new byte[length - 3];
+                int bytesReceived_r = mInput.read(data);
+                while (bytesReceived_r != (length - 3)) {
+                    bytesReceived_r += mInput.read(data, bytesReceived_r, data.length - bytesReceived_r);
+                }
+                header.responseCode = mInput.read();
+                length = ((mInput.read() << 8) | (mInput.read()));
+            }
 
             if (length > ObexHelper.getMaxRxPacketSize(mTransport)) {
                 throw new IOException("Packet received exceeds packet size limit");
