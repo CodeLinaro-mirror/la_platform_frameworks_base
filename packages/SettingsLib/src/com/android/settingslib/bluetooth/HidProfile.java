@@ -20,6 +20,7 @@ import static android.bluetooth.BluetoothProfile.CONNECTION_POLICY_ALLOWED;
 import static android.bluetooth.BluetoothProfile.CONNECTION_POLICY_FORBIDDEN;
 
 import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothAdapterUtil;
 import android.bluetooth.BluetoothClass;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothHidHost;
@@ -42,6 +43,7 @@ public class HidProfile implements LocalBluetoothProfile {
 
     private final CachedBluetoothDeviceManager mDeviceManager;
     private final LocalBluetoothProfileManager mProfileManager;
+    private final BluetoothAdapter mBluetoothAdapter;
 
     static final String NAME = "HID";
 
@@ -89,7 +91,8 @@ public class HidProfile implements LocalBluetoothProfile {
         LocalBluetoothProfileManager profileManager) {
         mDeviceManager = deviceManager;
         mProfileManager = profileManager;
-        BluetoothAdapter.getDefaultAdapter().getProfileProxy(context, new HidHostServiceListener(),
+        mBluetoothAdapter = BluetoothAdapterUtil.getAdapter();
+        mBluetoothAdapter.getProfileProxy(context, new HidHostServiceListener(),
                 BluetoothProfile.HID_HOST);
     }
 
@@ -191,8 +194,7 @@ public class HidProfile implements LocalBluetoothProfile {
         Log.d(TAG, "finalize()");
         if (mService != null) {
             try {
-                BluetoothAdapter.getDefaultAdapter().closeProfileProxy(BluetoothProfile.HID_HOST,
-                                                                       mService);
+                mBluetoothAdapter.closeProfileProxy(BluetoothProfile.HID_HOST, mService);
                 mService = null;
             }catch (Throwable t) {
                 Log.w(TAG, "Error cleaning up HID proxy", t);

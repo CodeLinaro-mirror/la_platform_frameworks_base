@@ -21,6 +21,7 @@ import static android.bluetooth.BluetoothProfile.CONNECTION_POLICY_ALLOWED;
 import static android.bluetooth.BluetoothProfile.CONNECTION_POLICY_FORBIDDEN;
 
 import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothAdapterUtil;
 import android.bluetooth.BluetoothClass;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothHeadset;
@@ -101,7 +102,7 @@ public class HeadsetProfile implements LocalBluetoothProfile {
             LocalBluetoothProfileManager profileManager) {
         mDeviceManager = deviceManager;
         mProfileManager = profileManager;
-        mBluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
+        mBluetoothAdapter = BluetoothAdapterUtil.getAdapter();
         mBluetoothAdapter.getProfileProxy(context, new HeadsetServiceListener(),
                 BluetoothProfile.HEADSET);
     }
@@ -229,8 +230,7 @@ public class HeadsetProfile implements LocalBluetoothProfile {
         Log.d(TAG, "finalize()");
         if (mService != null) {
             try {
-                BluetoothAdapter.getDefaultAdapter().closeProfileProxy(BluetoothProfile.HEADSET,
-                                                                       mService);
+                mBluetoothAdapter.closeProfileProxy(BluetoothProfile.HEADSET, mService);
                 mService = null;
             }catch (Throwable t) {
                 Log.w(TAG, "Error cleaning up HID proxy", t);

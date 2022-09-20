@@ -17,6 +17,7 @@
 package com.android.settingslib.bluetooth;
 
 import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothAdapterUtil;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothProfile;
 import android.bluetooth.le.BluetoothLeScanner;
@@ -24,6 +25,8 @@ import android.content.Context;
 import android.os.ParcelUuid;
 import android.util.Log;
 
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -44,6 +47,7 @@ public class LocalBluetoothAdapter {
 
     /** This class does not allow direct access to the BluetoothAdapter. */
     private final BluetoothAdapter mAdapter;
+    private final BluetoothAdapter mNewAdapter;
 
     private LocalBluetoothProfileManager mProfileManager;
 
@@ -57,6 +61,11 @@ public class LocalBluetoothAdapter {
 
     private LocalBluetoothAdapter(BluetoothAdapter adapter) {
         mAdapter = adapter;
+        /**
+         * Get new BluetoothAdapter only if adapter is default.
+         * New BluetoothAdapter is null if dual Bluetooth is not supported.
+         */
+        mNewAdapter = getNewAdapter(adapter);
     }
 
     void setProfileManager(LocalBluetoothProfileManager manager) {
@@ -104,7 +113,11 @@ public class LocalBluetoothAdapter {
     }
 
     public Set<BluetoothDevice> getBondedDevices() {
-        return mAdapter.getBondedDevices();
+        Set<BluetoothDevice> devices = mAdapter.getBondedDevices();
+        Set<BluetoothDevice> devices1 = (mNewAdapter != null) ?
+                mNewAdapter.getBondedDevices() :
+                null;
+        return toDeviceSet(devices, devices1);
     }
 
     public String getName() {
@@ -251,5 +264,23 @@ public class LocalBluetoothAdapter {
 
     public List<Integer> getSupportedProfiles() {
         return mAdapter.getSupportedProfiles();
+    }
+
+    private BluetoothAdapter getNewAdapter(BluetoothAdapter adapter) {
+        return !BluetoothAdapterUtil.isNewAdapter(adapter) ?
+                BluetoothAdapterUtil.getNewAdapter() : null;
+    }
+
+    private Set<BluetoothDevice> toDeviceSet(Set<BluetoothDevice> devices,
+            Set<BluetoothDevice> devices1) {
+        // Combine devices in different Bluetooth adapters
+        Set<BluetoothDevice> deviceSet = new HashSet<BluetoothDevice>();
+        if (devices != null) {
+            deviceSet.addAll(devices);
+        }
+        if (devices1 != null) {
+            deviceSet.addAll(devices1);
+        }
+        return Collections.unmodifiableSet(deviceSet);
     }
 }

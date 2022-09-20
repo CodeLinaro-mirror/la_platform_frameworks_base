@@ -18,6 +18,7 @@ package com.android.settingslib.bluetooth;
 
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
+import android.bluetooth.BluetoothClass;
 import android.content.Context;
 import android.util.Log;
 
@@ -174,6 +175,15 @@ public class CachedBluetoothDeviceManager {
         }
 
         return device.getAddress();
+    }
+
+    public BluetoothClass getBluetoothClass(BluetoothDevice device) {
+        CachedBluetoothDevice cachedDevice = findDevice(device);
+        if (cachedDevice != null && cachedDevice.getBtClass() != null) {
+            return cachedDevice.getBtClass();
+        }
+
+        return device.getBluetoothClass();
     }
 
     public synchronized void clearNonBondedDevices() {

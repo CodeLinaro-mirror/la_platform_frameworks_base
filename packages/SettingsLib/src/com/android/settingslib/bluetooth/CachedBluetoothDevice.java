@@ -17,6 +17,7 @@
 package com.android.settingslib.bluetooth;
 
 import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothAdapterUtil;
 import android.bluetooth.BluetoothClass;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothHearingAid;
@@ -70,9 +71,12 @@ public class CachedBluetoothDevice implements Comparable<CachedBluetoothDevice> 
 
     private final Context mContext;
     private final BluetoothAdapter mLocalAdapter;
+    // Active BluetoothAdapter (default or new)
+    private BluetoothAdapter mActiveAdapter;
     private final LocalBluetoothProfileManager mProfileManager;
     private final Object mProfileLock = new Object();
     BluetoothDevice mDevice;
+    private BluetoothDevice mActiveDevice;
     private long mHiSyncId;
     // Need this since there is no method for getting RSSI
     short mRssi;
@@ -139,7 +143,7 @@ public class CachedBluetoothDevice implements Comparable<CachedBluetoothDevice> 
         mContext = context;
         mLocalAdapter = BluetoothAdapter.getDefaultAdapter();
         mProfileManager = profileManager;
-        mDevice = device;
+        initAdapterDevice(device);
         fillData();
         mHiSyncId = BluetoothHearingAid.HI_SYNC_ID_INVALID;
         initDrawableCache();
@@ -178,8 +182,7 @@ public class CachedBluetoothDevice implements Comparable<CachedBluetoothDevice> 
             Log.d(TAG, "onProfileStateChanged: profile " + profile + ", device "
                     + mDevice.getAlias() + ", newProfileState " + newProfileState);
         }
-        if (mLocalAdapter.getState() == BluetoothAdapter.STATE_TURNING_OFF)
-        {
+        if (mLocalAdapter.getState() == BluetoothAdapter.STATE_TURNING_OFF) {
             if (BluetoothUtils.D) {
                 Log.d(TAG, " BT Turninig Off...Profile conn state change ignored...");
             }
@@ -265,7 +268,7 @@ public class CachedBluetoothDevice implements Comparable<CachedBluetoothDevice> 
 
     public void disconnect() {
         synchronized (mProfileLock) {
-            mLocalAdapter.disconnectAllEnabledProfiles(mDevice);
+            mActiveAdapter.disconnectAllEnabledProfiles(mDevice);
         }
         // Disconnect  PBAP server in case its connected
         // This is to ensure all the profiles are disconnected as some CK/Hs do not
@@ -342,7 +345,7 @@ public class CachedBluetoothDevice implements Comparable<CachedBluetoothDevice> 
                 return;
             }
 
-            mLocalAdapter.connectAllEnabledProfiles(mDevice);
+            mActiveAdapter.connectAllEnabledProfiles(mDevice);
         }
     }
 
@@ -382,11 +385,11 @@ public class CachedBluetoothDevice implements Comparable<CachedBluetoothDevice> 
 
     public boolean startPairing() {
         // Pairing is unreliable while scanning, so cancel discovery
-        if (mLocalAdapter.isDiscovering()) {
-            mLocalAdapter.cancelDiscovery();
+        if (mActiveAdapter.isDiscovering()) {
+            mActiveAdapter.cancelDiscovery();
         }
 
-        if (!mDevice.createBond()) {
+        if (!mActiveDevice.createBond()) {
             return false;
         }
 
@@ -397,11 +400,11 @@ public class CachedBluetoothDevice implements Comparable<CachedBluetoothDevice> 
         int state = getBondState();
 
         if (state == BluetoothDevice.BOND_BONDING) {
-            mDevice.cancelBondProcess();
+            mActiveDevice.cancelBondProcess();
         }
 
         if (state != BluetoothDevice.BOND_NONE) {
-            final BluetoothDevice dev = mDevice;
+            final BluetoothDevice dev = mActiveDevice;
             if (dev != null) {
                 mUnpairing = true;
                 final boolean successful = dev.removeBond();
@@ -551,7 +554,7 @@ public class CachedBluetoothDevice implements Comparable<CachedBluetoothDevice> 
     }
 
     public int getBondState() {
-        return mDevice.getBondState();
+        return mActiveDevice.getBondState();
     }
 
     /**
@@ -661,7 +664,7 @@ public class CachedBluetoothDevice implements Comparable<CachedBluetoothDevice> 
         ParcelUuid[] uuids = mDevice.getUuids();
         if (uuids == null) return false;
 
-        ParcelUuid[] localUuids = mLocalAdapter.getUuids();
+        ParcelUuid[] localUuids = mActiveAdapter.getUuids();
         if (localUuids == null) return false;
 
         /*
@@ -738,14 +741,14 @@ public class CachedBluetoothDevice implements Comparable<CachedBluetoothDevice> 
             synchronized (mProfileLock) {
                 mProfiles.clear();
             }
-            mDevice.setPhonebookAccessPermission(BluetoothDevice.ACCESS_UNKNOWN);
-            mDevice.setMessageAccessPermission(BluetoothDevice.ACCESS_UNKNOWN);
-            mDevice.setSimAccessPermission(BluetoothDevice.ACCESS_UNKNOWN);
+            mActiveDevice.setPhonebookAccessPermission(BluetoothDevice.ACCESS_UNKNOWN);
+            mActiveDevice.setMessageAccessPermission(BluetoothDevice.ACCESS_UNKNOWN);
+            mActiveDevice.setSimAccessPermission(BluetoothDevice.ACCESS_UNKNOWN);
         }
 
         refresh();
 
-        if (bondState == BluetoothDevice.BOND_BONDED && mDevice.isBondingInitiatedLocally()) {
+        if (bondState == BluetoothDevice.BOND_BONDED && mActiveDevice.isBondingInitiatedLocally()) {
             connect();
         }
     }
@@ -845,13 +848,13 @@ public class CachedBluetoothDevice implements Comparable<CachedBluetoothDevice> 
             return;
         }
 
-        if (mDevice.getPhonebookAccessPermission() == BluetoothDevice.ACCESS_UNKNOWN) {
+        if (mActiveDevice.getPhonebookAccessPermission() == BluetoothDevice.ACCESS_UNKNOWN) {
             int oldPermission =
                     preferences.getInt(mDevice.getAddress(), BluetoothDevice.ACCESS_UNKNOWN);
             if (oldPermission == BluetoothDevice.ACCESS_ALLOWED) {
-                mDevice.setPhonebookAccessPermission(BluetoothDevice.ACCESS_ALLOWED);
+                mActiveDevice.setPhonebookAccessPermission(BluetoothDevice.ACCESS_ALLOWED);
             } else if (oldPermission == BluetoothDevice.ACCESS_REJECTED) {
-                mDevice.setPhonebookAccessPermission(BluetoothDevice.ACCESS_REJECTED);
+                mActiveDevice.setPhonebookAccessPermission(BluetoothDevice.ACCESS_REJECTED);
             }
         }
 
@@ -869,13 +872,13 @@ public class CachedBluetoothDevice implements Comparable<CachedBluetoothDevice> 
             return;
         }
 
-        if (mDevice.getMessageAccessPermission() == BluetoothDevice.ACCESS_UNKNOWN) {
+        if (mActiveDevice.getMessageAccessPermission() == BluetoothDevice.ACCESS_UNKNOWN) {
             int oldPermission =
                     preferences.getInt(mDevice.getAddress(), BluetoothDevice.ACCESS_UNKNOWN);
             if (oldPermission == BluetoothDevice.ACCESS_ALLOWED) {
-                mDevice.setMessageAccessPermission(BluetoothDevice.ACCESS_ALLOWED);
+                mActiveDevice.setMessageAccessPermission(BluetoothDevice.ACCESS_ALLOWED);
             } else if (oldPermission == BluetoothDevice.ACCESS_REJECTED) {
-                mDevice.setMessageAccessPermission(BluetoothDevice.ACCESS_REJECTED);
+                mActiveDevice.setMessageAccessPermission(BluetoothDevice.ACCESS_REJECTED);
             }
         }
 
@@ -885,21 +888,21 @@ public class CachedBluetoothDevice implements Comparable<CachedBluetoothDevice> 
     }
 
     private void processPhonebookAccess() {
-        if (mDevice.getBondState() != BluetoothDevice.BOND_BONDED) return;
+        if (mActiveDevice.getBondState() != BluetoothDevice.BOND_BONDED) return;
 
         ParcelUuid[] uuids = mDevice.getUuids();
         if (BluetoothUuid.containsAnyUuid(uuids, PbapServerProfile.PBAB_CLIENT_UUIDS)) {
             // The pairing dialog now warns of phone-book access for paired devices.
             // No separate prompt is displayed after pairing.
             final BluetoothClass bluetoothClass = mDevice.getBluetoothClass();
-            if (mDevice.getPhonebookAccessPermission() == BluetoothDevice.ACCESS_UNKNOWN) {
+            if (mActiveDevice.getPhonebookAccessPermission() == BluetoothDevice.ACCESS_UNKNOWN) {
                 if (bluetoothClass != null && (bluetoothClass.getDeviceClass()
                         == BluetoothClass.Device.AUDIO_VIDEO_HANDSFREE
                         || bluetoothClass.getDeviceClass()
                         == BluetoothClass.Device.AUDIO_VIDEO_WEARABLE_HEADSET)) {
                     EventLog.writeEvent(0x534e4554, "138529441", -1, "");
                 }
-                mDevice.setPhonebookAccessPermission(BluetoothDevice.ACCESS_REJECTED);
+                mActiveDevice.setPhonebookAccessPermission(BluetoothDevice.ACCESS_REJECTED);
             }
         }
     }
@@ -1248,5 +1251,65 @@ public class CachedBluetoothDevice implements Comparable<CachedBluetoothDevice> 
 
     boolean getUnpairing() {
         return mUnpairing;
+    }
+
+    /**
+     * [Dual Bluetooth] Check whether active BluetoothDevice is bonded
+     */
+    boolean isBonded() {
+        return isBonded(mActiveDevice);
+    }
+
+    /**
+     * [Dual Bluetooth] Check whether BluetoothDevice is bonded
+     */
+    private boolean isBonded(BluetoothDevice device) {
+        return (device != null) && (device.getBondState() == BluetoothDevice.BOND_BONDED);
+    }
+
+    /**
+     * [Dual Bluetooth] Init active BluetoothAdapter and BluetoothDevice
+     */
+    private void initAdapterDevice(BluetoothDevice device) {
+        if (BluetoothAdapterUtil.isDefaultAdapter(device)) {
+            boolean requireNewAdapter = isNewAdapterRequired();
+            BluetoothAdapter newAdapter = requireNewAdapter ?
+                    BluetoothAdapterUtil.getNewAdapter(device) :
+                    null;
+            if (newAdapter != null) {
+                mActiveAdapter = newAdapter;
+                mActiveDevice = getRemoteDevice(newAdapter, device);
+            } else {
+                mActiveAdapter = mLocalAdapter;
+                mActiveDevice = device;
+            }
+            mDevice = device;
+        } else {
+            // Adapter index in BluetoothDevice is new BluetoothAdapter
+            BluetoothAdapter newAdapter = BluetoothAdapterUtil.getNewAdapter();
+            if (newAdapter != null) {
+                mActiveAdapter = newAdapter;
+                mActiveDevice = device;
+            } else {
+                // Wrong, should not occur!
+                throw new IllegalArgumentException("newAdapter should not be null");
+            }
+            mDevice = isBonded(device) ? device : getRemoteDevice(mLocalAdapter, device);
+        }
+    }
+
+    /**
+     * [Dual Bluetooth] Get BluetoothDevice from adapter
+     */
+    private BluetoothDevice getRemoteDevice(BluetoothAdapter adapter, BluetoothDevice device) {
+        return adapter.getRemoteDevice(device.getAddress());
+    }
+
+    /**
+     * [Dual Bluetooth] Require new BluetoothAdapter or not
+     */
+    private boolean isNewAdapterRequired() {
+        // TODO: Get the flag from Settings
+        return true;
     }
 }

@@ -19,6 +19,7 @@ package com.android.settingslib.bluetooth;
 import static android.bluetooth.BluetoothProfile.CONNECTION_POLICY_FORBIDDEN;
 
 import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothAdapterUtil;
 import android.bluetooth.BluetoothClass;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothPbap;
@@ -39,6 +40,7 @@ public class PbapServerProfile implements LocalBluetoothProfile {
 
     private BluetoothPbap mService;
     private boolean mIsProfileReady;
+    private final BluetoothAdapter mBluetoothAdapter;
 
     @VisibleForTesting
     public static final String NAME = "PBAP Server";
@@ -79,8 +81,8 @@ public class PbapServerProfile implements LocalBluetoothProfile {
     }
 
     PbapServerProfile(Context context) {
-        BluetoothAdapter.getDefaultAdapter().getProfileProxy(context, new PbapServiceListener(),
-                BluetoothProfile.PBAP);
+        mBluetoothAdapter = BluetoothAdapterUtil.getAdapter();
+        mBluetoothAdapter.getProfileProxy(context, new PbapServiceListener(), BluetoothProfile.PBAP);
     }
 
     public boolean accessProfileEnabled() {
@@ -144,8 +146,7 @@ public class PbapServerProfile implements LocalBluetoothProfile {
         Log.d(TAG, "finalize()");
         if (mService != null) {
             try {
-                BluetoothAdapter.getDefaultAdapter().closeProfileProxy(BluetoothProfile.PBAP,
-                        mService);
+                mBluetoothAdapter.closeProfileProxy(BluetoothProfile.PBAP, mService);
                 mService = null;
             }catch (Throwable t) {
                 Log.w(TAG, "Error cleaning up PBAP proxy", t);

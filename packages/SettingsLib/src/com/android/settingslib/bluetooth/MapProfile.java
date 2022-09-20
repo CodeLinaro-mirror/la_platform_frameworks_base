@@ -20,6 +20,7 @@ import static android.bluetooth.BluetoothProfile.CONNECTION_POLICY_ALLOWED;
 import static android.bluetooth.BluetoothProfile.CONNECTION_POLICY_FORBIDDEN;
 
 import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothAdapterUtil;
 import android.bluetooth.BluetoothClass;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothMap;
@@ -45,6 +46,7 @@ public class MapProfile implements LocalBluetoothProfile {
 
     private final CachedBluetoothDeviceManager mDeviceManager;
     private final LocalBluetoothProfileManager mProfileManager;
+    private final BluetoothAdapter mBluetoothAdapter;
 
     static final ParcelUuid[] UUIDS = {
         BluetoothUuid.MAP,
@@ -101,7 +103,8 @@ public class MapProfile implements LocalBluetoothProfile {
             LocalBluetoothProfileManager profileManager) {
         mDeviceManager = deviceManager;
         mProfileManager = profileManager;
-        BluetoothAdapter.getDefaultAdapter().getProfileProxy(context, new MapServiceListener(),
+        mBluetoothAdapter = BluetoothAdapterUtil.getAdapter();
+        mBluetoothAdapter.getProfileProxy(context, new MapServiceListener(),
                 BluetoothProfile.MAP);
     }
 
@@ -197,8 +200,7 @@ public class MapProfile implements LocalBluetoothProfile {
         Log.d(TAG, "finalize()");
         if (mService != null) {
             try {
-                BluetoothAdapter.getDefaultAdapter().closeProfileProxy(BluetoothProfile.MAP,
-                                                                       mService);
+                mBluetoothAdapter.closeProfileProxy(BluetoothProfile.MAP, mService);
                 mService = null;
             }catch (Throwable t) {
                 Log.w(TAG, "Error cleaning up MAP proxy", t);

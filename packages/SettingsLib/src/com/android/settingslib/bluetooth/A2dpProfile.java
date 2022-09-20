@@ -22,6 +22,7 @@ import static android.bluetooth.BluetoothProfile.CONNECTION_POLICY_FORBIDDEN;
 
 import android.bluetooth.BluetoothA2dp;
 import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothAdapterUtil;
 import android.bluetooth.BluetoothClass;
 import android.bluetooth.BluetoothCodecConfig;
 import android.bluetooth.BluetoothDevice;
@@ -101,7 +102,7 @@ public class A2dpProfile implements LocalBluetoothProfile {
         mContext = context;
         mDeviceManager = deviceManager;
         mProfileManager = profileManager;
-        mBluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
+        mBluetoothAdapter = BluetoothAdapterUtil.getAdapter();
         mBluetoothAdapter.getProfileProxy(context, new A2dpServiceListener(),
                 BluetoothProfile.A2DP);
     }
@@ -355,8 +356,7 @@ public class A2dpProfile implements LocalBluetoothProfile {
         Log.d(TAG, "finalize()");
         if (mService != null) {
             try {
-                BluetoothAdapter.getDefaultAdapter().closeProfileProxy(BluetoothProfile.A2DP,
-                                                                       mService);
+                mBluetoothAdapter.closeProfileProxy(BluetoothProfile.A2DP, mService);
                 mService = null;
             }catch (Throwable t) {
                 Log.w(TAG, "Error cleaning up A2DP proxy", t);

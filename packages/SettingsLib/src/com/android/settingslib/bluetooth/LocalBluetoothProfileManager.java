@@ -19,6 +19,7 @@ package com.android.settingslib.bluetooth;
 import android.bluetooth.BluetoothA2dp;
 import android.bluetooth.BluetoothA2dpSink;
 import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothAdapterUtil;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothHeadset;
 import android.bluetooth.BluetoothHeadsetClient;
@@ -126,7 +127,19 @@ public class LocalBluetoothProfileManager {
      * create profile instance according to bluetooth supported profile list
      */
     void updateLocalProfiles() {
-        List<Integer> supportedList = BluetoothAdapter.getDefaultAdapter().getSupportedProfiles();
+        updateLocalProfiles(BluetoothAdapter.getDefaultAdapter());
+        updateLocalProfiles(BluetoothAdapterUtil.getNewAdapter());
+        mEventManager.registerProfileIntentReceiver();
+    }
+
+    /**
+     * create profile instance according to bluetooth adapter
+     */
+    void updateLocalProfiles(BluetoothAdapter adapter) {
+        if (adapter == null) {
+            return;
+        }
+        List<Integer> supportedList = adapter.getSupportedProfiles();
         if (CollectionUtils.isEmpty(supportedList)) {
             if (DEBUG) Log.d(TAG, "supportedList is null");
             return;
@@ -220,7 +233,6 @@ public class LocalBluetoothProfileManager {
             mSapProfile = new SapProfile(mContext, mDeviceManager, this);
             addProfile(mSapProfile, SapProfile.NAME, BluetoothSap.ACTION_CONNECTION_STATE_CHANGED);
         }
-        mEventManager.registerProfileIntentReceiver();
     }
 
     private void addHeadsetProfile(LocalBluetoothProfile profile, String profileName,
