@@ -108,6 +108,12 @@ public class KeyguardDisplayManager {
             return false;
         }
         display.getDisplayInfo(mTmpDisplayInfo);
+        //Dont show keyguard in Secodary display flag is FLAG_PRESENTATION
+        if ((mTmpDisplayInfo.flags & Display.FLAG_PRESENTATION) != 0 &&
+                (display.getDisplayId() > DEFAULT_DISPLAY)) {
+            if (DEBUG) Log.i(TAG,"Dont show Keyguard presentation for secondary display");
+            return false;
+        }
         if ((mTmpDisplayInfo.flags & Display.FLAG_PRIVATE) != 0) {
             if (DEBUG) Log.i(TAG, "Do not show KeyguardPresentation on a private display");
             return false;
