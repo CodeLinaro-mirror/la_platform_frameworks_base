@@ -635,6 +635,15 @@ public final class BluetoothAdapter {
     public static final String ACTION_BLE_ACL_DISCONNECTED =
             "android.bluetooth.adapter.action.BLE_ACL_DISCONNECTED";
 
+    /**
+     * Used as an int extra field in {@link #ACTION_BLE_ACL_DISCONNECTED}
+     * intent for BLE ACL disconnected reason.
+     *
+     * @hide
+     */
+    public static final String EXTRA_BLE_ACL_DISCONNECTED_REASON =
+            "android.bluetooth.device.extra.BLE_ACL_DISCONNECTED_REASON";
+
     /** The profile is in disconnected state */
     public static final int STATE_DISCONNECTED = BluetoothProtoEnums.CONNECTION_STATE_DISCONNECTED;
     /** The profile is in connecting state */

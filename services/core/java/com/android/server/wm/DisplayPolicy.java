@@ -950,7 +950,6 @@ public class DisplayPolicy {
                 }
                 break;
         }
-
         // Check if alternate bars positions were updated.
         if (mStatusBarAlt == win) {
             mStatusBarAltPosition = getAltBarPosition(attrs);
