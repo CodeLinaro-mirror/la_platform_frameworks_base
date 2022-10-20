@@ -104,7 +104,15 @@ import com.android.server.location.gnss.hal.GnssNative;
 import com.android.server.location.injector.Injector;
 import com.android.server.location.provider.AbstractLocationProvider;
 
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+
+import java.io.File;
 import java.io.FileDescriptor;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -127,6 +135,39 @@ public class GnssLocationProvider extends AbstractLocationProvider implements
         GnssNative.LocationRequestCallbacks, GnssNative.TimeCallbacks {
 
     private static final String TAG = "GnssLocationProvider";
+
+    //TwoWheeler: Changes for custom location mock for demo - START
+    private static final String TAG_CUSTOM_MOCK_LOCATION = "CustomTwoWheelerMock";
+    private static final String EXTRA_ENABLED = "EXTRA_ENABLED";
+    private static final String EXTRA_RESET = "EXTRA_RESET";
+    private static final String INTENT_CUSTOM_MOCK_LOCATION =
+            "android.intent.action.CUSTOM_LOCATION";
+    private static final String MOCK_LOCATION_FILE_NAME =
+            "/system/etc/mock_location_data.json";
+
+    // JSON keys
+    private final String NAVIGATION_KEY = "navigation";
+    private final String ACCURACY_KEY = "accuracy";
+    // elapsed time is ignored while parsing
+    private final String ELAPSED_TIME_NANOS_KEY = "realtimenanos";
+    private final String ALTITUDE_KEY = "altitude";
+    private final String BEARING_KEY = "bearing";
+    private final String LATITUDE_KEY = "latitude";
+    private final String LONGITUDE_KEY = "longitude";
+    // this field is removed in latest json. Keep for future use
+    private final String SPEED_KEY = "speed";
+    // ignored velocity for now
+    private final String VELOCITY_KEY = "velocity";
+    // provider is ignored while parsing
+    private final String PROVIDER_KEY = "provider";
+    // timestamp is ignored and current timestamp is set
+    private final String TIMESTAMP_KEY = "timestamp";
+
+    private static final int SLEEP_DURATION_AFTER_LOCATION_POST = 5 * 1000;
+
+
+    //TwoWheeler: Changes for custom location mock for demo - END
+
 
     private static final boolean DEBUG = Log.isLoggable(TAG, Log.DEBUG);
     private static final boolean VERBOSE = Log.isLoggable(TAG, Log.VERBOSE);
@@ -258,6 +299,11 @@ public class GnssLocationProvider extends AbstractLocationProvider implements
     private AlarmManager.OnAlarmListener mBatchingAlarm;
     private long mStartedChangedElapsedRealtime;
     private int mFixInterval = 1000;
+
+    //TwoWheeler: Changes for custom location mock for demo
+    private boolean mIsCustomMockEnabled = false;
+    private boolean mResetMockLocationIndex = false;
+    private Thread mStubLocationThread;
 
     private ProviderRequest mProviderRequest;
 
@@ -459,6 +505,40 @@ public class GnssLocationProvider extends AbstractLocationProvider implements
             }
         }, UserHandle.ALL, new IntentFilter(Intent.ACTION_SHUTDOWN), null, mHandler);
 
+        //TwoWheeler: Changes for custom location mock for demo
+        mContext.registerReceiverAsUser(new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context context, Intent intent) {
+                    Log.e(TAG_CUSTOM_MOCK_LOCATION,
+                            "received custom location intent for user" +
+                                    " " + getSendingUserId());
+                    // default is true since we enable on boot
+                    mIsCustomMockEnabled =
+                            intent.getBooleanExtra(EXTRA_ENABLED,
+                                    false);
+                    mResetMockLocationIndex =
+                            intent.getBooleanExtra(EXTRA_RESET, false);
+                    Log.e(TAG_CUSTOM_MOCK_LOCATION,
+                            "mIsCustomMockEnabled " + mIsCustomMockEnabled);
+                    Log.e(TAG_CUSTOM_MOCK_LOCATION,
+                            "mResetMockLocationIndex " + mResetMockLocationIndex);
+                    // Enabling/disabling not supported for now
+                    if (mIsCustomMockEnabled) {
+                        // ignore if already running
+                        if (mStubLocationThread == null || !mStubLocationThread.isAlive()) {
+                            stubLocationData();
+                        } else {
+                            Log.e(TAG_CUSTOM_MOCK_LOCATION,
+                                    "MockLocation already running");
+                        }
+                    } else if (mStubLocationThread != null && mStubLocationThread.isAlive()) {
+                        mStubLocationThread.interrupt();
+                        mStubLocationThread = null;
+
+                    }
+                }
+        }, UserHandle.ALL, new IntentFilter(INTENT_CUSTOM_MOCK_LOCATION), null, mHandler);
+
         mContext.getContentResolver().registerContentObserver(
                 Settings.Secure.getUriFor(Settings.Secure.LOCATION_MODE),
                 true,
@@ -471,6 +551,10 @@ public class GnssLocationProvider extends AbstractLocationProvider implements
 
         mHandler.post(this::handleInitialize);
         mHandler.post(mGnssSatelliteBlocklistHelper::updateSatelliteBlocklist);
+
+        //TwoWheeler: Changes for custom location mock for demo
+        // start pumping location data immediately on bootup
+        //stubLocationData();
     }
 
     private void handleInitialize() {
@@ -691,6 +775,128 @@ public class GnssLocationProvider extends AbstractLocationProvider implements
             mGnssNative.injectLocation(location);
         }
     }
+    //TwoWheeler: Changes for custom location mock for demo - START
+
+    // Copy of injectLocation without mock provider check
+    private void injectLocationCustom(Location location) {
+        mGnssNative.injectLocation(location);
+    }
+
+    public String loadJsonFile(String fileName) {
+        String json = null;
+        try {
+            InputStream is = new FileInputStream(fileName);
+            int size = is.available();
+            byte[] buffer = new byte[size];
+            is.read(buffer);
+            is.close();
+            json = new String(buffer, "UTF-8");
+        } catch (IOException ex) {
+            Log.e(TAG_CUSTOM_MOCK_LOCATION,
+                    "IO Exception in loadJsonFile: " + MOCK_LOCATION_FILE_NAME);
+            return null;
+        }
+        return json;
+    }
+
+    private void parseJSONAndUpdateLocation(String locationData) {
+        try {
+            JSONArray locations = new JSONArray(locationData);
+            if (locations == null && (locations.length() == 0)) {
+                Log.e(TAG_CUSTOM_MOCK_LOCATION, "FATAL Exception, location file is invalid");
+                mIsCustomMockEnabled = false;
+                return;
+            }
+            Log.e(TAG_CUSTOM_MOCK_LOCATION, "Total length of location data : "
+                    + locations.length());
+
+            for (int i = 0; i < locations.length(); i++) {
+                Log.e(TAG_CUSTOM_MOCK_LOCATION, "Current index " + i);
+                // Reset index if needed
+                if (mResetMockLocationIndex) {
+                    i = 0;
+                    mResetMockLocationIndex = false;
+                    Log.e(TAG_CUSTOM_MOCK_LOCATION, "Reset index to 0");
+                }
+
+                JSONObject location = locations.getJSONObject(i);
+                JSONObject navigation = location.getJSONObject(NAVIGATION_KEY);
+
+                Location mockLocation = new Location(LocationManager.GPS_PROVIDER);
+                if (navigation.has(ACCURACY_KEY)) {
+                    mockLocation.setAccuracy((float)navigation.getInt(ACCURACY_KEY));
+                }
+                if (navigation.has(ALTITUDE_KEY)) {
+                    mockLocation.setAltitude(navigation.getDouble(ALTITUDE_KEY));
+                }
+
+                if (navigation.has(BEARING_KEY)) {
+                    mockLocation.setBearing((float)navigation.getDouble(BEARING_KEY));
+                }
+                if (navigation.has(LATITUDE_KEY)) {
+                    mockLocation.setLatitude(navigation.getDouble(LATITUDE_KEY));
+                }
+                if (navigation.has(LONGITUDE_KEY)) {
+                    mockLocation.setLongitude(navigation.getDouble(LONGITUDE_KEY));
+                }
+                // Ignoring speed and velocity for now
+                /*if (navigation.has(SPEED_KEY)) {
+                    mockLocation.setSpeed((float)navigation.getDouble(SPEED_KEY));
+                }
+                if (navigation.has(VELOCITY_KEY)) {
+                    mockLocation.setSpeed((float)navigation.getDouble(VELOCITY_KEY));
+                }*/
+                mockLocation.makeComplete();
+
+                onReportLocation(true, mockLocation);
+                sleep();
+            }
+        } catch (JSONException e) {
+            Log.e(TAG_CUSTOM_MOCK_LOCATION, "FATAL Exception while parsing location file = " + e);
+            mIsCustomMockEnabled = false;
+            return;
+        }
+    }
+    private void stubLocationData() {
+        Log.e(TAG_CUSTOM_MOCK_LOCATION, "stubLocationData started ");
+
+        Thread mStubLocationThread = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                String jsonLocationData = loadJsonFile(MOCK_LOCATION_FILE_NAME);
+                if (TextUtils.isEmpty(jsonLocationData)) {
+                    Log.e(TAG_CUSTOM_MOCK_LOCATION,
+                            "FATAL - Mock location file not found at : "
+                                    + MOCK_LOCATION_FILE_NAME);
+                    return;
+                }
+                do {
+                    Log.e(TAG_CUSTOM_MOCK_LOCATION, "mStubLocationThread START ");
+                    parseJSONAndUpdateLocation(jsonLocationData);
+                    Log.e(TAG_CUSTOM_MOCK_LOCATION, "mStubLocationThread END ");
+                } while (mIsCustomMockEnabled);
+
+            }
+        });
+        mStubLocationThread.start();
+    }
+
+    private boolean sleep() {
+        if (!mIsCustomMockEnabled) {
+            Log.e(TAG_CUSTOM_MOCK_LOCATION, "Mock location disabled ...return");
+            return false;
+        }
+        Log.e(TAG_CUSTOM_MOCK_LOCATION, "Sleeping ....");
+
+        try {
+            Thread.sleep(SLEEP_DURATION_AFTER_LOCATION_POST);
+        } catch (InterruptedException e){
+            Log.e(TAG_CUSTOM_MOCK_LOCATION, "Exception during sleep .... " + e);
+        }
+        return true;
+    }
+
+    //TwoWheeler: Changes for custom location mock for demo - END
 
     private void setSuplHostPort() {
         mSuplServerHost = mGnssConfiguration.getSuplHost();
@@ -1165,8 +1371,13 @@ public class GnssLocationProvider extends AbstractLocationProvider implements
         if (VERBOSE) Log.v(TAG, "reportLocation " + location.toString());
 
         location.setExtras(mLocationExtras.getBundle());
+        //TwoWheeler: Bypass check for mock data
+        if (mIsCustomMockEnabled) {
+            reportLocation(LocationResult.wrap(location));
+        } else {
+            reportLocation(LocationResult.wrap(location).validate());
 
-        reportLocation(LocationResult.wrap(location).validate());
+        }
 
         if (mStarted) {
             mGnssMetrics.logReceivedLocationStatus(hasLatLong);
