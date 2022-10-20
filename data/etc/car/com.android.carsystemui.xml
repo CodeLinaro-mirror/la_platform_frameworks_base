@@ -30,5 +30,9 @@
         <permission name="android.car.permission.CONTROL_CAR_EVS_ACTIVITY"/>
         <permission name="android.car.permission.MONITOR_CAR_EVS_STATUS"/>
         <permission name="android.car.permission.CONTROL_CAR_APP_LAUNCH"/>
-    </privapp-permissions>
+        <!-- additional permission for TwoWheeler SystemUI -->
+        <permission name="android.car.permission.CAR_EXTERIOR_LIGHTS"/>
+	<permission name="vendor.vehicle.permission.TWO_WHEELER_CONTROLLER"/>
+        <permission name="android.permission.SEND_CATEGORY_CAR_NOTIFICATIONS"/>
+     </privapp-permissions>
 </permissions>
