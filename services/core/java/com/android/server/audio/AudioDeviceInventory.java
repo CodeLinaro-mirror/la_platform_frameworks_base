@@ -16,6 +16,7 @@
 package com.android.server.audio;
 
 import android.annotation.NonNull;
+import android.annotation.Nullable;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothProfile;
@@ -296,6 +297,7 @@ public class AudioDeviceInventory {
         }
     }
 
+    // @GuardedBy("AudioDeviceBroker.mSetModeLock")
     @GuardedBy("AudioDeviceBroker.mDeviceStateLock")
     void onSetBtActiveDevice(@NonNull AudioDeviceBroker.BtDeviceInfo btInfo, int streamType) {
         if (AudioService.DEBUG_DEVICES) {
@@ -1587,7 +1589,7 @@ public class AudioDeviceInventory {
         mDevRoleCapturePresetDispatchers.finishBroadcast();
     }
 
-    UUID getDeviceSensorUuid(AudioDeviceAttributes device) {
+    @Nullable UUID getDeviceSensorUuid(AudioDeviceAttributes device) {
         final String key = DeviceInfo.makeDeviceListKey(device.getInternalType(),
                 device.getAddress());
         synchronized (mDevicesLock) {
@@ -1598,6 +1600,19 @@ public class AudioDeviceInventory {
             return di.mSensorUuid;
         }
     }
+
+    /* package */ AudioDeviceAttributes getDeviceOfType(int type) {
+        synchronized (mDevicesLock) {
+            for (DeviceInfo di : mConnectedDevices.values()) {
+                if (di.mDeviceType == type) {
+                    return new AudioDeviceAttributes(
+                            di.mDeviceType, di.mDeviceAddress, di.mDeviceName);
+                }
+            }
+        }
+        return null;
+    }
+
     //----------------------------------------------------------
     // For tests only
 

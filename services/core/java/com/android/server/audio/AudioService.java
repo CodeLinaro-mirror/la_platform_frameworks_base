@@ -352,6 +352,9 @@ public class AudioService extends IAudioService.Stub
     private static final int MSG_REMOVE_ASSISTANT_SERVICE_UID = 45;
     private static final int MSG_UPDATE_ACTIVE_ASSISTANT_SERVICE_UID = 46;
     private static final int MSG_DISPATCH_DEVICE_VOLUME_BEHAVIOR = 47;
+    private static final int MSG_ROTATION_UPDATE = 48;
+    private static final int MSG_FOLD_UPDATE = 49;
+    private static final int MSG_RESET_SPATIALIZER = 50;
 
     // start of messages handled under wakelock
     //   these messages can only be queued, i.e. sent with queueMsgUnderWakeLock(),
@@ -359,6 +362,7 @@ public class AudioService extends IAudioService.Stub
     private static final int MSG_DISABLE_AUDIO_FOR_UID = 100;
     private static final int MSG_INIT_STREAMS_VOLUMES = 101;
     private static final int MSG_INIT_SPATIALIZER = 102;
+
     // end of messages handled under wakelock
 
     // retry delay in case of failure to indicate system ready to AudioFlinger
@@ -1229,7 +1233,9 @@ public class AudioService extends IAudioService.Stub
 
         intentFilter.addAction(Intent.ACTION_CONFIGURATION_CHANGED);
         if (mMonitorRotation) {
-            RotationHelper.init(mContext, mAudioHandler);
+            RotationHelper.init(mContext, mAudioHandler,
+                    rotationParam -> onRotationUpdate(rotationParam),
+                    foldParam -> onFoldUpdate(foldParam));
         }
 
         intentFilter.addAction(AudioEffect.ACTION_OPEN_AUDIO_EFFECT_CONTROL_SESSION);
@@ -1373,6 +1379,20 @@ public class AudioService extends IAudioService.Stub
             mSpatializerHelper.onRoutingUpdated();
         }
         checkMuteAwaitConnection();
+    }
+
+    //-----------------------------------------------------------------
+    // rotation/fold updates coming from RotationHelper
+    void onRotationUpdate(String rotationParameter) {
+        // use REPLACE as only the last rotation matters
+        sendMsg(mAudioHandler, MSG_ROTATION_UPDATE, SENDMSG_REPLACE, /*arg1*/ 0, /*arg2*/ 0,
+                /*obj*/ rotationParameter, /*delay*/ 0);
+    }
+
+    void onFoldUpdate(String foldParameter) {
+        // use REPLACE as only the last fold state matters
+        sendMsg(mAudioHandler, MSG_FOLD_UPDATE, SENDMSG_REPLACE, /*arg1*/ 0, /*arg2*/ 0,
+                /*obj*/ foldParameter, /*delay*/ 0);
     }
 
     //-----------------------------------------------------------------
@@ -1548,6 +1568,7 @@ public class AudioService extends IAudioService.Stub
         }
 
         synchronized (mAudioPolicies) {
+            ArrayList<AudioPolicyProxy> invalidProxies = new ArrayList<>();
             for (AudioPolicyProxy policy : mAudioPolicies.values()) {
                 final int status = policy.connectMixes();
                 if (status != AudioSystem.SUCCESS) {
@@ -1555,7 +1576,7 @@ public class AudioService extends IAudioService.Stub
                     Log.e(TAG, "onAudioServerDied: error "
                             + AudioSystem.audioSystemErrorToString(status)
                             + " when connecting mixes for policy " + policy.toLogFriendlyString());
-                    policy.release();
+                    invalidProxies.add(policy);
                 } else {
                     final int deviceAffinitiesStatus = policy.setupDeviceAffinities();
                     if (deviceAffinitiesStatus != AudioSystem.SUCCESS) {
@@ -1563,10 +1584,12 @@ public class AudioService extends IAudioService.Stub
                                 + AudioSystem.audioSystemErrorToString(deviceAffinitiesStatus)
                                 + " when connecting device affinities for policy "
                                 + policy.toLogFriendlyString());
-                        policy.release();
+                        invalidProxies.add(policy);
                     }
                 }
             }
+            invalidProxies.forEach((policy) -> policy.release());
+
         }
 
         // Restore capture policies
@@ -5059,16 +5082,17 @@ public class AudioService extends IAudioService.Stub
     }
 
     /**
-     * Return the pid of the current audio mode owner
+     * Return information on the current audio mode owner
      * @return 0 if nobody owns the mode
      */
     @GuardedBy("mDeviceBroker.mSetModeLock")
-    /*package*/ int getModeOwnerPid() {
+    /*package*/ AudioDeviceBroker.AudioModeInfo getAudioModeOwner() {
         SetModeDeathHandler hdlr = getAudioModeOwnerHandler();
         if (hdlr != null) {
-            return hdlr.getPid();
+            return new AudioDeviceBroker.AudioModeInfo(
+                    hdlr.getMode(), hdlr.getPid(), hdlr.getUid());
         }
-        return 0;
+        return new AudioDeviceBroker.AudioModeInfo(AudioSystem.MODE_NORMAL, 0 , 0);
     }
 
     /**
@@ -5250,7 +5274,7 @@ public class AudioService extends IAudioService.Stub
 
                 // when entering RINGTONE, IN_CALL or IN_COMMUNICATION mode, clear all SCO
                 // connections not started by the application changing the mode when pid changes
-                mDeviceBroker.postSetModeOwnerPid(pid, mode);
+                mDeviceBroker.postSetModeOwner(mode, pid, uid);
             } else {
                 Log.w(TAG, "onUpdateAudioMode: failed to set audio mode to: " + mode);
             }
@@ -5577,7 +5601,10 @@ public class AudioService extends IAudioService.Stub
         }
         return deviceIds.stream().mapToInt(Integer::intValue).toArray();
     }
-        /** @see AudioManager#setCommunicationDevice(int) */
+        /**
+         * @see AudioManager#setCommunicationDevice(int)
+         * @see AudioManager#clearCommunicationDevice()
+         */
     public boolean setCommunicationDevice(IBinder cb, int portId) {
         final int uid = Binder.getCallingUid();
         final int pid = Binder.getCallingPid();
@@ -5592,7 +5619,8 @@ public class AudioService extends IAudioService.Stub
                 throw new IllegalArgumentException("invalid device type " + device.getType());
             }
         }
-        final String eventSource = new StringBuilder("setCommunicationDevice(")
+        final String eventSource = new StringBuilder()
+                .append(device == null ? "clearCommunicationDevice(" : "setCommunicationDevice(")
                 .append(") from u/pid:").append(uid).append("/")
                 .append(pid).toString();
 
@@ -8212,6 +8240,10 @@ public class AudioService extends IAudioService.Stub
                     onPersistSpatialAudioDeviceSettings();
                     break;
 
+                case MSG_RESET_SPATIALIZER:
+                    mSpatializerHelper.reset(/* featureEnabled */ mHasSpatializerEffect);
+                    break;
+
                 case MSG_CHECK_MUSIC_ACTIVE:
                     onCheckMusicActive((String) msg.obj);
                     break;
@@ -8358,6 +8390,16 @@ public class AudioService extends IAudioService.Stub
 
                 case MSG_DISPATCH_DEVICE_VOLUME_BEHAVIOR:
                     dispatchDeviceVolumeBehavior((AudioDeviceAttributes) msg.obj, msg.arg1);
+                    break;
+
+                case MSG_ROTATION_UPDATE:
+                    // rotation parameter format: "rotation=x" where x is one of 0, 90, 180, 270
+                    mAudioSystem.setParameters((String) msg.obj);
+                    break;
+
+                case MSG_FOLD_UPDATE:
+                    // fold parameter format: "device_folded=x" where x is one of on, off
+                    mAudioSystem.setParameters((String) msg.obj);
                     break;
             }
         }
@@ -9179,16 +9221,23 @@ public class AudioService extends IAudioService.Stub
                 /*arg1*/ 0, /*arg2*/ 0, TAG, /*delay*/ 0);
     }
 
+    /**
+     * post a message to schedule a reset of the spatializer state
+     */
+    void postResetSpatializer() {
+        sendMsg(mAudioHandler,
+                MSG_RESET_SPATIALIZER,
+                SENDMSG_REPLACE,
+                /*arg1*/ 0, /*arg2*/ 0, TAG, /*delay*/ 0);
+    }
+
     void onInitSpatializer() {
         final String settings = mSettings.getSecureStringForUser(mContentResolver,
                 Settings.Secure.SPATIAL_AUDIO_ENABLED, UserHandle.USER_CURRENT);
         if (settings == null) {
             Log.e(TAG, "error reading spatial audio device settings");
-        } else {
-            Log.v(TAG, "restoring spatial audio device settings: " + settings);
-            mSpatializerHelper.setSADeviceSettings(settings);
         }
-        mSpatializerHelper.init(/*effectExpected*/ mHasSpatializerEffect);
+        mSpatializerHelper.init(/*effectExpected*/ mHasSpatializerEffect, settings);
         mSpatializerHelper.setFeatureEnabled(mHasSpatializerEffect);
     }
 
