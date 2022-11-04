@@ -31,5 +31,11 @@
         <permission name="android.permission.PACKAGE_USAGE_STATS"/>
         <permission name="android.car.permission.ACCESS_CAR_PROJECTION_STATUS"/>
         <permission name="android.car.permission.CONTROL_CAR_APP_LAUNCH"/>
+        <!-- TW: permission for car odometer reading -->
+        <permission name="android.car.permission.CAR_MILEAGE"/>
+        <!-- TW: permission for reading rpm -->
+        <permission name="android.car.permission.CAR_ENGINE_DETAILED"/>
+        <!-- TW: permission for vendor specific properties -->
+        <permission name="vendor.vehicle.permission.TWO_WHEELER_CONTROLLER" />
     </privapp-permissions>
 </permissions>
