@@ -16,6 +16,9 @@
 
 package com.android.server.locksettings;
 
+import static android.app.admin.DevicePolicyManager.DEPRECATE_USERMANAGERINTERNAL_DEVICEPOLICY_FLAG;
+import static android.provider.DeviceConfig.NAMESPACE_DEVICE_POLICY_MANAGER;
+
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -44,6 +47,7 @@ import android.os.RemoteException;
 import android.os.UserManager;
 import android.os.storage.IStorageManager;
 import android.os.storage.StorageManager;
+import android.provider.DeviceConfig;
 import android.security.KeyStore;
 
 import androidx.test.InstrumentationRegistry;
@@ -182,7 +186,11 @@ public abstract class BaseLockSettingsServiceTests {
         // Adding a fake Device Owner app which will enable escrow token support in LSS.
         when(mDevicePolicyManager.getDeviceOwnerComponentOnAnyUser()).thenReturn(
                 new ComponentName("com.dummy.package", ".FakeDeviceOwner"));
+        // TODO(b/258213147): Remove
+        DeviceConfig.setProperty(NAMESPACE_DEVICE_POLICY_MANAGER,
+                DEPRECATE_USERMANAGERINTERNAL_DEVICEPOLICY_FLAG, "true", /* makeDefault= */ false);
         when(mUserManagerInternal.isDeviceManaged()).thenReturn(true);
+        when(mDeviceStateCache.isUserOrganizationManaged(anyInt())).thenReturn(true);
         when(mDeviceStateCache.isDeviceProvisioned()).thenReturn(true);
         mockBiometricsHardwareFingerprintsAndTemplates(PRIMARY_USER_ID);
         mockBiometricsHardwareFingerprintsAndTemplates(MANAGED_PROFILE_USER_ID);
@@ -200,7 +208,10 @@ public abstract class BaseLockSettingsServiceTests {
         when(mUserManager.getProfileParent(eq(profileId))).thenReturn(PRIMARY_USER_INFO);
         when(mUserManager.isUserRunning(eq(profileId))).thenReturn(true);
         when(mUserManager.isUserUnlocked(eq(profileId))).thenReturn(true);
+        // TODO(b/258213147): Remove
         when(mUserManagerInternal.isUserManaged(eq(profileId))).thenReturn(true);
+        when(mDeviceStateCache.isUserOrganizationManaged(eq(profileId)))
+                .thenReturn(true);
         return userInfo;
     }
 

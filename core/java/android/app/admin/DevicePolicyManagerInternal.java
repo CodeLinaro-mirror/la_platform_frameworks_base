@@ -269,4 +269,9 @@ public abstract class DevicePolicyManagerInternal {
      * {@link #supportsResetOp(int)} is true.
      */
     public abstract void resetOp(int op, String packageName, @UserIdInt int userId);
+
+    /**
+     * True if either the entire device or the user is organization managed.
+     */
+    public abstract boolean isUserOrganizationManaged(@UserIdInt int userId);
 }

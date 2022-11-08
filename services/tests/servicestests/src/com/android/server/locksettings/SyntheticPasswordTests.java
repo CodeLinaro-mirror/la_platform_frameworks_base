@@ -28,6 +28,7 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.never;
@@ -35,8 +36,8 @@ import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import android.app.admin.PasswordMetrics;
 import android.app.PropertyInvalidatedCache;
+import android.app.admin.PasswordMetrics;
 import android.os.RemoteException;
 import android.os.UserHandle;
 import android.platform.test.annotations.Presubmit;
@@ -365,6 +366,8 @@ public class SyntheticPasswordTests extends BaseLockSettingsServiceTests {
     @Test
     public void testEscrowTokenCannotBeActivatedOnUnmanagedUser() {
         byte[] token = "some-high-entropy-secure-token".getBytes();
+        when(mDeviceStateCache.isUserOrganizationManaged(anyInt())).thenReturn(false);
+        // TODO(b/258213147): Remove
         when(mUserManagerInternal.isDeviceManaged()).thenReturn(false);
         when(mUserManagerInternal.isUserManaged(PRIMARY_USER_ID)).thenReturn(false);
         when(mDeviceStateCache.isDeviceProvisioned()).thenReturn(true);
