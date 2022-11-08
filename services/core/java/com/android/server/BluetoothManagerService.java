@@ -1531,9 +1531,16 @@ class BluetoothManagerService extends IBluetoothManager.Stub {
             if (DBG) {
                 Slog.d(TAG, "Auto-enabling Bluetooth.");
             }
-            sendEnableMsg(mQuietEnableExternal,
-                    BluetoothProtoEnums.ENABLE_DISABLE_REASON_SYSTEM_BOOT,
-                    mContext.getPackageName());
+
+            if (isBluetoothAvailable()) {
+                sendEnableMsg(mQuietEnableExternal,
+                        BluetoothProtoEnums.ENABLE_DISABLE_REASON_SYSTEM_BOOT,
+                        mContext.getPackageName());
+            } else {
+                if (DBG) {
+                    Slog.e(TAG, "Auto-enabling Bluetooth disallowed - bluetooth not available");
+                }
+            }
         } else if (!isNameAndAddressSet()) {
             if (DBG) {
                 Slog.d(TAG, "Getting adapter name and address");
