@@ -203,6 +203,7 @@ class AccessibilityInputFilter extends InputFilter implements EventStreamTransfo
         mInstalled = true;
         disableFeatures();
         enableFeatures();
+        mAms.onInputFilterInstalled(true);
         super.onInstalled();
     }
 
@@ -213,6 +214,7 @@ class AccessibilityInputFilter extends InputFilter implements EventStreamTransfo
         }
         mInstalled = false;
         disableFeatures();
+        mAms.onInputFilterInstalled(false);
         super.onUninstalled();
     }
 
