@@ -13,6 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+/*
+ * Changes from Qualcomm Innovation Center are provided under the following license:
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
 
 package com.android.server;
 
@@ -2097,9 +2102,10 @@ public final class SystemServer implements Dumpable {
             }
             t.traceEnd();
 
-            t.traceBegin("StartSoundTriggerMiddlewareService");
+            // Disabled for TwoWheeler as voice interaction is not supported
+            /*t.traceBegin("StartSoundTriggerMiddlewareService");
             mSystemServiceManager.startService(SoundTriggerMiddlewareService.Lifecycle.class);
-            t.traceEnd();
+            t.traceEnd();*/
 
             if (mPackageManager.hasSystemFeature(PackageManager.FEATURE_BROADCAST_RADIO)) {
                 t.traceBegin("StartBroadcastRadioService");
@@ -2188,9 +2194,10 @@ public final class SystemServer implements Dumpable {
             mSystemServiceManager.startService(JOB_SCHEDULER_SERVICE_CLASS);
             t.traceEnd();
 
-            t.traceBegin("StartSoundTrigger");
+            // Disabled for TwoWheeler as voice interaction is not supported
+            /*t.traceBegin("StartSoundTrigger");
             mSystemServiceManager.startService(SoundTriggerService.class);
-            t.traceEnd();
+            t.traceEnd();*/
 
             t.traceBegin("StartTrustManager");
             mSystemServiceManager.startService(TrustManagerService.class);
@@ -2209,13 +2216,14 @@ public final class SystemServer implements Dumpable {
                 t.traceEnd();
             }
 
+            // Disabled for TwoWheeler as voice interaction is not supported
             // We need to always start this service, regardless of whether the
             // FEATURE_VOICE_RECOGNIZERS feature is set, because it needs to take care
             // of initializing various settings.  It will internally modify its behavior
             // based on that feature.
-            t.traceBegin("StartVoiceRecognitionManager");
+            /*t.traceBegin("StartVoiceRecognitionManager");
             mSystemServiceManager.startService(VOICE_RECOGNITION_MANAGER_SERVICE_CLASS);
-            t.traceEnd();
+            t.traceEnd();*/
 
             t.traceBegin("StartAppHibernationService");
             mSystemServiceManager.startService(APP_HIBERNATION_SERVICE_CLASS);
