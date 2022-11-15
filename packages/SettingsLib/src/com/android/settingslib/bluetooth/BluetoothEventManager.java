@@ -179,9 +179,11 @@ public class BluetoothEventManager {
         for (BluetoothDevice device : bondedDevices) {
             CachedBluetoothDevice cachedDevice = mDeviceManager.findDevice(device);
             if (cachedDevice == null) {
-                mDeviceManager.addDevice(device);
                 deviceAdded = true;
+            } else {
+                mDeviceManager.removeDevice(cachedDevice);
             }
+            mDeviceManager.addDevice(device);
         }
 
         return deviceAdded;
