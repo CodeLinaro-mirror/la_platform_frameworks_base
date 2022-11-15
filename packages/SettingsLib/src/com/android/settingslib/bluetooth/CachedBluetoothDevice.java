@@ -748,8 +748,16 @@ public class CachedBluetoothDevice implements Comparable<CachedBluetoothDevice> 
 
         refresh();
 
-        if (bondState == BluetoothDevice.BOND_BONDED && mActiveDevice.isBondingInitiatedLocally()) {
-            connect();
+        if (bondState == BluetoothDevice.BOND_BONDED) {
+            /*
+             * This is to ensure the properties of peer Bluetooth device can still
+             * be retrieved after Bluetooth is re-enabled. E.g. alias name.
+             */
+            mDevice = mActiveDevice;
+
+            if (mActiveDevice.isBondingInitiatedLocally()) {
+                connect();
+            }
         }
     }
 
