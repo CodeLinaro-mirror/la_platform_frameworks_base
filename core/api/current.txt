@@ -9043,6 +9043,7 @@ package android.bluetooth {
     method @Nullable @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT) public String getAlias();
     method @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT) public android.bluetooth.BluetoothClass getBluetoothClass();
     method @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT) public int getBondState();
+    method @RequiresPermission(android.Manifest.permission.BLUETOOTH_PRIVILEGED) public void getLinkKey(@NonNull android.content.Context);
     method @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT) public String getName();
     method @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT) public int getType();
     method @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT) public android.os.ParcelUuid[] getUuids();
@@ -21825,6 +21826,7 @@ package android.media {
     field public static final String FEATURE_PartialFrame = "partial-frame";
     field public static final String FEATURE_QpBounds = "qp-bounds";
     field public static final String FEATURE_SecurePlayback = "secure-playback";
+    field public static final String FEATURE_SecureRecord = "secure-record";
     field public static final String FEATURE_TunneledPlayback = "tunneled-playback";
     field public int[] colorFormats;
     field public android.media.MediaCodecInfo.CodecProfileLevel[] profileLevels;

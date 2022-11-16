@@ -105,7 +105,7 @@ public class DisplayLayout {
                 && mDensityDpi == other.mDensityDpi
                 && Objects.equals(mCutout, other.mCutout);
     }
-
+	
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;

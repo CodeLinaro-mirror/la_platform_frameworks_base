@@ -563,6 +563,12 @@ public final class MediaCodecInfo {
         public static final String FEATURE_IntraRefresh = "intra-refresh";
 
         /**
+         * <b>video encoder only</b>: codec supports secure record.
+         */
+        @SuppressLint("AllUpper")
+        public static final String FEATURE_SecureRecord         = "secure-record";
+
+        /**
          * <b>decoder only</b>: codec supports low latency decoding.
          * If supported, clients can enable the low latency mode for the decoder.
          * When the mode is enabled, the decoder doesn't hold input and output data more than
@@ -615,6 +621,7 @@ public final class MediaCodecInfo {
             new Feature(FEATURE_MultipleFrames, (1 << 1), false),
             new Feature(FEATURE_DynamicTimestamp, (1 << 2), false),
             new Feature(FEATURE_QpBounds, (1 << 3), false),
+            new Feature(FEATURE_SecureRecord,   (1 << 4), false),
         };
 
         /** @hide */

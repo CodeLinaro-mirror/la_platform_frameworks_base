@@ -90,6 +90,14 @@ public final class BluetoothAvrcpController implements BluetoothProfile {
 
     private final BluetoothAdapter mAdapter;
     private final AttributionSource mAttributionSource;
+
+    /* Remote supported Features */
+    public static final int BTRC_FEAT_NONE = 0x00;
+    public static final int BTRC_FEAT_METADATA = 0x01;
+    public static final int BTRC_FEAT_ABSOLUTE_VOLUME = 0x02;
+    public static final int BTRC_FEAT_BROWSE = 0x04;
+    public static final int BTRC_FEAT_COVER_ART = 0x08;
+
     private final BluetoothProfileConnector<IBluetoothAvrcpController> mProfileConnector =
             new BluetoothProfileConnector(this, BluetoothProfile.AVRCP_CONTROLLER,
                     "BluetoothAvrcpController", IBluetoothAvrcpController.class.getName()) {
@@ -259,6 +267,112 @@ public final class BluetoothAvrcpController implements BluetoothProfile {
             }
         }
         if (service == null) Log.w(TAG, "Proxy not attached to service");
+    }
+
+    /**
+     * Fetch the playback state to Remote.
+     */
+    @RequiresBluetoothConnectPermission
+    @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
+    public void getPlaybackState(BluetoothDevice device){
+        Log.d(TAG, "getPlaybackStateNative dev = " + device);
+        final IBluetoothAvrcpController service = getService();
+        if (service != null && isEnabled()) {
+           try {
+               service.getPlaybackState(device, mAttributionSource);
+               return;
+           } catch (RemoteException e) {
+               Log.e(TAG, "Error talking to BT service in getPlaybackState()", e);
+               return;
+           }
+        }
+        if (service == null) Log.w(TAG, "Proxy not attached to service");
+    }
+
+     /**
+     * Get Supported features for Remote.
+     * @hide
+     */
+    @RequiresBluetoothConnectPermission
+    @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
+    public int getSupportedFeatures(BluetoothDevice device) {
+        Log.d(TAG, "getSupportedFeatures dev = " + device);
+        final IBluetoothAvrcpController service =
+                getService();
+        if (service != null && isEnabled()) {
+            try {
+                if (getConnectionState(device) == BluetoothProfile.STATE_CONNECTED) {
+                    return service.getSupportedFeatures(device, mAttributionSource);
+                } else {
+                    Log.w(TAG, "getSupportedFeatures failed, avrcp connection is required");
+                    return 0;
+                }
+            } catch (RemoteException e) {
+                Log.e(TAG, "Error talking to BT service in getSupportedFeatures()", e);
+                return 0;
+            }
+       }
+       if (service == null) Log.w(TAG, "Proxy not attached to service");
+       return 0;
+    }
+
+    /**
+     * Get remote AVRCP version.
+     * @hide
+     */
+    @RequiresBluetoothConnectPermission
+    @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
+    public int getRemoteVersion(BluetoothDevice device) {
+        Log.d(TAG, "getRemoteVersion dev = " + device);
+        final IBluetoothAvrcpController service =
+                getService();
+        if (service != null && isEnabled()) {
+            try {
+                if (getConnectionState(device) == BluetoothProfile.STATE_CONNECTED) {
+                    return service.getRemoteVersion(device, mAttributionSource);
+                } else {
+                    Log.w(TAG, "getRemoteVersion failed, avrcp connection is required");
+                    return 0;
+                }
+            } catch (RemoteException e) {
+                Log.e(TAG, "Error talking to BT service in getRemoteVersion()", e);
+                return 0;
+            }
+       }
+       if (service == null) Log.w(TAG, "Proxy not attached to service");
+       return 0;
+    }
+
+    /**
+     * Informs AvrcpControllerService to start fetching Album Art.
+     * Fetching will start only after this api is called.
+     * @device Bluetooth device
+     * @type Image type
+     * @scheme Image scheme
+     * @mimeType Image mime Type
+     * @height Image height
+     * @width Image width
+     * @maxSize Image maximum size
+     * if input parameters are null, 0, 0, 0: image in native encoding will be fetched.
+     * @hide
+     */
+    public void startFetchingAlbumArt(BluetoothDevice device, String type, String scheme,
+            String mimeType, int height, int width, int maxSize) {
+        if (DBG) Log.d(TAG, "startFetchingAlbumArt");
+        final IBluetoothAvrcpController service =
+                getService();
+        if (service != null && isEnabled()) {
+            try {
+                service.startFetchingAlbumArt(
+                    device, type, scheme, mimeType, height, width, maxSize,
+                    mAttributionSource);
+            } catch (RemoteException e) {
+                Log.e(TAG, "Error talking to BT service in startFetchingAlbumArt() " + e);
+                return;
+            }
+        }
+        if (service == null) Log.w(TAG, "Proxy not attached to service");
+        return ;
     }
 
     private boolean isEnabled() {

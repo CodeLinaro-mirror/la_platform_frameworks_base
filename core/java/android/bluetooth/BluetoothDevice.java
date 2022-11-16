@@ -747,6 +747,21 @@ public final class BluetoothDevice implements Parcelable, Attributable {
             "android.bluetooth.device.action.SILENCE_MODE_CHANGED";
 
     /**
+     * Broadcast Action: This intent is used to broadcast the {@link RSSI}
+     * of the remote device after it has been fetched.
+     * This intent is used to broadcast remote device's RSSI
+     * <p> Always contains the extra field {@link #EXTRA_DEVICE}
+     * <p> Always contains the extra field {@link #EXTRA_RSSI}
+     */
+    /** @hide */
+    @RequiresLegacyBluetoothAdminPermission
+    @RequiresBluetoothConnectPermission
+    @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
+    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+    public static final String ACTION_RSSI =
+            "android.bluetooth.device.action.RSSI";
+
+    /**
      * Used as an extra field in {@link #ACTION_CONNECTION_ACCESS_REQUEST} intent.
      *
      * @hide
@@ -1095,6 +1110,101 @@ public final class BluetoothDevice implements Parcelable, Attributable {
     public static final int ADDRESS_TYPE_PUBLIC = 0;
     /** Address is either resolvable, non-resolvable or static. */
     public static final int ADDRESS_TYPE_RANDOM = 1;
+
+    /** @hide */
+    public static final String ACTION_LINKKEY =
+            "android.bluetooth.device.action.LINKKEY";
+
+    /**
+     * Used as an extra field in {@link #ACTION_LINKKEY} intent.
+     * intents for link key number string.
+     *
+     * @hide
+     */
+    public static final String EXTRA_KEY_LINK_KEY = "link_key";
+
+    /**
+     * Used as an extra field in {@link #ACTION_LINKKEY} intent.
+     * intents for Link Key Notification Event. Possible values are:
+     * {@link #LKEY_TYPE_COMBINATION}, {@link #LKEY_TYPE_LOCAL_UNIT},
+     * {@link #LKEY_TYPE_REMOTE_UNIT}, {@link #LKEY_TYPE_DEBUG_COMB},
+     * {@link #LKEY_TYPE_UNAUTH_COMB}, {@link #LKEY_TYPE_AUTH_COMB},
+     * {@link #LKEY_TYPE_CHANGED_COMB}, {@link #LKEY_TYPE_UNAUTH_COMB_P_256},
+     * {@link #LKEY_TYPE_AUTH_COMB_P_256}, {@link #LKEY_TYPE_NO_LINK},
+     *
+     * @hide
+     */
+    public static final String EXTRA_KEY_LINK_KEY_TYPE = "link_key_type";
+
+    /**
+     * link key type is Combination Key.
+     *
+     * @hide
+     */
+    public static final int LKEY_TYPE_COMBINATION = 0x00;
+
+    /**
+     * link key type is Local Unit Key.
+     *
+     * @hide
+     */
+    public static final int LKEY_TYPE_LOCAL_UNIT = 0x01;
+
+    /**
+     * link key type is Remote Unit Key.
+     *
+     * @hide
+     */
+    public static final int LKEY_TYPE_REMOTE_UNIT = 0x02;
+
+    /**
+     * link key type is Debug Combination Key.
+     *
+     * @hide
+     */
+    public static final int LKEY_TYPE_DEBUG_COMB = 0x03;
+
+    /**
+     * link key type is Unauthenticated Combination Key generated from P-192.
+     *
+     * @hide
+     */
+    public static final int LKEY_TYPE_UNAUTH_COMB = 0x04;
+
+    /**
+     * link key type is Authenticated Combination Key generated from P-192.
+     *
+     * @hide
+     */
+    public static final int TYPE_AUTH_COMB = 0x05;
+
+    /**
+     * link key type is Changed Combination Key.
+     *
+     * @hide
+     */
+    public static final int LKEY_TYPE_CHANGED_COMB = 0x06;
+
+    /**
+     * link key type is Unauthenticated Combination Key generated from P-256.
+     *
+     * @hide
+     */
+    public static final int LKEY_TYPE_UNAUTH_COMB_P_256 = 0x07;
+
+    /**
+     * link key type is Authenticated Combination Key generated from P-256.
+     *
+     * @hide
+     */
+    public static final int LKEY_TYPE_AUTH_COMB_P_256 = 0x08;
+
+    /**
+     * link key type is no link key.
+     *
+     * @hide
+     */
+    public static final int LKEY_TYPE_NO_LINK = -1;
 
     /**
      * Lazy initialization. Guaranteed final after first object constructed, or
@@ -1499,6 +1609,91 @@ public final class BluetoothDevice implements Parcelable, Attributable {
         try {
             return service.createBond(
                     this, transport, remoteP192Data, remoteP256Data, mAttributionSource);
+        } catch (RemoteException e) {
+            Log.e(TAG, "", e);
+        }
+        return false;
+    }
+
+    /*
+     * Get link key and key type of current device.
+     *
+     * This API is asynchronous and {@link #ACTION_LINKKEY} intent is sent with
+     * linkkey and key type.
+     *
+     * <p>Requires {@link android.Manifest.permission#BLUETOOTH_PRIVILEGED}.
+     *
+     * @hide
+     */
+     @RequiresPermission(android.Manifest.permission.BLUETOOTH_PRIVILEGED)
+     public void getLinkKey(@NonNull Context context) {
+         final IBluetooth service = sService;
+         if (service == null) {
+             Log.w(TAG, "BT not enabled, getLinkKey failed");
+             return;
+         }
+         try {
+             service.getLinkKey(this, context.getPackageName());
+         } catch (RemoteException e) {
+             Log.e(TAG, "", e);
+         }
+     }
+
+    /**
+     * Load remote oob data to BT process
+     *
+     * <p>This is an synchronous call
+     * <p>There are two possible versions of OOB Data.  This data can come in as
+     * P192 or P256.  This is a reference to the cryptography used to generate the key.
+     * The caller may pass one or both.  If both types of data are passed, then the
+     * P256 data will be preferred, and thus used.
+     *
+     * @param transport - Transport to use
+     * @param remoteP192Data - Out Of Band data (P192) or null
+     * @param remoteP256Data - Out Of Band data (P256) or null
+     * @return false on immediate error, true if load success
+     * @hide
+     */
+    @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
+    public boolean loadRemoteOobData(int transport, @Nullable OobData remoteP192Data,
+            @Nullable OobData remoteP256Data) {
+        if (remoteP192Data == null && remoteP256Data == null) {
+            throw new IllegalArgumentException(
+                "One or both arguments for the OOB data types are required to not be null."
+                + "  using normal in-bind bond.");
+        }
+
+        final IBluetooth service = sService;
+        if (service == null) {
+            Log.w(TAG, "BT not enabled, loadRemoteOobDataInternal failed");
+            return false;
+        }
+        try {
+            return service.loadRemoteOobData(this, transport, remoteP192Data, remoteP256Data, mAttributionSource);
+        } catch (RemoteException e) {
+            Log.e(TAG, "", e);
+        }
+        return false;
+    }
+
+    /**
+     * Get Remote Device Rssi
+     *
+     * <p>This API is asynchronous and {@link #ACTION_RSSI} intent is sent with RSSI
+     *
+     * @param transport - Transport to use
+     * @return false on immediate error, otherwise true
+     * @hide
+     */
+    @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
+    public boolean getRssi(int transport) {
+        final IBluetooth service = sService;
+        if (service == null) {
+            Log.w(TAG, "BT not enabled, getRssi failed");
+            return false;
+        }
+        try {
+            return service.getRssi(this, transport);
         } catch (RemoteException e) {
             Log.e(TAG, "", e);
         }
