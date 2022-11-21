@@ -12,6 +12,10 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License
+ *
+ * Changes from Qualcomm Innovation Center are provided under the following license:
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 package com.android.settingslib.wifi;
 
@@ -39,6 +43,14 @@ import com.android.settingslib.TronUtils;
 import com.android.settingslib.Utils;
 
 public class AccessPointPreference extends Preference {
+
+    private static final int[] STATE_SECURED_OWE = {
+            R.attr.state_encrypted_owe
+    };
+
+    private static final int[] STATE_SECURED_SAE = {
+            R.attr.state_encrypted_sae
+    };
 
     private static final int[] STATE_SECURED = {
             R.attr.state_encrypted
@@ -200,7 +212,11 @@ public class AccessPointPreference extends Preference {
         if (frictionImageView == null || mFrictionSld == null) {
             return;
         }
-        if (mAccessPoint.getSecurity() != AccessPoint.SECURITY_NONE) {
+        if (mAccessPoint.getSecurity() == AccessPoint.SECURITY_SAE) {
+            mFrictionSld.setState(STATE_SECURED_SAE);
+        } else if (mAccessPoint.getSecurity() == AccessPoint.SECURITY_OWE) {
+            mFrictionSld.setState(STATE_SECURED_OWE);
+        } else if (mAccessPoint.getSecurity() != AccessPoint.SECURITY_NONE) {
             mFrictionSld.setState(STATE_SECURED);
         } else if (mAccessPoint.isMetered()) {
             mFrictionSld.setState(STATE_METERED);

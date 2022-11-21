@@ -12,6 +12,10 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Changes from Qualcomm Innovation Center are provided under the following license:
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 
 package android.net.wifi;
@@ -24,6 +28,7 @@ import android.net.wifi.hotspot2.PasspointConfiguration;
 
 import android.net.wifi.WifiConfiguration;
 import android.net.wifi.WifiInfo;
+import android.net.wifi.WifiDppConfig;
 import android.net.wifi.ScanSettings;
 import android.net.wifi.ScanResult;
 import android.net.wifi.PasspointManagementObjectDefinition;
@@ -193,5 +198,27 @@ interface IWifiManager
     List<WifiDevice> getConnectedStations();
 
     boolean isExtendingNetworkCoverage();
+
+    String getCapabilities(String capaType);
+
+    int dppAddBootstrapQrCode(String uri);
+
+    int dppBootstrapGenerate(in WifiDppConfig config);
+
+    String dppGetUri(int bootstrap_id);
+
+    int dppBootstrapRemove(int bootstrap_id);
+
+    int dppListen(String frequency, int dpp_role, boolean qr_mutual, boolean netrole_ap);
+
+    void dppStopListen();
+
+    int dppConfiguratorAdd(String curve, String key, int expiry);
+
+    int dppConfiguratorRemove(int config_id);
+
+    int  dppStartAuth(in WifiDppConfig config);
+
+    String dppConfiguratorGetKey(int id);
 }
 

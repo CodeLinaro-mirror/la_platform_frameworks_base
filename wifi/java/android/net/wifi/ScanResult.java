@@ -12,6 +12,10 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Changes from Qualcomm Innovation Center are provided under the following license:
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 
 package android.net.wifi;
@@ -145,6 +149,28 @@ public class ScanResult implements Parcelable {
 
     /**
      * @hide
+     * Security key management scheme: DPP.
+     */
+    public static final int KEY_MGMT_DPP = 10;
+
+     /**
+     * @hide
+     * Security key management scheme: SAE.
+     */
+    public static final int KEY_MGMT_SAE = 11;
+
+    /**
+     * @hide
+     * Security key management scheme: OWE.
+     */
+    public static final int KEY_MGMT_OWE = 12;
+    /**
+     * @hide
+     * Security key management scheme: SUITE_B_192.
+     */
+    public static final int KEY_MGMT_EAP_SUITE_B_192 = 13;
+    /**
+     * @hide
      * No cipher suite.
      */
     public static final int CIPHER_NONE = 0;
@@ -163,6 +189,11 @@ public class ScanResult implements Parcelable {
      * Cipher suite: CCMP
      */
     public static final int CIPHER_CCMP = 3;
+    /**
+     * @hide
+     * Cipher suite: GCMP
+     */
+    public static final int CIPHER_GCMP = 4;
 
     /**
      * The detected signal level in dBm, also known as the RSSI.

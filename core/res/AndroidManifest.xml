@@ -15,6 +15,10 @@
 ** WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 ** See the License for the specific language governing permissions and
 ** limitations under the License.
+**
+** Changes from Qualcomm Innovation Center are provided under the following license:
+** Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+** SPDX-License-Identifier: BSD-3-Clause-Clear
 */
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
@@ -363,6 +367,7 @@
     <protected-broadcast android:name="android.net.wifi.p2p.PERSISTENT_GROUPS_CHANGED" />
     <protected-broadcast android:name="android.net.wifi.COUNTRY_CODE_CHANGED" />
     <protected-broadcast android:name="codeaurora.net.conn.TETHER_CONNECT_STATE_CHANGED" />
+    <protected-broadcast android:name="com.qualcomm.qti.net.wifi.DPP_EVENT" />
     <protected-broadcast android:name="android.net.conn.TETHER_STATE_CHANGED" />
     <protected-broadcast android:name="android.net.conn.INET_CONDITION_ACTION" />
     <protected-broadcast android:name="android.net.conn.NETWORK_CONDITIONS_MEASURED" />
