@@ -114,16 +114,6 @@ public class CachedBluetoothDeviceManager {
         return newDevice;
     }
 
-    /* Remove specified {@link CachedBluetoothDevice} */
-    public void removeDevice(CachedBluetoothDevice cachedDevice) {
-        CachedBluetoothDevice subDevice = cachedDevice.getSubDevice();
-        if (subDevice != null) {
-            cachedDevice.setSubDevice(null);
-        }
-
-        mCachedDevices.remove(cachedDevice);
-    }
-
     /**
      * Returns device summary of the pair of the hearing aid passed as the parameter.
      *
