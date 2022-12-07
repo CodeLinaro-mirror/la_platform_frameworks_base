@@ -80,7 +80,8 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
                                                    };
 
     private static final String NAME_HDMI = "hdmi";
-    private static final String NAME_DP = "DP";
+    private static final String INTF_DP = "DP";
+    private static final String INTF_HDMI = "HDMI";
     private static final int MSG_NEW_DEVICE_STATE = 1;
     private static final int MSG_SYSTEM_READY = 2;
 
@@ -91,7 +92,7 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
 
     private int mHeadsetState;
     private int mDpCount;
-    private String mDetectedIntf = NAME_DP;
+    private String mDetectedIntf = INTF_DP;
     private int mSwitchValues;
 
     private final WiredAccessoryObserver mObserver;
@@ -407,12 +408,17 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
                     UEventInfo uei = mUEventInfo.get(i);
                     try {
                         int curState;
-                        FileReader file = new FileReader(uei.getSwitchStatePath());
+                        String switchStatePath = uei.getSwitchStatePath();
+                        FileReader file = new FileReader(switchStatePath);
                         int len = file.read(buffer, 0, 1024);
                         file.close();
                         curState = Integer.parseInt((new String(buffer, 0, len)).trim());
 
                         if (curState > 0) {
+                            int index = switchStatePath.lastIndexOf(".");
+                            if(switchStatePath.substring(index + 1, index + 2).equals("1")) {
+                                mDetectedIntf = INTF_HDMI;
+                            }
                             updateStateLocked(uei.getDevPath(), uei.getDevName(), curState);
                         }
                     } catch (FileNotFoundException e) {
@@ -579,7 +585,7 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
 
                 if (devPath.equals(uei.getDevPath())) {
                     if (state == 1) {
-                        int newControllerIdx = (mDetectedIntf.equals(NAME_DP)) ? 0 : 1;
+                        int newControllerIdx = (mDetectedIntf.equals(INTF_DP)) ? 0 : 1;
                         uei.setCableIndex(newControllerIdx);
                     }
                     updateLocked(name, uei.getDevAddress(),
