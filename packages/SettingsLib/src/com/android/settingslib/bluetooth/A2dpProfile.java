@@ -272,6 +272,33 @@ public class A2dpProfile implements LocalBluetoothProfile {
         }
     }
 
+    public String getMediaPlayer(BluetoothDevice device) {
+        BluetoothDevice bluetoothDevice = getActiveDevice(device);
+        if (bluetoothDevice == null) {
+            return "";
+        }
+        return mService.getMediaPlayer(bluetoothDevice);
+    }
+
+    public boolean setMediaPlayer(BluetoothDevice device, String mediaPlayer) {
+        BluetoothDevice bluetoothDevice = getActiveDevice(device);
+        if (bluetoothDevice == null) {
+            return false;
+        }
+        if (!isConnected(bluetoothDevice)) {
+            return false;
+        }
+        return mService.setMediaPlayer(device, mediaPlayer);
+    }
+
+    private BluetoothDevice getActiveDevice(BluetoothDevice device) {
+        return device != null ? device : mService.getActiveDevice();
+    }
+
+    private boolean isConnected(BluetoothDevice device) {
+        return getConnectionStatus(device) == BluetoothProfile.STATE_CONNECTED;
+    }
+
     public String getHighQualityAudioOptionLabel(BluetoothDevice device) {
         BluetoothDevice bluetoothDevice = (device != null) ? device : mService.getActiveDevice();
         int unknownCodecId = R.string.bluetooth_profile_a2dp_high_quality_unknown_codec;
