@@ -419,6 +419,8 @@ public class CachedBluetoothDevice implements Comparable<CachedBluetoothDevice> 
                 }
             }
         }
+
+        unpairCounterpartDevice(mActiveDevice);
     }
 
     public int getProfileConnectionState(LocalBluetoothProfile profile) {
@@ -1310,7 +1312,34 @@ public class CachedBluetoothDevice implements Comparable<CachedBluetoothDevice> 
      * [Dual Bluetooth] Get BluetoothDevice from adapter
      */
     private BluetoothDevice getRemoteDevice(BluetoothAdapter adapter, BluetoothDevice device) {
-        return adapter.getRemoteDevice(device.getAddress());
+        return adapter != null && device != null ?
+                adapter.getRemoteDevice(device.getAddress()) :
+                null;
+    }
+
+    /**
+     * [Dual Bluetooth] Get counterpart BluetoothDevice
+     */
+    private BluetoothDevice getCounterpartDevice(BluetoothDevice device) {
+        return BluetoothAdapterUtil.isDefaultAdapter(device) ?
+                getRemoteDevice(BluetoothAdapterUtil.getNewAdapter(), device) :
+                getRemoteDevice(mLocalAdapter, device);
+    }
+
+    /**
+     * [Dual Bluetooth] Unpair counterpart BluetoothDevice
+     */
+    private void unpairCounterpartDevice(BluetoothDevice device) {
+        if (!BluetoothAdapterUtil.isDualBluetoothSupported()) {
+            return;
+        }
+        final BluetoothDevice dev = getCounterpartDevice(device);
+        if (dev == null) {
+            return;
+        }
+        if (dev.getBondState() != BluetoothDevice.BOND_NONE) {
+            dev.removeBond();
+        }
     }
 
     /**
