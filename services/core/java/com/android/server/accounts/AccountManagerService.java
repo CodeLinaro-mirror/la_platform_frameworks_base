@@ -2981,7 +2981,7 @@ public class AccountManagerService
                             }
                         }
 
-                        Intent intent = result.getParcelable(AccountManager.KEY_INTENT);
+                        Intent intent = result.getParcelable(AccountManager.KEY_INTENT, Intent.class);
                         if (intent != null && notifyOnAuthFailure && !customTokens) {
                             /*
                              * Make sure that the supplied intent is owned by the authenticator
@@ -3398,8 +3398,7 @@ public class AccountManagerService
             Bundle.setDefusable(result, true);
             mNumResults++;
             Intent intent = null;
-            if (result != null
-                    && (intent = result.getParcelable(AccountManager.KEY_INTENT)) != null) {
+            if (result != null) {
                 if (!checkKeyIntent(
                         Binder.getCallingUid(),
                         result)) {
@@ -4760,8 +4759,10 @@ public class AccountManagerService
             	EventLog.writeEvent(0x534e4554, "250588548", authUid, "");
                 return false;
             }
-
             Intent intent = bundle.getParcelable(AccountManager.KEY_INTENT, Intent.class);
+            if (intent == null) {
+                return true;
+            }
             // Explicitly set an empty ClipData to ensure that we don't offer to
             // promote any Uris contained inside for granting purposes
             if (intent.getClipData() == null) {
@@ -4811,8 +4812,12 @@ public class AccountManagerService
             Bundle simulateBundle = p.readBundle();
             p.recycle();
             Intent intent = bundle.getParcelable(AccountManager.KEY_INTENT, Intent.class);
-            return (intent.filterEquals(simulateBundle.getParcelable(AccountManager.KEY_INTENT,
-                Intent.class)));
+            Intent simulateIntent = simulateBundle.getParcelable(AccountManager.KEY_INTENT,
+                    Intent.class);
+            if (intent == null) {
+                return (simulateIntent == null);
+            }
+            return intent.filterEquals(simulateIntent);
         }
 
         private boolean isExportedSystemActivity(ActivityInfo activityInfo) {
@@ -4957,8 +4962,7 @@ public class AccountManagerService
                     }
                 }
             }
-            if (result != null
-                    && (intent = result.getParcelable(AccountManager.KEY_INTENT)) != null) {
+            if (result != null) {
                 if (!checkKeyIntent(
                         Binder.getCallingUid(),
                         result)) {
