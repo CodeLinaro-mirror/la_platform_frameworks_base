@@ -10,6 +10,9 @@ import android.annotation.Nullable;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothProfile;
 import android.compat.annotation.UnsupportedAppUsage;
+import android.os.RemoteException;
+import android.util.Log;
+
 import java.util.Arrays;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -173,5 +176,23 @@ public final class BluetoothAdapterUtil {
                 btClass.doesClassMatch(BluetoothClass.PROFILE_HID) ?
                 ADAPTER_1 :
                 ADAPTER_DEFAULT;
+    }
+
+    /** {@hide} */
+    public static IBluetoothGatt getBluetoothGatt(int adapterIndex) {
+        BluetoothAdapter adapter = getAdapter(adapterIndex);
+        if (adapter == null)
+            return null;
+
+        IBluetoothManager bluetoothManager = adapter.getBluetoothManager();
+        if (bluetoothManager == null)
+            return null;
+
+        try {
+            return bluetoothManager.getBluetoothGatt();
+        } catch (RemoteException e) {
+            Log.e(TAG, "", e);
+            return null;
+        }
     }
 }
