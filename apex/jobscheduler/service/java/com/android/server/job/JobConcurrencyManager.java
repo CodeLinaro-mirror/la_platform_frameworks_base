@@ -545,7 +545,9 @@ class JobConcurrencyManager {
         if (DEBUG) {
             Slog.d(TAG, printPendingQueueLocked());
         }
-
+        if (mService.mPendingJobs.size() == 0) {
+             return;
+        }
         final List<JobStatus> pendingJobs = mService.mPendingJobs;
         final List<JobServiceContext> activeServices = mService.mActiveServices;
 
