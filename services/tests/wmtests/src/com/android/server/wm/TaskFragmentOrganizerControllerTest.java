@@ -422,7 +422,10 @@ public class TaskFragmentOrganizerControllerTest extends WindowTestsBase {
     }
 
     @Test
-    public void testApplyTransaction_enforceConfigurationChangeOnOrganizedTaskFragment() {
+    public void testApplyTransaction_enforceConfigurationChangeOnOrganizedTaskFragment()
+            throws RemoteException {
+        mOrganizer.applyTransaction(mTransaction);
+
         // Throw exception if the transaction is trying to change a window that is not organized by
         // the organizer.
         mTransaction.setBounds(mFragmentWindowToken, new Rect(0, 0, 100, 100));
