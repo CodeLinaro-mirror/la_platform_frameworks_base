@@ -559,7 +559,12 @@ public class CachedBluetoothDevice implements Comparable<CachedBluetoothDevice> 
     }
 
     public int getBondState() {
-        return mActiveDevice.getBondState();
+        int bondstate = mActiveDevice.getBondState();
+        // In case device pairing is not in expected Bluetooth process
+        if (bondstate == BluetoothDevice.BOND_NONE) {
+            bondstate = mDevice.getBondState();
+        }
+        return bondstate;
     }
 
     /**
