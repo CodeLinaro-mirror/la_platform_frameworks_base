@@ -621,6 +621,21 @@ public final class MediaSessionManager {
         }
     }
 
+     /**
+     * Send a media key event. The receiver will be selected automatically.
+     *
+     * @param keyEvent The KeyEvent to send.
+     */
+    public void dispatchMediaKeyEvent(@NonNull KeyEvent keyEvent, @NonNull String mediaPlayerPackagename) {
+            Log.i(TAG, "dispatch event for package " + mediaPlayerPackagename);
+        try {
+            mService.dispatchMediaKeyEventToMediaPlayer(mContext.getPackageName(), false, keyEvent,
+                    false, mediaPlayerPackagename);
+        } catch (RemoteException e) {
+            Log.e(TAG, "Failed to send key event.", e);
+        }
+    }
+
     /**
      * Sends a media key event as system service to the given session.
      * <p>
