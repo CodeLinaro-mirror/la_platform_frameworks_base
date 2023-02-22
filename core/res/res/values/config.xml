@@ -227,7 +227,7 @@
          allocations to block waiting on disk I/O or lowmemorykiller.  Overrides the default
          value chosen by ActivityManager based on screen size.  0 prevents keeping any extra
          memory over what the kernel keeps by default.  -1 keeps the default. -->
-    <integer name="config_extraFreeKbytesAbsolute">-1</integer>
+    <integer name="config_extraFreeKbytesAbsolute">51200</integer>
 
     <!-- Device configuration adjusting the /proc/sys/vm/extra_free_kbytes tunable in the kernel
          (if it exists).  0 uses the default value chosen by ActivityManager.  A positive value
