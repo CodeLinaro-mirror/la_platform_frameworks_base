@@ -12651,6 +12651,7 @@ package android.content.pm {
     field public static final String FEATURE_AUTOFILL = "android.software.autofill";
     field public static final String FEATURE_AUTOMOTIVE = "android.hardware.type.automotive";
     field public static final String FEATURE_BACKUP = "android.software.backup";
+    field public static final String FEATURE_BIKE = "android.hardware.vehicle.bike";
     field public static final String FEATURE_BLUETOOTH = "android.hardware.bluetooth";
     field public static final String FEATURE_BLUETOOTH_LE = "android.hardware.bluetooth_le";
     field public static final String FEATURE_CAMERA = "android.hardware.camera";

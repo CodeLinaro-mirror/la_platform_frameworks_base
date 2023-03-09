@@ -1372,6 +1372,10 @@ public final class SystemServer implements Dumpable {
         boolean isWatch = context.getPackageManager().hasSystemFeature(
                 PackageManager.FEATURE_WATCH);
 
+        boolean isBike = context.getPackageManager().hasSystemFeature(
+                PackageManager.FEATURE_BIKE);
+
+
         boolean isArc = context.getPackageManager().hasSystemFeature(
                 "org.chromium.arc");
 
@@ -1524,7 +1528,7 @@ public final class SystemServer implements Dumpable {
                 traceLog.traceEnd();
             }, START_HIDL_SERVICES);
 
-            if (!isWatch && enableVrService) {
+            if (!isBike && !isWatch && enableVrService) {
                 t.traceBegin("StartVrManagerService");
                 mSystemServiceManager.startService(VrManagerService.class);
                 t.traceEnd();
