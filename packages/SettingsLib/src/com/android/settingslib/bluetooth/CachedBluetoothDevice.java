@@ -186,9 +186,6 @@ public class CachedBluetoothDevice implements Comparable<CachedBluetoothDevice> 
             if (BluetoothUtils.D) {
                 Log.d(TAG, " BT Turninig Off...Profile conn state change ignored...");
             }
-            /* Ensure Bluetooth device's property (e.g. alias name) can be retrieved
-             * after Bluetooth is re-enabled. */
-            mDevice = mActiveDevice;
             return;
         }
 
@@ -249,6 +246,19 @@ public class CachedBluetoothDevice implements Comparable<CachedBluetoothDevice> 
         }
 
         fetchActiveDevices();
+    }
+
+    void onBluetoothStateChanged() {
+        Log.d(TAG, "onBluetoothStateChanged");
+        if (mLocalAdapter.getState() == BluetoothAdapter.STATE_TURNING_OFF) {
+            if (BluetoothUtils.D) {
+                Log.d(TAG, " BT Turninig Off...Set mDevice to mActiveDevice");
+            }
+            /* Ensure Bluetooth device's property (e.g. alias name) can be retrieved
+             * after Bluetooth is re-enabled. */
+            mDevice = mActiveDevice;
+            return;
+        }
     }
 
     @VisibleForTesting
@@ -462,7 +472,7 @@ public class CachedBluetoothDevice implements Comparable<CachedBluetoothDevice> 
      * {@link BluetoothDevice#getAddress()}
      */
     public String getName() {
-        final String aliasName = mDevice.getAlias();
+        final String aliasName = getAlias();
         return TextUtils.isEmpty(aliasName) ? getAddress() : aliasName;
     }
 
@@ -520,7 +530,7 @@ public class CachedBluetoothDevice implements Comparable<CachedBluetoothDevice> 
      * @return true if device's alias name is not null nor empty, false otherwise
      */
     public boolean hasHumanReadableName() {
-        return !TextUtils.isEmpty(mDevice.getAlias());
+        return !TextUtils.isEmpty(getAlias());
     }
 
     /**
@@ -688,7 +698,7 @@ public class CachedBluetoothDevice implements Comparable<CachedBluetoothDevice> 
         }
 
         if (BluetoothUtils.D) {
-            Log.d(TAG, "updating profiles for " + mDevice.getAlias());
+            Log.d(TAG, "updating profiles for " + getAlias());
             BluetoothClass bluetoothClass = mDevice.getBluetoothClass();
 
             if (bluetoothClass != null) Log.v(TAG, "Class: " + bluetoothClass.toString());
@@ -1317,6 +1327,14 @@ public class CachedBluetoothDevice implements Comparable<CachedBluetoothDevice> 
                 adapter.getRemoteDevice(device.getAddress()) :
                 null;
     }
+
+    private String getAlias() {
+        String alias = mDevice.getAlias();
+
+       return alias != null ?
+              alias :
+              getCounterpartDevice(mDevice).getAlias();
+   }
 
     /**
      * [Dual Bluetooth] Get counterpart BluetoothDevice
