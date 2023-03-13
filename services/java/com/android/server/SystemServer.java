@@ -344,6 +344,8 @@ public final class SystemServer implements Dumpable {
             "com.android.server.slice.SliceManagerService$Lifecycle";
     private static final String CAR_SERVICE_HELPER_SERVICE_CLASS =
             "com.android.internal.car.CarServiceHelperService";
+    private static final String BIKE_SERVICE_HELPER_SERVICE_CLASS =
+            "com.android.internal.bike.BikeServiceHelperService";
     private static final String TIME_DETECTOR_SERVICE_CLASS =
             "com.android.server.timedetector.TimeDetectorService$Lifecycle";
     private static final String TIME_ZONE_DETECTOR_SERVICE_CLASS =
@@ -2783,9 +2785,10 @@ public final class SystemServer implements Dumpable {
             }
 
             if (mPackageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE)) {
-                t.traceBegin("StartCarServiceHelperService");
+                String traceLog = isBike ? "StartBikeServiceHelperService" : "StartCarServiceHelperService";
+                t.traceBegin(traceLog);
                 final SystemService cshs = mSystemServiceManager
-                        .startService(CAR_SERVICE_HELPER_SERVICE_CLASS);
+                        .startService(isBike ? BIKE_SERVICE_HELPER_SERVICE_CLASS : CAR_SERVICE_HELPER_SERVICE_CLASS);
                 if (cshs instanceof Dumpable) {
                     mDumper.addDumpable((Dumpable) cshs);
                 }
