@@ -7,6 +7,7 @@
 
 LOCAL_PATH:= frameworks/base/data/sounds
 
+ifneq ($(TARGET_BUILD_2W),true)
 PRODUCT_COPY_FILES += \
 	$(LOCAL_PATH)/alarms/ogg/Barium.ogg:$(TARGET_COPY_OUT_PRODUCT)/media/audio/alarms/Barium.ogg \
 	$(LOCAL_PATH)/alarms/ogg/Cesium.ogg:$(TARGET_COPY_OUT_PRODUCT)/media/audio/alarms/Cesium.ogg \
@@ -46,3 +47,4 @@ PRODUCT_COPY_FILES += \
 	$(LOCAL_PATH)/notifications/ogg/Xenon.ogg:$(TARGET_COPY_OUT_PRODUCT)/media/audio/notifications/Xenon.ogg \
 	$(LOCAL_PATH)/notifications/ogg/Zirconium.ogg:$(TARGET_COPY_OUT_PRODUCT)/media/audio/notifications/Zirconium.ogg \
 	$(LOCAL_PATH)/ringtones/ogg/Sceptrum.ogg:$(TARGET_COPY_OUT_PRODUCT)/media/audio/ringtones/Sceptrum.ogg \
+endif
