@@ -401,7 +401,7 @@ public class BluetoothEventManager {
         public void onReceive(Context context, Intent intent, BluetoothDevice device) {
             CachedBluetoothDevice cachedDevice = mDeviceManager.findDevice(device);
             if (cachedDevice != null) {
-                cachedDevice.refresh();
+                cachedDevice.refreshBluetoothClass();
             }
         }
     }

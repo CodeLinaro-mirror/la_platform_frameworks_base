@@ -533,6 +533,11 @@ public class CachedBluetoothDevice implements Comparable<CachedBluetoothDevice> 
         return mDevice.getBatteryLevel();
     }
 
+    public void refreshBluetoothClass(){
+        initAdapterDevice(mDevice);
+        refresh();
+    }
+
     void refresh() {
         ThreadUtils.postOnBackgroundThread(() -> {
             if (BluetoothUtils.isAdvancedDetailsHeader(mDevice)) {
