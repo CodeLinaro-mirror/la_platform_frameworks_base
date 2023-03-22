@@ -129,7 +129,7 @@ public class RescueParty {
     private static boolean isDisabled() {
         // Check if we're explicitly enabled for testing
         if (SystemProperties.getBoolean(PROP_ENABLE_RESCUE, false)) {
-            return false;
+            return true;
         }
 
         // We're disabled if the DeviceConfig disable flag is set to true.
@@ -159,7 +159,7 @@ public class RescueParty {
             return true;
         }
 
-        return false;
+        return true;
     }
 
     /**
