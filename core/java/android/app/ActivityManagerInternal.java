@@ -12,6 +12,11 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Changes from Qualcomm Innovation Center are provided under the following license:
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ *
  */
 
 package android.app;
@@ -690,6 +695,9 @@ public abstract class ActivityManagerInternal {
      * Return the temp allowlist type when server push messaging is over the quota.
      */
     public abstract @TempAllowListType int getPushMessagingOverQuotaBehavior();
+
+    /** Starts a process as empty. */
+    public abstract int startActivityAsUserEmpty(Bundle options);
 
     /**
      * Return the startForeground() grace period after calling startForegroundService().

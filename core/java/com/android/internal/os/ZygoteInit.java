@@ -12,6 +12,11 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Changes from Qualcomm Innovation Center are provided under the following license:
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ *
  */
 
 package com.android.internal.os;
@@ -187,6 +192,11 @@ public class ZygoteInit {
         System.loadLibrary("android");
         System.loadLibrary("compiler_rt");
         System.loadLibrary("jnigraphics");
+        try {
+          System.loadLibrary("qti_performance");
+        } catch (UnsatisfiedLinkError e) {
+          Log.e(TAG, "Couldn't load qti_performance");
+        }
     }
 
     native private static void nativePreloadAppProcessHALs();
