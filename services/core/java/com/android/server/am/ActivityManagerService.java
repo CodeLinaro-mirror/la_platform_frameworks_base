@@ -12,6 +12,11 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Changes from Qualcomm Innovation Center are provided under the following license:
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ *
  */
 
 package com.android.server.am;
@@ -46,6 +51,7 @@ import static android.app.ActivityManagerInternal.MEDIA_PROJECTION_TOKEN_EVENT_C
 import static android.app.ActivityManagerInternal.MEDIA_PROJECTION_TOKEN_EVENT_DESTROYED;
 import static android.app.ActivityManagerInternal.OOM_ADJ_REASON_BACKUP;
 import static android.app.ActivityManagerInternal.OOM_ADJ_REASON_FINISH_RECEIVER;
+import static android.app.ActivityManagerInternal.OOM_ADJ_REASON_NONE;
 import static android.app.ActivityManagerInternal.OOM_ADJ_REASON_PROCESS_BEGIN;
 import static android.app.ActivityManagerInternal.OOM_ADJ_REASON_PROCESS_END;
 import static android.app.ActivityManagerInternal.OOM_ADJ_REASON_SHELL;
@@ -391,6 +397,7 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.WindowManager;
 import android.view.autofill.AutofillManagerInternal;
+import android.util.BoostFramework;
 
 import com.android.internal.R;
 import com.android.internal.annotations.CompositeRWLock;
@@ -480,6 +487,7 @@ import com.android.server.wm.ActivityMetricsLaunchObserver;
 import com.android.server.wm.ActivityServiceConnectionsHolder;
 import com.android.server.wm.ActivityTaskManagerInternal;
 import com.android.server.wm.ActivityTaskManagerService;
+import com.android.server.wm.ActivityTaskSupervisor;
 import com.android.server.wm.WindowManagerInternal;
 import com.android.server.wm.WindowManagerService;
 import com.android.server.wm.WindowProcessController;
@@ -615,6 +623,12 @@ public class ActivityManagerService extends IActivityManager.Stub
     private static final int MAX_BUGREPORT_TITLE_SIZE = 100;
     private static final int MAX_BUGREPORT_DESCRIPTION_SIZE = 150;
 
+    // Perf Event Object Creation
+    public static BoostFramework sUxPerf = new BoostFramework();
+    public static boolean sForceStopKill = false;
+    public static final int PERF_HANDLE = -1;
+    public static final int PERF_HINT_TYPE = 1;
+
     OomAdjuster mOomAdjuster;
 
     static final String EXTRA_TITLE = "android.intent.extra.TITLE";
@@ -655,6 +669,8 @@ public class ActivityManagerService extends IActivityManager.Stub
     SystemServiceManager mSystemServiceManager;
 
     private Installer mInstaller;
+    /** Run all ActivityStacks through this */
+    ActivityTaskSupervisor mTaskSupervisor;
 
     final InstrumentationReporter mInstrumentationReporter = new InstrumentationReporter();
 
@@ -2544,6 +2560,7 @@ public class ActivityManagerService extends IActivityManager.Stub
         mActivityTaskManager.initialize(mIntentFirewall, mPendingIntentController,
                 DisplayThread.get().getLooper());
         mAtmInternal = LocalServices.getService(ActivityTaskManagerInternal.class);
+        mTaskSupervisor = mActivityTaskManager.mTaskSupervisor;
 
         mHiddenApiBlacklist = new HiddenApiSettings(mHandler, mContext);
 
@@ -3249,6 +3266,55 @@ public class ActivityManagerService extends IActivityManager.Stub
         return mActivityTaskManager.startActivityFromRecents(taskId, bOptions);
     }
 
+
+    public int startActivityAsUserEmpty(Bundle options) {
+        if (options != null) {
+            Slog.w(TAG, "Exception raised as the options is empty");
+            return 1;
+        }
+        ArrayList<String> pApps = options.getStringArrayList("start_empty_apps");
+        if (pApps != null && pApps.size() > 0) {
+            Iterator<String> apps_itr = pApps.iterator();
+            while (apps_itr.hasNext()) {
+                ProcessRecord empty_app = null;
+                String app_str = apps_itr.next();
+                if (app_str == null) {
+                    continue;
+                }
+                synchronized (this) {
+                    Intent intent_l = null;
+                    try {
+                        intent_l = mContext.getPackageManager().getLaunchIntentForPackage(app_str);
+                        if (intent_l == null)
+                            continue;
+                        ActivityInfo aInfo = mTaskSupervisor.resolveActivity(intent_l, null,
+                                                                          0, null, 0, 0, 0);
+                        if (aInfo == null) {
+                            continue;
+                        }
+                        empty_app = startProcessLocked(
+                            app_str,
+                            aInfo.applicationInfo,
+                            false /* knownToBeDead */,
+                            0 /* intentFlags */,
+                            sNullHostingRecord /* hostingRecord */,
+                           ZYGOTE_POLICY_FLAG_EMPTY /* zygotePolicyFlags */,
+                           false /* allowWhileBooting */,
+                           false /* isolated */);
+                        if (empty_app != null) {
+                            updateOomAdjLocked(empty_app, OOM_ADJ_REASON_NONE);
+                        }
+                    } catch (Exception e) {
+                        if (DEBUG_PROCESSES)
+                            Slog.w(TAG, "Exception raised trying to start app as empty " + e);
+                    }
+                }
+            }
+        }
+        return 1;
+    }
+
+
     /**
      * This is the internal entry point for handling Activity.finish().
      *
@@ -3432,6 +3498,15 @@ public class ActivityManagerService extends IActivityManager.Stub
                 mAppProfiler.setAllowLowerMemLevelLocked(false);
                 doLowMem = false;
             }
+
+            if (sUxPerf != null && !sForceStopKill && !app.mErrorState.isNotResponding() && !app.mErrorState.isCrashing()) {
+                if (sUxPerf.board_first_api_lvl < BoostFramework.VENDOR_T_API_LEVEL &&
+                    sUxPerf.board_api_lvl < BoostFramework.VENDOR_T_API_LEVEL) {
+                    sUxPerf.perfUXEngine_events(BoostFramework.UXE_EVENT_KILL, 0, app.processName, 0);
+                }
+                sUxPerf.perfEvent(BoostFramework.VENDOR_HINT_KILL, app.processName, 2, 0, pid);
+            }
+
             EventLogTags.writeAmProcDied(app.userId, pid, app.processName, setAdj, setProcState);
             if (DEBUG_CLEANUP) Slog.v(TAG_CLEANUP,
                 "Dying app: " + app + ", pid: " + pid + ", thread: " + thread.asBinder());
@@ -4578,6 +4653,20 @@ public class ActivityManagerService extends IActivityManager.Stub
         }
 
         EventLogTags.writeAmProcBound(app.userId, pid, app.processName);
+
+        if (sUxPerf != null && app.getHostingRecord() != null && app.getHostingRecord().isTopApp()) {
+            Slog.i(TAG, "Launching : Application with the perf lock");
+            if (sUxPerf.getPerfHalVersion() >= BoostFramework.PERF_HAL_V23) {
+                int pkgType = sUxPerf.perfGetFeedback(
+                                    BoostFramework.VENDOR_FEEDBACK_WORKLOAD_TYPE, app.processName);
+                sUxPerf.perfHintAcqRel(PERF_HANDLE,
+                    BoostFramework.VENDOR_HINT_FIRST_LAUNCH_BOOST, app.processName,
+                    pid, BoostFramework.Launch.TYPE_ATTACH_APPLICATION, PERF_HINT_TYPE, pkgType);
+            } else {
+                sUxPerf.perfHint(BoostFramework.VENDOR_HINT_FIRST_LAUNCH_BOOST, app.processName,
+                    pid, BoostFramework.Launch.TYPE_ATTACH_APPLICATION);
+            }
+        }
 
         synchronized (mProcLock) {
             app.mState.setCurAdj(ProcessList.INVALID_ADJ);
@@ -13071,6 +13160,27 @@ public class ActivityManagerService extends IActivityManager.Stub
             }
             app.setPid(0);
         }
+
+        if (app != null) {
+            ArrayList<ApplicationExitInfo> results = new ArrayList<ApplicationExitInfo>();
+            mProcessList.mAppExitInfoTracker.getExitInfo(
+                    app.processName, app.uid, app.getPid(), 0, results);
+            if (results != null) {
+                boolean recentAppClose = false;
+                for (int i=0; i < results.size(); i++) {
+                    ApplicationExitInfo appExitInfo = results.get(i);
+                    if ((appExitInfo.getReason() == ApplicationExitInfo.REASON_USER_REQUESTED
+                            || appExitInfo.getReason() == ApplicationExitInfo.REASON_USER_STOPPED)
+                                && appExitInfo.getDescription() == "remove task") {
+                        recentAppClose = true;
+                        break;
+                    }
+                }
+                if (recentAppClose) {
+                    mTaskSupervisor.startPreferredApps();
+                }
+            }
+        }
         return false;
     }
 
@@ -17521,6 +17631,11 @@ public class ActivityManagerService extends IActivityManager.Stub
             mAtmInternal.onUserStopped(userId);
             // Clean up various services by removing the user
             mBatteryStatsService.onUserRemoved(userId);
+        }
+
+        @Override
+        public int startActivityAsUserEmpty(Bundle options) {
+            return ActivityManagerService.this.startActivityAsUserEmpty(options);
         }
 
         @Override
