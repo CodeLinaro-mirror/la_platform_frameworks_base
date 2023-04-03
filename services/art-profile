@@ -12663,6 +12663,7 @@ HSPLcom/android/server/audio/AudioDeviceBroker;->topCommunicationRouteClient()Lc
 PLcom/android/server/audio/AudioDeviceBroker;->unregisterCommunicationDeviceDispatcher(Landroid/media/ICommunicationDeviceDispatcher;)V
 HSPLcom/android/server/audio/AudioDeviceBroker;->updateActiveCommunicationDevice()V
 HSPLcom/android/server/audio/AudioDeviceBroker;->waitForBrokerHandlerCreation()V
+PLcom/android/server/audio/AudioDeviceBroker;->setLeAudioTimeout(Ljava/lang/String;II)V
 PLcom/android/server/audio/AudioDeviceInventory$$ExternalSyntheticLambda0;-><init>(Lcom/android/server/audio/AudioDeviceInventory;)V
 PLcom/android/server/audio/AudioDeviceInventory$$ExternalSyntheticLambda0;->test(Ljava/lang/Object;)Z
 PLcom/android/server/audio/AudioDeviceInventory$$ExternalSyntheticLambda10;-><init>(Landroid/util/ArraySet;)V
@@ -12760,6 +12761,8 @@ PLcom/android/server/audio/AudioDeviceInventory;->setPreferredDevicesForStrategy
 HSPLcom/android/server/audio/AudioDeviceInventory;->setWiredDeviceConnectionState(Landroid/media/AudioDeviceAttributes;ILjava/lang/String;)I
 HSPLcom/android/server/audio/AudioDeviceInventory;->startWatchingRoutes(Landroid/media/IAudioRoutesObserver;)Landroid/media/AudioRoutesInfo;
 HSPLcom/android/server/audio/AudioDeviceInventory;->updateAudioRoutes(II)V
+PLcom/android/server/audio/AudioDeviceInventory;->makeLeAudioUnavailableLater(Ljava/lang/String;II)V
+PLcom/android/server/audio/AudioDeviceInventory;->onMakeLeAudioUnavailableNow(Ljava/lang/String;I)V
 HSPLcom/android/server/audio/AudioEventLogger$Event;-><clinit>()V
 HSPLcom/android/server/audio/AudioEventLogger$Event;-><init>()V
 HSPLcom/android/server/audio/AudioEventLogger$Event;->printLog(ILjava/lang/String;)Lcom/android/server/audio/AudioEventLogger$Event;
