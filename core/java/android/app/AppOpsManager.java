@@ -2463,8 +2463,8 @@ public class AppOpsManager {
      * restriction} for a certain app-op.
      */
     private static RestrictionBypass[] sOpAllowSystemRestrictionBypass = new RestrictionBypass[] {
-            new RestrictionBypass(true, false), //COARSE_LOCATION
-            new RestrictionBypass(true, false), //FINE_LOCATION
+            new RestrictionBypass(true, false, false), //COARSE_LOCATION
+            new RestrictionBypass(true, false, false), //FINE_LOCATION
             null, //GPS
             null, //VIBRATE
             null, //READ_CONTACTS
@@ -2473,7 +2473,7 @@ public class AppOpsManager {
             null, //WRITE_CALL_LOG
             null, //READ_CALENDAR
             null, //WRITE_CALENDAR
-            new RestrictionBypass(true, false), //WIFI_SCAN
+            new RestrictionBypass(false, true, false), //WIFI_SCAN
             null, //POST_NOTIFICATION
             null, //NEIGHBORING_CELLS
             null, //CALL_PHONE
@@ -2487,10 +2487,10 @@ public class AppOpsManager {
             null, //READ_ICC_SMS
             null, //WRITE_ICC_SMS
             null, //WRITE_SETTINGS
-            new RestrictionBypass(true, false), //SYSTEM_ALERT_WINDOW
+            new RestrictionBypass(false, true, false), //SYSTEM_ALERT_WINDOW
             null, //ACCESS_NOTIFICATIONS
             null, //CAMERA
-            new RestrictionBypass(false, true), //RECORD_AUDIO
+            new RestrictionBypass(false, false, true), //RECORD_AUDIO
             null, //PLAY_AUDIO
             null, //READ_CLIPBOARD
             null, //WRITE_CLIPBOARD
@@ -2508,7 +2508,7 @@ public class AppOpsManager {
             null, //MONITOR_HIGH_POWER_LOCATION
             null, //GET_USAGE_STATS
             null, //MUTE_MICROPHONE
-            new RestrictionBypass(true, false), //TOAST_WINDOW
+            new RestrictionBypass(false, true, false), //TOAST_WINDOW
             null, //PROJECT_MEDIA
             null, //ACTIVATE_VPN
             null, //WALLPAPER
@@ -2540,7 +2540,7 @@ public class AppOpsManager {
             null, // ACCEPT_HANDOVER
             null, // MANAGE_IPSEC_HANDOVERS
             null, // START_FOREGROUND
-            new RestrictionBypass(true, false), // BLUETOOTH_SCAN
+            new RestrictionBypass(false, true, false), // BLUETOOTH_SCAN
             null, // USE_BIOMETRIC
             null, // ACTIVITY_RECOGNITION
             null, // SMS_FINANCIAL_TRANSACTIONS
@@ -3105,6 +3105,9 @@ public class AppOpsManager {
      * @hide
      */
     public static class RestrictionBypass {
+        /** Does the app need to be system uid to bypass the restriction */
+        public boolean isSystemUid;
+
         /** Does the app need to be privileged to bypass the restriction */
         public boolean isPrivileged;
 
@@ -3114,12 +3117,14 @@ public class AppOpsManager {
          */
         public boolean isRecordAudioRestrictionExcept;
 
-        public RestrictionBypass(boolean isPrivileged, boolean isRecordAudioRestrictionExcept) {
+        public RestrictionBypass(boolean isSystemUid, boolean isPrivileged,
+                boolean isRecordAudioRestrictionExcept) {
+            this.isSystemUid = isSystemUid;
             this.isPrivileged = isPrivileged;
             this.isRecordAudioRestrictionExcept = isRecordAudioRestrictionExcept;
         }
 
-        public static RestrictionBypass UNRESTRICTED = new RestrictionBypass(true, true);
+        public static RestrictionBypass UNRESTRICTED = new RestrictionBypass(false, true, true);
     }
 
     /**
@@ -8883,8 +8888,9 @@ public class AppOpsManager {
      */
     public int startProxyOpNoThrow(int op, @NonNull AttributionSource attributionSource,
             @Nullable String message, boolean skipProxyOperation) {
-        return startProxyOpNoThrow(op, attributionSource, message, skipProxyOperation,
-                ATTRIBUTION_FLAGS_NONE, ATTRIBUTION_FLAGS_NONE, ATTRIBUTION_CHAIN_ID_NONE);
+        return startProxyOpNoThrow(attributionSource.getToken(), op, attributionSource, message,
+                skipProxyOperation, ATTRIBUTION_FLAGS_NONE, ATTRIBUTION_FLAGS_NONE,
+                ATTRIBUTION_CHAIN_ID_NONE);
     }
 
     /**
@@ -8896,7 +8902,8 @@ public class AppOpsManager {
      *
      * @hide
      */
-    public int startProxyOpNoThrow(int op, @NonNull AttributionSource attributionSource,
+    public int startProxyOpNoThrow(@NonNull IBinder clientId, int op,
+            @NonNull AttributionSource attributionSource,
             @Nullable String message, boolean skipProxyOperation, @AttributionFlags
             int proxyAttributionFlags, @AttributionFlags int proxiedAttributionFlags,
             int attributionChainId) {
@@ -8914,7 +8921,7 @@ public class AppOpsManager {
                 }
             }
 
-            SyncNotedAppOp syncOp = mService.startProxyOperation(op,
+            SyncNotedAppOp syncOp = mService.startProxyOperation(clientId, op,
                     attributionSource, false, collectionMode == COLLECT_ASYNC, message,
                     shouldCollectMessage, skipProxyOperation, proxyAttributionFlags,
                     proxiedAttributionFlags, attributionChainId);
@@ -9012,9 +9019,10 @@ public class AppOpsManager {
      */
     public void finishProxyOp(@NonNull String op, int proxiedUid,
             @NonNull String proxiedPackageName, @Nullable String proxiedAttributionTag) {
-        finishProxyOp(op, new AttributionSource(mContext.getAttributionSource(),
+        IBinder token = mContext.getAttributionSource().getToken();
+        finishProxyOp(token, op, new AttributionSource(mContext.getAttributionSource(),
                 new AttributionSource(proxiedUid, proxiedPackageName,  proxiedAttributionTag,
-                        mContext.getAttributionSource().getToken())), /*skipProxyOperation*/ false);
+                        token)), /*skipProxyOperation*/ false);
     }
 
     /**
@@ -9029,10 +9037,11 @@ public class AppOpsManager {
      *
      * @hide
      */
-    public void finishProxyOp(@NonNull String op, @NonNull AttributionSource attributionSource,
-            boolean skipProxyOperation) {
+    public void finishProxyOp(@NonNull IBinder clientId, @NonNull String op,
+            @NonNull AttributionSource attributionSource, boolean skipProxyOperation) {
         try {
-            mService.finishProxyOperation(strOpToOp(op), attributionSource, skipProxyOperation);
+            mService.finishProxyOperation(clientId, strOpToOp(op), attributionSource,
+                    skipProxyOperation);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
