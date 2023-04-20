@@ -943,6 +943,13 @@ public final class SystemServer implements Dumpable {
             // Only update the timeout after starting all the services so that we use
             // the default timeout to start system server.
             updateWatchdogTimeout(t);
+
+            if (mSystemContext.getResources().getBoolean(R.bool.config_enable_hypervisor)) {
+            // All the services are up now and the system is stable.
+            // Display and window services are disabled, so tell anyone interested that we are done booting!
+            SystemProperties.set("sys.boot_completed", "1");
+            SystemProperties.set("dev.bootcomplete", "1");
+            }
         } catch (Throwable ex) {
             Slog.e("System", "******************************************");
             Slog.e("System", "************ Failure starting system services", ex);
@@ -1590,6 +1597,7 @@ public final class SystemServer implements Dumpable {
                 t.traceEnd();
             }
 
+            if (!mSystemContext.getResources().getBoolean(R.bool.config_enable_hypervisor)) {
             t.traceBegin("StartWindowManagerService");
             // WMS needs sensor service ready
             mSystemServiceManager.startBootPhase(t, SystemService.PHASE_WAIT_FOR_SENSOR_SERVICE);
@@ -1608,6 +1616,7 @@ public final class SystemServer implements Dumpable {
             t.traceBegin("WindowManagerServiceOnInitReady");
             wm.onInitReady();
             t.traceEnd();
+            }
 
             // Start receiving calls from SensorManager services. Start in a separate thread
             // because it need to connect to SensorManager. This has to start
@@ -1632,6 +1641,7 @@ public final class SystemServer implements Dumpable {
                 t.traceEnd();
             }
 
+            if (!mSystemContext.getResources().getBoolean(R.bool.config_enable_hypervisor)) {
             t.traceBegin("StartInputManager");
             inputManager.setWindowManagerCallbacks(wm.getInputManagerCallback());
             inputManager.start();
@@ -1641,6 +1651,7 @@ public final class SystemServer implements Dumpable {
             t.traceBegin("DisplayManagerWindowManagerAndInputReady");
             mDisplayManagerService.windowManagerAndInputReady();
             t.traceEnd();
+            }
 
             if (mFactoryTestMode == FactoryTest.FACTORY_TEST_LOW_LEVEL) {
                 Slog.i(TAG, "No Bluetooth Service (factory test)");
@@ -1692,7 +1703,14 @@ public final class SystemServer implements Dumpable {
 
         // Before things start rolling, be sure we have decided whether
         // we are in safe mode.
-        final boolean safeMode = wm.detectSafeMode();
+        // TODO: Android U bringup change, default set to true
+        //final boolean safeMode = wm.detectSafeMode();
+        final boolean safeMode;
+        if (mSystemContext.getResources().getBoolean(R.bool.config_enable_hypervisor)) {
+          safeMode = true;
+        } else {
+          safeMode = wm.detectSafeMode();
+        }
         if (safeMode) {
             // If yes, immediately turn on the global setting for airplane mode.
             // Note that this does not send broadcasts at this stage because
@@ -1711,6 +1729,7 @@ public final class SystemServer implements Dumpable {
         ILockSettings lockSettings = null;
         MediaRouterService mediaRouter = null;
 
+        if (!mSystemContext.getResources().getBoolean(R.bool.config_enable_hypervisor)) {
         // Bring up services needed for UI.
         if (mFactoryTestMode != FactoryTest.FACTORY_TEST_LOW_LEVEL) {
             t.traceBegin("StartInputMethodManagerLifecycle");
@@ -1744,6 +1763,7 @@ public final class SystemServer implements Dumpable {
             reportWtf("making display ready", e);
         }
         t.traceEnd();
+        }
 
         if (mFactoryTestMode != FactoryTest.FACTORY_TEST_LOW_LEVEL) {
             if (!"0".equals(SystemProperties.get("system_init.startmountservice"))) {
@@ -1773,9 +1793,11 @@ public final class SystemServer implements Dumpable {
 
         // We start this here so that we update our configuration to set watch or television
         // as appropriate.
+        if (!mSystemContext.getResources().getBoolean(R.bool.config_enable_hypervisor)) {
         t.traceBegin("StartUiModeManager");
         mSystemServiceManager.startService(UiModeManagerService.class);
         t.traceEnd();
+        }
 
         t.traceBegin("StartLocaleManagerService");
         try {
@@ -1914,9 +1936,11 @@ public final class SystemServer implements Dumpable {
 
             // Search UI manager service
             // TODO: add deviceHasConfigString(context, R.string.config_defaultSearchUiService)
+            if (!mSystemContext.getResources().getBoolean(R.bool.config_enable_hypervisor)) {
             t.traceBegin("StartSearchUiService");
             mSystemServiceManager.startService(SEARCH_UI_MANAGER_SERVICE_CLASS);
             t.traceEnd();
+            }
 
             // Smartspace manager service
             // TODO: add deviceHasConfigString(context, R.string.config_defaultSmartspaceService)
@@ -2083,6 +2107,7 @@ public final class SystemServer implements Dumpable {
             }
             t.traceEnd();
 
+            if (!mSystemContext.getResources().getBoolean(R.bool.config_enable_hypervisor)) {
             t.traceBegin("StartNotificationManager");
             mSystemServiceManager.startService(NotificationManagerService.class);
             SystemNotificationChannels.removeDeprecated(context);
@@ -2090,6 +2115,7 @@ public final class SystemServer implements Dumpable {
             notification = INotificationManager.Stub.asInterface(
                     ServiceManager.getService(Context.NOTIFICATION_SERVICE));
             t.traceEnd();
+            }
 
             t.traceBegin("StartDeviceMonitor");
             mSystemServiceManager.startService(DeviceStorageMonitorService.class);
@@ -2150,6 +2176,7 @@ public final class SystemServer implements Dumpable {
                 t.traceEnd();
             }
 
+            if (!mSystemContext.getResources().getBoolean(R.bool.config_enable_hypervisor)) {
             if (!isWatch) {
                 t.traceBegin("StartSearchManagerService");
                 try {
@@ -2193,6 +2220,7 @@ public final class SystemServer implements Dumpable {
             t.traceBegin("StartSoundTriggerMiddlewareService");
             mSystemServiceManager.startService(SoundTriggerMiddlewareService.Lifecycle.class);
             t.traceEnd();
+            }
 
             if (mPackageManager.hasSystemFeature(PackageManager.FEATURE_BROADCAST_RADIO)) {
                 t.traceBegin("StartBroadcastRadioService");
@@ -2272,6 +2300,7 @@ public final class SystemServer implements Dumpable {
             }
             t.traceEnd();
 
+            if (!mSystemContext.getResources().getBoolean(R.bool.config_enable_hypervisor)) {
             if (!isWatch) {
                 t.traceBegin("StartTwilightService");
                 mSystemServiceManager.startService(TwilightService.class);
@@ -2281,6 +2310,7 @@ public final class SystemServer implements Dumpable {
             t.traceBegin("StartColorDisplay");
             mSystemServiceManager.startService(ColorDisplayService.class);
             t.traceEnd();
+            }
 
             // TODO(aml-jobscheduler): Think about how to do it properly.
             t.traceBegin("StartJobScheduler");
@@ -2301,11 +2331,13 @@ public final class SystemServer implements Dumpable {
                 t.traceEnd();
             }
 
+            if (!mSystemContext.getResources().getBoolean(R.bool.config_enable_hypervisor)) {
             if (mPackageManager.hasSystemFeature(PackageManager.FEATURE_APP_WIDGETS)
                     || context.getResources().getBoolean(R.bool.config_enableAppWidgetService)) {
                 t.traceBegin("StartAppWidgetService");
                 mSystemServiceManager.startService(APPWIDGET_SERVICE_CLASS);
                 t.traceEnd();
+            }
             }
 
             // We need to always start this service, regardless of whether the
@@ -2381,6 +2413,7 @@ public final class SystemServer implements Dumpable {
             mSystemServiceManager.startService(BLOB_STORE_MANAGER_SERVICE_CLASS);
             t.traceEnd();
 
+            if (!mSystemContext.getResources().getBoolean(R.bool.config_enable_hypervisor)) {
             // Dreams (interactive idle-time views, a/k/a screen savers, and doze mode)
             t.traceBegin("StartDreamManager");
             mSystemServiceManager.startService(DreamManagerService.class);
@@ -2390,6 +2423,7 @@ public final class SystemServer implements Dumpable {
             ServiceManager.addService(GraphicsStatsService.GRAPHICS_STATS_SERVICE,
                     new GraphicsStatsService(context));
             t.traceEnd();
+            }
 
             if (CoverageService.ENABLED) {
                 t.traceBegin("AddCoverageService");
@@ -2422,6 +2456,7 @@ public final class SystemServer implements Dumpable {
             mSystemServiceManager.startService(RestrictionsManagerService.class);
             t.traceEnd();
 
+            if (!mSystemContext.getResources().getBoolean(R.bool.config_enable_hypervisor)) {
             t.traceBegin("StartMediaSessionService");
             mSystemServiceManager.startService(MEDIA_SESSION_SERVICE_CLASS);
             t.traceEnd();
@@ -2430,6 +2465,7 @@ public final class SystemServer implements Dumpable {
                 t.traceBegin("StartHdmiControlService");
                 mSystemServiceManager.startService(HdmiControlService.class);
                 t.traceEnd();
+            }
             }
 
             if (mPackageManager.hasSystemFeature(PackageManager.FEATURE_LIVE_TV)
@@ -2557,9 +2593,11 @@ public final class SystemServer implements Dumpable {
             t.traceEnd();
         }
 
+        if (!mSystemContext.getResources().getBoolean(R.bool.config_enable_hypervisor)) {
         t.traceBegin("StartMediaProjectionManager");
         mSystemServiceManager.startService(MediaProjectionManagerService.class);
         t.traceEnd();
+        }
 
        if (isWatch) {
             // Must be started before services that depend it, e.g. WearConnectivityService
@@ -2729,6 +2767,7 @@ public final class SystemServer implements Dumpable {
             t.traceEnd();
         }
 
+        if (!mSystemContext.getResources().getBoolean(R.bool.config_enable_hypervisor)) {
         t.traceBegin("StartBootPhaseSystemServicesReady");
         mSystemServiceManager.startBootPhase(t, SystemService.PHASE_SYSTEM_SERVICES_READY);
         t.traceEnd();
@@ -2740,6 +2779,7 @@ public final class SystemServer implements Dumpable {
             reportWtf("making Window Manager Service ready", e);
         }
         t.traceEnd();
+        }
 
         t.traceBegin("RegisterLogMteState");
         try {
@@ -2757,6 +2797,7 @@ public final class SystemServer implements Dumpable {
             }
         }
 
+        if (!mSystemContext.getResources().getBoolean(R.bool.config_enable_hypervisor)) {
         if (safeMode) {
             mActivityManagerService.showSafeModeOverlay();
         }
@@ -2774,6 +2815,7 @@ public final class SystemServer implements Dumpable {
         if (systemTheme.getChangingConfigurations() != 0) {
             systemTheme.rebase();
         }
+        }
 
         // Permission policy service
         t.traceBegin("StartPermissionPolicyService");
@@ -2784,6 +2826,7 @@ public final class SystemServer implements Dumpable {
         mPackageManagerService.systemReady();
         t.traceEnd();
 
+        if (!mSystemContext.getResources().getBoolean(R.bool.config_enable_hypervisor)) {
         t.traceBegin("MakeDisplayManagerServiceReady");
         try {
             // TODO: use boot phase and communicate this flag some other way
@@ -2792,6 +2835,7 @@ public final class SystemServer implements Dumpable {
             reportWtf("making Display Manager Service ready", e);
         }
         t.traceEnd();
+        }
 
         mSystemServiceManager.setSafeMode(safeMode);
 
@@ -3028,6 +3072,7 @@ public final class SystemServer implements Dumpable {
                 t.traceEnd();
             }
 
+            if (!mSystemContext.getResources().getBoolean(R.bool.config_enable_hypervisor)) {
             t.traceBegin("StartNetworkStack");
             try {
                 // Note : the network stack is creating on-demand objects that need to send
@@ -3055,6 +3100,7 @@ public final class SystemServer implements Dumpable {
                 reportWtf("starting Tethering", e);
             }
             t.traceEnd();
+            }
 
             t.traceBegin("MakeCountryDetectionServiceReady");
             try {
@@ -3074,6 +3120,7 @@ public final class SystemServer implements Dumpable {
                 reportWtf("Notifying NetworkTimeService running", e);
             }
             t.traceEnd();
+            if (!mSystemContext.getResources().getBoolean(R.bool.config_enable_hypervisor)) {
             t.traceBegin("MakeInputManagerServiceReady");
             try {
                 // TODO(BT) Pass parameter to input manager
@@ -3084,6 +3131,7 @@ public final class SystemServer implements Dumpable {
                 reportWtf("Notifying InputManagerService running", e);
             }
             t.traceEnd();
+            }
             t.traceBegin("MakeTelephonyRegistryReady");
             try {
                 if (telephonyRegistryF != null) {
@@ -3149,6 +3197,7 @@ public final class SystemServer implements Dumpable {
         }
         t.traceEnd();
 
+        if (!mSystemContext.getResources().getBoolean(R.bool.config_enable_hypervisor)) {
         t.traceBegin("StartSystemUI");
         try {
             startSystemUi(context, windowManagerF);
@@ -3156,6 +3205,7 @@ public final class SystemServer implements Dumpable {
             reportWtf("starting System UI", e);
         }
         t.traceEnd();
+        }
 
         t.traceEnd(); // startOtherServices
     }

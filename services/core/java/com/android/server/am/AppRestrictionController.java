@@ -150,6 +150,7 @@ import android.util.TimeUtils;
 import android.util.Xml;
 import android.util.proto.ProtoOutputStream;
 
+import com.android.internal.R;
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.messages.nano.SystemMessageProto.SystemMessage;
@@ -1529,7 +1530,9 @@ public final class AppRestrictionController {
                 mBgExecutor, mConstantsObserver);
         mConstantsObserver.start();
         initBgRestrictionExemptioFromSysConfig();
+        if (!mContext.getResources().getBoolean(R.bool.config_enable_hypervisor)) {
         initRestrictionStates();
+        }
         initSystemModuleNames();
         initRolesInInterest();
         registerForUidObservers();
@@ -1540,11 +1543,13 @@ public final class AppRestrictionController {
         mInjector.getAppStandbyInternal().addListener(mAppIdleStateChangeListener);
         mInjector.getRoleManager().addOnRoleHoldersChangedListenerAsUser(mBgExecutor,
                 mRoleHolderChangedListener, UserHandle.ALL);
+        if (!mContext.getResources().getBoolean(R.bool.config_enable_hypervisor)) {
         mInjector.scheduleInitTrackers(mBgHandler, () -> {
             for (int i = 0, size = mAppStateTrackers.size(); i < size; i++) {
                 mAppStateTrackers.get(i).onSystemReady();
             }
         });
+        }
     }
 
     @VisibleForTesting

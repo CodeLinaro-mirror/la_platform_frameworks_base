@@ -973,7 +973,9 @@ public class NetworkPolicyManagerService extends INetworkPolicyManager.Stub {
 
                     mSystemReady = true;
 
+                    if (!mContext.getResources().getBoolean(R.bool.config_enable_hypervisor)) {
                     waitForAdminData();
+                    }
 
                     // read policy from disk
                     readPolicyAL();

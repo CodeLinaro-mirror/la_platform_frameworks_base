@@ -170,6 +170,7 @@ import android.util.StatsEvent;
 import android.util.proto.ProtoOutputStream;
 import android.view.Display;
 
+import com.android.internal.R;
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.app.procstats.IProcessStats;
 import com.android.internal.app.procstats.ProcessStats;
@@ -774,8 +775,10 @@ public class StatsPullAtomService extends SystemService {
                 registerEventListeners();
             });
         } else if (phase == PHASE_THIRD_PARTY_APPS_CAN_START) {
+            if (!mContext.getResources().getBoolean(R.bool.config_enable_hypervisor)) {
             // Network stats related pullers can only be initialized after service is ready.
             BackgroundThread.getHandler().post(() -> initAndRegisterNetworkStatsPullers());
+            }
         }
     }
 
