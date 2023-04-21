@@ -4472,8 +4472,6 @@ public class NotificationManagerServiceTest extends UiServiceTestCase {
     public void testVisitUris() throws Exception {
         final Uri audioContents = Uri.parse("content://com.example/audio");
         final Uri backgroundImage = Uri.parse("content://com.example/background");
-        final Icon smallIcon = Icon.createWithContentUri("content://media/small/icon");
-        final Icon largeIcon = Icon.createWithContentUri("content://media/large/icon");
         final Icon personIcon1 = Icon.createWithContentUri("content://media/person1");
         final Icon personIcon2 = Icon.createWithContentUri("content://media/person2");
         final Icon personIcon3 = Icon.createWithContentUri("content://media/person3");
@@ -4516,13 +4514,34 @@ public class NotificationManagerServiceTest extends UiServiceTestCase {
         n.visitUris(visitor);
         verify(visitor, times(1)).accept(eq(audioContents));
         verify(visitor, times(1)).accept(eq(backgroundImage));
-        verify(visitor, times(1)).accept(eq(smallIcon.getUri()));
-        verify(visitor, times(1)).accept(eq(largeIcon.getUri()));
         verify(visitor, times(1)).accept(eq(personIcon1.getUri()));
         verify(visitor, times(1)).accept(eq(personIcon2.getUri()));
         verify(visitor, times(1)).accept(eq(personIcon3.getUri()));
         verify(visitor, times(1)).accept(eq(historyUri1));
         verify(visitor, times(1)).accept(eq(historyUri2));
+    }
+
+    @Test
+    public void testVisitUris_callStyle() {
+        Icon personIcon = Icon.createWithContentUri("content://media/person");
+        Icon verificationIcon = Icon.createWithContentUri("content://media/verification");
+        Person callingPerson = new Person.Builder().setName("Someone")
+                .setIcon(personIcon)
+                .build();
+        PendingIntent hangUpIntent = PendingIntent.getActivity(mContext, 0, new Intent(),
+                PendingIntent.FLAG_IMMUTABLE);
+        Notification n = new Notification.Builder(mContext, "a")
+                .setStyle(Notification.CallStyle.forOngoingCall(callingPerson, hangUpIntent)
+                        .setVerificationIcon(verificationIcon))
+                .setContentTitle("Calling...")
+                .setSmallIcon(android.R.drawable.sym_def_app_icon)
+                .build();
+
+        Consumer<Uri> visitor = (Consumer<Uri>) spy(Consumer.class);
+        n.visitUris(visitor);
+
+        verify(visitor, times(1)).accept(eq(personIcon.getUri()));
+        verify(visitor, times(1)).accept(eq(verificationIcon.getUri()));
     }
 
     @Test
