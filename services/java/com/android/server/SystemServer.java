@@ -2578,11 +2578,9 @@ public final class SystemServer implements Dumpable {
         }
 
         // NOTE: ClipboardService depends on ContentCapture and Autofill
-        if(!enable1GLowMem){
-            t.traceBegin("StartClipboardService");
-            mSystemServiceManager.startService(ClipboardService.class);
-            t.traceEnd();
-        }
+        t.traceBegin("StartClipboardService");
+        mSystemServiceManager.startService(ClipboardService.class);
+        t.traceEnd();
 
         t.traceBegin("AppServiceManager");
         mSystemServiceManager.startService(AppBindingService.Lifecycle.class);
