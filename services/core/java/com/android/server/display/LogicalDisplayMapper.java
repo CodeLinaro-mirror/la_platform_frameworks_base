@@ -422,7 +422,12 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
     }
 
     void onBootCompleted() {
+        // TODO: Temp changes for android u bring-up
+        if (android.os.SystemProperties.getInt("ro.config.headless", 0) != 1) {
         synchronized (mSyncRoot) {
+            mBootCompleted = true;
+        }
+        } else {
             mBootCompleted = true;
         }
     }

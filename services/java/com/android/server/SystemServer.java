@@ -936,6 +936,10 @@ public final class SystemServer implements Dumpable {
             startCoreServices(t);
             startOtherServices(t);
             startApexServices(t);
+            if (android.os.SystemProperties.getInt("ro.config.headless", 0) == 1) {
+            SystemProperties.set("sys.boot_completed", "1");
+            SystemProperties.set("dev.bootcomplete", "1");
+            }
         } catch (Throwable ex) {
             Slog.e("System", "******************************************");
             Slog.e("System", "************ Failure starting system services", ex);
@@ -1578,6 +1582,7 @@ public final class SystemServer implements Dumpable {
                 t.traceEnd();
             }
 
+            if (android.os.SystemProperties.getInt("ro.config.headless", 0) != 1) {
             t.traceBegin("StartWindowManagerService");
             // WMS needs sensor service ready
             mSystemServiceManager.startBootPhase(t, SystemService.PHASE_WAIT_FOR_SENSOR_SERVICE);
@@ -1596,6 +1601,7 @@ public final class SystemServer implements Dumpable {
             t.traceBegin("WindowManagerServiceOnInitReady");
             wm.onInitReady();
             t.traceEnd();
+            }
 
             // Start receiving calls from HIDL services. Start in in a separate thread
             // because it need to connect to SensorManager. This has to start
@@ -1613,6 +1619,7 @@ public final class SystemServer implements Dumpable {
                 t.traceEnd();
             }
 
+            if (android.os.SystemProperties.getInt("ro.config.headless", 0) != 1) {
             t.traceBegin("StartInputManager");
             inputManager.setWindowManagerCallbacks(wm.getInputManagerCallback());
             inputManager.start();
@@ -1622,7 +1629,7 @@ public final class SystemServer implements Dumpable {
             t.traceBegin("DisplayManagerWindowManagerAndInputReady");
             mDisplayManagerService.windowManagerAndInputReady();
             t.traceEnd();
-
+            }
             if (mFactoryTestMode == FactoryTest.FACTORY_TEST_LOW_LEVEL) {
                 Slog.i(TAG, "No Bluetooth Service (factory test)");
             } else if (!context.getPackageManager().hasSystemFeature
@@ -1673,7 +1680,12 @@ public final class SystemServer implements Dumpable {
 
         // Before things start rolling, be sure we have decided whether
         // we are in safe mode.
-        final boolean safeMode = wm.detectSafeMode();
+        final boolean safeMode;
+        if (android.os.SystemProperties.getInt("ro.config.headless", 0) == 1) {
+        safeMode = true;
+	} else {
+        safeMode = wm.detectSafeMode();
+        }
         if (safeMode) {
             // If yes, immediately turn on the global setting for airplane mode.
             // Note that this does not send broadcasts at this stage because
@@ -1693,6 +1705,7 @@ public final class SystemServer implements Dumpable {
         MediaRouterService mediaRouter = null;
 
         // Bring up services needed for UI.
+        if (android.os.SystemProperties.getInt("ro.config.headless", 0) != 1) {
         if (mFactoryTestMode != FactoryTest.FACTORY_TEST_LOW_LEVEL) {
             t.traceBegin("StartInputMethodManagerLifecycle");
             mSystemServiceManager.startService(InputMethodManagerService.Lifecycle.class);
@@ -1714,7 +1727,7 @@ public final class SystemServer implements Dumpable {
             reportWtf("making display ready", e);
         }
         t.traceEnd();
-
+        }
         if (mFactoryTestMode != FactoryTest.FACTORY_TEST_LOW_LEVEL) {
             if (!"0".equals(SystemProperties.get("system_init.startmountservice"))) {
                 t.traceBegin("StartStorageManagerService");
@@ -1743,9 +1756,11 @@ public final class SystemServer implements Dumpable {
 
         // We start this here so that we update our configuration to set watch or television
         // as appropriate.
+        if (android.os.SystemProperties.getInt("ro.config.headless", 0) != 1) {
         t.traceBegin("StartUiModeManager");
         mSystemServiceManager.startService(UiModeManagerService.class);
         t.traceEnd();
+        }
 
         t.traceBegin("StartLocaleManagerService");
         try {
@@ -1873,10 +1888,11 @@ public final class SystemServer implements Dumpable {
 
             // Search UI manager service
             // TODO: add deviceHasConfigString(context, R.string.config_defaultSearchUiService)
+            if (android.os.SystemProperties.getInt("ro.config.headless", 0) != 1) {
             t.traceBegin("StartSearchUiService");
             mSystemServiceManager.startService(SEARCH_UI_MANAGER_SERVICE_CLASS);
             t.traceEnd();
-
+            }
             // Smartspace manager service
             // TODO: add deviceHasConfigString(context, R.string.config_defaultSmartspaceService)
             t.traceBegin("StartSmartspaceService");
@@ -2006,6 +2022,7 @@ public final class SystemServer implements Dumpable {
             networkPolicy.bindConnectivityManager();
             t.traceEnd();
 
+            if (android.os.SystemProperties.getInt("ro.config.headless", 0) != 1) {
             t.traceBegin("StartVpnManagerService");
             try {
                 vpnManager = VpnManagerService.create(context);
@@ -2014,7 +2031,7 @@ public final class SystemServer implements Dumpable {
                 reportWtf("starting VPN Manager Service", e);
             }
             t.traceEnd();
-
+	    }
             t.traceBegin("StartVcnManagementService");
             try {
                 vcnManagement = VcnManagementService.create(context);
@@ -2042,6 +2059,7 @@ public final class SystemServer implements Dumpable {
             }
             t.traceEnd();
 
+            if (android.os.SystemProperties.getInt("ro.config.headless", 0) != 1) {
             t.traceBegin("StartNotificationManager");
             mSystemServiceManager.startService(NotificationManagerService.class);
             SystemNotificationChannels.removeDeprecated(context);
@@ -2049,7 +2067,7 @@ public final class SystemServer implements Dumpable {
             notification = INotificationManager.Stub.asInterface(
                     ServiceManager.getService(Context.NOTIFICATION_SERVICE));
             t.traceEnd();
-
+            }
             t.traceBegin("StartDeviceMonitor");
             mSystemServiceManager.startService(DeviceStorageMonitorService.class);
             t.traceEnd();
@@ -2101,6 +2119,7 @@ public final class SystemServer implements Dumpable {
                 t.traceEnd();
             }
 
+            if (android.os.SystemProperties.getInt("ro.config.headless", 0) != 1) {
             if (!isWatch) {
                 t.traceBegin("StartSearchManagerService");
                 try {
@@ -2110,7 +2129,6 @@ public final class SystemServer implements Dumpable {
                 }
                 t.traceEnd();
             }
-
             if (context.getResources().getBoolean(R.bool.config_enableWallpaperService)) {
                 t.traceBegin("StartWallpaperManagerService");
                 mSystemServiceManager.startService(WALLPAPER_SERVICE_CLASS);
@@ -2144,7 +2162,7 @@ public final class SystemServer implements Dumpable {
             t.traceBegin("StartSoundTriggerMiddlewareService");
             mSystemServiceManager.startService(SoundTriggerMiddlewareService.Lifecycle.class);
             t.traceEnd();
-
+            }
             if (mPackageManager.hasSystemFeature(PackageManager.FEATURE_BROADCAST_RADIO)) {
                 t.traceBegin("StartBroadcastRadioService");
                 mSystemServiceManager.startService(BroadcastRadioService.class);
@@ -2221,6 +2239,7 @@ public final class SystemServer implements Dumpable {
             }
             t.traceEnd();
           
+            if (android.os.SystemProperties.getInt("ro.config.headless", 0) != 1) {
             if (!isWatch) {
                 t.traceBegin("StartTwilightService");
                 mSystemServiceManager.startService(TwilightService.class);
@@ -2230,7 +2249,7 @@ public final class SystemServer implements Dumpable {
             t.traceBegin("StartColorDisplay");
             mSystemServiceManager.startService(ColorDisplayService.class);
             t.traceEnd();
-
+            }
             // TODO(aml-jobscheduler): Think about how to do it properly.
             t.traceBegin("StartJobScheduler");
             mSystemServiceManager.startService(JOB_SCHEDULER_SERVICE_CLASS);
@@ -2250,13 +2269,14 @@ public final class SystemServer implements Dumpable {
                 t.traceEnd();
             }
 
+            if (android.os.SystemProperties.getInt("ro.config.headless", 0) != 1) {
             if (mPackageManager.hasSystemFeature(PackageManager.FEATURE_APP_WIDGETS)
                     || context.getResources().getBoolean(R.bool.config_enableAppWidgetService)) {
                 t.traceBegin("StartAppWidgetService");
                 mSystemServiceManager.startService(APPWIDGET_SERVICE_CLASS);
                 t.traceEnd();
             }
-
+            }
             // We need to always start this service, regardless of whether the
             // FEATURE_VOICE_RECOGNIZERS feature is set, because it needs to take care
             // of initializing various settings.  It will internally modify its behavior
@@ -2343,6 +2363,7 @@ public final class SystemServer implements Dumpable {
             mSystemServiceManager.startService(BLOB_STORE_MANAGER_SERVICE_CLASS);
             t.traceEnd();
 
+            if (android.os.SystemProperties.getInt("ro.config.headless", 0) != 1) {
             // Dreams (interactive idle-time views, a/k/a screen savers, and doze mode)
             t.traceBegin("StartDreamManager");
             mSystemServiceManager.startService(DreamManagerService.class);
@@ -2352,7 +2373,7 @@ public final class SystemServer implements Dumpable {
             ServiceManager.addService(GraphicsStatsService.GRAPHICS_STATS_SERVICE,
                     new GraphicsStatsService(context));
             t.traceEnd();
-
+            }
             if (CoverageService.ENABLED) {
                 t.traceBegin("AddCoverageService");
                 ServiceManager.addService(CoverageService.COVERAGE_SERVICE, new CoverageService());
@@ -2384,6 +2405,7 @@ public final class SystemServer implements Dumpable {
             mSystemServiceManager.startService(RestrictionsManagerService.class);
             t.traceEnd();
 
+            if (android.os.SystemProperties.getInt("ro.config.headless", 0) != 1) {
             t.traceBegin("StartMediaSessionService");
             mSystemServiceManager.startService(MEDIA_SESSION_SERVICE_CLASS);
             t.traceEnd();
@@ -2393,7 +2415,7 @@ public final class SystemServer implements Dumpable {
                 mSystemServiceManager.startService(HdmiControlService.class);
                 t.traceEnd();
             }
-
+            }
             if (mPackageManager.hasSystemFeature(PackageManager.FEATURE_LIVE_TV)
                     || mPackageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)) {
                 t.traceBegin("StartTvInteractiveAppManager");
@@ -2515,10 +2537,11 @@ public final class SystemServer implements Dumpable {
             t.traceEnd();
         }
 
+        if (android.os.SystemProperties.getInt("ro.config.headless", 0) != 1) {
         t.traceBegin("StartMediaProjectionManager");
         mSystemServiceManager.startService(MediaProjectionManagerService.class);
         t.traceEnd();
-
+        }
        if (isWatch) {
             // Must be started before services that depend it, e.g. WearConnectivityService
             t.traceBegin("StartWearPowerService");
@@ -2653,6 +2676,7 @@ public final class SystemServer implements Dumpable {
         }
         t.traceEnd();
 
+        if (android.os.SystemProperties.getInt("ro.config.headless", 0) != 1) {
         // Needed by DevicePolicyManager for initialization
         t.traceBegin("StartBootPhaseLockSettingsReady");
         mSystemServiceManager.startBootPhase(t, SystemService.PHASE_LOCK_SETTINGS_READY);
@@ -2669,7 +2693,7 @@ public final class SystemServer implements Dumpable {
             reportWtf("making Window Manager Service ready", e);
         }
         t.traceEnd();
-
+        }
         // Emit any pending system_server WTFs
         synchronized (SystemService.class) {
             if (sPendingWtfs != null) {
@@ -2678,6 +2702,7 @@ public final class SystemServer implements Dumpable {
             }
         }
 
+        if (android.os.SystemProperties.getInt("ro.config.headless", 0) != 1) {
         if (safeMode) {
             mActivityManagerService.showSafeModeOverlay();
         }
@@ -2695,7 +2720,7 @@ public final class SystemServer implements Dumpable {
         if (systemTheme.getChangingConfigurations() != 0) {
             systemTheme.rebase();
         }
-
+        }
         // Permission policy service
         t.traceBegin("StartPermissionPolicyService");
         mSystemServiceManager.startService(PermissionPolicyService.class);
@@ -2705,6 +2730,7 @@ public final class SystemServer implements Dumpable {
         mPackageManagerService.systemReady();
         t.traceEnd();
 
+        if (android.os.SystemProperties.getInt("ro.config.headless", 0) != 1) {
         t.traceBegin("MakeDisplayManagerServiceReady");
         try {
             // TODO: use boot phase and communicate these flags some other way
@@ -2713,7 +2739,7 @@ public final class SystemServer implements Dumpable {
             reportWtf("making Display Manager Service ready", e);
         }
         t.traceEnd();
-
+        }
         mSystemServiceManager.setSafeMode(safeMode);
 
         // Start device specific services
@@ -2814,8 +2840,9 @@ public final class SystemServer implements Dumpable {
 
             // No dependency on Webview preparation in system server. But this should
             // be completed before allowing 3rd party
-            final String WEBVIEW_PREPARATION = "WebViewFactoryPreparation";
             Future<?> webviewPrep = null;
+            final String WEBVIEW_PREPARATION = "WebViewFactoryPreparation";
+            if (android.os.SystemProperties.getInt("ro.config.headless", 0) != 1) {
             if (!mOnlyCore && mWebViewUpdateService != null) {
                 webviewPrep = SystemServerInitThreadPool.submit(() -> {
                     Slog.i(TAG, WEBVIEW_PREPARATION);
@@ -2827,7 +2854,7 @@ public final class SystemServer implements Dumpable {
                     traceLog.traceEnd();
                 }, WEBVIEW_PREPARATION);
             }
-
+	    }
             boolean isAutomotive = mPackageManager
                     .hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE);
             if (isAutomotive) {
@@ -2928,6 +2955,7 @@ public final class SystemServer implements Dumpable {
                 t.traceEnd();
             }
 
+            if (android.os.SystemProperties.getInt("ro.config.headless", 0) != 1) {
             t.traceBegin("StartNetworkStack");
             try {
                 // Note : the network stack is creating on-demand objects that need to send
@@ -2955,7 +2983,7 @@ public final class SystemServer implements Dumpable {
                 reportWtf("starting Tethering", e);
             }
             t.traceEnd();
-
+            }
             t.traceBegin("MakeCountryDetectionServiceReady");
             try {
                 if (countryDetectorF != null) {
@@ -2974,6 +3002,7 @@ public final class SystemServer implements Dumpable {
                 reportWtf("Notifying NetworkTimeService running", e);
             }
             t.traceEnd();
+            if (android.os.SystemProperties.getInt("ro.config.headless", 0) != 1) {
             t.traceBegin("MakeInputManagerServiceReady");
             try {
                 // TODO(BT) Pass parameter to input manager
@@ -2984,6 +3013,7 @@ public final class SystemServer implements Dumpable {
                 reportWtf("Notifying InputManagerService running", e);
             }
             t.traceEnd();
+            }
             t.traceBegin("MakeTelephonyRegistryReady");
             try {
                 if (telephonyRegistryF != null) {
@@ -3041,6 +3071,7 @@ public final class SystemServer implements Dumpable {
             t.traceEnd();
         }, t);
 
+        if (android.os.SystemProperties.getInt("ro.config.headless", 0) != 1) {
         t.traceBegin("StartSystemUI");
         try {
             startSystemUi(context, windowManagerF);
@@ -3048,7 +3079,7 @@ public final class SystemServer implements Dumpable {
             reportWtf("starting System UI", e);
         }
         t.traceEnd();
-
+        }
         t.traceEnd(); // startOtherServices
     }
 

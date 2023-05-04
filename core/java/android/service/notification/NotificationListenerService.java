@@ -56,6 +56,7 @@ import android.os.UserHandle;
 import android.util.ArrayMap;
 import android.util.Log;
 import android.widget.RemoteViews;
+import android.os.SystemProperties;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
@@ -1269,7 +1270,9 @@ public abstract class NotificationListenerService extends Service {
         INotificationManager noMan = getNotificationInterface();
         mHandler = new MyHandler(context.getMainLooper());
         mCurrentUser = currentUser;
+        if (android.os.SystemProperties.getInt("ro.config.headless", 0) != 1) {
         noMan.registerListener(mWrapper, componentName, currentUser);
+        }
     }
 
     /**

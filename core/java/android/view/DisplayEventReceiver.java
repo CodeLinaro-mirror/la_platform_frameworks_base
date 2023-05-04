@@ -22,6 +22,7 @@ import android.os.Build;
 import android.os.Looper;
 import android.os.MessageQueue;
 import android.util.Log;
+import android.os.SystemProperties;
 
 import com.android.internal.annotations.VisibleForTesting;
 
@@ -108,10 +109,12 @@ public abstract class DisplayEventReceiver {
         if (looper == null) {
             throw new IllegalArgumentException("looper must not be null");
         }
-
         mMessageQueue = looper.getQueue();
+        mReceiverPtr = 0;
+        if (android.os.SystemProperties.getInt("ro.config.headless", 0) != 1) {
         mReceiverPtr = nativeInit(new WeakReference<DisplayEventReceiver>(this), mMessageQueue,
                 vsyncSource, eventRegistration);
+        }
     }
 
     @Override

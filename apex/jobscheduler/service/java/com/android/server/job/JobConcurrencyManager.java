@@ -79,7 +79,8 @@ import java.util.function.Predicate;
  */
 class JobConcurrencyManager {
     private static final String TAG = JobSchedulerService.TAG + ".Concurrency";
-    private static final boolean DEBUG = JobSchedulerService.DEBUG;
+    //private static final boolean DEBUG = JobSchedulerService.DEBUG;
+    private static final boolean DEBUG = true;
 
     /** The maximum number of concurrent jobs we'll aim to run at one time. */
     public static final int STANDARD_CONCURRENCY_LIMIT = 16;
@@ -1099,6 +1100,7 @@ class JobConcurrencyManager {
             @WorkType final int workType) {
         final List<StateController> controllers = mService.mControllers;
         final int numControllers = controllers.size();
+/*
         final PowerManager.WakeLock wl =
                 mPowerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, jobStatus.getTag());
         wl.setWorkSource(mService.deriveWorkSource(
@@ -1107,7 +1109,7 @@ class JobConcurrencyManager {
         // Since the quota controller will start counting from the time prepareForExecutionLocked()
         // is called, hold a wakelock to make sure the CPU doesn't suspend between that call and
         // when the service actually starts.
-        wl.acquire();
+        wl.acquire();*/
         try {
             for (int ic = 0; ic < numControllers; ic++) {
                 controllers.get(ic).prepareForExecutionLocked(jobStatus);
@@ -1135,7 +1137,7 @@ class JobConcurrencyManager {
                 mService.mJobPackageTracker.noteNonpending(jobStatus);
             }
         } finally {
-            wl.release();
+            //wl.release();
         }
     }
 
@@ -1342,14 +1344,14 @@ class JobConcurrencyManager {
         // We're over the minimum guaranteed runtime. Stop the job if we're over config limits,
         // there are pending jobs that could replace this one, or the device state is not conducive
         // to long runs.
-
+/*
         if (mPowerManager.isPowerSaveMode()) {
             return "battery saver";
         }
         if (mPowerManager.isDeviceIdleMode()) {
             return "deep doze";
         }
-
+*/
         // Update config in case memory usage has changed significantly.
         updateCounterConfigLocked();
 

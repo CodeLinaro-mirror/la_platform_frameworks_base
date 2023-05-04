@@ -34,6 +34,7 @@ import android.telephony.CarrierConfigManager;
 import android.telephony.SubscriptionManager;
 import android.util.IntArray;
 import android.util.Slog;
+import android.os.SystemProperties;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.telecom.ITelecomLoader;
@@ -137,7 +138,9 @@ public class TelecomLoaderService extends SystemService {
             registerCarrierConfigChangedReceiver();
             // core services will have already been loaded.
             setupServiceRepository();
+            if (android.os.SystemProperties.getInt("ro.config.headless", 0) != 1) {
             connectToTelecom();
+            }
         }
     }
 

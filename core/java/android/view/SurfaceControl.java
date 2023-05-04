@@ -62,6 +62,7 @@ import android.util.Log;
 import android.util.SparseIntArray;
 import android.util.proto.ProtoOutputStream;
 import android.view.Surface.OutOfResourcesException;
+import android.os.SystemProperties;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.util.Preconditions;
@@ -2271,9 +2272,13 @@ public final class SurfaceControl implements Parcelable {
      * @hide
      */
     public static ColorSpace[] getCompositionColorSpaces() {
-        int[] dataspaces = nativeGetCompositionDataspaces();
         ColorSpace srgb = ColorSpace.get(ColorSpace.Named.SRGB);
         ColorSpace[] colorSpaces = { srgb, srgb };
+        if (android.os.SystemProperties.getInt("ro.config.headless", 0) == 1) {
+            colorSpaces[0] = ColorSpace.get(ColorSpace.Named.EXTENDED_SRGB);
+            colorSpaces[1] = ColorSpace.get(ColorSpace.Named.EXTENDED_SRGB);
+        } else {
+        int[] dataspaces = nativeGetCompositionDataspaces();
         if (dataspaces.length == 2) {
             for (int i = 0; i < 2; ++i) {
                 switch(dataspaces[i]) {
@@ -2291,6 +2296,7 @@ public final class SurfaceControl implements Parcelable {
                 }
             }
         }
+        }
         return colorSpaces;
     }
 
@@ -2298,7 +2304,10 @@ public final class SurfaceControl implements Parcelable {
      * @hide
      */
     public static boolean getBootDisplayModeSupport() {
-        return nativeGetBootDisplayModeSupport();
+        if (android.os.SystemProperties.getInt("ro.config.headless", 0) == 1) {
+            return false;
+        } else
+            return nativeGetBootDisplayModeSupport();
     }
 
     /** There is no associated getter for this method.  When this is set, the display is expected
@@ -2425,7 +2434,10 @@ public final class SurfaceControl implements Parcelable {
      * @hide
      */
     public static long[] getPhysicalDisplayIds() {
-        return nativeGetPhysicalDisplayIds();
+        if (android.os.SystemProperties.getInt("ro.config.headless", 0) == 1)
+            return new long[0]; //nativeGetPhysicalDisplayIds();
+        else
+            return nativeGetPhysicalDisplayIds();
     }
 
     /**

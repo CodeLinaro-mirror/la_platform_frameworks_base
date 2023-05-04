@@ -54,6 +54,7 @@ import android.service.notification.ZenModeConfig;
 import android.service.notification.ZenPolicy;
 import android.util.Log;
 import android.util.proto.ProtoOutputStream;
+import android.os.SystemProperties;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -881,12 +882,14 @@ public class NotificationManager {
      * @param groups The list of groups to create
      */
     public void createNotificationChannelGroups(@NonNull List<NotificationChannelGroup> groups) {
+        if (android.os.SystemProperties.getInt("ro.config.headless", 0) != 1) {
         INotificationManager service = getService();
         try {
             service.createNotificationChannelGroups(mContext.getPackageName(),
                     new ParceledListSlice(groups));
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
+        }
         }
     }
 
@@ -924,12 +927,14 @@ public class NotificationManager {
      * @param channels the list of channels to attempt to create.
      */
     public void createNotificationChannels(@NonNull List<NotificationChannel> channels) {
+        if (android.os.SystemProperties.getInt("ro.config.headless", 0) != 1) {
         INotificationManager service = getService();
         try {
             service.createNotificationChannels(mContext.getPackageName(),
                     new ParceledListSlice(channels));
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
+        }
         }
     }
 

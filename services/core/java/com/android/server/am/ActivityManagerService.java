@@ -8119,10 +8119,11 @@ public class ActivityManagerService extends IActivityManager.Stub
         watchDeviceProvisioning(mContext);
         t.traceEnd();
 
+        if (android.os.SystemProperties.getInt("ro.config.headless", 0) != 1) {
         t.traceBegin("retrieveSettings");
         retrieveSettings();
         t.traceEnd();
-
+        }
         t.traceBegin("Ugm.onSystemReady");
         mUgmInternal.onSystemReady();
         t.traceEnd();
@@ -8171,10 +8172,11 @@ public class ActivityManagerService extends IActivityManager.Stub
         synchronized (this) {
             // Only start up encryption-aware persistent apps; once user is
             // unlocked we'll come back around and start unaware apps
+            if (android.os.SystemProperties.getInt("ro.config.headless", 0) != 1) {
             t.traceBegin("startPersistentApps");
             startPersistentApps(PackageManager.MATCH_DIRECT_BOOT_AWARE);
             t.traceEnd();
-
+            }
             // Start up initial activity.
             mBooting = true;
             // Enable home activity for system user, so that the system can always boot. We don't

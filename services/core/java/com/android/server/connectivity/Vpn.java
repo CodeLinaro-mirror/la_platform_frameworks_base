@@ -122,6 +122,7 @@ import android.text.TextUtils;
 import android.util.ArraySet;
 import android.util.Log;
 import android.util.Range;
+import android.os.SystemProperties;
 
 import com.android.internal.R;
 import com.android.internal.annotations.GuardedBy;
@@ -2157,6 +2158,7 @@ public class Vpn {
 
         final UserHandle user = UserHandle.of(mUserId);
         final long token = Binder.clearCallingIdentity();
+	if (android.os.SystemProperties.getInt("ro.config.headless", 0) != 1) {
         try {
             final NotificationManager notificationManager =
                     mUserIdContext.getSystemService(NotificationManager.class);
@@ -2186,6 +2188,7 @@ public class Vpn {
         } finally {
             Binder.restoreCallingIdentity(token);
         }
+	}
     }
 
     /**

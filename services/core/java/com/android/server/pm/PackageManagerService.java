@@ -1808,9 +1808,10 @@ public class PackageManagerService implements PackageSender, TestUtilityService 
         mViewCompiler = injector.getViewCompiler();
         mSharedLibraries = mInjector.getSharedLibrariesImpl();
 
+        if (android.os.SystemProperties.getInt("ro.config.headless", 0) != 1) {
         mContext.getSystemService(DisplayManager.class)
                 .getDisplay(Display.DEFAULT_DISPLAY).getMetrics(mMetrics);
-
+        }
         t.traceBegin("get system config");
         SystemConfig systemConfig = injector.getSystemConfig();
         mAvailableFeatures = systemConfig.getAvailableFeatures();

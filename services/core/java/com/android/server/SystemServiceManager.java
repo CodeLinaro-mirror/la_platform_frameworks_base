@@ -33,6 +33,7 @@ import android.util.Dumpable;
 import android.util.EventLog;
 import android.util.Slog;
 import android.util.SparseArray;
+import android.os.SystemProperties;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.os.SystemServerClassLoaderFactory;
@@ -293,10 +294,17 @@ public final class SystemServiceManager implements Dumpable {
                 try {
                     service.onBootPhase(mCurrentPhase);
                 } catch (Exception ex) {
+                    if (android.os.SystemProperties.getInt("ro.config.headless", 0) != 1) {
                     throw new RuntimeException("Failed to boot service "
                             + service.getClass().getName()
                             + ": onBootPhase threw an exception during phase "
                             + mCurrentPhase, ex);
+                    } else {
+                           Slog.e(TAG, "Failed to boot service "
+                            + service.getClass().getName()
+                            + ": onBootPhase threw an exception during phase "
+                            + mCurrentPhase, ex);
+                    }
                 }
                 warnIfTooLong(SystemClock.elapsedRealtime() - time, service, "onBootPhase");
                 t.traceEnd();

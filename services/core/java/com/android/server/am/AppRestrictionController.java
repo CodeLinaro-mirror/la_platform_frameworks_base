@@ -150,6 +150,7 @@ import android.util.TypedXmlPullParser;
 import android.util.TypedXmlSerializer;
 import android.util.Xml;
 import android.util.proto.ProtoOutputStream;
+import android.os.SystemProperties;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
@@ -1528,7 +1529,9 @@ public final class AppRestrictionController {
                 mBgExecutor, mConstantsObserver);
         mConstantsObserver.start();
         initBgRestrictionExemptioFromSysConfig();
+        if (android.os.SystemProperties.getInt("ro.config.headless", 0) != 1) {
         initRestrictionStates();
+        }
         initSystemModuleNames();
         initRolesInInterest();
         registerForUidObservers();
@@ -1539,11 +1542,13 @@ public final class AppRestrictionController {
         mInjector.getAppStandbyInternal().addListener(mAppIdleStateChangeListener);
         mInjector.getRoleManager().addOnRoleHoldersChangedListenerAsUser(mBgExecutor,
                 mRoleHolderChangedListener, UserHandle.ALL);
+        if (android.os.SystemProperties.getInt("ro.config.headless", 0) != 1) {
         mInjector.scheduleInitTrackers(mBgHandler, () -> {
             for (int i = 0, size = mAppStateTrackers.size(); i < size; i++) {
                 mAppStateTrackers.get(i).onSystemReady();
             }
         });
+        }
     }
 
     @VisibleForTesting

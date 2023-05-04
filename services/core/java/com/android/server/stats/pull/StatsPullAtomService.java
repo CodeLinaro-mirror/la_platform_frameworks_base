@@ -760,7 +760,9 @@ public class StatsPullAtomService extends SystemService {
             });
         } else if (phase == PHASE_THIRD_PARTY_APPS_CAN_START) {
             // Network stats related pullers can only be initialized after service is ready.
+	    if (android.os.SystemProperties.getInt("ro.config.headless", 0) != 1) {
             BackgroundThread.getHandler().post(() -> initAndRegisterNetworkStatsPullers());
+	    }
         }
     }
 

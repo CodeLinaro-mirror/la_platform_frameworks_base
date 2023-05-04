@@ -6202,12 +6202,14 @@ public class ActivityTaskManagerService extends IActivityTaskManager.Stub {
 
         @Override
         public void resumeTopActivities(boolean scheduleIdle) {
+	    if (android.os.SystemProperties.getInt("ro.config.headless", 0) != 1) {
             synchronized (mGlobalLock) {
                 mRootWindowContainer.resumeFocusedTasksTopActivities();
                 if (scheduleIdle) {
                     mTaskSupervisor.scheduleIdle();
                 }
             }
+	    }
         }
 
         @HotPath(caller = HotPath.PROCESS_CHANGE)

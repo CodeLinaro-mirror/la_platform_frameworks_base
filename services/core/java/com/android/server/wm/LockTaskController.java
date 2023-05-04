@@ -59,6 +59,7 @@ import android.util.Pair;
 import android.util.Slog;
 import android.util.SparseArray;
 import android.util.SparseIntArray;
+import android.os.SystemProperties;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.policy.IKeyguardDismissCallback;
@@ -783,6 +784,9 @@ public class LockTaskController {
             taskChanged = true;
         }
 
+	if (android.os.SystemProperties.getInt("ro.config.headless", 0) == 1) {
+		return;
+	}
         mSupervisor.mRootWindowContainer.forAllTasks(Task::setLockTaskAuth);
 
         final ActivityRecord r = mSupervisor.mRootWindowContainer.topRunningActivity();

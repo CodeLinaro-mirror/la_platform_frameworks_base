@@ -4480,6 +4480,9 @@ class StorageManagerService extends IStorageManager.Stub
                 return StorageManager.MOUNT_MODE_EXTERNAL_NONE;
             }
 
+            if (android.os.SystemProperties.getInt("ro.config.headless", 0) == 1) {
+                return StorageManager.MOUNT_MODE_EXTERNAL_NONE;
+            }
             final String[] packagesForUid = mIPackageManager.getPackagesForUid(uid);
             if (ArrayUtils.isEmpty(packagesForUid)) {
                 // It's possible the package got uninstalled already, so just ignore.
