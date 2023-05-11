@@ -18,11 +18,13 @@
 package com.android.systemui.user.domain.model
 
 import android.os.UserHandle
+import com.android.systemui.animation.Expandable
 import com.android.systemui.qs.user.UserSwitchDialogController
 
 /** Encapsulates a request to show a dialog. */
 sealed class ShowDialogRequestModel(
     open val dialogShower: UserSwitchDialogController.DialogShower? = null,
+    open val expandable: Expandable? = null,
 ) {
     data class ShowAddUserDialog(
         val userHandle: UserHandle,
@@ -43,4 +45,9 @@ sealed class ShowDialogRequestModel(
         val onExitGuestUser: (guestId: Int, targetId: Int, forceRemoveGuest: Boolean) -> Unit,
         override val dialogShower: UserSwitchDialogController.DialogShower?,
     ) : ShowDialogRequestModel(dialogShower)
+
+    /** Show the user switcher dialog */
+    data class ShowUserSwitcherDialog(
+        override val expandable: Expandable?,
+    ) : ShowDialogRequestModel()
 }

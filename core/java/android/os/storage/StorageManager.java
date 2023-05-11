@@ -18,17 +18,10 @@ package android.os.storage;
 
 import static android.Manifest.permission.MANAGE_EXTERNAL_STORAGE;
 import static android.Manifest.permission.READ_EXTERNAL_STORAGE;
-import static android.Manifest.permission.WRITE_EXTERNAL_STORAGE;
 import static android.app.AppOpsManager.OP_LEGACY_STORAGE;
 import static android.app.AppOpsManager.OP_MANAGE_EXTERNAL_STORAGE;
 import static android.app.AppOpsManager.OP_READ_EXTERNAL_STORAGE;
-import static android.app.AppOpsManager.OP_READ_MEDIA_AUDIO;
 import static android.app.AppOpsManager.OP_READ_MEDIA_IMAGES;
-import static android.app.AppOpsManager.OP_READ_MEDIA_VIDEO;
-import static android.app.AppOpsManager.OP_WRITE_EXTERNAL_STORAGE;
-import static android.app.AppOpsManager.OP_WRITE_MEDIA_AUDIO;
-import static android.app.AppOpsManager.OP_WRITE_MEDIA_IMAGES;
-import static android.app.AppOpsManager.OP_WRITE_MEDIA_VIDEO;
 import static android.content.ContentResolver.DEPRECATE_DATA_PREFIX;
 import static android.content.pm.PackageManager.PERMISSION_GRANTED;
 import static android.os.UserHandle.PER_USER_RANGE;
@@ -1869,51 +1862,14 @@ public class StorageManager {
     // handle obscure cases like when an app targets Q but was installed on
     // a device that was originally running on P before being upgraded to Q.
 
-    /** {@hide} */
-    public boolean checkPermissionReadAudio(boolean enforce,
-            int pid, int uid, String packageName, @Nullable String featureId) {
-        if (!checkExternalStoragePermissionAndAppOp(enforce, pid, uid, packageName, featureId,
-                READ_EXTERNAL_STORAGE, OP_READ_EXTERNAL_STORAGE)) {
-            return false;
-        }
-        return noteAppOpAllowingLegacy(enforce, pid, uid, packageName, featureId,
-                OP_READ_MEDIA_AUDIO);
-    }
-
-    /** {@hide} */
-    public boolean checkPermissionWriteAudio(boolean enforce,
-            int pid, int uid, String packageName, @Nullable String featureId) {
-        if (!checkExternalStoragePermissionAndAppOp(enforce, pid, uid, packageName, featureId,
-                WRITE_EXTERNAL_STORAGE, OP_WRITE_EXTERNAL_STORAGE)) {
-            return false;
-        }
-        return noteAppOpAllowingLegacy(enforce, pid, uid, packageName, featureId,
-                OP_WRITE_MEDIA_AUDIO);
-    }
-
-    /** {@hide} */
-    public boolean checkPermissionReadVideo(boolean enforce,
-            int pid, int uid, String packageName, @Nullable String featureId) {
-        if (!checkExternalStoragePermissionAndAppOp(enforce, pid, uid, packageName, featureId,
-                READ_EXTERNAL_STORAGE, OP_READ_EXTERNAL_STORAGE)) {
-            return false;
-        }
-        return noteAppOpAllowingLegacy(enforce, pid, uid, packageName, featureId,
-                OP_READ_MEDIA_VIDEO);
-    }
-
-    /** {@hide} */
-    public boolean checkPermissionWriteVideo(boolean enforce,
-            int pid, int uid, String packageName, @Nullable String featureId) {
-        if (!checkExternalStoragePermissionAndAppOp(enforce, pid, uid, packageName, featureId,
-                WRITE_EXTERNAL_STORAGE, OP_WRITE_EXTERNAL_STORAGE)) {
-            return false;
-        }
-        return noteAppOpAllowingLegacy(enforce, pid, uid, packageName, featureId,
-                OP_WRITE_MEDIA_VIDEO);
-    }
-
-    /** {@hide} */
+    /**
+     * @deprecated This method should not be used since it check slegacy permissions,
+     * no longer valid. Clients should check the appropriate permissions directly
+     * instead (e.g. READ_MEDIA_IMAGES).
+     *
+     * {@hide}
+     */
+    @Deprecated
     public boolean checkPermissionReadImages(boolean enforce,
             int pid, int uid, String packageName, @Nullable String featureId) {
         if (!checkExternalStoragePermissionAndAppOp(enforce, pid, uid, packageName, featureId,
@@ -1922,17 +1878,6 @@ public class StorageManager {
         }
         return noteAppOpAllowingLegacy(enforce, pid, uid, packageName, featureId,
                 OP_READ_MEDIA_IMAGES);
-    }
-
-    /** {@hide} */
-    public boolean checkPermissionWriteImages(boolean enforce,
-            int pid, int uid, String packageName, @Nullable String featureId) {
-        if (!checkExternalStoragePermissionAndAppOp(enforce, pid, uid, packageName, featureId,
-                WRITE_EXTERNAL_STORAGE, OP_WRITE_EXTERNAL_STORAGE)) {
-            return false;
-        }
-        return noteAppOpAllowingLegacy(enforce, pid, uid, packageName, featureId,
-                OP_WRITE_MEDIA_IMAGES);
     }
 
     private boolean checkExternalStoragePermissionAndAppOp(boolean enforce,
@@ -2540,9 +2485,11 @@ public class StorageManager {
      * called on first creation of a new file on external storage, and whenever the
      * media type of the file is updated later.
      *
-     * This API requires MANAGE_EXTERNAL_STORAGE permission and typical implementations
+     * This API doesn't require any special permissions, though typical implementations
      * will require being called from an SELinux domain that allows setting file attributes
      * related to quota (eg the GID or project ID).
+     * If the calling user has MANAGE_EXTERNAL_STORAGE permissions, quota for shared profile's
+     * volumes is also updated.
      *
      * The default platform user of this API is the MediaProvider process, which is
      * responsible for managing all of external storage.
@@ -2559,15 +2506,17 @@ public class StorageManager {
      * @hide
      */
     @SystemApi
-    @RequiresPermission(android.Manifest.permission.MANAGE_EXTERNAL_STORAGE)
     public void updateExternalStorageFileQuotaType(@NonNull File path,
             @QuotaType int quotaType) throws IOException {
         long projectId;
         final String filePath = path.getCanonicalPath();
-        // MANAGE_EXTERNAL_STORAGE permission is required as FLAG_INCLUDE_SHARED_PROFILE is being
-        // set while querying getVolumeList.
-        final StorageVolume[] availableVolumes = getVolumeList(mContext.getUserId(),
-                FLAG_REAL_STATE | FLAG_INCLUDE_INVISIBLE | FLAG_INCLUDE_SHARED_PROFILE);
+        int volFlags = FLAG_REAL_STATE | FLAG_INCLUDE_INVISIBLE;
+        // If caller has MANAGE_EXTERNAL_STORAGE permission, results from User Profile(s) are also
+        // returned by enabling FLAG_INCLUDE_SHARED_PROFILE.
+        if (mContext.checkSelfPermission(MANAGE_EXTERNAL_STORAGE) == PERMISSION_GRANTED) {
+            volFlags |= FLAG_INCLUDE_SHARED_PROFILE;
+        }
+        final StorageVolume[] availableVolumes = getVolumeList(mContext.getUserId(), volFlags);
         final StorageVolume volume = getStorageVolume(availableVolumes, path);
         if (volume == null) {
             Log.w(TAG, "Failed to update quota type for " + filePath);
@@ -2738,7 +2687,8 @@ public class StorageManager {
 
     /** {@hide} */
     @TestApi
-    public static @NonNull UUID convert(@NonNull String uuid) {
+    public static @NonNull UUID convert(@Nullable String uuid) {
+        // UUID_PRIVATE_INTERNAL is null, so this accepts nullable input
         if (Objects.equals(uuid, UUID_PRIVATE_INTERNAL)) {
             return UUID_DEFAULT;
         } else if (Objects.equals(uuid, UUID_PRIMARY_PHYSICAL)) {

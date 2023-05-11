@@ -21,6 +21,7 @@ import android.hardware.biometrics.IBiometricStateListener;
 import android.hardware.biometrics.IInvalidationCallback;
 import android.hardware.biometrics.ITestSession;
 import android.hardware.biometrics.ITestSessionCallback;
+import android.hardware.biometrics.fingerprint.PointerContext;
 import android.hardware.fingerprint.IFingerprintClientActiveCallback;
 import android.hardware.fingerprint.IFingerprintAuthenticatorsRegisteredCallback;
 import android.hardware.fingerprint.IFingerprintServiceReceiver;
@@ -28,6 +29,7 @@ import android.hardware.fingerprint.IUdfpsOverlayController;
 import android.hardware.fingerprint.ISidefpsController;
 import android.hardware.fingerprint.IUdfpsOverlay;
 import android.hardware.fingerprint.Fingerprint;
+import android.hardware.fingerprint.FingerprintAuthenticateOptions;
 import android.hardware.fingerprint.FingerprintSensorPropertiesInternal;
 import java.util.List;
 
@@ -55,16 +57,15 @@ interface IFingerprintService {
     // Authenticate with a fingerprint. This is protected by USE_FINGERPRINT/USE_BIOMETRIC
     // permission. This is effectively deprecated, since it only comes through FingerprintManager
     // now. A requestId is returned that can be used to cancel this operation.
-    long authenticate(IBinder token, long operationId, int sensorId, int userId,
-            IFingerprintServiceReceiver receiver, String opPackageName, String attributionTag,
-            boolean shouldIgnoreEnrollmentState);
+    long authenticate(IBinder token, long operationId, IFingerprintServiceReceiver receiver,
+            in FingerprintAuthenticateOptions options);
 
     // Uses the fingerprint hardware to detect for the presence of a finger, without giving details
     // about accept/reject/lockout. A requestId is returned that can be used to cancel this
     // operation.
     @EnforcePermission("USE_BIOMETRIC_INTERNAL")
-    long detectFingerprint(IBinder token, int userId, IFingerprintServiceReceiver receiver,
-            String opPackageName);
+    long detectFingerprint(IBinder token, IFingerprintServiceReceiver receiver,
+            in FingerprintAuthenticateOptions options);
 
     // This method prepares the service to start authenticating, but doesn't start authentication.
     // This is protected by the MANAGE_BIOMETRIC signatuer permission. This method should only be
@@ -72,8 +73,8 @@ interface IFingerprintService {
     // by BiometricService. To start authentication after the clients are ready, use
     // startPreparedClient().
     @EnforcePermission("MANAGE_BIOMETRIC")
-    void prepareForAuthentication(int sensorId, IBinder token, long operationId, int userId,
-            IBiometricSensorReceiver sensorReceiver, String opPackageName, long requestId,
+    void prepareForAuthentication(IBinder token, long operationId,
+            IBiometricSensorReceiver sensorReceiver, in FingerprintAuthenticateOptions options, long requestId,
             int cookie, boolean allowBackgroundAuthentication);
 
     // Starts authentication with the previously prepared client.
@@ -184,11 +185,11 @@ interface IFingerprintService {
 
     // Notifies about a finger touching the sensor area.
     @EnforcePermission("USE_BIOMETRIC_INTERNAL")
-    void onPointerDown(long requestId, int sensorId, int x, int y, float minor, float major);
+    void onPointerDown(long requestId, int sensorId, in PointerContext pc);
 
     // Notifies about a finger leaving the sensor area.
     @EnforcePermission("USE_BIOMETRIC_INTERNAL")
-    void onPointerUp(long requestId, int sensorId);
+    void onPointerUp(long requestId, int sensorId, in PointerContext pc);
 
     // Notifies about the fingerprint UI being ready (e.g. HBM illumination is enabled).
     @EnforcePermission("USE_BIOMETRIC_INTERNAL")

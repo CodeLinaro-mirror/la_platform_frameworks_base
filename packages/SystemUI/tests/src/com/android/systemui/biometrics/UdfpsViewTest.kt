@@ -25,6 +25,7 @@ import android.testing.ViewUtils
 import android.view.LayoutInflater
 import android.view.Surface
 import androidx.test.filters.SmallTest
+import com.android.settingslib.udfps.UdfpsOverlayParams
 import com.android.systemui.R
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.util.mockito.any
@@ -77,15 +78,6 @@ class UdfpsViewTest : SysuiTestCase() {
     @After
     fun cleanup() {
         ViewUtils.detachView(view)
-    }
-
-    @Test
-    fun forwardsEvents() {
-        view.dozeTimeTick()
-        verify(animationViewController).dozeTimeTick()
-
-        view.onTouchOutsideView()
-        verify(animationViewController).onTouchOutsideView()
     }
 
     @Test

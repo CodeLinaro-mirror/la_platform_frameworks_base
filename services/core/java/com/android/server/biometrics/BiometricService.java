@@ -563,6 +563,14 @@ public class BiometricService extends SystemService {
                 }
             }
 
+            // Set the default subtitle if necessary.
+            if (promptInfo.isUseDefaultSubtitle()) {
+                if (TextUtils.isEmpty(promptInfo.getSubtitle())) {
+                    promptInfo.setSubtitle(getContext()
+                            .getString(R.string.biometric_dialog_default_subtitle));
+                }
+            }
+
             final long requestId = mRequestCounter.get();
             mHandler.post(() -> handleAuthenticate(
                     token, requestId, operationId, userId, receiver, opPackageName, promptInfo));
@@ -780,6 +788,8 @@ public class BiometricService extends SystemService {
         @Override // Binder call
         public void resetLockout(
                 int userId, byte[] hardwareAuthToken) {
+            super.resetLockout_enforcePermission();
+
             Slog.d(TAG, "resetLockout(userId=" + userId
                     + ", hat=" + (hardwareAuthToken == null ? "null " : "present") + ")");
             mBiometricContext.getAuthSessionCoordinator()
@@ -1312,7 +1322,7 @@ public class BiometricService extends SystemService {
         }
 
         final boolean debugEnabled = mInjector.isDebugEnabled(getContext(), userId);
-        mAuthSession = new AuthSession(getContext(), mStatusBarService,
+        mAuthSession = new AuthSession(getContext(), mBiometricContext, mStatusBarService,
                 createSysuiReceiver(requestId), mKeyStore, mRandom,
                 createClientDeathReceiver(requestId), preAuthInfo, token, requestId,
                 operationId, userId, createBiometricSensorReceiver(requestId), receiver,

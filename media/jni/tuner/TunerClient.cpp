@@ -22,7 +22,6 @@
 
 #include "TunerClient.h"
 
-using ::aidl::android::hardware::tv::tuner::FrontendStatusType;
 using ::aidl::android::hardware::tv::tuner::FrontendType;
 
 namespace android {
@@ -106,6 +105,27 @@ sp<DemuxClient> TunerClient::openDemux(int32_t demuxHandle) {
     }
 
     return nullptr;
+}
+
+shared_ptr<DemuxInfo> TunerClient::getDemuxInfo(int32_t demuxHandle) {
+    if (mTunerService != nullptr) {
+        DemuxInfo aidlDemuxInfo;
+        Status s = mTunerService->getDemuxInfo(demuxHandle, &aidlDemuxInfo);
+        if (!s.isOk()) {
+            return nullptr;
+        }
+        return make_shared<DemuxInfo>(aidlDemuxInfo);
+    }
+    return nullptr;
+}
+
+void TunerClient::getDemuxInfoList(vector<DemuxInfo>* demuxInfoList) {
+    if (mTunerService != nullptr) {
+        Status s = mTunerService->getDemuxInfoList(demuxInfoList);
+        if (!s.isOk()) {
+            demuxInfoList->clear();
+        }
+    }
 }
 
 shared_ptr<DemuxCapabilities> TunerClient::getDemuxCaps() {
@@ -208,6 +228,19 @@ int TunerClient::getMaxNumberOfFrontends(FrontendType frontendType) {
     }
 
     return -1;
+}
+
+bool TunerClient::isLnaSupported() {
+    if (mTunerService != nullptr) {
+        bool lnaSupported;
+        Status s = mTunerService->isLnaSupported(&lnaSupported);
+        if (!s.isOk()) {
+            return false;
+        }
+        return lnaSupported;
+    }
+
+    return false;
 }
 
 }  // namespace android

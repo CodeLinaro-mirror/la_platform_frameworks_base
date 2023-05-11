@@ -20,11 +20,13 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.PointF
+import android.graphics.Rect
 import android.graphics.RectF
 import android.util.AttributeSet
 import android.util.Log
 import android.view.MotionEvent
 import android.widget.FrameLayout
+import com.android.settingslib.udfps.UdfpsOverlayParams
 import com.android.systemui.R
 import com.android.systemui.doze.DozeReceiver
 
@@ -38,9 +40,12 @@ class UdfpsView(
     attrs: AttributeSet?
 ) : FrameLayout(context, attrs), DozeReceiver {
 
+    // Use expanded overlay when feature flag is true, set by UdfpsViewController
+    var useExpandedOverlay: Boolean = false
+
     // sensorRect may be bigger than the sensor. True sensor dimensions are defined in
     // overlayParams.sensorBounds
-    private val sensorRect = RectF()
+    var sensorRect = Rect()
     private var mUdfpsDisplayMode: UdfpsDisplayModeProvider? = null
     private val debugTextPaint = Paint().apply {
         isAntiAlias = true
@@ -92,17 +97,19 @@ class UdfpsView(
         val paddingX = animationViewController?.paddingX ?: 0
         val paddingY = animationViewController?.paddingY ?: 0
 
-        sensorRect.set(
-            paddingX.toFloat(),
-            paddingY.toFloat(),
-            (overlayParams.sensorBounds.width() + paddingX).toFloat(),
-            (overlayParams.sensorBounds.height() + paddingY).toFloat()
-        )
-        animationViewController?.onSensorRectUpdated(RectF(sensorRect))
-    }
+        // Updates sensor rect in relation to the overlay view
+        if (useExpandedOverlay) {
+            animationViewController?.onSensorRectUpdated(RectF(sensorRect))
+        } else {
+            sensorRect.set(
+                    paddingX,
+                    paddingY,
+                    (overlayParams.sensorBounds.width() + paddingX),
+                    (overlayParams.sensorBounds.height() + paddingY)
+            )
 
-    fun onTouchOutsideView() {
-        animationViewController?.onTouchOutsideView()
+            animationViewController?.onSensorRectUpdated(RectF(sensorRect))
+        }
     }
 
     override fun onAttachedToWindow() {

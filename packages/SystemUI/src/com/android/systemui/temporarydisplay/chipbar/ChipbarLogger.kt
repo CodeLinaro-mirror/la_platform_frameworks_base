@@ -29,7 +29,7 @@ class ChipbarLogger
 @Inject
 constructor(
     @ChipbarLog buffer: LogBuffer,
-) : TemporaryViewLogger(buffer, "ChipbarLog") {
+) : TemporaryViewLogger<ChipbarInfo>(buffer, "ChipbarLog") {
     /**
      * Logs that the chipbar was updated to display in a window named [windowTitle], with [text] and
      * [endItemDesc].
@@ -44,6 +44,18 @@ constructor(
                 str3 = endItemDesc
             },
             { "Chipbar updated. window=$str1 text=$str2 endItem=$str3" }
+        )
+    }
+
+    fun logSwipeGestureError(id: String?, errorMsg: String) {
+        buffer.log(
+            tag,
+            LogLevel.WARNING,
+            {
+                str1 = id
+                str2 = errorMsg
+            },
+            { "Chipbar swipe gesture detected for incorrect state. id=$str1 error=$str2" }
         )
     }
 }

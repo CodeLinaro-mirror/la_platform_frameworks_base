@@ -509,7 +509,7 @@ public class AidlConversion {
                     } else if (MediaFormat.MIMETYPE_AUDIO_MPEGH_LC_L4.equals(aidl.encoding)) {
                         return AudioFormat.ENCODING_MPEGH_LC_L4;
                     } else if (MediaFormat.MIMETYPE_AUDIO_DTS_UHD.equals(aidl.encoding)) {
-                        return AudioFormat.ENCODING_DTS_UHD;
+                        return AudioFormat.ENCODING_DTS_UHD_P1;
                     } else if (MediaFormat.MIMETYPE_AUDIO_DRA.equals(aidl.encoding)) {
                         return AudioFormat.ENCODING_DRA;
                     } else {
@@ -585,6 +585,10 @@ public class AidlConversion {
         switch (standard) {
             case AudioDescriptor.STANDARD_EDID:
                 return AudioStandard.EDID;
+            case AudioDescriptor.STANDARD_SADB:
+                return AudioStandard.SADB;
+            case AudioDescriptor.STANDARD_VSADB:
+                return AudioStandard.VSADB;
             case AudioDescriptor.STANDARD_NONE:
             default:
                 return AudioStandard.NONE;
@@ -599,6 +603,10 @@ public class AidlConversion {
         switch (standard) {
             case AudioStandard.EDID:
                 return AudioDescriptor.STANDARD_EDID;
+            case AudioStandard.SADB:
+                return AudioDescriptor.STANDARD_SADB;
+            case AudioStandard.VSADB:
+                return AudioDescriptor.STANDARD_VSADB;
             case AudioStandard.NONE:
             default:
                 return AudioDescriptor.STANDARD_NONE;
@@ -614,6 +622,8 @@ public class AidlConversion {
         switch (type) {
             case android.media.AudioProfile.AUDIO_ENCAPSULATION_TYPE_IEC61937:
                 return AudioEncapsulationType.IEC61937;
+            case android.media.AudioProfile.AUDIO_ENCAPSULATION_TYPE_PCM:
+                return AudioEncapsulationType.PCM;
             case android.media.AudioProfile.AUDIO_ENCAPSULATION_TYPE_NONE:
             default:
                 return AudioEncapsulationType.NONE;
@@ -629,6 +639,8 @@ public class AidlConversion {
         switch (type) {
             case AudioEncapsulationType.IEC61937:
                 return android.media.AudioProfile.AUDIO_ENCAPSULATION_TYPE_IEC61937;
+            case AudioEncapsulationType.PCM:
+                return android.media.AudioProfile.AUDIO_ENCAPSULATION_TYPE_PCM;
             case AudioEncapsulationType.NONE:
             default:
                 return android.media.AudioProfile.AUDIO_ENCAPSULATION_TYPE_NONE;

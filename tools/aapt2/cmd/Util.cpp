@@ -34,8 +34,7 @@ using ::android::base::StringPrintf;
 
 namespace aapt {
 
-std::optional<uint16_t> ParseTargetDensityParameter(const StringPiece& arg,
-                                                    android::IDiagnostics* diag) {
+std::optional<uint16_t> ParseTargetDensityParameter(StringPiece arg, android::IDiagnostics* diag) {
   ConfigDescription preferred_density_config;
   if (!ConfigDescription::Parse(arg, &preferred_density_config)) {
     diag->Error(android::DiagMessage()
@@ -55,7 +54,7 @@ std::optional<uint16_t> ParseTargetDensityParameter(const StringPiece& arg,
   return preferred_density_config.density;
 }
 
-bool ParseSplitParameter(const StringPiece& arg, android::IDiagnostics* diag, std::string* out_path,
+bool ParseSplitParameter(StringPiece arg, android::IDiagnostics* diag, std::string* out_path,
                          SplitConstraints* out_split) {
   CHECK(diag != nullptr);
   CHECK(out_path != nullptr);
@@ -77,7 +76,7 @@ bool ParseSplitParameter(const StringPiece& arg, android::IDiagnostics* diag, st
 
   *out_path = parts[0];
   out_split->name = parts[1];
-  for (const StringPiece& config_str : util::Tokenize(parts[1], ',')) {
+  for (StringPiece config_str : util::Tokenize(parts[1], ',')) {
     ConfigDescription config;
     if (!ConfigDescription::Parse(config_str, &config)) {
       diag->Error(android::DiagMessage()
@@ -93,7 +92,7 @@ std::unique_ptr<IConfigFilter> ParseConfigFilterParameters(const std::vector<std
                                                            android::IDiagnostics* diag) {
   std::unique_ptr<AxisConfigFilter> filter = util::make_unique<AxisConfigFilter>();
   for (const std::string& config_arg : args) {
-    for (const StringPiece& config_str : util::Tokenize(config_arg, ',')) {
+    for (StringPiece config_str : util::Tokenize(config_arg, ',')) {
       ConfigDescription config;
       LocaleValue lv;
       if (lv.InitFromFilterString(config_str)) {
@@ -449,7 +448,8 @@ std::regex GetRegularExpression(const std::string &input) {
 
 bool ParseResourceConfig(const std::string& content, IAaptContext* context,
                          std::unordered_set<ResourceName>& out_resource_exclude_list,
-                         std::set<ResourceName>& out_name_collapse_exemptions) {
+                         std::set<ResourceName>& out_name_collapse_exemptions,
+                         std::set<ResourceName>& out_path_shorten_exemptions) {
   for (StringPiece line : util::Tokenize(content, '\n')) {
     line = util::TrimWhitespace(line);
     if (line.empty()) {
@@ -478,6 +478,8 @@ bool ParseResourceConfig(const std::string& content, IAaptContext* context,
         out_resource_exclude_list.insert(resource_name.ToResourceName());
       } else if (directive == "no_collapse" || directive == "no_obfuscate") {
         out_name_collapse_exemptions.insert(resource_name.ToResourceName());
+      } else if (directive == "no_path_shorten") {
+        out_path_shorten_exemptions.insert(resource_name.ToResourceName());
       }
     }
   }

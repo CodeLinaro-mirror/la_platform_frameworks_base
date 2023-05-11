@@ -467,7 +467,8 @@
     <string name="power_charging" msgid="6727132649743436802">"<xliff:g id="LEVEL">%1$s</xliff:g> — <xliff:g id="STATE">%2$s</xliff:g>"</string>
     <string name="power_remaining_charging_duration_only" msgid="8085099012811384899">"<xliff:g id="TIME">%1$s</xliff:g> līdz pilnai uzlādei"</string>
     <string name="power_charging_duration" msgid="6127154952524919719">"<xliff:g id="LEVEL">%1$s</xliff:g> — <xliff:g id="TIME">%2$s</xliff:g> līdz pilnai uzlādei"</string>
-    <string name="power_charging_limited" msgid="6971664137170239141">"<xliff:g id="LEVEL">%1$s</xliff:g> — uzlāde ir pārtraukta"</string>
+    <string name="power_charging_limited" msgid="8202147604844938236">"<xliff:g id="LEVEL">%1$s</xliff:g> — uzlāde optimizēta"</string>
+    <string name="power_charging_future_paused" msgid="4730177778538118032">"<xliff:g id="LEVEL">%1$s</xliff:g> — uzlāde optimizēta"</string>
     <string name="battery_info_status_unknown" msgid="268625384868401114">"Nezināms"</string>
     <string name="battery_info_status_charging" msgid="4279958015430387405">"Uzlāde"</string>
     <string name="battery_info_status_charging_fast" msgid="8027559755902954885">"Notiek ātrā uzlāde"</string>
@@ -539,6 +540,13 @@
     <string name="media_transfer_this_device_name" product="default" msgid="2357329267148436433">"Šis tālrunis"</string>
     <string name="media_transfer_this_device_name" product="tablet" msgid="3714653244000242800">"Šis planšetdators"</string>
     <string name="media_transfer_this_phone" msgid="7194341457812151531">"Šis tālrunis"</string>
+    <string name="media_output_status_unknown_error" msgid="5098565887497902222">"Nevar atskaņot šajā ierīcē."</string>
+    <string name="media_output_status_require_premium" msgid="8411255800047014822">"Lai pārslēgtu, jauniniet kontu"</string>
+    <string name="media_output_status_not_support_downloads" msgid="4523828729240373315">"Šeit nevar atskaņot lejupielādes"</string>
+    <string name="media_output_status_try_after_ad" msgid="8312579066856015441">"Mēģiniet vēlreiz, kad beigsies reklāma"</string>
+    <string name="media_output_status_device_in_low_power_mode" msgid="8184631698321758451">"Lai atskaņotu šeit, aktivizējiet ierīci."</string>
+    <string name="media_output_status_unauthorized" msgid="5880222828273853838">"Ierīce nav apstiprināta atskaņošanai."</string>
+    <string name="media_output_status_track_unsupported" msgid="5576313219317709664">"Šo multivides saturu nevar atskaņot šeit."</string>
     <string name="profile_connect_timeout_subtext" msgid="4043408193005851761">"Radās problēma ar savienojuma izveidi. Izslēdziet un atkal ieslēdziet ierīci."</string>
     <string name="media_transfer_wired_device_name" msgid="4447880899964056007">"Vadu audioierīce"</string>
     <string name="help_label" msgid="3528360748637781274">"Palīdzība un atsauksmes"</string>
@@ -563,6 +571,8 @@
     <string name="user_add_user_title" msgid="5457079143694924885">"Vai pievienot jaunu lietotāju?"</string>
     <string name="user_add_user_message_long" msgid="1527434966294733380">"Varat koplietot šo ierīci ar citām personām, izveidojot papildu lietotājus. Katram lietotājam ir sava vide, kas ir pielāgojama, izmantojot lietotnes, fona tapetes u.c. Lietotāji var pielāgot arī ierīces iestatījumus, kas attiecas uz visiem lietotājiem, piemēram, Wi‑Fi.\n\nKad pievienosiet jaunu lietotāju, viņam būs jāizveido sava vide.\n\nIkviens lietotājs var atjaunināt lietotnes citu lietotāju vietā. Pieejamības iestatījumi un pakalpojumi var netikt pārsūtīti jaunajam lietotājam."</string>
     <string name="user_add_user_message_short" msgid="3295959985795716166">"Kad pievienosiet jaunu lietotāju, viņam būs jāizveido sava vide.\n\nIkviens lietotājs var atjaunināt lietotnes citu lietotāju vietā."</string>
+    <string name="user_grant_admin_title" msgid="5565796912475193314">"Vai piešķirt šim lietotājam administratora atļaujas?"</string>
+    <string name="user_grant_admin_message" msgid="7925257971286380976">"Kā administrators šis lietotājs varēs pārvaldīt citus lietotājus, mainīt ierīces iestatījumus un atiestatīt ierīcē rūpnīcas datus."</string>
     <string name="user_setup_dialog_title" msgid="8037342066381939995">"Iestatīt kontu tūlīt?"</string>
     <string name="user_setup_dialog_message" msgid="269931619868102841">"Pārliecinieties, ka persona var izmantot ierīci un iestatīt savu vidi."</string>
     <string name="user_setup_profile_dialog_message" msgid="4788197052296962620">"Vai iestatīt profilu tūlīt?"</string>
@@ -594,6 +604,8 @@
     <string name="guest_reset_and_restart_dialog_message" msgid="2764425635305200790">"Tādējādi tiks sākta jauna viesa sesijas un visas pašreizējās sesijas lietotnes un dati tiks dzēsti"</string>
     <string name="guest_exit_dialog_title" msgid="1846494656849381804">"Vai iziet no viesa režīma?"</string>
     <string name="guest_exit_dialog_message" msgid="1743218864242719783">"Tādējādi tiks dzēstas pašreizējās viesa sesijas lietotnes un dati."</string>
+    <string name="grant_admin" msgid="4273077214151417783">"Piešķirt šim lietotājam administratora atļaujas"</string>
+    <string name="not_grant_admin" msgid="6985027675930546850">"Nepiešķirt lietotājam administratora atļaujas"</string>
     <string name="guest_exit_dialog_button" msgid="1736401897067442044">"Iziet"</string>
     <string name="guest_exit_dialog_title_non_ephemeral" msgid="7675327443743162986">"Vai saglabāt viesa darbības?"</string>
     <string name="guest_exit_dialog_message_non_ephemeral" msgid="223385323235719442">"Varat saglabāt pašreizējās sesijas darbības vai dzēst visas lietotnes un datus"</string>
@@ -661,4 +673,10 @@
     <string name="back_navigation_animation" msgid="8105467568421689484">"Animāciju prognozēšana pāriešanai atpakaļ"</string>
     <string name="back_navigation_animation_summary" msgid="741292224121599456">"Iespējot sistēmas animācijas prognozētam žestam pāriešanai atpakaļ."</string>
     <string name="back_navigation_animation_dialog" msgid="8696966520944625596">"Šis iestatījums iespējo sistēmas animācijas prognozēto žestu animācijām. Lai to varētu izmantot, parametram “enableOnBackInvokedCallback” lietotnes manifesta failā jāiestata vērtība “true”."</string>
+  <string-array name="udfps_accessibility_touch_hints">
+    <item msgid="1737722959616802157">"Pārvietojiet pirkstu pa kreisi"</item>
+    <item msgid="5425394847942513942">"Pārvietojiet pirkstu lejup"</item>
+    <item msgid="7728484337962740316">"Pārvietojiet pirkstu pa labi"</item>
+    <item msgid="324200556467459329">"Pārvietojiet pirkstu augšup"</item>
+  </string-array>
 </resources>

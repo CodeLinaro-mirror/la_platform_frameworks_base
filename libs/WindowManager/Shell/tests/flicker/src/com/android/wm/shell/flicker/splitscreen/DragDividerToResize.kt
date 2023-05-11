@@ -18,13 +18,13 @@ package com.android.wm.shell.flicker.splitscreen
 
 import android.platform.test.annotations.FlakyTest
 import android.platform.test.annotations.IwTest
-import android.platform.test.annotations.Postsubmit
 import android.platform.test.annotations.Presubmit
+import android.tools.device.flicker.isShellTransitionsEnabled
+import android.tools.device.flicker.junit.FlickerParametersRunnerFactory
+import android.tools.device.flicker.legacy.FlickerBuilder
+import android.tools.device.flicker.legacy.FlickerTest
+import android.tools.device.flicker.legacy.FlickerTestFactory
 import androidx.test.filters.RequiresDevice
-import com.android.server.wm.flicker.FlickerParametersRunnerFactory
-import com.android.server.wm.flicker.FlickerTestParameter
-import com.android.server.wm.flicker.FlickerTestParameterFactory
-import com.android.server.wm.flicker.dsl.FlickerBuilder
 import com.android.wm.shell.flicker.SPLIT_SCREEN_DIVIDER_COMPONENT
 import com.android.wm.shell.flicker.appWindowIsVisibleAtEnd
 import com.android.wm.shell.flicker.appWindowIsVisibleAtStart
@@ -50,35 +50,31 @@ import org.junit.runners.Parameterized
 @RunWith(Parameterized::class)
 @Parameterized.UseParametersRunnerFactory(FlickerParametersRunnerFactory::class)
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
-class DragDividerToResize(testSpec: FlickerTestParameter) : SplitScreenBase(testSpec) {
+class DragDividerToResize(flicker: FlickerTest) : SplitScreenBase(flicker) {
 
     override val transition: FlickerBuilder.() -> Unit
         get() = {
             super.transition(this)
-            setup {
-                SplitScreenUtils.enterSplit(wmHelper, tapl, device, primaryApp, secondaryApp)
-            }
-            transitions {
-                SplitScreenUtils.dragDividerToResizeAndWait(device, wmHelper)
-            }
+            setup { SplitScreenUtils.enterSplit(wmHelper, tapl, device, primaryApp, secondaryApp) }
+            transitions { SplitScreenUtils.dragDividerToResizeAndWait(device, wmHelper) }
         }
 
     @Before
     fun before() {
-        Assume.assumeTrue(tapl.isTablet || !testSpec.isLandscapeOrSeascapeAtStart)
+        Assume.assumeTrue(tapl.isTablet || !flicker.scenario.isLandscapeOrSeascapeAtStart)
     }
 
     @IwTest(focusArea = "sysui")
     @Presubmit
     @Test
     fun cujCompleted() {
-        testSpec.appWindowIsVisibleAtStart(primaryApp)
-        testSpec.appWindowIsVisibleAtStart(secondaryApp)
-        testSpec.splitScreenDividerIsVisibleAtStart()
+        flicker.appWindowIsVisibleAtStart(primaryApp)
+        flicker.appWindowIsVisibleAtStart(secondaryApp)
+        flicker.splitScreenDividerIsVisibleAtStart()
 
-        testSpec.appWindowIsVisibleAtEnd(primaryApp)
-        testSpec.appWindowIsVisibleAtEnd(secondaryApp)
-        testSpec.splitScreenDividerIsVisibleAtEnd()
+        flicker.appWindowIsVisibleAtEnd(primaryApp)
+        flicker.appWindowIsVisibleAtEnd(secondaryApp)
+        flicker.splitScreenDividerIsVisibleAtEnd()
 
         // TODO(b/246490534): Add validation for resized app after withAppTransitionIdle is
         // robust enough to get the correct end state.
@@ -86,16 +82,26 @@ class DragDividerToResize(testSpec: FlickerTestParameter) : SplitScreenBase(test
 
     @Presubmit
     @Test
-    fun splitScreenDividerKeepVisible() = testSpec.layerKeepVisible(SPLIT_SCREEN_DIVIDER_COMPONENT)
+    fun splitScreenDividerKeepVisible() = flicker.layerKeepVisible(SPLIT_SCREEN_DIVIDER_COMPONENT)
 
     @Presubmit
     @Test
-    fun primaryAppLayerKeepVisible() = testSpec.layerKeepVisible(primaryApp)
+    fun primaryAppLayerKeepVisible() {
+        Assume.assumeFalse(isShellTransitionsEnabled)
+        flicker.layerKeepVisible(primaryApp)
+    }
+
+    @FlakyTest(bugId = 263213649)
+    @Test
+    fun primaryAppLayerKeepVisible_ShellTransit() {
+        Assume.assumeTrue(isShellTransitionsEnabled)
+        flicker.layerKeepVisible(primaryApp)
+    }
 
     @Presubmit
     @Test
     fun secondaryAppLayerVisibilityChanges() {
-        testSpec.assertLayers {
+        flicker.assertLayers {
             this.isVisible(secondaryApp)
                 .then()
                 .isInvisible(secondaryApp)
@@ -104,101 +110,53 @@ class DragDividerToResize(testSpec: FlickerTestParameter) : SplitScreenBase(test
         }
     }
 
-    @Presubmit
-    @Test
-    fun primaryAppWindowKeepVisible() = testSpec.appWindowKeepVisible(primaryApp)
+    @Presubmit @Test fun primaryAppWindowKeepVisible() = flicker.appWindowKeepVisible(primaryApp)
 
     @Presubmit
     @Test
-    fun secondaryAppWindowKeepVisible() = testSpec.appWindowKeepVisible(secondaryApp)
+    fun secondaryAppWindowKeepVisible() = flicker.appWindowKeepVisible(secondaryApp)
 
     @Presubmit
     @Test
-    fun primaryAppBoundsChanges() = testSpec.splitAppLayerBoundsChanges(
-        primaryApp,
-        landscapePosLeft = true,
-        portraitPosTop = false
-    )
+    fun primaryAppBoundsChanges() {
+        Assume.assumeFalse(isShellTransitionsEnabled)
+        flicker.splitAppLayerBoundsChanges(
+            primaryApp,
+            landscapePosLeft = true,
+            portraitPosTop = false
+        )
+    }
 
-    @FlakyTest(bugId = 250530664)
+    @FlakyTest(bugId = 263213649)
     @Test
-    fun secondaryAppBoundsChanges() = testSpec.splitAppLayerBoundsChanges(
-        secondaryApp,
-        landscapePosLeft = false,
-        portraitPosTop = true
-    )
+    fun primaryAppBoundsChanges_ShellTransit() {
+        Assume.assumeTrue(isShellTransitionsEnabled)
+        flicker.splitAppLayerBoundsChanges(
+            primaryApp,
+            landscapePosLeft = true,
+            portraitPosTop = false
+        )
+    }
 
-    /** {@inheritDoc} */
-    @Postsubmit
+    @Presubmit
     @Test
-    override fun entireScreenCovered() =
-        super.entireScreenCovered()
-
-    /** {@inheritDoc} */
-    @Postsubmit
-    @Test
-    override fun navBarLayerIsVisibleAtStartAndEnd() =
-        super.navBarLayerIsVisibleAtStartAndEnd()
-
-    /** {@inheritDoc} */
-    @Postsubmit
-    @Test
-    override fun navBarLayerPositionAtStartAndEnd() =
-        super.navBarLayerPositionAtStartAndEnd()
+    fun secondaryAppBoundsChanges() =
+        flicker.splitAppLayerBoundsChanges(
+            secondaryApp,
+            landscapePosLeft = false,
+            portraitPosTop = true
+        )
 
     /** {@inheritDoc} */
-    @Postsubmit
+    @FlakyTest(bugId = 263213649)
     @Test
-    override fun navBarWindowIsAlwaysVisible() =
-        super.navBarWindowIsAlwaysVisible()
-
-    /** {@inheritDoc} */
-    @Postsubmit
-    @Test
-    override fun statusBarLayerIsVisibleAtStartAndEnd() =
-        super.statusBarLayerIsVisibleAtStartAndEnd()
-
-    /** {@inheritDoc} */
-    @Postsubmit
-    @Test
-    override fun statusBarLayerPositionAtStartAndEnd() =
-        super.statusBarLayerPositionAtStartAndEnd()
-
-    /** {@inheritDoc} */
-    @Postsubmit
-    @Test
-    override fun statusBarWindowIsAlwaysVisible() =
-        super.statusBarWindowIsAlwaysVisible()
-
-    /** {@inheritDoc} */
-    @Postsubmit
-    @Test
-    override fun taskBarLayerIsVisibleAtStartAndEnd() =
-        super.taskBarLayerIsVisibleAtStartAndEnd()
-
-    /** {@inheritDoc} */
-    @Postsubmit
-    @Test
-    override fun taskBarWindowIsAlwaysVisible() =
-        super.taskBarWindowIsAlwaysVisible()
-
-    /** {@inheritDoc} */
-    @Postsubmit
-    @Test
-    override fun visibleLayersShownMoreThanOneConsecutiveEntry() =
-        super.visibleLayersShownMoreThanOneConsecutiveEntry()
-
-    /** {@inheritDoc} */
-    @Postsubmit
-    @Test
-    override fun visibleWindowsShownMoreThanOneConsecutiveEntry() =
-        super.visibleWindowsShownMoreThanOneConsecutiveEntry()
+    override fun entireScreenCovered() = super.entireScreenCovered()
 
     companion object {
         @Parameterized.Parameters(name = "{0}")
         @JvmStatic
-        fun getParams(): List<FlickerTestParameter> {
-            return FlickerTestParameterFactory.getInstance().getConfigNonRotationTests()
+        fun getParams(): List<FlickerTest> {
+            return FlickerTestFactory.nonRotationTests()
         }
     }
 }

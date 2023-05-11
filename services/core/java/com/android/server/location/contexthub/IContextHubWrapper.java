@@ -18,6 +18,7 @@ package com.android.server.location.contexthub;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.hardware.contexthub.HostEndpointInfo;
+import android.hardware.contexthub.NanSessionRequest;
 import android.hardware.contexthub.V1_0.ContextHub;
 import android.hardware.contexthub.V1_0.ContextHubMsg;
 import android.hardware.contexthub.V1_0.TransactionResult;
@@ -359,6 +360,16 @@ public abstract class IContextHubWrapper {
     public abstract int queryNanoapps(int contextHubId) throws RemoteException;
 
     /**
+     * Provides the list of preloaded nanoapp IDs on the system. The output of this API must
+     * not change.
+     *
+     * @param contextHubId  The context Hub ID.
+     *
+     * @return The list of preloaded nanoapp IDs.
+     */
+    public abstract long[] getPreloadedNanoappIds(int contextHubId);
+
+    /**
      * Registers a callback with the Context Hub.
      *
      * @param contextHubId The ID of the Context Hub to register the callback with.
@@ -373,6 +384,23 @@ public abstract class IContextHubWrapper {
      * @param contextHubId The ID of the Context Hub to register the callback with.
      */
     public abstract void registerExistingCallback(int contextHubId) throws RemoteException;
+
+    /**
+     * Puts the context hub in and out of test mode. Test mode is a clean state
+     * where tests can be executed in the same environment. If enable is true,
+     * this will enable test mode by unloading all nanoapps. If enable is false,
+     * this will disable test mode and reverse the actions of enabling test mode
+     * by loading all preloaded nanoapps. This puts CHRE in a normal state.
+     *
+     * This should only be used for a test environment, either through a
+     * @TestApi or development tools. This should not be used in a production
+     * environment.
+     *
+     * @param enable If true, put the context hub in test mode. If false, disable
+     *               test mode.
+     * @return       If true, the operation was successful; false otherwise.
+     */
+    public abstract boolean setTestMode(boolean enable);
 
     private static class ContextHubWrapperAidl extends IContextHubWrapper
             implements IBinder.DeathRecipient {
@@ -430,6 +458,11 @@ public abstract class IContextHubWrapper {
                     mCallback.handleTransactionResult(transactionId, success);
                 });
             }
+
+            public void handleNanSessionRequest(NanSessionRequest request) {
+                // TODO(271471342): Implement
+            }
+
             @Override
             public String getInterfaceHash() {
                 return android.hardware.contexthub.IContextHubCallback.HASH;
@@ -683,6 +716,20 @@ public abstract class IContextHubWrapper {
             }
         }
 
+        public long[] getPreloadedNanoappIds(int contextHubId) {
+            android.hardware.contexthub.IContextHub hub = getHub();
+            if (hub == null) {
+                return null;
+            }
+
+            try {
+                return hub.getPreloadedNanoappIds(contextHubId);
+            } catch (RemoteException e) {
+                Log.e(TAG, "Exception while getting preloaded nanoapp IDs: " + e.getMessage());
+                return null;
+            }
+        }
+
         public void registerExistingCallback(int contextHubId) {
             android.hardware.contexthub.IContextHub hub = getHub();
             if (hub == null) {
@@ -712,6 +759,22 @@ public abstract class IContextHubWrapper {
             mHandleServiceRestartCallback = callback::handleServiceRestart;
             mAidlCallbackMap.put(contextHubId, new ContextHubAidlCallback(contextHubId, callback));
             registerExistingCallback(contextHubId);
+        }
+
+        public boolean setTestMode(boolean enable) {
+            android.hardware.contexthub.IContextHub hub = getHub();
+            if (hub == null) {
+                return false;
+            }
+
+            try {
+                hub.setTestMode(enable);
+                return true;
+            } catch (RemoteException | ServiceSpecificException e) {
+                Log.e(TAG, "Exception while setting test mode (enable: "
+                        + (enable ? "true" : "false") + "): " + e.getMessage());
+                return false;
+            }
         }
 
         private void onSettingChanged(byte setting, boolean enabled) {
@@ -863,6 +926,10 @@ public abstract class IContextHubWrapper {
                     mHub.queryApps(contextHubId));
         }
 
+        public long[] getPreloadedNanoappIds(int contextHubId) {
+            return new long[0];
+        }
+
         public void registerCallback(int contextHubId, ICallback callback) throws RemoteException {
             mHidlCallbackMap.put(contextHubId,
                         new ContextHubWrapperHidlCallback(contextHubId, callback));
@@ -878,6 +945,10 @@ public abstract class IContextHubWrapper {
             }
 
             mHub.registerCallback(contextHubId, callback);
+        }
+
+        public boolean setTestMode(boolean enable) {
+            return false;
         }
 
         public boolean supportsBtSettingNotifications() {

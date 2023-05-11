@@ -17,11 +17,14 @@
 
 package com.android.systemui.keyguard.domain.interactor
 
+import android.app.admin.DevicePolicyManager
 import android.content.Intent
+import android.os.UserHandle
 import androidx.test.filters.SmallTest
 import com.android.internal.widget.LockPatternUtils
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.animation.ActivityLaunchAnimator
+import com.android.systemui.animation.DialogLaunchAnimator
 import com.android.systemui.animation.Expandable
 import com.android.systemui.common.shared.model.ContentDescription
 import com.android.systemui.common.shared.model.Icon
@@ -29,27 +32,42 @@ import com.android.systemui.flags.FakeFeatureFlags
 import com.android.systemui.flags.Flags
 import com.android.systemui.keyguard.data.quickaffordance.BuiltInKeyguardQuickAffordanceKeys
 import com.android.systemui.keyguard.data.quickaffordance.FakeKeyguardQuickAffordanceConfig
+import com.android.systemui.keyguard.data.quickaffordance.FakeKeyguardQuickAffordanceProviderClientFactory
 import com.android.systemui.keyguard.data.quickaffordance.KeyguardQuickAffordanceConfig
-import com.android.systemui.keyguard.data.quickaffordance.KeyguardQuickAffordanceSelectionManager
+import com.android.systemui.keyguard.data.quickaffordance.KeyguardQuickAffordanceLegacySettingSyncer
+import com.android.systemui.keyguard.data.quickaffordance.KeyguardQuickAffordanceLocalUserSelectionManager
+import com.android.systemui.keyguard.data.quickaffordance.KeyguardQuickAffordanceRemoteUserSelectionManager
+import com.android.systemui.keyguard.data.repository.FakeKeyguardBouncerRepository
 import com.android.systemui.keyguard.data.repository.FakeKeyguardRepository
 import com.android.systemui.keyguard.data.repository.KeyguardQuickAffordanceRepository
 import com.android.systemui.keyguard.domain.quickaffordance.FakeKeyguardQuickAffordanceRegistry
 import com.android.systemui.keyguard.shared.quickaffordance.KeyguardQuickAffordancePosition
+import com.android.systemui.keyguard.shared.quickaffordance.KeyguardQuickAffordancesMetricsLogger
 import com.android.systemui.plugins.ActivityStarter
+import com.android.systemui.settings.FakeUserTracker
+import com.android.systemui.settings.UserFileManager
 import com.android.systemui.settings.UserTracker
+import com.android.systemui.statusbar.CommandQueue
 import com.android.systemui.statusbar.policy.KeyguardStateController
+import com.android.systemui.util.FakeSharedPreferences
 import com.android.systemui.util.mockito.any
 import com.android.systemui.util.mockito.mock
 import com.android.systemui.util.mockito.whenever
+import com.android.systemui.util.settings.FakeSettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.test.runBlockingTest
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.Parameterized
 import org.junit.runners.Parameterized.Parameter
 import org.junit.runners.Parameterized.Parameters
+import org.mockito.ArgumentMatchers.anyInt
+import org.mockito.ArgumentMatchers.anyString
 import org.mockito.ArgumentMatchers.eq
 import org.mockito.ArgumentMatchers.same
 import org.mockito.Mock
@@ -57,6 +75,7 @@ import org.mockito.Mockito.verify
 import org.mockito.Mockito.verifyZeroInteractions
 import org.mockito.MockitoAnnotations
 
+@OptIn(ExperimentalCoroutinesApi::class)
 @SmallTest
 @RunWith(Parameterized::class)
 class KeyguardQuickAffordanceInteractorParameterizedTest : SysuiTestCase() {
@@ -201,12 +220,16 @@ class KeyguardQuickAffordanceInteractorParameterizedTest : SysuiTestCase() {
 
     @Mock private lateinit var lockPatternUtils: LockPatternUtils
     @Mock private lateinit var keyguardStateController: KeyguardStateController
-    @Mock private lateinit var userTracker: UserTracker
     @Mock private lateinit var activityStarter: ActivityStarter
     @Mock private lateinit var animationController: ActivityLaunchAnimator.Controller
     @Mock private lateinit var expandable: Expandable
+    @Mock private lateinit var launchAnimator: DialogLaunchAnimator
+    @Mock private lateinit var commandQueue: CommandQueue
+    @Mock private lateinit var devicePolicyManager: DevicePolicyManager
+    @Mock private lateinit var logger: KeyguardQuickAffordancesMetricsLogger
 
     private lateinit var underTest: KeyguardQuickAffordanceInteractor
+    private lateinit var testScope: TestScope
 
     @JvmField @Parameter(0) var needStrongAuthAfterBoot: Boolean = false
     @JvmField @Parameter(1) var canShowWhileLocked: Boolean = false
@@ -214,12 +237,14 @@ class KeyguardQuickAffordanceInteractorParameterizedTest : SysuiTestCase() {
     @JvmField @Parameter(3) var needsToUnlockFirst: Boolean = false
     @JvmField @Parameter(4) var startActivity: Boolean = false
     private lateinit var homeControls: FakeKeyguardQuickAffordanceConfig
+    private lateinit var userTracker: UserTracker
 
     @Before
     fun setUp() {
         MockitoAnnotations.initMocks(this)
         whenever(expandable.activityLaunchController()).thenReturn(animationController)
 
+        userTracker = FakeUserTracker()
         homeControls =
             FakeKeyguardQuickAffordanceConfig(BuiltInKeyguardQuickAffordanceKeys.HOME_CONTROLS)
         val quickAccessWallet =
@@ -228,16 +253,65 @@ class KeyguardQuickAffordanceInteractorParameterizedTest : SysuiTestCase() {
             )
         val qrCodeScanner =
             FakeKeyguardQuickAffordanceConfig(BuiltInKeyguardQuickAffordanceKeys.QR_CODE_SCANNER)
+        val scope = CoroutineScope(IMMEDIATE)
+        val localUserSelectionManager =
+            KeyguardQuickAffordanceLocalUserSelectionManager(
+                context = context,
+                userFileManager =
+                    mock<UserFileManager>().apply {
+                        whenever(
+                                getSharedPreferences(
+                                    anyString(),
+                                    anyInt(),
+                                    anyInt(),
+                                )
+                            )
+                            .thenReturn(FakeSharedPreferences())
+                    },
+                userTracker = userTracker,
+                broadcastDispatcher = fakeBroadcastDispatcher,
+            )
+        val remoteUserSelectionManager =
+            KeyguardQuickAffordanceRemoteUserSelectionManager(
+                scope = scope,
+                userTracker = userTracker,
+                clientFactory = FakeKeyguardQuickAffordanceProviderClientFactory(userTracker),
+                userHandle = UserHandle.SYSTEM,
+            )
         val quickAffordanceRepository =
             KeyguardQuickAffordanceRepository(
-                scope = CoroutineScope(IMMEDIATE),
-                backgroundDispatcher = IMMEDIATE,
-                selectionManager = KeyguardQuickAffordanceSelectionManager(),
+                appContext = context,
+                scope = scope,
+                localUserSelectionManager = localUserSelectionManager,
+                remoteUserSelectionManager = remoteUserSelectionManager,
+                userTracker = userTracker,
+                legacySettingSyncer =
+                    KeyguardQuickAffordanceLegacySettingSyncer(
+                        scope = scope,
+                        backgroundDispatcher = IMMEDIATE,
+                        secureSettings = FakeSettings(),
+                        selectionsManager = localUserSelectionManager,
+                    ),
                 configs = setOf(homeControls, quickAccessWallet, qrCodeScanner),
+                dumpManager = mock(),
+                userHandle = UserHandle.SYSTEM,
             )
+        val featureFlags =
+            FakeFeatureFlags().apply {
+                set(Flags.CUSTOMIZABLE_LOCK_SCREEN_QUICK_AFFORDANCES, false)
+                set(Flags.FACE_AUTH_REFACTOR, true)
+            }
+        val testDispatcher = StandardTestDispatcher()
+        testScope = TestScope(testDispatcher)
         underTest =
             KeyguardQuickAffordanceInteractor(
-                keyguardInteractor = KeyguardInteractor(repository = FakeKeyguardRepository()),
+                keyguardInteractor =
+                    KeyguardInteractor(
+                        repository = FakeKeyguardRepository(),
+                        commandQueue = commandQueue,
+                        featureFlags = featureFlags,
+                        bouncerRepository = FakeKeyguardBouncerRepository(),
+                    ),
                 registry =
                     FakeKeyguardQuickAffordanceRegistry(
                         mapOf(
@@ -256,69 +330,71 @@ class KeyguardQuickAffordanceInteractorParameterizedTest : SysuiTestCase() {
                 keyguardStateController = keyguardStateController,
                 userTracker = userTracker,
                 activityStarter = activityStarter,
-                featureFlags =
-                    FakeFeatureFlags().apply {
-                        set(Flags.CUSTOMIZABLE_LOCK_SCREEN_QUICK_AFFORDANCES, false)
-                    },
+                featureFlags = featureFlags,
                 repository = { quickAffordanceRepository },
+                launchAnimator = launchAnimator,
+                logger = logger,
+                devicePolicyManager = devicePolicyManager,
+                backgroundDispatcher = testDispatcher,
             )
     }
 
     @Test
-    fun onQuickAffordanceTriggered() = runBlockingTest {
-        setUpMocks(
-            needStrongAuthAfterBoot = needStrongAuthAfterBoot,
-            keyguardIsUnlocked = keyguardIsUnlocked,
-        )
+    fun onQuickAffordanceTriggered() =
+        testScope.runTest {
+            setUpMocks(
+                needStrongAuthAfterBoot = needStrongAuthAfterBoot,
+                keyguardIsUnlocked = keyguardIsUnlocked,
+            )
 
-        homeControls.setState(
-            lockScreenState =
-                KeyguardQuickAffordanceConfig.LockScreenState.Visible(
-                    icon = DRAWABLE,
-                )
-        )
-        homeControls.onTriggeredResult =
-            if (startActivity) {
-                KeyguardQuickAffordanceConfig.OnTriggeredResult.StartActivity(
-                    intent = INTENT,
-                    canShowWhileLocked = canShowWhileLocked,
-                )
-            } else {
-                KeyguardQuickAffordanceConfig.OnTriggeredResult.Handled
-            }
+            homeControls.setState(
+                lockScreenState =
+                    KeyguardQuickAffordanceConfig.LockScreenState.Visible(
+                        icon = DRAWABLE,
+                    )
+            )
+            homeControls.onTriggeredResult =
+                if (startActivity) {
+                    KeyguardQuickAffordanceConfig.OnTriggeredResult.StartActivity(
+                        intent = INTENT,
+                        canShowWhileLocked = canShowWhileLocked,
+                    )
+                } else {
+                    KeyguardQuickAffordanceConfig.OnTriggeredResult.Handled
+                }
 
         underTest.onQuickAffordanceTriggered(
             configKey = BuiltInKeyguardQuickAffordanceKeys.HOME_CONTROLS,
             expandable = expandable,
+            slotId = "",
         )
 
-        if (startActivity) {
-            if (needsToUnlockFirst) {
-                verify(activityStarter)
-                    .postStartActivityDismissingKeyguard(
-                        any(),
-                        /* delay= */ eq(0),
-                        same(animationController),
-                    )
+            if (startActivity) {
+                if (needsToUnlockFirst) {
+                    verify(activityStarter)
+                        .postStartActivityDismissingKeyguard(
+                            any(),
+                            /* delay= */ eq(0),
+                            same(animationController),
+                        )
+                } else {
+                    verify(activityStarter)
+                        .startActivity(
+                            any(),
+                            /* dismissShade= */ eq(true),
+                            same(animationController),
+                            /* showOverLockscreenWhenLocked= */ eq(true),
+                        )
+                }
             } else {
-                verify(activityStarter)
-                    .startActivity(
-                        any(),
-                        /* dismissShade= */ eq(true),
-                        same(animationController),
-                        /* showOverLockscreenWhenLocked= */ eq(true),
-                    )
+                verifyZeroInteractions(activityStarter)
             }
-        } else {
-            verifyZeroInteractions(activityStarter)
         }
-    }
 
     private fun setUpMocks(
         needStrongAuthAfterBoot: Boolean = true,
         keyguardIsUnlocked: Boolean = false,
     ) {
-        whenever(userTracker.userHandle).thenReturn(mock())
         whenever(lockPatternUtils.getStrongAuthForUser(any()))
             .thenReturn(
                 if (needStrongAuthAfterBoot) {

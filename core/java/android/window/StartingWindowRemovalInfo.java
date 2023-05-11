@@ -61,6 +61,22 @@ public final class StartingWindowRemovalInfo implements Parcelable {
      */
     public boolean deferRemoveForIme;
 
+    /**
+     * The rounded corner radius
+     * @hide
+     */
+    public float roundedCornerRadius;
+
+    /**
+     * Remove windowless surface.
+     */
+    public boolean windowlessSurface;
+
+    /**
+     * Remove immediately.
+     */
+    public boolean removeImmediately;
+
     public StartingWindowRemovalInfo() {
 
     }
@@ -80,6 +96,9 @@ public final class StartingWindowRemovalInfo implements Parcelable {
         mainFrame = source.readTypedObject(Rect.CREATOR);
         playRevealAnimation = source.readBoolean();
         deferRemoveForIme = source.readBoolean();
+        roundedCornerRadius = source.readFloat();
+        windowlessSurface = source.readBoolean();
+        removeImmediately = source.readBoolean();
     }
 
     @Override
@@ -89,6 +108,9 @@ public final class StartingWindowRemovalInfo implements Parcelable {
         dest.writeTypedObject(mainFrame, flags);
         dest.writeBoolean(playRevealAnimation);
         dest.writeBoolean(deferRemoveForIme);
+        dest.writeFloat(roundedCornerRadius);
+        dest.writeBoolean(windowlessSurface);
+        dest.writeBoolean(removeImmediately);
     }
 
     @Override
@@ -96,7 +118,10 @@ public final class StartingWindowRemovalInfo implements Parcelable {
         return "StartingWindowRemovalInfo{taskId=" + taskId
                 + " frame=" + mainFrame
                 + " playRevealAnimation=" + playRevealAnimation
-                + " deferRemoveForIme=" + deferRemoveForIme + "}";
+                + " roundedCornerRadius=" + roundedCornerRadius
+                + " deferRemoveForIme=" + deferRemoveForIme
+                + " windowlessSurface=" + windowlessSurface
+                + " removeImmediately=" + removeImmediately + "}";
     }
 
     public static final @android.annotation.NonNull Creator<StartingWindowRemovalInfo> CREATOR =

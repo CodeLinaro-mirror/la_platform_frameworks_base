@@ -20,13 +20,12 @@ import android.platform.test.annotations.FlakyTest
 import android.platform.test.annotations.IwTest
 import android.platform.test.annotations.Postsubmit
 import android.platform.test.annotations.Presubmit
+import android.tools.device.flicker.junit.FlickerParametersRunnerFactory
+import android.tools.device.flicker.legacy.FlickerBuilder
+import android.tools.device.flicker.legacy.FlickerTest
+import android.tools.device.flicker.legacy.FlickerTestFactory
+import android.tools.device.helpers.WindowUtils
 import androidx.test.filters.RequiresDevice
-import com.android.server.wm.flicker.FlickerParametersRunnerFactory
-import com.android.server.wm.flicker.FlickerTestParameter
-import com.android.server.wm.flicker.FlickerTestParameterFactory
-import com.android.server.wm.flicker.dsl.FlickerBuilder
-import com.android.server.wm.flicker.helpers.WindowUtils
-import com.android.wm.shell.flicker.SPLIT_SCREEN_DIVIDER_COMPONENT
 import com.android.wm.shell.flicker.appWindowBecomesInvisible
 import com.android.wm.shell.flicker.appWindowIsVisibleAtEnd
 import com.android.wm.shell.flicker.layerBecomesInvisible
@@ -49,103 +48,96 @@ import org.junit.runners.Parameterized
 @RunWith(Parameterized::class)
 @Parameterized.UseParametersRunnerFactory(FlickerParametersRunnerFactory::class)
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
-class DismissSplitScreenByDivider (testSpec: FlickerTestParameter) : SplitScreenBase(testSpec) {
+class DismissSplitScreenByDivider(flicker: FlickerTest) : SplitScreenBase(flicker) {
 
     override val transition: FlickerBuilder.() -> Unit
         get() = {
             super.transition(this)
-            setup {
-                SplitScreenUtils.enterSplit(wmHelper, tapl, device, primaryApp, secondaryApp)
-            }
+            setup { SplitScreenUtils.enterSplit(wmHelper, tapl, device, primaryApp, secondaryApp) }
             transitions {
                 if (tapl.isTablet) {
-                    SplitScreenUtils.dragDividerToDismissSplit(device, wmHelper,
-                        dragToRight = false, dragToBottom = true)
+                    SplitScreenUtils.dragDividerToDismissSplit(
+                        device,
+                        wmHelper,
+                        dragToRight = false,
+                        dragToBottom = true
+                    )
                 } else {
-                    SplitScreenUtils.dragDividerToDismissSplit(device, wmHelper,
-                        dragToRight = true, dragToBottom = true)
+                    SplitScreenUtils.dragDividerToDismissSplit(
+                        device,
+                        wmHelper,
+                        dragToRight = true,
+                        dragToBottom = true
+                    )
                 }
-                wmHelper.StateSyncBuilder()
-                    .withFullScreenApp(secondaryApp)
-                    .waitForAndVerify()
+                wmHelper.StateSyncBuilder().withFullScreenApp(secondaryApp).waitForAndVerify()
             }
         }
 
     @IwTest(focusArea = "sysui")
     @Presubmit
     @Test
-    fun cujCompleted() = testSpec.splitScreenDismissed(primaryApp, secondaryApp, toHome = false)
+    fun cujCompleted() = flicker.splitScreenDismissed(primaryApp, secondaryApp, toHome = false)
 
     @Presubmit
     @Test
-    fun splitScreenDividerBecomesInvisible() = testSpec.splitScreenDividerBecomesInvisible()
+    fun splitScreenDividerBecomesInvisible() = flicker.splitScreenDividerBecomesInvisible()
 
     @Presubmit
     @Test
-    fun primaryAppLayerBecomesInvisible() = testSpec.layerBecomesInvisible(primaryApp)
+    fun primaryAppLayerBecomesInvisible() = flicker.layerBecomesInvisible(primaryApp)
 
     @Presubmit
     @Test
-    fun secondaryAppLayerIsVisibleAtEnd() = testSpec.layerIsVisibleAtEnd(secondaryApp)
+    fun secondaryAppLayerIsVisibleAtEnd() = flicker.layerIsVisibleAtEnd(secondaryApp)
 
     @Presubmit
     @Test
-    fun primaryAppBoundsBecomesInvisible() = testSpec.splitAppLayerBoundsBecomesInvisible(
-        primaryApp, landscapePosLeft = tapl.isTablet, portraitPosTop = false)
+    fun primaryAppBoundsBecomesInvisible() =
+        flicker.splitAppLayerBoundsBecomesInvisible(
+            primaryApp,
+            landscapePosLeft = tapl.isTablet,
+            portraitPosTop = false
+        )
 
     @Presubmit
     @Test
     fun secondaryAppBoundsIsFullscreenAtEnd() {
-        testSpec.assertLayers {
-            this.isVisible(secondaryApp)
-                .isVisible(SPLIT_SCREEN_DIVIDER_COMPONENT)
-                .then()
-                .isInvisible(secondaryApp)
-                .isVisible(SPLIT_SCREEN_DIVIDER_COMPONENT)
-                .then()
-                .isVisible(secondaryApp, isOptional = true)
-                .isVisible(SPLIT_SCREEN_DIVIDER_COMPONENT, isOptional = true)
-                .then()
-                .contains(SPLIT_SCREEN_DIVIDER_COMPONENT)
-                .then()
-                .invoke("secondaryAppBoundsIsFullscreenAtEnd") {
-                    val displayBounds = WindowUtils.getDisplayBounds(testSpec.endRotation)
-                    it.visibleRegion(secondaryApp).coversExactly(displayBounds)
-                }
+        flicker.assertLayers {
+            this.isVisible(secondaryApp).then().isInvisible(secondaryApp).then().invoke(
+                "secondaryAppBoundsIsFullscreenAtEnd"
+            ) {
+                val displayBounds = WindowUtils.getDisplayBounds(flicker.scenario.endRotation)
+                it.visibleRegion(secondaryApp).coversExactly(displayBounds)
+            }
         }
     }
 
     @Presubmit
     @Test
-    fun primaryAppWindowBecomesInvisible() = testSpec.appWindowBecomesInvisible(primaryApp)
+    fun primaryAppWindowBecomesInvisible() = flicker.appWindowBecomesInvisible(primaryApp)
 
     @Presubmit
     @Test
-    fun secondaryAppWindowIsVisibleAtEnd() = testSpec.appWindowIsVisibleAtEnd(secondaryApp)
+    fun secondaryAppWindowIsVisibleAtEnd() = flicker.appWindowIsVisibleAtEnd(secondaryApp)
+
+    /** {@inheritDoc} */
+    @Postsubmit @Test override fun entireScreenCovered() = super.entireScreenCovered()
 
     /** {@inheritDoc} */
     @Postsubmit
     @Test
-    override fun entireScreenCovered() =
-        super.entireScreenCovered()
-
-    /** {@inheritDoc} */
-    @Postsubmit
-    @Test
-    override fun navBarLayerIsVisibleAtStartAndEnd() =
-        super.navBarLayerIsVisibleAtStartAndEnd()
+    override fun navBarLayerIsVisibleAtStartAndEnd() = super.navBarLayerIsVisibleAtStartAndEnd()
 
     /** {@inheritDoc} */
     @FlakyTest(bugId = 206753786)
     @Test
-    override fun navBarLayerPositionAtStartAndEnd() =
-        super.navBarLayerPositionAtStartAndEnd()
+    override fun navBarLayerPositionAtStartAndEnd() = super.navBarLayerPositionAtStartAndEnd()
 
     /** {@inheritDoc} */
     @Postsubmit
     @Test
-    override fun navBarWindowIsAlwaysVisible() =
-        super.navBarWindowIsAlwaysVisible()
+    override fun navBarWindowIsAlwaysVisible() = super.navBarWindowIsAlwaysVisible()
 
     /** {@inheritDoc} */
     @Postsubmit
@@ -156,26 +148,22 @@ class DismissSplitScreenByDivider (testSpec: FlickerTestParameter) : SplitScreen
     /** {@inheritDoc} */
     @Postsubmit
     @Test
-    override fun statusBarLayerPositionAtStartAndEnd() =
-        super.statusBarLayerPositionAtStartAndEnd()
+    override fun statusBarLayerPositionAtStartAndEnd() = super.statusBarLayerPositionAtStartAndEnd()
 
     /** {@inheritDoc} */
     @Postsubmit
     @Test
-    override fun statusBarWindowIsAlwaysVisible() =
-        super.statusBarWindowIsAlwaysVisible()
+    override fun statusBarWindowIsAlwaysVisible() = super.statusBarWindowIsAlwaysVisible()
 
     /** {@inheritDoc} */
     @Postsubmit
     @Test
-    override fun taskBarLayerIsVisibleAtStartAndEnd() =
-        super.taskBarLayerIsVisibleAtStartAndEnd()
+    override fun taskBarLayerIsVisibleAtStartAndEnd() = super.taskBarLayerIsVisibleAtStartAndEnd()
 
     /** {@inheritDoc} */
     @Postsubmit
     @Test
-    override fun taskBarWindowIsAlwaysVisible() =
-        super.taskBarWindowIsAlwaysVisible()
+    override fun taskBarWindowIsAlwaysVisible() = super.taskBarWindowIsAlwaysVisible()
 
     /** {@inheritDoc} */
     @Postsubmit
@@ -192,8 +180,8 @@ class DismissSplitScreenByDivider (testSpec: FlickerTestParameter) : SplitScreen
     companion object {
         @Parameterized.Parameters(name = "{0}")
         @JvmStatic
-        fun getParams(): List<FlickerTestParameter> {
-            return FlickerTestParameterFactory.getInstance().getConfigNonRotationTests()
+        fun getParams(): List<FlickerTest> {
+            return FlickerTestFactory.nonRotationTests()
         }
     }
 }

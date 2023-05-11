@@ -80,10 +80,6 @@ public class ProcessCpuTracker {
     /** Stores user time and system time in jiffies. */
     private final long[] mProcessStatsData = new long[4];
 
-    /** Stores user time and system time in jiffies.  Used for
-     * public API to retrieve CPU use for a process.  Must lock while in use. */
-    private final long[] mSinglePidStatsData = new long[4];
-
     private static final int[] PROCESS_FULL_STATS_FORMAT = new int[] {
         PROC_SPACE_TERM,
         PROC_SPACE_TERM|PROC_PARENS|PROC_OUT_STRING,    // 2: name
@@ -629,17 +625,15 @@ public class ProcessCpuTracker {
      * executing in both user and system code. Safe to call without lock held.
      */
     public long getCpuTimeForPid(int pid) {
-        synchronized (mSinglePidStatsData) {
-            final String statFile = "/proc/" + pid + "/stat";
-            final long[] statsData = mSinglePidStatsData;
-            if (Process.readProcFile(statFile, PROCESS_STATS_FORMAT,
-                    null, statsData, null)) {
-                long time = statsData[PROCESS_STAT_UTIME]
+        final String statFile = "/proc/" + pid + "/stat";
+        final long[] statsData = new long[4];
+        if (Process.readProcFile(statFile, PROCESS_STATS_FORMAT,
+                null, statsData, null)) {
+            long time = statsData[PROCESS_STAT_UTIME]
                         + statsData[PROCESS_STAT_STIME];
-                return time * mJiffyMillis;
-            }
-            return 0;
+            return time * mJiffyMillis;
         }
+        return 0;
     }
 
     /**
@@ -647,15 +641,13 @@ public class ProcessCpuTracker {
      * in the runqueue. Safe to call without lock held.
      */
     public long getCpuDelayTimeForPid(int pid) {
-        synchronized (mSinglePidStatsData) {
-            final String statFile = "/proc/" + pid + "/schedstat";
-            final long[] statsData = mSinglePidStatsData;
-            if (Process.readProcFile(statFile, PROCESS_SCHEDSTATS_FORMAT,
-                    null, statsData, null)) {
-                return statsData[PROCESS_SCHEDSTAT_CPU_DELAY_TIME] / 1_000_000;
-            }
-            return 0;
+        final String statFile = "/proc/" + pid + "/schedstat";
+        final long[] statsData = new long[4];
+        if (Process.readProcFile(statFile, PROCESS_SCHEDSTATS_FORMAT,
+                null, statsData, null)) {
+            return statsData[PROCESS_SCHEDSTAT_CPU_DELAY_TIME] / 1_000_000;
         }
+        return 0;
     }
 
     /**
@@ -841,7 +833,19 @@ public class ProcessCpuTracker {
         return sw.toString();
     }
 
-    final public String printCurrentState(long now) {
+    /**
+     * Returns current CPU state with all the processes as a String, sorted by load
+     * in descending order.
+     */
+    public final String printCurrentState(long now) {
+        return printCurrentState(now, Integer.MAX_VALUE);
+    }
+
+    /**
+     * Returns current CPU state with the top {@code maxProcessesToDump} highest load
+     * processes as a String, sorted by load in descending order.
+     */
+    public final String printCurrentState(long now, int maxProcessesToDump) {
         final SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS");
 
         buildWorkingProcs();
@@ -883,8 +887,8 @@ public class ProcessCpuTracker {
         if (DEBUG) Slog.i(TAG, "totalTime " + totalTime + " over sample time "
                 + (mCurrentSampleTime-mLastSampleTime));
 
-        int N = mWorkingProcs.size();
-        for (int i=0; i<N; i++) {
+        int dumpedProcessCount = Math.min(maxProcessesToDump, mWorkingProcs.size());
+        for (int i = 0; i < dumpedProcessCount; i++) {
             Stats st = mWorkingProcs.get(i);
             printProcessCPU(pw, st.added ? " +" : (st.removed ? " -": "  "),
                     st.pid, st.name, (int)st.rel_uptime,

@@ -20,6 +20,7 @@ import static com.android.systemui.statusbar.phone.CentralSurfaces.MULTIUSER_DEB
 
 import android.app.KeyguardManager;
 import android.content.Context;
+import android.os.PowerManager;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.SystemClock;
@@ -39,6 +40,7 @@ import com.android.systemui.plugins.ActivityStarter;
 import com.android.systemui.plugins.ActivityStarter.OnDismissAction;
 import com.android.systemui.shade.NotificationPanelViewController;
 import com.android.systemui.shade.NotificationShadeWindowView;
+import com.android.systemui.shade.QuickSettingsController;
 import com.android.systemui.statusbar.CommandQueue;
 import com.android.systemui.statusbar.KeyguardIndicationController;
 import com.android.systemui.statusbar.LockscreenShadeTransitionController;
@@ -101,6 +103,7 @@ class StatusBarNotificationPresenter implements NotificationPresenter,
     private final IStatusBarService mBarService;
     private final DynamicPrivacyController mDynamicPrivacyController;
     private final NotificationListContainer mNotifListContainer;
+    private final QuickSettingsController mQsController;
 
     protected boolean mVrMode;
 
@@ -108,6 +111,7 @@ class StatusBarNotificationPresenter implements NotificationPresenter,
     StatusBarNotificationPresenter(
             Context context,
             NotificationPanelViewController panel,
+            QuickSettingsController quickSettingsController,
             HeadsUpManagerPhone headsUp,
             NotificationShadeWindowView statusBarWindow,
             ActivityStarter activityStarter,
@@ -135,6 +139,7 @@ class StatusBarNotificationPresenter implements NotificationPresenter,
         mActivityStarter = activityStarter;
         mKeyguardStateController = keyguardStateController;
         mNotificationPanel = panel;
+        mQsController = quickSettingsController;
         mHeadsUpManager = headsUp;
         mDynamicPrivacyController = dynamicPrivacyController;
         mKeyguardIndicationController = keyguardIndicationController;
@@ -190,7 +195,7 @@ class StatusBarNotificationPresenter implements NotificationPresenter,
     private void maybeClosePanelForShadeEmptied() {
         if (CLOSE_PANEL_WHEN_EMPTIED
                 && !mNotificationPanel.isTracking()
-                && !mNotificationPanel.isQsExpanded()
+                && !mQsController.getExpanded()
                 && mStatusBarStateController.getState() == StatusBarState.SHADE_LOCKED
                 && !isCollapsing()) {
             mStatusBarStateController.setState(StatusBarState.KEYGUARD);
@@ -270,7 +275,8 @@ class StatusBarNotificationPresenter implements NotificationPresenter,
             boolean nowExpanded) {
         mHeadsUpManager.setExpanded(clickedEntry, nowExpanded);
         mCentralSurfaces.wakeUpIfDozing(
-                SystemClock.uptimeMillis(), clickedView, "NOTIFICATION_CLICK");
+                SystemClock.uptimeMillis(), clickedView, "NOTIFICATION_CLICK",
+                PowerManager.WAKE_REASON_GESTURE);
         if (nowExpanded) {
             if (mStatusBarStateController.getState() == StatusBarState.KEYGUARD) {
                 mShadeTransitionController.goToLockedShade(clickedEntry.getRow());

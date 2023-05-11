@@ -34,11 +34,12 @@ public final class BrightnessReason {
     public static final int REASON_DOZE_DEFAULT = 3;
     public static final int REASON_AUTOMATIC = 4;
     public static final int REASON_SCREEN_OFF = 5;
-    public static final int REASON_VR = 6;
-    public static final int REASON_OVERRIDE = 7;
-    public static final int REASON_TEMPORARY = 8;
-    public static final int REASON_BOOST = 9;
-    public static final int REASON_MAX = REASON_BOOST;
+    public static final int REASON_OVERRIDE = 6;
+    public static final int REASON_TEMPORARY = 7;
+    public static final int REASON_BOOST = 8;
+    public static final int REASON_SCREEN_OFF_BRIGHTNESS_SENSOR = 9;
+    public static final int REASON_FOLLOWER = 10;
+    public static final int REASON_MAX = REASON_FOLLOWER;
 
     public static final int MODIFIER_DIMMED = 0x1;
     public static final int MODIFIER_LOW_POWER = 0x2;
@@ -185,14 +186,16 @@ public final class BrightnessReason {
                 return "automatic";
             case REASON_SCREEN_OFF:
                 return "screen_off";
-            case REASON_VR:
-                return "vr";
             case REASON_OVERRIDE:
                 return "override";
             case REASON_TEMPORARY:
                 return "temporary";
             case REASON_BOOST:
                 return "boost";
+            case REASON_SCREEN_OFF_BRIGHTNESS_SENSOR:
+                return "screen_off_brightness_sensor";
+            case REASON_FOLLOWER:
+                return "follower";
             default:
                 return Integer.toString(reason);
         }

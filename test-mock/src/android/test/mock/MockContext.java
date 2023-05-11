@@ -887,6 +887,12 @@ public class MockContext extends Context {
         throw new UnsupportedOperationException();
     }
 
+    /** @hide */
+    @Override
+    public void updateDeviceId(int deviceId) {
+        throw new UnsupportedOperationException();
+    }
+
     @Override
     public int getDeviceId() {
         throw new UnsupportedOperationException();
@@ -961,7 +967,7 @@ public class MockContext extends Context {
     /** {@hide} */
     @Override
     public IServiceConnection getServiceDispatcher(ServiceConnection conn, Handler handler,
-            int flags) {
+            long flags) {
         throw new UnsupportedOperationException();
     }
 

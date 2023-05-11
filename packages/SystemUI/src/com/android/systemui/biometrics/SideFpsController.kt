@@ -19,6 +19,8 @@ import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.app.ActivityTaskManager
 import android.content.Context
+import android.content.res.Configuration
+import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffColorFilter
@@ -54,12 +56,19 @@ import com.android.internal.annotations.VisibleForTesting
 import com.android.systemui.Dumpable
 import com.android.systemui.R
 import com.android.systemui.dagger.SysUISingleton
+import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.dagger.qualifiers.Main
 import com.android.systemui.dump.DumpManager
+import com.android.systemui.flags.FeatureFlags
+import com.android.systemui.flags.Flags
+import com.android.systemui.keyguard.domain.interactor.AlternateBouncerInteractor
 import com.android.systemui.recents.OverviewProxyService
 import com.android.systemui.util.concurrency.DelayableExecutor
+import com.android.systemui.util.traceSection
 import java.io.PrintWriter
 import javax.inject.Inject
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 
 private const val TAG = "SideFpsController"
 
@@ -79,9 +88,12 @@ constructor(
     displayManager: DisplayManager,
     @Main private val mainExecutor: DelayableExecutor,
     @Main private val handler: Handler,
+    private val alternateBouncerInteractor: AlternateBouncerInteractor,
+    @Application private val scope: CoroutineScope,
+    private val featureFlags: FeatureFlags,
     dumpManager: DumpManager
 ) : Dumpable {
-    val requests: HashSet<SideFpsUiRequestSource> = HashSet()
+    private val requests: HashSet<SideFpsUiRequestSource> = HashSet()
 
     @VisibleForTesting
     val sensorProps: FingerprintSensorPropertiesInternal =
@@ -89,13 +101,17 @@ constructor(
             ?: throw IllegalStateException("no side fingerprint sensor")
 
     @VisibleForTesting
-    val orientationListener =
-        BiometricDisplayListener(
+    val orientationReasonListener =
+        OrientationReasonListener(
             context,
             displayManager,
             handler,
-            BiometricDisplayListener.SensorType.SideFingerprint(sensorProps)
-        ) { onOrientationChanged() }
+            sensorProps,
+            { reason -> onOrientationChanged(reason) },
+            BiometricOverlayConstants.REASON_UNKNOWN
+        )
+
+    @VisibleForTesting val orientationListener = orientationReasonListener.orientationListener
 
     @VisibleForTesting
     val overviewProxyListener =
@@ -109,6 +125,9 @@ constructor(
 
     private val animationDuration =
         context.resources.getInteger(android.R.integer.config_mediumAnimTime).toLong()
+
+    private val isReverseDefaultRotation =
+        context.resources.getBoolean(com.android.internal.R.bool.config_reverseDefaultRotation)
 
     private var overlayHideAnimator: ViewPropertyAnimator? = null
 
@@ -135,7 +154,7 @@ constructor(
         WindowManager.LayoutParams(
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.WRAP_CONTENT,
-                WindowManager.LayoutParams.TYPE_SYSTEM_ERROR,
+                WindowManager.LayoutParams.TYPE_KEYGUARD_DIALOG,
                 Utils.FINGERPRINT_OVERLAY_LAYOUT_PARAM_FLAGS,
                 PixelFormat.TRANSLUCENT
             )
@@ -154,26 +173,52 @@ constructor(
                 override fun show(
                     sensorId: Int,
                     @BiometricOverlayConstants.ShowReason reason: Int
-                ) =
-                    if (reason.isReasonToAutoShow(activityTaskManager)) {
-                        show(SideFpsUiRequestSource.AUTO_SHOW)
+                ) {
+                    if (
+                        reason.isReasonToAutoShow(activityTaskManager) &&
+                            !context.isInRearDisplayMode()
+                    ) {
+                        show(SideFpsUiRequestSource.AUTO_SHOW, reason)
                     } else {
                         hide(SideFpsUiRequestSource.AUTO_SHOW)
                     }
+                }
 
                 override fun hide(sensorId: Int) = hide(SideFpsUiRequestSource.AUTO_SHOW)
             }
         )
         overviewProxyService.addCallback(overviewProxyListener)
+        listenForAlternateBouncerVisibility()
+
         dumpManager.registerDumpable(this)
     }
 
+    private fun listenForAlternateBouncerVisibility() {
+        alternateBouncerInteractor.setAlternateBouncerUIAvailable(true)
+        if (featureFlags.isEnabled(Flags.MODERN_ALTERNATE_BOUNCER)) {
+            scope.launch {
+                alternateBouncerInteractor.isVisible.collect { isVisible: Boolean ->
+                    if (isVisible) {
+                        show(SideFpsUiRequestSource.ALTERNATE_BOUNCER)
+                    } else {
+                        hide(SideFpsUiRequestSource.ALTERNATE_BOUNCER)
+                    }
+                }
+            }
+        }
+    }
+
     /** Shows the side fps overlay if not already shown. */
-    fun show(request: SideFpsUiRequestSource) {
+    fun show(
+        request: SideFpsUiRequestSource,
+        @BiometricOverlayConstants.ShowReason reason: Int = BiometricOverlayConstants.REASON_UNKNOWN
+    ) {
         requests.add(request)
         mainExecutor.execute {
             if (overlayView == null) {
-                createOverlayForDisplay()
+                traceSection("SideFpsController#show(request=${request.name}, reason=$reason") {
+                    createOverlayForDisplay(reason)
+                }
             } else {
                 Log.v(TAG, "overlay already shown")
             }
@@ -185,7 +230,7 @@ constructor(
         requests.remove(request)
         mainExecutor.execute {
             if (requests.isEmpty()) {
-                overlayView = null
+                traceSection("SideFpsController#hide(${request.name}") { overlayView = null }
             }
         }
     }
@@ -197,13 +242,13 @@ constructor(
         }
     }
 
-    private fun onOrientationChanged() {
+    private fun onOrientationChanged(@BiometricOverlayConstants.ShowReason reason: Int) {
         if (overlayView != null) {
-            createOverlayForDisplay()
+            createOverlayForDisplay(reason)
         }
     }
 
-    private fun createOverlayForDisplay() {
+    private fun createOverlayForDisplay(@BiometricOverlayConstants.ShowReason reason: Int) {
         val view = layoutInflater.inflate(R.layout.sidefps_view, null, false)
         overlayView = view
         val display = context.display!!
@@ -217,15 +262,25 @@ constructor(
         overlayOffsets = offsets
 
         val lottie = view.findViewById(R.id.sidefps_animation) as LottieAnimationView
-        view.rotation = display.asSideFpsAnimationRotation(offsets.isYAligned())
-        lottie.setAnimation(display.asSideFpsAnimation(offsets.isYAligned()))
+        view.rotation =
+            display.asSideFpsAnimationRotation(
+                offsets.isYAligned(),
+                getRotationFromDefault(display.rotation)
+            )
+        lottie.setAnimation(
+            display.asSideFpsAnimation(
+                offsets.isYAligned(),
+                getRotationFromDefault(display.rotation)
+            )
+        )
         lottie.addLottieOnCompositionLoadedListener {
             // Check that view is not stale, and that overlayView has not been hidden/removed
             if (overlayView != null && overlayView == view) {
                 updateOverlayParams(display, it.bounds)
             }
         }
-        lottie.addOverlayDynamicColor(context)
+        orientationReasonListener.reason = reason
+        lottie.addOverlayDynamicColor(context, reason)
 
         /**
          * Intercepts TYPE_WINDOW_STATE_CHANGED accessibility event, preventing Talkback from
@@ -253,11 +308,15 @@ constructor(
     @VisibleForTesting
     internal fun updateOverlayParams(display: Display, bounds: Rect) {
         val isNaturalOrientation = display.isNaturalOrientation()
+        val isDefaultOrientation =
+            if (isReverseDefaultRotation) !isNaturalOrientation else isNaturalOrientation
         val size = windowManager.maximumWindowMetrics.bounds
-        val displayWidth = if (isNaturalOrientation) size.width() else size.height()
-        val displayHeight = if (isNaturalOrientation) size.height() else size.width()
-        val boundsWidth = if (isNaturalOrientation) bounds.width() else bounds.height()
-        val boundsHeight = if (isNaturalOrientation) bounds.height() else bounds.width()
+
+        val displayWidth = if (isDefaultOrientation) size.width() else size.height()
+        val displayHeight = if (isDefaultOrientation) size.height() else size.width()
+        val boundsWidth = if (isDefaultOrientation) bounds.width() else bounds.height()
+        val boundsHeight = if (isDefaultOrientation) bounds.height() else bounds.width()
+
         val sensorBounds =
             if (overlayOffsets.isYAligned()) {
                 Rect(
@@ -278,11 +337,12 @@ constructor(
         RotationUtils.rotateBounds(
             sensorBounds,
             Rect(0, 0, displayWidth, displayHeight),
-            display.rotation
+            getRotationFromDefault(display.rotation)
         )
 
         overlayViewParams.x = sensorBounds.left
         overlayViewParams.y = sensorBounds.top
+
         windowManager.updateViewLayout(overlayView, overlayViewParams)
     }
 
@@ -292,7 +352,12 @@ constructor(
         }
         // hide after a few seconds if the sensor is oriented down and there are
         // large overlapping system bars
-        val rotation = context.display?.rotation
+        var rotation = context.display?.rotation
+
+        if (rotation != null) {
+            rotation = getRotationFromDefault(rotation)
+        }
+
         if (
             windowManager.currentWindowMetrics.windowInsets.hasBigNavigationBar() &&
                 ((rotation == Surface.ROTATION_270 && overlayOffsets.isYAligned()) ||
@@ -319,6 +384,9 @@ constructor(
             view.visibility = View.VISIBLE
         }
     }
+
+    private fun getRotationFromDefault(rotation: Int): Int =
+        if (isReverseDefaultRotation) (rotation + 1) % 4 else rotation
 }
 
 private val FingerprintManager?.sideFpsSensorProperties: FingerprintSensorPropertiesInternal?
@@ -344,15 +412,15 @@ private fun ActivityTaskManager.topClass(): String =
     getTasks(1).firstOrNull()?.topActivity?.className ?: ""
 
 @RawRes
-private fun Display.asSideFpsAnimation(yAligned: Boolean): Int =
-    when (rotation) {
+private fun Display.asSideFpsAnimation(yAligned: Boolean, rotationFromDefault: Int): Int =
+    when (rotationFromDefault) {
         Surface.ROTATION_0 -> if (yAligned) R.raw.sfps_pulse else R.raw.sfps_pulse_landscape
         Surface.ROTATION_180 -> if (yAligned) R.raw.sfps_pulse else R.raw.sfps_pulse_landscape
         else -> if (yAligned) R.raw.sfps_pulse_landscape else R.raw.sfps_pulse
     }
 
-private fun Display.asSideFpsAnimationRotation(yAligned: Boolean): Float =
-    when (rotation) {
+private fun Display.asSideFpsAnimationRotation(yAligned: Boolean, rotationFromDefault: Int): Float =
+    when (rotationFromDefault) {
         Surface.ROTATION_90 -> if (yAligned) 0f else 180f
         Surface.ROTATION_180 -> 180f
         Surface.ROTATION_270 -> if (yAligned) 180f else 0f
@@ -367,12 +435,35 @@ private fun Display.isNaturalOrientation(): Boolean =
 private fun WindowInsets.hasBigNavigationBar(): Boolean =
     getInsets(WindowInsets.Type.navigationBars()).bottom >= 70
 
-private fun LottieAnimationView.addOverlayDynamicColor(context: Context) {
+private fun LottieAnimationView.addOverlayDynamicColor(
+    context: Context,
+    @BiometricOverlayConstants.ShowReason reason: Int
+) {
     fun update() {
         val c = context.getColor(R.color.biometric_dialog_accent)
-        for (key in listOf(".blue600", ".blue400")) {
-            addValueCallback(KeyPath(key, "**"), LottieProperty.COLOR_FILTER) {
-                PorterDuffColorFilter(c, PorterDuff.Mode.SRC_ATOP)
+        val chevronFill = context.getColor(R.color.sfps_chevron_fill)
+        val isKeyguard = reason == REASON_AUTH_KEYGUARD
+        if (isKeyguard) {
+            for (key in listOf(".blue600", ".blue400")) {
+                addValueCallback(KeyPath(key, "**"), LottieProperty.COLOR_FILTER) {
+                    PorterDuffColorFilter(c, PorterDuff.Mode.SRC_ATOP)
+                }
+            }
+            addValueCallback(KeyPath(".black", "**"), LottieProperty.COLOR_FILTER) {
+                PorterDuffColorFilter(chevronFill, PorterDuff.Mode.SRC_ATOP)
+            }
+        } else if (!isDarkMode(context)) {
+            addValueCallback(KeyPath(".black", "**"), LottieProperty.COLOR_FILTER) {
+                PorterDuffColorFilter(Color.WHITE, PorterDuff.Mode.SRC_ATOP)
+            }
+        } else if (isDarkMode(context)) {
+            for (key in listOf(".blue600", ".blue400")) {
+                addValueCallback(KeyPath(key, "**"), LottieProperty.COLOR_FILTER) {
+                    PorterDuffColorFilter(
+                        context.getColor(R.color.settingslib_color_blue400),
+                        PorterDuff.Mode.SRC_ATOP
+                    )
+                }
             }
         }
     }
@@ -382,6 +473,31 @@ private fun LottieAnimationView.addOverlayDynamicColor(context: Context) {
     } else {
         addLottieOnCompositionLoadedListener { update() }
     }
+}
+
+private fun isDarkMode(context: Context): Boolean {
+    val darkMode = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
+    return darkMode == Configuration.UI_MODE_NIGHT_YES
+}
+
+@VisibleForTesting
+class OrientationReasonListener(
+    context: Context,
+    displayManager: DisplayManager,
+    handler: Handler,
+    sensorProps: FingerprintSensorPropertiesInternal,
+    onOrientationChanged: (reason: Int) -> Unit,
+    @BiometricOverlayConstants.ShowReason var reason: Int
+) {
+    val orientationListener =
+        BiometricDisplayListener(
+            context,
+            displayManager,
+            handler,
+            BiometricDisplayListener.SensorType.SideFingerprint(sensorProps)
+        ) {
+            onOrientationChanged(reason)
+        }
 }
 
 /**
@@ -394,4 +510,5 @@ enum class SideFpsUiRequestSource {
     AUTO_SHOW,
     /** Pin, pattern or password bouncer */
     PRIMARY_BOUNCER,
+    ALTERNATE_BOUNCER
 }

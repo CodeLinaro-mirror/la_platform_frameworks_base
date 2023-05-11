@@ -16,6 +16,7 @@
 
 package com.android.server.wm;
 
+import static android.app.ActivityTaskManager.INVALID_TASK_ID;
 import static android.app.TaskInfo.cameraCompatControlStateToString;
 
 import static com.android.internal.protolog.ProtoLogGroup.WM_DEBUG_WINDOW_ORGANIZER;
@@ -43,6 +44,7 @@ import android.view.Display;
 import android.view.SurfaceControl;
 import android.window.ITaskOrganizer;
 import android.window.ITaskOrganizerController;
+import android.window.IWindowlessStartingSurfaceCallback;
 import android.window.SplashScreenView;
 import android.window.StartingWindowInfo;
 import android.window.StartingWindowRemovalInfo;
@@ -656,9 +658,10 @@ class TaskOrganizerController extends ITaskOrganizerController.Stub {
             info.splashScreenThemeResId = launchTheme;
         }
         info.taskSnapshot = taskSnapshot;
+        info.appToken = activity.token;
         // make this happen prior than prepare surface
         try {
-            lastOrganizer.addStartingWindow(info, activity.token);
+            lastOrganizer.addStartingWindow(info);
         } catch (RemoteException e) {
             Slog.e(TAG, "Exception sending onTaskStart callback", e);
             return false;
@@ -691,6 +694,8 @@ class TaskOrganizerController extends ITaskOrganizerController.Stub {
             if (mainWindow == null || mainWindow.mRemoved) {
                 removalInfo.playRevealAnimation = false;
             } else if (removalInfo.playRevealAnimation && playShiftUpAnimation) {
+                removalInfo.roundedCornerRadius =
+                        topActivity.mLetterboxUiController.getRoundedCornersRadius(mainWindow);
                 removalInfo.windowAnimationLeash = applyStartingWindowAnimation(mainWindow);
                 removalInfo.mainFrame = mainWindow.getRelativeFrame();
             }
@@ -699,6 +704,55 @@ class TaskOrganizerController extends ITaskOrganizerController.Stub {
             lastOrganizer.removeStartingWindow(removalInfo);
         } catch (RemoteException e) {
             Slog.e(TAG, "Exception sending onStartTaskFinished callback", e);
+        }
+    }
+
+    /**
+     * Create a starting surface which attach on a given surface.
+     * @param activity Target activity, this isn't necessary to be the top activity.
+     * @param root The root surface which the created surface will attach on.
+     * @param taskSnapshot Whether to draw snapshot.
+     * @param callback Called when surface is drawn and attached to the root surface.
+     * @return The taskId, this is a token and should be used to remove the surface, even if
+     *         the task was removed from hierarchy.
+     */
+    int addWindowlessStartingSurface(Task task, ActivityRecord activity, SurfaceControl root,
+            TaskSnapshot taskSnapshot, IWindowlessStartingSurfaceCallback callback) {
+        final Task rootTask = task.getRootTask();
+        if (rootTask == null) {
+            return INVALID_TASK_ID;
+        }
+        final ITaskOrganizer lastOrganizer = mTaskOrganizers.peekLast();
+        if (lastOrganizer == null) {
+            return INVALID_TASK_ID;
+        }
+        final StartingWindowInfo info = task.getStartingWindowInfo(activity);
+        info.taskInfo.taskDescription = activity.taskDescription;
+        info.taskSnapshot = taskSnapshot;
+        info.windowlessStartingSurfaceCallback = callback;
+        info.rootSurface = root;
+        try {
+            lastOrganizer.addStartingWindow(info);
+        } catch (RemoteException e) {
+            Slog.e(TAG, "Exception sending addWindowlessStartingSurface ", e);
+            return INVALID_TASK_ID;
+        }
+        return task.mTaskId;
+    }
+
+    void removeWindowlessStartingSurface(int taskId, boolean immediately) {
+        final ITaskOrganizer lastOrganizer = mTaskOrganizers.peekLast();
+        if (lastOrganizer == null || taskId == 0) {
+            return;
+        }
+        final StartingWindowRemovalInfo removalInfo = new StartingWindowRemovalInfo();
+        removalInfo.taskId = taskId;
+        removalInfo.windowlessSurface = true;
+        removalInfo.removeImmediately = immediately;
+        try {
+            lastOrganizer.removeStartingWindow(removalInfo);
+        } catch (RemoteException e) {
+            Slog.e(TAG, "Exception sending removeWindowlessStartingSurface ", e);
         }
     }
 
@@ -720,6 +774,14 @@ class TaskOrganizerController extends ITaskOrganizerController.Stub {
         return true;
     }
 
+    boolean isSupportWindowlessStartingSurface() {
+        // Enable after ag/20426257
+        final ITaskOrganizer lastOrganizer = mTaskOrganizers.peekLast();
+        if (lastOrganizer == null) {
+            return false;
+        }
+        return false;
+    }
     /**
      * Notify the shell ({@link com.android.wm.shell.ShellTaskOrganizer} that the client has
      * removed the splash screen view.
@@ -781,7 +843,8 @@ class TaskOrganizerController extends ITaskOrganizerController.Stub {
     }
 
     @Override
-    public void createRootTask(int displayId, int windowingMode, @Nullable IBinder launchCookie) {
+    public void createRootTask(int displayId, int windowingMode, @Nullable IBinder launchCookie,
+            boolean removeWithTaskOrganizer) {
         enforceTaskPermission("createRootTask()");
         final long origId = Binder.clearCallingIdentity();
         try {
@@ -793,7 +856,7 @@ class TaskOrganizerController extends ITaskOrganizerController.Stub {
                     return;
                 }
 
-                createRootTask(display, windowingMode, launchCookie);
+                createRootTask(display, windowingMode, launchCookie, removeWithTaskOrganizer);
             }
         } finally {
             Binder.restoreCallingIdentity(origId);
@@ -802,6 +865,12 @@ class TaskOrganizerController extends ITaskOrganizerController.Stub {
 
     @VisibleForTesting
     Task createRootTask(DisplayContent display, int windowingMode, @Nullable IBinder launchCookie) {
+        return createRootTask(display, windowingMode, launchCookie,
+                false /* removeWithTaskOrganizer */);
+    }
+
+    Task createRootTask(DisplayContent display, int windowingMode, @Nullable IBinder launchCookie,
+            boolean removeWithTaskOrganizer) {
         ProtoLog.v(WM_DEBUG_WINDOW_ORGANIZER, "Create root task displayId=%d winMode=%d",
                 display.mDisplayId, windowingMode);
         // We want to defer the task appear signal until the task is fully created and attached to
@@ -814,6 +883,7 @@ class TaskOrganizerController extends ITaskOrganizerController.Stub {
                 .setDeferTaskAppear(true)
                 .setLaunchCookie(launchCookie)
                 .setParent(display.getDefaultTaskDisplayArea())
+                .setRemoveWithTaskOrganizer(removeWithTaskOrganizer)
                 .build();
         task.setDeferTaskAppear(false /* deferTaskAppear */);
         return task;

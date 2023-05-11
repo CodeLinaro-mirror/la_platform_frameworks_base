@@ -93,6 +93,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
+import android.os.ParcelFileDescriptor;
 import android.os.ParcelableException;
 import android.os.PersistableBundle;
 import android.os.Process;
@@ -126,6 +127,8 @@ import dalvik.system.VMRuntime;
 
 import libcore.util.EmptyArray;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.lang.ref.WeakReference;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateEncodingException;
@@ -1221,6 +1224,31 @@ public class ApplicationPackageManager extends PackageManager {
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
+    }
+
+    @Override
+    @NonNull
+    public PersistableBundle getAppMetadata(@NonNull String packageName)
+            throws NameNotFoundException {
+        PersistableBundle appMetadata = null;
+        ParcelFileDescriptor pfd = null;
+        try {
+            pfd = mPM.getAppMetadataFd(packageName, getUserId());
+        } catch (ParcelableException e) {
+            e.maybeRethrow(NameNotFoundException.class);
+            throw new RuntimeException(e);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+        if (pfd != null) {
+            try (InputStream inputStream = new ParcelFileDescriptor.AutoCloseInputStream(pfd)) {
+                appMetadata = PersistableBundle.readFromStream(inputStream);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        return appMetadata != null ? appMetadata : new PersistableBundle();
     }
 
     @SuppressWarnings("unchecked")
@@ -3257,6 +3285,20 @@ public class ApplicationPackageManager extends PackageManager {
      * @hide
      */
     @Override
+    public boolean removeCrossProfileIntentFilter(IntentFilter filter, int sourceUserId,
+            int targetUserId, int flags) {
+        try {
+            return mPM.removeCrossProfileIntentFilter(filter, mContext.getOpPackageName(),
+                    sourceUserId, targetUserId, flags);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * @hide
+     */
+    @Override
     public void clearCrossProfileIntentFilters(int sourceUserId) {
         try {
             mPM.clearCrossProfileIntentFilters(sourceUserId, mContext.getOpPackageName());
@@ -3816,8 +3858,17 @@ public class ApplicationPackageManager extends PackageManager {
             @NonNull String targetPackageName) throws NameNotFoundException {
         Objects.requireNonNull(sourcePackageName);
         Objects.requireNonNull(targetPackageName);
+        return canPackageQuery(sourcePackageName, new String[]{targetPackageName})[0];
+    }
+
+    @Override
+    @NonNull
+    public boolean[] canPackageQuery(@NonNull String sourcePackageName,
+            @NonNull String[] targetPackageNames) throws NameNotFoundException {
+        Objects.requireNonNull(sourcePackageName);
+        Objects.requireNonNull(targetPackageNames);
         try {
-            return mPM.canPackageQuery(sourcePackageName, targetPackageName, getUserId());
+            return mPM.canPackageQuery(sourcePackageName, targetPackageNames, getUserId());
         } catch (ParcelableException e) {
             e.maybeRethrow(PackageManager.NameNotFoundException.class);
             throw new RuntimeException(e);
@@ -3832,6 +3883,31 @@ public class ApplicationPackageManager extends PackageManager {
             mPM.makeUidVisible(recipientUid, visibleUid);
         } catch (RemoteException e) {
             throw e.rethrowAsRuntimeException();
+        }
+    }
+
+    @Override
+    public boolean canUserUninstall(String packageName, UserHandle user) {
+        try {
+            return mPM.getBlockUninstallForUser(packageName, user.getIdentifier());
+        } catch (RemoteException e) {
+            throw e.rethrowAsRuntimeException();
+        }
+    }
+
+    @Override
+    public boolean shouldShowNewAppInstalledNotification() {
+        return Settings.Global.getInt(mContext.getContentResolver(),
+                Settings.Global.SHOW_NEW_APP_INSTALLED_NOTIFICATION_ENABLED, 0) == 1;
+    }
+
+    @Override
+    public void relinquishUpdateOwnership(String targetPackage) {
+        Objects.requireNonNull(targetPackage);
+        try {
+            mPM.relinquishUpdateOwnership(targetPackage);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
         }
     }
 }

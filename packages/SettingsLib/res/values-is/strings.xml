@@ -467,7 +467,8 @@
     <string name="power_charging" msgid="6727132649743436802">"<xliff:g id="LEVEL">%1$s</xliff:g> – <xliff:g id="STATE">%2$s</xliff:g>"</string>
     <string name="power_remaining_charging_duration_only" msgid="8085099012811384899">"<xliff:g id="TIME">%1$s</xliff:g> fram að fullri hleðslu"</string>
     <string name="power_charging_duration" msgid="6127154952524919719">"<xliff:g id="LEVEL">%1$s</xliff:g> - <xliff:g id="TIME">%2$s</xliff:g> fram að fullri hleðslu"</string>
-    <string name="power_charging_limited" msgid="6971664137170239141">"<xliff:g id="LEVEL">%1$s</xliff:g> - Hlé var gert á hleðslu"</string>
+    <string name="power_charging_limited" msgid="8202147604844938236">"<xliff:g id="LEVEL">%1$s</xliff:g> – Hleðsla fínstillt"</string>
+    <string name="power_charging_future_paused" msgid="4730177778538118032">"<xliff:g id="LEVEL">%1$s</xliff:g> – Hleðsla fínstillt"</string>
     <string name="battery_info_status_unknown" msgid="268625384868401114">"Óþekkt"</string>
     <string name="battery_info_status_charging" msgid="4279958015430387405">"Í hleðslu"</string>
     <string name="battery_info_status_charging_fast" msgid="8027559755902954885">"Hröð hleðsla"</string>
@@ -539,6 +540,13 @@
     <string name="media_transfer_this_device_name" product="default" msgid="2357329267148436433">"Þessi sími"</string>
     <string name="media_transfer_this_device_name" product="tablet" msgid="3714653244000242800">"Þessi spjaldtölva"</string>
     <string name="media_transfer_this_phone" msgid="7194341457812151531">"Þessi sími"</string>
+    <string name="media_output_status_unknown_error" msgid="5098565887497902222">"Ekki er hægt að spila í þessu tæki"</string>
+    <string name="media_output_status_require_premium" msgid="8411255800047014822">"Uppfærðu reikninginn til að skipta"</string>
+    <string name="media_output_status_not_support_downloads" msgid="4523828729240373315">"Ekki er hægt að spila niðurhal hér"</string>
+    <string name="media_output_status_try_after_ad" msgid="8312579066856015441">"Reyndu aftur eftir auglýsinguna"</string>
+    <string name="media_output_status_device_in_low_power_mode" msgid="8184631698321758451">"Vektu tæki til að spila hér"</string>
+    <string name="media_output_status_unauthorized" msgid="5880222828273853838">"Tæki er ekki samþykkt til spilunar"</string>
+    <string name="media_output_status_track_unsupported" msgid="5576313219317709664">"Ekki er hægt að spila þetta efni hér"</string>
     <string name="profile_connect_timeout_subtext" msgid="4043408193005851761">"Vandamál í tengingu. Slökktu og kveiktu á tækinu"</string>
     <string name="media_transfer_wired_device_name" msgid="4447880899964056007">"Snúrutengt hljómtæki"</string>
     <string name="help_label" msgid="3528360748637781274">"Hjálp og ábendingar"</string>
@@ -563,6 +571,8 @@
     <string name="user_add_user_title" msgid="5457079143694924885">"Bæta nýjum notanda við?"</string>
     <string name="user_add_user_message_long" msgid="1527434966294733380">"Þú getur búið til fleiri notendur til að deila þessu tæki með öðrum. Hver notandi hefur sitt eigið svæði sem viðkomandi getur sérsniðið með forritum, veggfóðri o.s.frv. Notendur geta einnig breytt þeim stillingum tækisins sem hafa áhrif á alla notendur, t.d. Wi-Fi.\n\nÞegar þú bætir nýjum notanda við þarf sá notandi að setja upp svæðið sitt.\n\nHvaða notandi sem er getur uppfært forrit fyrir alla aðra notendur. Ekki er tryggt að stillingar á aðgengi og þjónustu flytjist yfir á nýja notandann."</string>
     <string name="user_add_user_message_short" msgid="3295959985795716166">"Þegar þú bætir nýjum notanda við þarf sá notandi að setja upp svæðið sitt.\n\nHvaða notandi sem er getur uppfært forrit fyrir alla aðra notendur."</string>
+    <string name="user_grant_admin_title" msgid="5565796912475193314">"Viltu veita þessum notanda stjórnandaheimildir?"</string>
+    <string name="user_grant_admin_message" msgid="7925257971286380976">"Sem stjórnandi getur viðkomandi stjórnað öðrum notendum, breytt tækjastillingum og núllstillt tækið."</string>
     <string name="user_setup_dialog_title" msgid="8037342066381939995">"Setja notanda upp núna?"</string>
     <string name="user_setup_dialog_message" msgid="269931619868102841">"Gakktu úr skugga um að notandinn geti tekið tækið og sett upp sitt svæði"</string>
     <string name="user_setup_profile_dialog_message" msgid="4788197052296962620">"Setja upp snið núna?"</string>
@@ -594,6 +604,8 @@
     <string name="guest_reset_and_restart_dialog_message" msgid="2764425635305200790">"Þetta opnar nýja gestalotu og eyðir öllum forritum og gögnum úr núverandi lotu"</string>
     <string name="guest_exit_dialog_title" msgid="1846494656849381804">"Loka gestastillingu?"</string>
     <string name="guest_exit_dialog_message" msgid="1743218864242719783">"Þetta eyðir forritum og gögnum úr núverandi gestalotu"</string>
+    <string name="grant_admin" msgid="4273077214151417783">"Veita þessum notanda stjórnandaheimildir"</string>
+    <string name="not_grant_admin" msgid="6985027675930546850">"Ekki veita þessum notanda stjórnandaheimildir"</string>
     <string name="guest_exit_dialog_button" msgid="1736401897067442044">"Hætta"</string>
     <string name="guest_exit_dialog_title_non_ephemeral" msgid="7675327443743162986">"Vista aðgerðir úr gestalotu?"</string>
     <string name="guest_exit_dialog_message_non_ephemeral" msgid="223385323235719442">"Þú getur vistað aðgerðir úr núverandi lotu eða eytt öllum forritum og gögnum"</string>
@@ -661,4 +673,10 @@
     <string name="back_navigation_animation" msgid="8105467568421689484">"Hreyfimyndir flýtiritunar við bendinguna „til baka“"</string>
     <string name="back_navigation_animation_summary" msgid="741292224121599456">"Kveikja á hreyfimyndum í kerfinu til að sýna hreyfimyndir þegar bendingin „til baka“ er gerð."</string>
     <string name="back_navigation_animation_dialog" msgid="8696966520944625596">"Þessi stilling kveikir á hreyfimyndum í kerfinu til að sýna hreyfimyndir flýtiritunar með bendingum. Stillingin krefst þess að kveikt sé á enableOnBackInvokedCallback í upplýsingaskránni fyrir hvert forrit."</string>
+  <string-array name="udfps_accessibility_touch_hints">
+    <item msgid="1737722959616802157">"Færa til vinstri"</item>
+    <item msgid="5425394847942513942">"Færa niður"</item>
+    <item msgid="7728484337962740316">"Færa til hægri"</item>
+    <item msgid="324200556467459329">"Færa upp"</item>
+  </string-array>
 </resources>

@@ -74,8 +74,8 @@ interface Roundable {
     @JvmDefault
     fun requestTopRoundness(
         @FloatRange(from = 0.0, to = 1.0) value: Float,
-        animate: Boolean,
         sourceType: SourceType,
+        animate: Boolean,
     ): Boolean {
         val roundnessMap = roundableState.topRoundnessMap
         val lastValue = roundnessMap.values.maxOrNull() ?: 0f
@@ -105,6 +105,30 @@ interface Roundable {
     }
 
     /**
+     * Request the top roundness [value] for a specific [sourceType]. Animate the roundness if the
+     * view is shown.
+     *
+     * The top roundness of a [Roundable] can be defined by different [sourceType]. In case more
+     * origins require different roundness, for the same property, the maximum value will always be
+     * chosen.
+     *
+     * @param value a value between 0f and 1f.
+     * @param sourceType the source from which the request for roundness comes.
+     * @return Whether the roundness was changed.
+     */
+    @JvmDefault
+    fun requestTopRoundness(
+        @FloatRange(from = 0.0, to = 1.0) value: Float,
+        sourceType: SourceType,
+    ): Boolean {
+        return requestTopRoundness(
+            value = value,
+            sourceType = sourceType,
+            animate = roundableState.targetView.isShown
+        )
+    }
+
+    /**
      * Request the bottom roundness [value] for a specific [sourceType].
      *
      * The bottom roundness of a [Roundable] can be defined by different [sourceType]. In case more
@@ -119,8 +143,8 @@ interface Roundable {
     @JvmDefault
     fun requestBottomRoundness(
         @FloatRange(from = 0.0, to = 1.0) value: Float,
-        animate: Boolean,
         sourceType: SourceType,
+        animate: Boolean,
     ): Boolean {
         val roundnessMap = roundableState.bottomRoundnessMap
         val lastValue = roundnessMap.values.maxOrNull() ?: 0f
@@ -149,9 +173,116 @@ interface Roundable {
         return false
     }
 
+    /**
+     * Request the bottom roundness [value] for a specific [sourceType]. Animate the roundness if
+     * the view is shown.
+     *
+     * The bottom roundness of a [Roundable] can be defined by different [sourceType]. In case more
+     * origins require different roundness, for the same property, the maximum value will always be
+     * chosen.
+     *
+     * @param value value between 0f and 1f.
+     * @param sourceType the source from which the request for roundness comes.
+     * @return Whether the roundness was changed.
+     */
+    @JvmDefault
+    fun requestBottomRoundness(
+        @FloatRange(from = 0.0, to = 1.0) value: Float,
+        sourceType: SourceType,
+    ): Boolean {
+        return requestBottomRoundness(
+            value = value,
+            sourceType = sourceType,
+            animate = roundableState.targetView.isShown
+        )
+    }
+
+    /**
+     * Request the roundness [value] for a specific [sourceType].
+     *
+     * The top/bottom roundness of a [Roundable] can be defined by different [sourceType]. In case
+     * more origins require different roundness, for the same property, the maximum value will
+     * always be chosen.
+     *
+     * @param top top value between 0f and 1f.
+     * @param bottom bottom value between 0f and 1f.
+     * @param sourceType the source from which the request for roundness comes.
+     * @param animate true if it should animate to that value.
+     * @return Whether the roundness was changed.
+     */
+    @JvmDefault
+    fun requestRoundness(
+        @FloatRange(from = 0.0, to = 1.0) top: Float,
+        @FloatRange(from = 0.0, to = 1.0) bottom: Float,
+        sourceType: SourceType,
+        animate: Boolean,
+    ): Boolean {
+        val hasTopChanged =
+            requestTopRoundness(value = top, sourceType = sourceType, animate = animate)
+        val hasBottomChanged =
+            requestBottomRoundness(value = bottom, sourceType = sourceType, animate = animate)
+        return hasTopChanged || hasBottomChanged
+    }
+
+    /**
+     * Request the roundness [value] for a specific [sourceType]. Animate the roundness if the view
+     * is shown.
+     *
+     * The top/bottom roundness of a [Roundable] can be defined by different [sourceType]. In case
+     * more origins require different roundness, for the same property, the maximum value will
+     * always be chosen.
+     *
+     * @param top top value between 0f and 1f.
+     * @param bottom bottom value between 0f and 1f.
+     * @param sourceType the source from which the request for roundness comes.
+     * @return Whether the roundness was changed.
+     */
+    @JvmDefault
+    fun requestRoundness(
+        @FloatRange(from = 0.0, to = 1.0) top: Float,
+        @FloatRange(from = 0.0, to = 1.0) bottom: Float,
+        sourceType: SourceType,
+    ): Boolean {
+        return requestRoundness(
+            top = top,
+            bottom = bottom,
+            sourceType = sourceType,
+            animate = roundableState.targetView.isShown,
+        )
+    }
+
+    /**
+     * Request the roundness 0f for a [SourceType].
+     *
+     * The top/bottom roundness of a [Roundable] can be defined by different [sourceType]. In case
+     * more origins require different roundness, for the same property, the maximum value will
+     * always be chosen.
+     *
+     * @param sourceType the source from which the request for roundness comes.
+     * @param animate true if it should animate to that value.
+     */
+    @JvmDefault
+    fun requestRoundnessReset(sourceType: SourceType, animate: Boolean) {
+        requestRoundness(top = 0f, bottom = 0f, sourceType = sourceType, animate = animate)
+    }
+
+    /**
+     * Request the roundness 0f for a [SourceType]. Animate the roundness if the view is shown.
+     *
+     * The top/bottom roundness of a [Roundable] can be defined by different [sourceType]. In case
+     * more origins require different roundness, for the same property, the maximum value will
+     * always be chosen.
+     *
+     * @param sourceType the source from which the request for roundness comes.
+     */
+    @JvmDefault
+    fun requestRoundnessReset(sourceType: SourceType) {
+        requestRoundnessReset(sourceType = sourceType, animate = roundableState.targetView.isShown)
+    }
+
     /** Apply the roundness changes, usually means invalidate the [RoundableState.targetView]. */
     @JvmDefault
-    fun applyRoundness() {
+    fun applyRoundnessAndInvalidate() {
         roundableState.targetView.invalidate()
     }
 
@@ -184,15 +315,19 @@ interface Roundable {
 
 /**
  * State object for a `Roundable` class.
+ *
  * @param targetView Will handle the [AnimatableProperty]
  * @param roundable Target of the radius animation
  * @param maxRadius Max corner radius in pixels
  */
 class RoundableState(
     internal val targetView: View,
-    roundable: Roundable,
-    internal val maxRadius: Float,
+    private val roundable: Roundable,
+    maxRadius: Float,
 ) {
+    internal var maxRadius = maxRadius
+        private set
+
     /** Animatable for top roundness */
     private val topAnimatable = topAnimatable(roundable)
 
@@ -227,7 +362,7 @@ class RoundableState(
     /** Set the current top roundness */
     internal fun setTopRoundness(
         value: Float,
-        animated: Boolean = targetView.isShown,
+        animated: Boolean,
     ) {
         PropertyAnimator.setProperty(targetView, topAnimatable, value, DURATION, animated)
     }
@@ -235,9 +370,24 @@ class RoundableState(
     /** Set the current bottom roundness */
     internal fun setBottomRoundness(
         value: Float,
-        animated: Boolean = targetView.isShown,
+        animated: Boolean,
     ) {
         PropertyAnimator.setProperty(targetView, bottomAnimatable, value, DURATION, animated)
+    }
+
+    fun setMaxRadius(radius: Float) {
+        if (maxRadius != radius) {
+            maxRadius = radius
+            roundable.applyRoundnessAndInvalidate()
+        }
+    }
+
+    fun debugString() = buildString {
+        append("TargetView: ${targetView.hashCode()} ")
+        append("Top: $topRoundness ")
+        append(topRoundnessMap.map { "${it.key} ${it.value}" })
+        append(" Bottom: $bottomRoundness ")
+        append(bottomRoundnessMap.map { "${it.key} ${it.value}" })
     }
 
     companion object {
@@ -252,7 +402,7 @@ class RoundableState(
 
                     override fun setValue(view: View, value: Float) {
                         roundable.roundableState.topRoundness = value
-                        roundable.applyRoundness()
+                        roundable.applyRoundnessAndInvalidate()
                     }
                 },
                 R.id.top_roundess_animator_tag,
@@ -267,7 +417,7 @@ class RoundableState(
 
                     override fun setValue(view: View, value: Float) {
                         roundable.roundableState.bottomRoundness = value
-                        roundable.applyRoundness()
+                        roundable.applyRoundnessAndInvalidate()
                     }
                 },
                 R.id.bottom_roundess_animator_tag,
@@ -277,7 +427,30 @@ class RoundableState(
     }
 }
 
-enum class SourceType {
+/**
+ * Interface used to define the owner of a roundness. Usually the [SourceType] is defined as a
+ * private property of a class.
+ */
+interface SourceType {
+    companion object {
+        /**
+         * This is the most convenient way to define a new [SourceType].
+         *
+         * For example:
+         * ```kotlin
+         *     private val SECTION = SourceType.from("Section")
+         * ```
+         */
+        @JvmStatic
+        fun from(name: String) =
+            object : SourceType {
+                override fun toString() = name
+            }
+    }
+}
+
+@Deprecated("Use SourceType.from() instead", ReplaceWith("SourceType.from()"))
+enum class LegacySourceType : SourceType {
     DefaultValue,
     OnDismissAnimation,
     OnScroll,

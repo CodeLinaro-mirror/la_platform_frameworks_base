@@ -467,7 +467,8 @@
     <string name="power_charging" msgid="6727132649743436802">"<xliff:g id="LEVEL">%1$s</xliff:g> – <xliff:g id="STATE">%2$s</xliff:g>"</string>
     <string name="power_remaining_charging_duration_only" msgid="8085099012811384899">"<xliff:g id="TIME">%1$s</xliff:g> до полной зарядки"</string>
     <string name="power_charging_duration" msgid="6127154952524919719">"<xliff:g id="LEVEL">%1$s</xliff:g> – <xliff:g id="TIME">%2$s</xliff:g> до полной зарядки"</string>
-    <string name="power_charging_limited" msgid="6971664137170239141">"<xliff:g id="LEVEL">%1$s</xliff:g>: зарядка приостановлена"</string>
+    <string name="power_charging_limited" msgid="8202147604844938236">"<xliff:g id="LEVEL">%1$s</xliff:g> – зарядка оптимизирована"</string>
+    <string name="power_charging_future_paused" msgid="4730177778538118032">"<xliff:g id="LEVEL">%1$s</xliff:g> – зарядка оптимизирована"</string>
     <string name="battery_info_status_unknown" msgid="268625384868401114">"Неизвестно"</string>
     <string name="battery_info_status_charging" msgid="4279958015430387405">"Идет зарядка"</string>
     <string name="battery_info_status_charging_fast" msgid="8027559755902954885">"Быстрая зарядка"</string>
@@ -521,7 +522,7 @@
     <string name="alarms_and_reminders_label" msgid="6918395649731424294">"Будильники и напоминания"</string>
     <string name="alarms_and_reminders_switch_title" msgid="4939393911531826222">"Разрешить установку будильников и напоминаний"</string>
     <string name="alarms_and_reminders_title" msgid="8819933264635406032">"Будильники и напоминания"</string>
-    <string name="alarms_and_reminders_footer_title" msgid="6302587438389079695">"Если вы разрешите этому приложению устанавливать будильники и планировать на определенное время действия, оно будет работать в фоновом режиме. В таком случае заряд батареи может расходоваться быстрее.\n\nЕсли отключить эту настройку, текущие будильники и созданные приложением мероприятия перестанут запускаться."</string>
+    <string name="alarms_and_reminders_footer_title" msgid="6302587438389079695">"Вы можете разрешить этому приложению устанавливать будильники и планировать запуск действий в определенное время. В этом случае оно будет работать в фоновом режиме и быстрее расходовать заряд батареи.\n\nЕсли отключить это разрешение, текущие будильники и созданные приложением события перестанут запускаться."</string>
     <string name="keywords_alarms_and_reminders" msgid="6633360095891110611">"установить, будильник, напоминание, часы"</string>
     <string name="zen_mode_enable_dialog_turn_on" msgid="6418297231575050426">"Включить"</string>
     <string name="zen_mode_settings_turn_on_dialog_title" msgid="2760567063190790696">"Включите режим \"Не беспокоить\""</string>
@@ -539,6 +540,13 @@
     <string name="media_transfer_this_device_name" product="default" msgid="2357329267148436433">"Этот смартфон"</string>
     <string name="media_transfer_this_device_name" product="tablet" msgid="3714653244000242800">"Этот планшет"</string>
     <string name="media_transfer_this_phone" msgid="7194341457812151531">"Этот смартфон"</string>
+    <string name="media_output_status_unknown_error" msgid="5098565887497902222">"Невозможно воспроизвести на этом устройстве."</string>
+    <string name="media_output_status_require_premium" msgid="8411255800047014822">"Для переключения требуется премиум-аккаунт"</string>
+    <string name="media_output_status_not_support_downloads" msgid="4523828729240373315">"Не удается воспроизвести скачанные файлы"</string>
+    <string name="media_output_status_try_after_ad" msgid="8312579066856015441">"Повторите попытку после просмотра объявления"</string>
+    <string name="media_output_status_device_in_low_power_mode" msgid="8184631698321758451">"Для воспроизведения выведите устройство из спящего режима."</string>
+    <string name="media_output_status_unauthorized" msgid="5880222828273853838">"Для воспроизведения необходима авторизация."</string>
+    <string name="media_output_status_track_unsupported" msgid="5576313219317709664">"Невозможно воспроизвести медиафайл."</string>
     <string name="profile_connect_timeout_subtext" msgid="4043408193005851761">"Ошибка подключения. Выключите и снова включите устройство."</string>
     <string name="media_transfer_wired_device_name" msgid="4447880899964056007">"Проводное аудиоустройство"</string>
     <string name="help_label" msgid="3528360748637781274">"Справка/отзыв"</string>
@@ -563,6 +571,8 @@
     <string name="user_add_user_title" msgid="5457079143694924885">"Добавить пользователя?"</string>
     <string name="user_add_user_message_long" msgid="1527434966294733380">"Если этим устройством пользуются сразу несколько человек, для каждого из них можно создать отдельный профиль – практически собственное пространство со своими приложениями, обоями и т. д. При этом из профиля можно поменять и настройки устройства, общие для всех, например выбрать сеть Wi-Fi.\n\nКогда вы добавляете нового пользователя, ему нужно настроить свой профиль.\n\nОбновлять общие приложения может любой пользователь, однако специальные возможности настраиваются индивидуально."</string>
     <string name="user_add_user_message_short" msgid="3295959985795716166">"После создания профиля его потребуется настроить.\n\nЛюбой пользователь устройства может обновлять приложения для всех аккаунтов."</string>
+    <string name="user_grant_admin_title" msgid="5565796912475193314">"Права администратора"</string>
+    <string name="user_grant_admin_message" msgid="7925257971286380976">"Как администратор, он сможет управлять другими пользователями, менять и сбрасывать настройки устройства."</string>
     <string name="user_setup_dialog_title" msgid="8037342066381939995">"Настроить профиль?"</string>
     <string name="user_setup_dialog_message" msgid="269931619868102841">"Вам потребуется передать устройство пользователю, чтобы он мог настроить свой профиль."</string>
     <string name="user_setup_profile_dialog_message" msgid="4788197052296962620">"Настроить профиль?"</string>
@@ -594,6 +604,8 @@
     <string name="guest_reset_and_restart_dialog_message" msgid="2764425635305200790">"При этом начнется новый гостевой сеанс, а все данные и приложения предыдущего сеанса будут удалены."</string>
     <string name="guest_exit_dialog_title" msgid="1846494656849381804">"Выйти из гостевого режима?"</string>
     <string name="guest_exit_dialog_message" msgid="1743218864242719783">"Все приложения и данные текущего гостевого сеанса будут удалены."</string>
+    <string name="grant_admin" msgid="4273077214151417783">"Предоставить пользователю права администратора"</string>
+    <string name="not_grant_admin" msgid="6985027675930546850">"Не предоставлять пользователю права администратора"</string>
     <string name="guest_exit_dialog_button" msgid="1736401897067442044">"Выйти"</string>
     <string name="guest_exit_dialog_title_non_ephemeral" msgid="7675327443743162986">"Сохранить историю сеанса?"</string>
     <string name="guest_exit_dialog_message_non_ephemeral" msgid="223385323235719442">"Сохраните историю текущего сеанса или удалите данные и приложения."</string>
@@ -661,4 +673,10 @@
     <string name="back_navigation_animation" msgid="8105467568421689484">"Анимации подсказки для жеста \"Назад\""</string>
     <string name="back_navigation_animation_summary" msgid="741292224121599456">"Включить системную анимацию подсказки для жеста \"Назад\"."</string>
     <string name="back_navigation_animation_dialog" msgid="8696966520944625596">"С помощью этого параметра можно включить системные анимации подсказок для жестов. Для этого нужно установить значение true для enableOnBackInvokedCallback в файле манифеста приложения."</string>
+  <string-array name="udfps_accessibility_touch_hints">
+    <item msgid="1737722959616802157">"Переместите палец влево"</item>
+    <item msgid="5425394847942513942">"Переместите палец вниз"</item>
+    <item msgid="7728484337962740316">"Переместите палец вправо"</item>
+    <item msgid="324200556467459329">"Переместите палец вверх"</item>
+  </string-array>
 </resources>

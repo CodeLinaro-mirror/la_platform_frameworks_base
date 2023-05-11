@@ -24,6 +24,7 @@ import static android.service.autofill.FillEventHistory.Event.UI_TYPE_MENU;
 import static android.service.autofill.FillEventHistory.Event.UI_TYPE_UNKNOWN;
 import static android.service.autofill.FillRequest.FLAG_MANUAL_REQUEST;
 import static android.service.autofill.FillRequest.FLAG_PASSWORD_INPUT_TYPE;
+import static android.service.autofill.FillRequest.FLAG_PCC_DETECTION;
 import static android.service.autofill.FillRequest.FLAG_RESET_FILL_DIALOG_STATE;
 import static android.service.autofill.FillRequest.FLAG_SUPPORTS_FILL_DIALOG;
 import static android.service.autofill.FillRequest.FLAG_VIEW_NOT_FOCUSED;
@@ -87,6 +88,8 @@ import android.os.Process;
 import android.os.RemoteCallback;
 import android.os.RemoteException;
 import android.os.SystemClock;
+import android.service.assist.classification.FieldClassificationRequest;
+import android.service.assist.classification.FieldClassificationResponse;
 import android.service.autofill.AutofillFieldClassificationService.Scores;
 import android.service.autofill.AutofillService;
 import android.service.autofill.CompositeUserData;
@@ -124,6 +127,7 @@ import android.view.autofill.AutofillValue;
 import android.view.autofill.IAutoFillManagerClient;
 import android.view.autofill.IAutofillWindowPresenter;
 import android.view.inputmethod.InlineSuggestionsRequest;
+import android.widget.RemoteViews;
 
 import com.android.internal.R;
 import com.android.internal.annotations.GuardedBy;
@@ -145,6 +149,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -162,12 +167,15 @@ import java.util.function.Function;
  * until the user authenticates or it times out.
  */
 final class Session implements RemoteFillService.FillServiceCallbacks, ViewState.Listener,
-        AutoFillUI.AutoFillUiCallback, ValueFinder {
+        AutoFillUI.AutoFillUiCallback, ValueFinder,
+        RemoteFieldClassificationService.FieldClassificationServiceCallbacks {
     private static final String TAG = "AutofillSession";
 
     private static final String ACTION_DELAYED_FILL =
             "android.service.autofill.action.DELAYED_FILL";
     private static final String EXTRA_REQUEST_ID = "android.service.autofill.extra.REQUEST_ID";
+
+    private static final String PCC_HINTS_DELIMITER = ",";
 
     final Object mLock;
 
@@ -181,6 +189,8 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
     static final int AUGMENTED_AUTOFILL_REQUEST_ID = 1;
 
     private static AtomicInteger sIdCounter = new AtomicInteger(2);
+
+    private static AtomicInteger sIdCounterForPcc = new AtomicInteger(2);
 
     @GuardedBy("mLock")
     private @SessionState int mSessionState = STATE_UNKNOWN;
@@ -266,6 +276,9 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
     @GuardedBy("mLock")
     private DeathRecipient mClientVulture;
 
+    @GuardedBy("mLock")
+    private boolean mLoggedInlineDatasetShown;
+
     /**
      * Reference to the remote service.
      *
@@ -324,6 +337,13 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
     private final long mStartTime;
 
     /**
+     * Starting timestamp of latency logger.
+     * This is set when Session created or when the view is reset.
+     */
+    @GuardedBy("mLock")
+    private long mLatencyBaseTime;
+
+    /**
      * When the UI was shown for the first time (using elapsed time since boot).
      */
     @GuardedBy("mLock")
@@ -377,8 +397,15 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
      */
     private final AssistDataReceiverImpl mAssistReceiver = new AssistDataReceiverImpl();
 
+    /**
+     * Receiver of assist data for pcc purpose
+     */
+    private final PccAssistDataReceiverImpl mPccAssistReceiver = new PccAssistDataReceiverImpl();
+
     @Nullable
     private ClientSuggestionsSession mClientSuggestionsSession;
+
+    private final ClassificationState mClassificationState = new ClassificationState();
 
     // TODO(b/216576510): Share one BroadcastReceiver between all Sessions instead of creating a
     // new one per Session.
@@ -416,6 +443,18 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
     @NonNull
     @GuardedBy("mLock")
     private boolean mPreviouslyFillDialogPotentiallyStarted;
+
+    /**
+     * Keeps track of if the user entered view, this is used to
+     * distinguish Fill Request that did not have user interaction
+     * with ones that did.
+     *
+     * This is set to true when entering view - after FillDialog FillRequest
+     * or on plain user tap.
+     */
+    @NonNull
+    @GuardedBy("mLock")
+    private boolean mLogViewEntered;
 
     /**
      * Keeps the fill dialog trigger ids of the last response. This invalidates
@@ -551,6 +590,7 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
                 if (mPendingInlineSuggestionsRequest.isServiceSupported()) {
                     mPendingFillRequest = new FillRequest(mPendingFillRequest.getId(),
                             mPendingFillRequest.getFillContexts(),
+                            mPendingFillRequest.getHints(),
                             mPendingFillRequest.getClientState(),
                             mPendingFillRequest.getFlags(),
                             mPendingInlineSuggestionsRequest,
@@ -659,8 +699,10 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
 
                 final ArrayList<FillContext> contexts =
                         mergePreviousSessionLocked(/* forSave= */ false);
+                final List<String> hints = getTypeHintsForProvider();
+
                 mDelayedFillPendingIntent = createPendingIntent(requestId);
-                request = new FillRequest(requestId, contexts, mClientState, flags,
+                request = new FillRequest(requestId, contexts, hints, mClientState, flags,
                         /*inlineSuggestionsRequest=*/ null,
                         /*delayedFillIntentSender=*/ mDelayedFillPendingIntent == null
                             ? null
@@ -688,6 +730,103 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
                 onFillRequestSuccess(requestId, response,
                         mService.getServicePackageName(), mLastFillRequest.getFlags());
             }
+        }
+    }
+
+    /**
+     * Get the list of valid autofill hint types from Device flags
+     * Returns empty list if PCC is off or no types available
+    */
+    private List<String> getTypeHintsForProvider() {
+        if (!mService.getMaster().isPccClassificationEnabled()) {
+            return Collections.EMPTY_LIST;
+        }
+        final String typeHints = mService.getMaster().getPccProviderHints();
+        if (sVerbose) {
+            Slog.v(TAG, "TypeHints flag:" + typeHints);
+        }
+        if (TextUtils.isEmpty(typeHints)) {
+            return new ArrayList<>();
+        }
+
+        return List.of(typeHints.split(PCC_HINTS_DELIMITER));
+    }
+
+    /**
+     * Assist Data Receiver for PCC
+     */
+    private final class PccAssistDataReceiverImpl extends IAssistDataReceiver.Stub {
+
+        @GuardedBy("mLock")
+        void maybeRequestFieldClassificationFromServiceLocked() {
+            if (mClassificationState.mPendingFieldClassificationRequest == null) {
+                Slog.w(TAG, "Received AssistData without pending classification request");
+                return;
+            }
+
+            RemoteFieldClassificationService remoteFieldClassificationService =
+                    mService.getRemoteFieldClassificationServiceLocked();
+            if (remoteFieldClassificationService != null) {
+                remoteFieldClassificationService.onFieldClassificationRequest(
+                        mClassificationState.mPendingFieldClassificationRequest, Session.this);
+            }
+            mClassificationState.onFieldClassificationRequestSent();
+        }
+
+        @Override
+        public void onHandleAssistData(Bundle resultData) throws RemoteException {
+            // TODO: add a check if pcc field classification service is present
+            final AssistStructure structure = resultData.getParcelable(ASSIST_KEY_STRUCTURE,
+                android.app.assist.AssistStructure.class);
+            if (structure == null) {
+                Slog.e(TAG, "No assist structure for pcc detection - "
+                    + "app might have crashed providing it");
+                return;
+            }
+
+            final Bundle receiverExtras = resultData.getBundle(ASSIST_KEY_RECEIVER_EXTRAS);
+            if (receiverExtras == null) {
+                Slog.e(TAG, "No receiver extras for pcc detection - "
+                    + "app might have crashed providing it");
+                return;
+            }
+
+            final int requestId = receiverExtras.getInt(EXTRA_REQUEST_ID);
+
+            if (sVerbose) {
+                Slog.v(TAG, "New structure for PCC Detection: requestId " + requestId + ": "
+                        + structure);
+            }
+
+            synchronized (mLock) {
+                // TODO(b/35708678): Must fetch the data so it's available later on handleSave(),
+                // even if the activity is gone by then, but structure .ensureData() gives a
+                // ONE_WAY warning because system_service could block on app calls. We need to
+                // change AssistStructure so it provides a "one-way" writeToParcel() method that
+                // sends all the data
+                try {
+                    structure.ensureDataForAutofill();
+                } catch (RuntimeException e) {
+                    wtf(e, "Exception lazy loading assist structure for %s: %s",
+                        structure.getActivityComponent(), e);
+                    return;
+                }
+
+                final ArrayList<AutofillId> ids = Helper.getAutofillIds(structure,
+                    /* autofillableOnly= */false);
+                for (int i = 0; i < ids.size(); i++) {
+                    ids.get(i).setSessionId(Session.this.id);
+                }
+
+                mClassificationState.onAssistStructureReceived(structure);
+
+                maybeRequestFieldClassificationFromServiceLocked();
+            }
+        }
+
+        @Override
+        public void onHandleAssistScreenshot(Bitmap screenshot) {
+            // Do nothing
         }
     }
 
@@ -990,6 +1129,13 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
         // structure is taken. This causes only one fill request per burst of focus changes.
         cancelCurrentRequestLocked();
 
+        if (mClassificationState.mHintsToAutofillIdMap == null) {
+            if (sVerbose) {
+                Slog.v(TAG, "triggering field classification");
+            }
+            requestAssistStructureForPccLocked(flags | FLAG_PCC_DETECTION);
+        }
+
         // Only ask IME to create inline suggestions request when
         // 1. Autofill provider supports it or client enabled client suggestions.
         // 2. The render service is available.
@@ -1041,12 +1187,46 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
             return;
         }
 
+        final long fillRequestSentRelativeTimestamp =
+                SystemClock.elapsedRealtime() - mLatencyBaseTime;
+        mPresentationStatsEventLogger.maybeSetFillRequestSentTimestampMs(
+                (int) (fillRequestSentRelativeTimestamp));
+
         // Now request the assist structure data.
         requestAssistStructureLocked(requestId, flags);
     }
 
     private boolean isRequestSupportFillDialog(int flags) {
         return (flags & FLAG_SUPPORTS_FILL_DIALOG) != 0;
+    }
+
+    @GuardedBy("mLock")
+    private void requestAssistStructureForPccLocked(int flags) {
+        // Get request id
+        int requestId;
+        // TODO(b/158623971): Update this to prevent possible overflow
+        do {
+            requestId = sIdCounterForPcc.getAndIncrement();
+        } while (requestId == INVALID_REQUEST_ID);
+
+        if (sVerbose) {
+            Slog.v(TAG, "request id is " + requestId + ", requesting assist structure for pcc");
+        }
+        // Call requestAutofilLData
+        try {
+            final Bundle receiverExtras = new Bundle();
+            receiverExtras.putInt(EXTRA_REQUEST_ID, requestId);
+            final long identity = Binder.clearCallingIdentity();
+            try {
+                if (!ActivityTaskManager.getService().requestAutofillData(mPccAssistReceiver,
+                        receiverExtras, mActivityToken, flags)) {
+                    Slog.w(TAG, "failed to request autofill data for " + mActivityToken);
+                }
+            } finally {
+                Binder.restoreCallingIdentity(identity);
+            }
+        } catch (RemoteException e) {
+        }
     }
 
     @GuardedBy("mLock")
@@ -1085,6 +1265,7 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
         this.taskId = taskId;
         this.uid = uid;
         mStartTime = SystemClock.elapsedRealtime();
+        mLatencyBaseTime = mStartTime;
         mService = service;
         mLock = lock;
         mUi = ui;
@@ -1116,6 +1297,14 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
                     @Override
                     public void notifyInlineUiShown(AutofillId autofillId) {
                         notifyFillUiShown(autofillId);
+
+                        synchronized (mLock) {
+                            // TODO(b/262448552): Log when chip inflates instead of here
+                            final long inlineUiShownRelativeTimestamp =
+                                    SystemClock.elapsedRealtime() - mLatencyBaseTime;
+                            mPresentationStatsEventLogger.maybeSetSuggestionPresentedTimestampMs(
+                                    (int) (inlineUiShownRelativeTimestamp));
+                        }
                     }
 
                     @Override
@@ -1126,6 +1315,7 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
 
         mMetricsLogger.write(newLogMaker(MetricsEvent.AUTOFILL_SESSION_STARTED)
                 .addTaggedData(MetricsEvent.FIELD_AUTOFILL_FLAGS, flags));
+        mLogViewEntered = false;
     }
 
     /**
@@ -1197,7 +1387,6 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
     @Override
     public void onFillRequestSuccess(int requestId, @Nullable FillResponse response,
             @NonNull String servicePackageName, int requestFlags) {
-
         final AutofillId[] fieldClassificationIds;
 
         final LogMaker requestLog;
@@ -1208,6 +1397,12 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
                         + id + " destroyed");
                 return;
             }
+
+            // Time passed since session was created
+            final long fillRequestReceivedRelativeTimestamp =
+                    SystemClock.elapsedRealtime() - mLatencyBaseTime;
+            mPresentationStatsEventLogger.maybeSetFillResponseReceivedTimestampMs(
+                    (int) (fillRequestReceivedRelativeTimestamp));
 
             requestLog = mRequestLogs.get(requestId);
             if (requestLog != null) {
@@ -1223,6 +1418,8 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
                 return;
             }
 
+            // TODO: Check if this is required. We can still present datasets to the user even if
+            //  traditional field classification is disabled.
             fieldClassificationIds = response.getFieldClassificationIds();
             if (!mSessionFlags.mClientSuggestionsEnabled && fieldClassificationIds != null
                     && !mService.isFieldClassificationEnabledLocked()) {
@@ -1241,6 +1438,14 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
         }
 
         mService.setLastResponse(id, response);
+
+        synchronized (mLock) {
+            if (mLogViewEntered) {
+                mLogViewEntered = false;
+                mService.logViewEntered(id, null);
+            }
+        }
+
 
         final long disableDuration = response.getDisableDuration();
         final boolean autofillDisabled = disableDuration > 0;
@@ -1287,7 +1492,7 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
         if (((response.getDatasets() == null || response.getDatasets().isEmpty())
                         && response.getAuthentication() == null)
                 || autofillDisabled) {
-            // Response is "empty" from an UI point of view, need to notify client.
+            // Response is "empty" from a UI point of view, need to notify client.
             notifyUnavailableToClient(
                     autofillDisabled ? AutofillManager.STATE_DISABLED_BY_SERVICE : 0,
                     /* autofillableIds= */ null);
@@ -1307,8 +1512,289 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
             }
         }
 
+        // TODO(b/266379948): Ideally wait for PCC request to finish for a while more
+        // (say 100ms) before proceeding further on.
+
         synchronized (mLock) {
+            response = getEffectiveFillResponse(response);
             processResponseLocked(response, null, requestFlags);
+        }
+    }
+
+    private FillResponse getEffectiveFillResponse(FillResponse response) {
+        // TODO(b/266379948): label dataset source
+        if (!mService.getMaster().isPccClassificationEnabled()) return response;
+        synchronized (mLock) {
+            if (mClassificationState.mState != ClassificationState.STATE_RESPONSE
+                    || mClassificationState.mLastFieldClassificationResponse == null) {
+                return response;
+            }
+            if (!mClassificationState.processResponse()) return response;
+        }
+        boolean preferAutofillProvider = mService.getMaster().preferProviderOverPcc();
+        boolean shouldUseFallback = mService.getMaster().shouldUsePccFallback();
+        if (preferAutofillProvider && !shouldUseFallback) {
+            return response;
+        }
+
+        DatasetComputationContainer autofillProviderContainer = new DatasetComputationContainer();
+        DatasetComputationContainer detectionPccContainer = new DatasetComputationContainer();
+
+        computeDatasetsForProviderAndUpdateContainer(response, autofillProviderContainer);
+        computeDatasetsForPccAndUpdateContainer(response, detectionPccContainer);
+
+        DatasetComputationContainer resultContainer;
+        if (preferAutofillProvider) {
+            resultContainer = autofillProviderContainer;
+            if (shouldUseFallback) {
+                // add PCC datasets that are not detected by provider.
+                addFallbackDatasets(autofillProviderContainer, detectionPccContainer);
+            }
+        } else {
+            resultContainer = detectionPccContainer;
+            if (shouldUseFallback) {
+                // add Provider's datasets that are not detected by PCC.
+                addFallbackDatasets(detectionPccContainer, autofillProviderContainer);
+            }
+        }
+        // Create FillResponse with effectiveDatasets, and all the rest value from the original
+        // response.
+        return FillResponse.shallowCopy(response, new ArrayList<>(resultContainer.mDatasets));
+    }
+
+    /**
+     * A private class to hold & compute datasets to be shown
+     */
+    private static class DatasetComputationContainer {
+        // List of all autofill ids that have a corresponding datasets
+        Set<AutofillId> mAutofillIds = new ArraySet<>();
+        // Set of datasets. Kept separately, to be able to be used directly for composing
+        // FillResponse.
+        Set<Dataset> mDatasets = new ArraySet<>();
+        ArrayMap<AutofillId, Set<Dataset>> mAutofillIdToDatasetMap = new ArrayMap<>();
+    }
+
+    // Adds fallback datasets to the first container.
+    // This function will destruct and modify c2 container.
+    private void addFallbackDatasets(
+            DatasetComputationContainer c1, DatasetComputationContainer c2) {
+        for (AutofillId id : c2.mAutofillIds) {
+            if (!c1.mAutofillIds.contains(id)) {
+
+                // Since c2 could be modified in a previous iteration, it's possible that all
+                // datasets corresponding to it have been evaluated, and it's map no longer has
+                // any more datasets left. Early return in this case.
+                if (c2.mAutofillIdToDatasetMap.get(id).isEmpty()) return;
+
+                // For AutofillId id, do the following
+                // 1. Add all the datasets corresponding to it to c1's dataset, and update c1
+                // properly.
+                // 2. All the datasets that were added should be removed from the other autofill
+                // ids that were in this dataset. This prevents us from revisiting those datasets.
+                // Although we are using Sets, and that'd avoid re-adding them, using this logic
+                // for now to keep safe. TODO(b/266379948): Revisit this logic.
+
+                Set<Dataset> datasets = c2.mAutofillIdToDatasetMap.get(id);
+                Set<Dataset> copyDatasets = new ArraySet<>(datasets);
+                c1.mAutofillIds.add(id);
+                c1.mAutofillIdToDatasetMap.put(id, copyDatasets);
+                c1.mDatasets.addAll(copyDatasets);
+
+                for (Dataset dataset : datasets) {
+                    for (AutofillId currentId : dataset.getFieldIds()) {
+                        if (currentId.equals(id)) continue;
+                        // For this id, we need to remove the dataset from it's map.
+                        c2.mAutofillIdToDatasetMap.get(currentId).remove(dataset);
+                    }
+                }
+            }
+        }
+    }
+
+    private void computeDatasetsForProviderAndUpdateContainer(
+            FillResponse response, DatasetComputationContainer container) {
+        List<Dataset> datasets = response.getDatasets();
+        if (datasets == null) return;
+        ArrayMap<AutofillId, Set<Dataset>> autofillIdToDatasetMap = new ArrayMap<>();
+        Set<Dataset> eligibleDatasets = new ArraySet<>();
+        Set<AutofillId> eligibleAutofillIds = new ArraySet<>();
+        for (Dataset dataset : response.getDatasets()) {
+            if (dataset.getFieldIds() == null || dataset.getFieldIds().isEmpty()) continue;
+            if (dataset.getAutofillDatatypes() != null
+                    && !dataset.getAutofillDatatypes().isEmpty()) {
+                // This dataset has information relevant for detection too, so we should filter
+                // them out. It's possible that some fields are applicable to hints only, as such,
+                // they need to be filtered off.
+                // TODO(b/266379948): Verify the logic and add tests
+                // Update dataset to only have non-null fieldValues
+
+                // Figure out if we need to process results.
+                boolean conversionRequired = false;
+                int newSize = dataset.getFieldIds().size();
+                for (AutofillId id : dataset.getFieldIds()) {
+                    if (id == null) {
+                        conversionRequired = true;
+                        newSize--;
+                    }
+                }
+
+                if (conversionRequired) {
+                    ArrayList<AutofillId> fieldIds = new ArrayList<>(newSize);
+                    ArrayList<AutofillValue> fieldValues = new ArrayList<>(newSize);
+                    ArrayList<RemoteViews> fieldPresentations = new ArrayList<>(newSize);
+                    ArrayList<RemoteViews> fieldDialogPresentations = new ArrayList<>(newSize);
+                    ArrayList<InlinePresentation> fieldInlinePresentations =
+                            new ArrayList<>(newSize);
+                    ArrayList<InlinePresentation> fieldInlineTooltipPresentations =
+                            new ArrayList<>(newSize);
+                    ArrayList<Dataset.DatasetFieldFilter> fieldFilters = new ArrayList<>(newSize);
+
+                    for (int i = 0; i < dataset.getFieldIds().size(); i++) {
+                        AutofillId id = dataset.getFieldIds().get(i);
+                        if (id != null) {
+                            // Copy over
+                            fieldIds.add(id);
+                            fieldValues.add(dataset.getFieldValues().get(i));
+                            fieldPresentations.add(dataset.getFieldPresentation(i));
+                            fieldDialogPresentations.add(dataset.getFieldDialogPresentation(i));
+                            fieldInlinePresentations.add(dataset.getFieldInlinePresentation(i));
+                            fieldInlineTooltipPresentations.add(
+                                    dataset.getFieldInlineTooltipPresentation(i));
+                            fieldFilters.add(dataset.getFilter(i));
+                        }
+                    }
+                    dataset =
+                            new Dataset(
+                                    fieldIds,
+                                    fieldValues,
+                                    fieldPresentations,
+                                    fieldDialogPresentations,
+                                    fieldInlinePresentations,
+                                    fieldInlineTooltipPresentations,
+                                    fieldFilters,
+                                    new ArrayList<>(),
+                                    dataset.getFieldContent(),
+                                    null,
+                                    null,
+                                    null,
+                                    null,
+                                    dataset.getId(),
+                                    dataset.getAuthentication());
+                }
+            }
+            eligibleDatasets.add(dataset);
+            for (AutofillId id : dataset.getFieldIds()) {
+                eligibleAutofillIds.add(id);
+                Set<Dataset> datasetForIds = autofillIdToDatasetMap.get(id);
+                if (datasetForIds == null) {
+                    datasetForIds = new ArraySet<>();
+                }
+                datasetForIds.add(dataset);
+                autofillIdToDatasetMap.put(id, datasetForIds);
+            }
+        }
+        container.mAutofillIdToDatasetMap = autofillIdToDatasetMap;
+        container.mDatasets = eligibleDatasets;
+        container.mAutofillIds = eligibleAutofillIds;
+    }
+
+    private void computeDatasetsForPccAndUpdateContainer(
+            FillResponse response, DatasetComputationContainer container) {
+        List<Dataset> datasets = response.getDatasets();
+        if (datasets == null) return;
+
+        synchronized (mLock) {
+            ArrayMap<String, Set<AutofillId>> hintsToAutofillIdMap =
+                    mClassificationState.mHintsToAutofillIdMap;
+
+            // TODO(266379948): Handle group hints too.
+            ArrayMap<String, Set<AutofillId>> groupHintsToAutofillIdMap =
+                    mClassificationState.mGroupHintsToAutofillIdMap;
+
+            ArrayMap<AutofillId, Set<Dataset>> map = new ArrayMap<>();
+
+            Set<Dataset> eligibleDatasets = new ArraySet<>();
+            Set<AutofillId> eligibleAutofillIds = new ArraySet<>();
+
+            for (int i = 0; i < datasets.size(); i++) {
+                Dataset dataset = datasets.get(i);
+                if (dataset.getAutofillDatatypes() == null
+                        || dataset.getAutofillDatatypes().isEmpty()) continue;
+                if (dataset.getFieldIds() != null && dataset.getFieldIds().size() > 0) continue;
+
+                ArrayList<AutofillId> fieldIds = new ArrayList<>();
+                ArrayList<AutofillValue> fieldValues = new ArrayList<>();
+                ArrayList<RemoteViews> fieldPresentations = new ArrayList<>();
+                ArrayList<RemoteViews> fieldDialogPresentations = new ArrayList<>();
+                ArrayList<InlinePresentation> fieldInlinePresentations = new ArrayList<>();
+                ArrayList<InlinePresentation> fieldInlineTooltipPresentations = new ArrayList<>();
+                ArrayList<Dataset.DatasetFieldFilter> fieldFilters = new ArrayList<>();
+
+                for (int j = 0; j < dataset.getAutofillDatatypes().size(); j++) {
+                    if (dataset.getAutofillDatatypes().get(0) == null) continue;
+                    String hint = dataset.getAutofillDatatypes().get(j);
+
+                    if (hintsToAutofillIdMap.containsKey(hint)) {
+                        ArrayList<AutofillId> tempIds =
+                                new ArrayList<>(hintsToAutofillIdMap.get(hint));
+
+                        for (AutofillId autofillId : tempIds) {
+                            eligibleAutofillIds.add(autofillId);
+                            // For each of the field, copy over values.
+                            fieldIds.add(autofillId);
+                            fieldValues.add(dataset.getFieldValues().get(j));
+                            //  TODO(b/266379948): might need to make it more efficient by not
+                            //  copying over value if it didn't exist. This would require creating
+                            //  a getter for the presentations arraylist.
+                            fieldPresentations.add(dataset.getFieldPresentation(j));
+                            fieldDialogPresentations.add(dataset.getFieldDialogPresentation(j));
+                            fieldInlinePresentations.add(dataset.getFieldInlinePresentation(j));
+                            fieldInlineTooltipPresentations.add(
+                                    dataset.getFieldInlineTooltipPresentation(j));
+                            fieldFilters.add(dataset.getFilter(j));
+                        }
+
+                        Dataset newDataset =
+                                new Dataset(
+                                        fieldIds,
+                                        fieldValues,
+                                        fieldPresentations,
+                                        fieldDialogPresentations,
+                                        fieldInlinePresentations,
+                                        fieldInlineTooltipPresentations,
+                                        fieldFilters,
+                                        new ArrayList<>(),
+                                        dataset.getFieldContent(),
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        dataset.getId(),
+                                        dataset.getAuthentication());
+                        eligibleDatasets.add(newDataset);
+
+                        // Associate this dataset with all the ids that are represented with it.
+                        Set<Dataset> newDatasets;
+                        for (AutofillId autofillId : tempIds) {
+                            if (map.containsKey(autofillId)) {
+                                newDatasets = map.get(autofillId);
+                            } else {
+                                newDatasets = new ArraySet<>();
+                            }
+                            newDatasets.add(newDataset);
+                            map.put(autofillId, newDatasets);
+                        }
+                    }
+                    // TODO(b/266379948):  handle the case:
+                    // groupHintsToAutofillIdMap.containsKey(hint))
+                    // but the autofill id not being applicable to other hints.
+                    // TODO(b/266379948):  also handle the case where there could be more types in
+                    // the dataset, provided by the provider, however, they aren't applicable.
+                }
+            }
+            container.mAutofillIds = eligibleAutofillIds;
+            container.mDatasets = eligibleDatasets;
+            container.mAutofillIdToDatasetMap = map;
         }
     }
 
@@ -1567,6 +2053,22 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
         }
         mHandler.sendMessage(obtainMessage(
                 Session::removeFromService, this));
+    }
+
+    // AutofillUiCallback
+    @Override
+    public void onShown(int uiType) {
+        synchronized (mLock) {
+            if (uiType == UI_TYPE_INLINE) {
+                if (mLoggedInlineDatasetShown) {
+                    // Chip inflation already logged, do not log again.
+                    // This is needed because every chip inflation will call this.
+                    return;
+                }
+                mLoggedInlineDatasetShown = true;
+            }
+            mService.logDatasetShown(this.id, mClientState, uiType);
+        }
     }
 
     // AutoFillUiCallback
@@ -2624,8 +3126,8 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
                 final CharSequence serviceLabel;
                 final Drawable serviceIcon;
                 synchronized (mLock) {
-                    serviceLabel = mService.getServiceLabelLocked();
-                    serviceIcon = mService.getServiceIconLocked();
+                    serviceIcon = getServiceIcon(response);
+                    serviceLabel = getServiceLabel(response);
                 }
                 if (serviceLabel == null || serviceIcon == null) {
                     wtf(null, "showSaveLocked(): no service label or icon");
@@ -2635,7 +3137,8 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
 
                 getUiForShowing().showSaveUi(serviceLabel, serviceIcon,
                         mService.getServicePackageName(), saveInfo, this,
-                        mComponentName, this, mPendingSaveUi, isUpdate, mCompatMode);
+                        mComponentName, this, mPendingSaveUi, isUpdate, mCompatMode,
+                        response.getShowSaveDialogIcon());
                 if (client != null) {
                     try {
                         client.setSaveUiState(id, true);
@@ -3067,6 +3570,12 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
             mSessionFlags.mFillDialogDisabled = false;
         }
 
+        /* request assist structure for pcc */
+        if ((flags & FLAG_PCC_DETECTION) != 0) {
+            requestAssistStructureForPccLocked(flags);
+            return;
+        }
+
         switch(action) {
             case ACTION_START_SESSION:
                 // View is triggering autofill.
@@ -3128,6 +3637,7 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
                 }
                 break;
             case ACTION_VIEW_ENTERED:
+                mLatencyBaseTime = SystemClock.elapsedRealtime();
                 boolean wasPreviouslyFillDialog = mPreviouslyFillDialogPotentiallyStarted;
                 mPreviouslyFillDialogPotentiallyStarted = false;
                 if (sVerbose && virtualBounds != null) {
@@ -3144,6 +3654,28 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
                 if (mCompatMode && (viewState.getState() & ViewState.STATE_URL_BAR) != 0) {
                     if (sDebug) Slog.d(TAG, "Ignoring VIEW_ENTERED on URL BAR (id=" + id + ")");
                     return;
+                }
+
+                synchronized (mLock) {
+                    if (!mLogViewEntered) {
+                        // If the current request is for FillDialog (preemptive)
+                        // then this is the first time that the view is entered
+                        // (mLogViewEntered == false) in this case, setLastResponse()
+                        // has already been called, so just log here.
+                        // If the current request is not and (mLogViewEntered == false)
+                        // then the last session is being tracked (setLastResponse not called)
+                        // so this calling logViewEntered will be a nop.
+                        // Calling logViewEntered() twice will only log it once
+                        // TODO(271181979): this is broken for multiple partitions
+                        mService.logViewEntered(this.id, null);
+                    }
+
+                    // If this is the first time view is entered for inline, the last
+                    // session is still being tracked, so logViewEntered() needs
+                    // to be delayed until setLastResponse is called.
+                    // For fill dialog requests case logViewEntered is already called above
+                    // so this will do nothing. Assumption: only one fill dialog per session
+                    mLogViewEntered = true;
                 }
 
                 // Previously, fill request will only start whenever a view is entered.
@@ -3181,7 +3713,7 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
                         return;
                     }
                 }
-
+                // If previous request was FillDialog request, a logger event was already started
                 if (!wasPreviouslyFillDialog) {
                     mPresentationStatsEventLogger.startNewEvent();
                     mPresentationStatsEventLogger.maybeSetAutofillServiceUid(
@@ -3405,14 +3937,20 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
             return;
         }
 
+        synchronized (mLock) {
+            // Time passed since Session was created
+            long suggestionSentRelativeTimestamp =
+                    SystemClock.elapsedRealtime() - mLatencyBaseTime;
+            mPresentationStatsEventLogger.maybeSetSuggestionSentTimestampMs(
+                    (int) (suggestionSentRelativeTimestamp));
+        }
+
         final AutofillId[] ids = response.getFillDialogTriggerIds();
         if (ids != null && ArrayUtils.contains(ids, filledId)) {
             if (requestShowFillDialog(response, filledId, filterText, flags)) {
                 synchronized (mLock) {
                     final ViewState currentView = mViewStates.get(mCurrentViewId);
                     currentView.setState(ViewState.STATE_FILL_DIALOG_SHOWN);
-                    mService.logDatasetShown(id, mClientState, UI_TYPE_DIALOG);
-
                     mPresentationStatsEventLogger.maybeSetCountShown(
                             response.getDatasets(), mCurrentViewId);
                     mPresentationStatsEventLogger.maybeSetDisplayPresentationType(UI_TYPE_DIALOG);
@@ -3421,6 +3959,13 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
                 // Note: Cannot disable before requestShowFillDialog() because the method
                 //       need to check whether fill dialog enabled.
                 setFillDialogDisabled();
+                synchronized (mLock) {
+                    // Logs when fill dialog ui is shown; time since Session was created
+                    final long fillDialogUiShownRelativeTimestamp =
+                            SystemClock.elapsedRealtime() - mLatencyBaseTime;
+                    mPresentationStatsEventLogger.maybeSetSuggestionPresentedTimestampMs(
+                            (int) (fillDialogUiShownRelativeTimestamp));
+                }
                 return;
             } else {
                 setFillDialogDisabled();
@@ -3431,12 +3976,10 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
         if (response.supportsInlineSuggestions()) {
             synchronized (mLock) {
                 if (requestShowInlineSuggestionsLocked(response, filterText)) {
+                    // Cannot tell for sure that InlineSuggestions are shown yet, IME needs to send
+                    // back a response via callback.
                     final ViewState currentView = mViewStates.get(mCurrentViewId);
                     currentView.setState(ViewState.STATE_INLINE_SHOWN);
-                    // TODO(b/248378401): Fix it to log showed only when IME asks for inflation,
-                    // rather than here where framework sends back the response.
-                    mService.logDatasetShown(id, mClientState, UI_TYPE_INLINE);
-
                     // TODO(b/234475358): Log more accurate value of number of inline suggestions
                     // shown, inflated, and filtered.
                     mPresentationStatsEventLogger.maybeSetCountShown(
@@ -3453,7 +3996,6 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
                 targetLabel, targetIcon, this, id, mCompatMode);
 
         synchronized (mLock) {
-            mService.logDatasetShown(id, mClientState, UI_TYPE_MENU);
             mPresentationStatsEventLogger.maybeSetCountShown(
                     response.getDatasets(), mCurrentViewId);
             mPresentationStatsEventLogger.maybeSetDisplayPresentationType(UI_TYPE_MENU);
@@ -3464,6 +4006,11 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
                 // Log first time UI is shown.
                 mUiShownTime = SystemClock.elapsedRealtime();
                 final long duration = mUiShownTime - mStartTime;
+                // This logs when dropdown ui was shown. Timestamp is relative to
+                // when the session was created
+                mPresentationStatsEventLogger.maybeSetSuggestionPresentedTimestampMs(
+                        (int) (mUiShownTime - mLatencyBaseTime));
+
                 if (sDebug) {
                     final StringBuilder msg = new StringBuilder("1st UI for ")
                             .append(mActivityToken)
@@ -3550,9 +4097,13 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
                 if (sDebug) Log.w(TAG, "Last fill dialog triggered ids are changed.");
                 return false;
             }
+
         }
 
-        final Drawable serviceIcon = getServiceIcon();
+        Drawable serviceIcon = null;
+        synchronized (mLock) {
+            serviceIcon = getServiceIcon(response);
+        }
 
         getUiForShowing().showFillDialog(filledId, response, filterText,
                 mService.getServicePackageName(), mComponentName, serviceIcon, this,
@@ -3560,13 +4111,64 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
         return true;
     }
 
+    /**
+     * Get the custom icon that was passed through FillResponse. If the custom icon wasn't able
+     * to be fetched, use the default provider icon instead
+     *
+     * @return Drawable of the provider icon, if it was able to be fetched. Null otherwise
+     */
     @SuppressWarnings("GuardedBy") // ErrorProne says we need to use mService.mLock, but it's
                                    // actually the same object as mLock.
                                    // TODO: Expose mService.mLock or redesign instead.
-    private Drawable getServiceIcon() {
-        synchronized (mLock) {
-            return mService.getServiceIconLocked();
+    @GuardedBy("mLock")
+    private Drawable getServiceIcon(FillResponse response) {
+        Drawable serviceIcon = null;
+        // Try to get the custom Icon, if one was passed through FillResponse
+        int iconResourceId = response.getIconResourceId();
+        if (iconResourceId != 0) {
+            serviceIcon = mService.getMaster().getContext().getPackageManager()
+                .getDrawable(
+                    mService.getServicePackageName(),
+                    iconResourceId,
+                    null);
         }
+
+        // Custom icon wasn't fetched, use the default package icon instead
+        if (serviceIcon == null) {
+            serviceIcon = mService.getServiceIconLocked();
+        }
+
+        return serviceIcon;
+    }
+
+    /**
+     * Get the custom label that was passed through FillResponse. If the custom label
+     * wasn't able to be fetched, use the default provider icon instead
+     *
+     * @return Drawable of the provider icon, if it was able to be fetched. Null otherwise
+     */
+    @SuppressWarnings("GuardedBy") // ErrorProne says we need to use mService.mLock, but it's
+                                   // actually the same object as mLock.
+                                   // TODO: Expose mService.mLock or redesign instead.
+    @GuardedBy("mLock")
+    private CharSequence getServiceLabel(FillResponse response) {
+        CharSequence serviceLabel = null;
+        // Try to get the custom Service name, if one was passed through FillResponse
+        int customServiceNameId = response.getServiceDisplayNameResourceId();
+        if (customServiceNameId != 0) {
+            serviceLabel = mService.getMaster().getContext().getPackageManager()
+                .getText(
+                    mService.getServicePackageName(),
+                    customServiceNameId,
+                    null);
+        }
+
+        // Custom label wasn't fetched, use the default package name instead
+        if (serviceLabel == null) {
+            serviceLabel = mService.getServiceLabelLocked();
+        }
+
+        return serviceLabel;
     }
 
     /**
@@ -3605,6 +4207,12 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
             return false;
         }
 
+        // Set this to false - we are requesting a new inline request and haven't shown
+        // anything yet
+        synchronized (mLock) {
+            mLoggedInlineDatasetShown = false;
+        }
+
         final InlineFillUi.InlineFillUiInfo inlineFillUiInfo =
                 new InlineFillUi.InlineFillUiInfo(request, focusedId,
                         filterText, remoteRenderService, userId, id);
@@ -3633,6 +4241,11 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
                             mInlineSessionController.setInlineFillUiLocked(
                                     InlineFillUi.emptyUi(focusedId));
                         }
+                    }
+
+                    @Override
+                    public void onInflate() {
+                        Session.this.onShown(UI_TYPE_INLINE);
                     }
                 });
         return mInlineSessionController.setInlineFillUiLocked(inlineFillUi);
@@ -3807,7 +4420,7 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
 
         mService.resetLastResponse();
 
-        // The default autofill service cannot fullfill the request, let's check if the augmented
+        // The default autofill service cannot fulfill the request, let's check if the augmented
         // autofill service can.
         mAugmentedAutofillDestroyer = triggerAugmentedAutofillLocked(flags);
         if (mAugmentedAutofillDestroyer == null && ((flags & FLAG_PASSWORD_INPUT_TYPE) == 0)) {
@@ -3964,8 +4577,7 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
                 && (mSessionFlags.mAugmentedAutofillOnly
                         || !mSessionFlags.mInlineSupportedByService
                         || mSessionFlags.mExpiredResponse)
-                && isViewFocusedLocked(flags)
-                || isFillDialogUiEnabled()) {
+                && (isViewFocusedLocked(flags) || isRequestSupportFillDialog(flags))) {
             if (sDebug) Slog.d(TAG, "Create inline request for augmented autofill");
             remoteRenderService.getInlineSuggestionsRendererInfo(new RemoteCallback(
                     (extras) -> {
@@ -4019,7 +4631,7 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
         if (mResponses == null) {
             // Set initial capacity as 2 to handle cases where service always requires auth.
             // TODO: add a metric for number of responses set by server, so we can use its average
-            // as the initial array capacitiy.
+            // as the initial array capacity.
             mResponses = new SparseArray<>(2);
         }
         mResponses.put(requestId, newResponse);
@@ -4231,6 +4843,7 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
         if (mContexts == null) {
             mContexts = new ArrayList<>(1);
         }
+        mContexts.add(new FillContext(requestId, new AssistStructure(), mCurrentViewId));
 
         if (inlineSuggestionsRequest != null && !inlineSuggestionsRequest.isClientSupported()) {
             inlineSuggestionsRequest = null;
@@ -4327,6 +4940,190 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
             return "SaveResult: [logSaveShown=" + mLogSaveShown
                     + ", removeSession=" + mRemoveSession
                     + ", saveDialogNotShowReason=" + mSaveDialogNotShowReason + "]";
+        }
+    }
+
+    /**
+     * Class maintaining the state of the requests to
+     * {@link android.service.assist.classification.FieldClassificationService}.
+     */
+    private static final class ClassificationState {
+
+        /**
+         * Initial state indicating that the request for classification hasn't been triggered yet.
+         */
+        private static final int STATE_INITIAL = 1;
+        /**
+         * Assist request has been triggered, but awaiting response.
+         */
+        private static final int STATE_PENDING_ASSIST_REQUEST = 2;
+        /**
+         * Classification request has been triggered, but awaiting response.
+         */
+        private static final int STATE_PENDING_REQUEST = 3;
+        /**
+         * Classification response has been received.
+         */
+        private static final int STATE_RESPONSE = 4;
+        /**
+         * Classification state has been invalidated, and the last response may no longer be valid.
+         * This could occur due to various reasons like views changing their layouts, becoming
+         * visible or invisible, thereby rendering previous response potentially inaccurate or
+         * incomplete.
+         */
+        private static final int STATE_INVALIDATED = 5;
+
+        @IntDef(prefix = { "STATE_" }, value = {
+                STATE_INITIAL,
+                STATE_PENDING_ASSIST_REQUEST,
+                STATE_PENDING_REQUEST,
+                STATE_RESPONSE,
+                STATE_INVALIDATED
+        })
+        @Retention(RetentionPolicy.SOURCE)
+        @interface ClassificationRequestState{}
+
+        @GuardedBy("mLock")
+        private @ClassificationRequestState int mState = STATE_INITIAL;
+
+        @GuardedBy("mLock")
+        private FieldClassificationRequest mPendingFieldClassificationRequest;
+
+        @GuardedBy("mLock")
+        private FieldClassificationResponse mLastFieldClassificationResponse;
+
+        @GuardedBy("mLock")
+        private ArrayMap<AutofillId, Set<String>> mClassificationHintsMap;
+
+        @GuardedBy("mLock")
+        private ArrayMap<AutofillId, Set<String>> mClassificationGroupHintsMap;
+
+        @GuardedBy("mLock")
+        private ArrayMap<AutofillId, Set<String>> mClassificationCombinedHintsMap;
+
+        /**
+         * Typically, there would be a 1:1 mapping. However, in certain cases, we may have a hint
+         * being applicable to many types. An example of this being new/change password forms,
+         * where you need to confirm the passward twice.
+         */
+        @GuardedBy("mLock")
+        private ArrayMap<String, Set<AutofillId>> mHintsToAutofillIdMap;
+
+        /**
+         * Group hints are expected to have a 1:many mapping. For example, different credit card
+         * fields (creditCardNumber, expiry, cvv) will all map to the same group hints.
+         */
+        @GuardedBy("mLock")
+        private ArrayMap<String, Set<AutofillId>> mGroupHintsToAutofillIdMap;
+
+        @GuardedBy("mLock")
+        private String stateToString() {
+            switch (mState) {
+                case STATE_INITIAL:
+                    return "STATE_INITIAL";
+                case STATE_PENDING_ASSIST_REQUEST:
+                    return "STATE_PENDING_ASSIST_REQUEST";
+                case STATE_PENDING_REQUEST:
+                    return "STATE_PENDING_REQUEST";
+                case STATE_RESPONSE:
+                    return "STATE_RESPONSE";
+                case STATE_INVALIDATED:
+                    return "STATE_INVALIDATED";
+                default:
+                    return "UNKNOWN_CLASSIFICATION_STATE_" + mState;
+            }
+        }
+
+        /**
+         * Process the response received.
+         * @return true if the response was processed, false otherwise. If there wasn't any
+         * response, yet this function was called, it would return false.
+         */
+        @GuardedBy("mLock")
+        private boolean processResponse() {
+            if (mClassificationHintsMap != null && !mClassificationHintsMap.isEmpty()) {
+                // Already processed, so return
+                return true;
+            }
+
+            FieldClassificationResponse response = mLastFieldClassificationResponse;
+            if (response == null) return false;
+
+            mClassificationHintsMap = new ArrayMap<>();
+            mClassificationGroupHintsMap = new ArrayMap<>();
+            mHintsToAutofillIdMap = new ArrayMap<>();
+            mGroupHintsToAutofillIdMap = new ArrayMap<>();
+            mClassificationCombinedHintsMap = new ArrayMap<>();
+            Set<android.service.assist.classification.FieldClassification> classifications =
+                    response.getClassifications();
+
+            for (android.service.assist.classification.FieldClassification classification :
+                    classifications) {
+                AutofillId id = classification.getAutofillId();
+                Set<String> hintDetections = classification.getHints();
+                Set<String> groupHintsDetections = classification.getGroupHints();
+                ArraySet<String> combinedHints = new ArraySet<>(hintDetections);
+                mClassificationHintsMap.put(id, hintDetections);
+                if (groupHintsDetections != null) {
+                    mClassificationGroupHintsMap.put(id, groupHintsDetections);
+                    combinedHints.addAll(groupHintsDetections);
+                }
+                mClassificationCombinedHintsMap.put(id, combinedHints);
+
+                processDetections(hintDetections, id, mHintsToAutofillIdMap);
+                processDetections(groupHintsDetections, id, mGroupHintsToAutofillIdMap);
+            }
+            return true;
+        }
+
+        @GuardedBy("mLock")
+        private static void processDetections(Set<String> detections, AutofillId id,
+                ArrayMap<String, Set<AutofillId>> currentMap) {
+            for (String detection : detections) {
+                Set<AutofillId> autofillIds;
+                if (currentMap.containsKey(detection)) {
+                    autofillIds = currentMap.get(detection);
+                } else {
+                    autofillIds = new ArraySet<>();
+                }
+                autofillIds.add(id);
+                currentMap.put(detection, autofillIds);
+            }
+        }
+
+        @GuardedBy("mLock")
+        private void invalidateState() {
+            mState = STATE_INVALIDATED;
+        }
+
+        @GuardedBy("mLock")
+        private void updatePendingAssistData() {
+            mState = STATE_PENDING_ASSIST_REQUEST;
+        }
+
+        @GuardedBy("mLock")
+        private void updatePendingRequest() {
+            mState = STATE_PENDING_REQUEST;
+        }
+
+        @GuardedBy("mLock")
+        private void updateResponseReceived(FieldClassificationResponse response) {
+            mState = STATE_RESPONSE;
+            mLastFieldClassificationResponse = response;
+            mPendingFieldClassificationRequest = null;
+            processResponse();
+        }
+
+        @GuardedBy("mLock")
+        private void onAssistStructureReceived(AssistStructure structure) {
+            mState = STATE_PENDING_REQUEST;
+            mPendingFieldClassificationRequest = new FieldClassificationRequest(structure);
+        }
+
+        @GuardedBy("mLock")
+        private void onFieldClassificationRequestSent() {
+            mState = STATE_PENDING_REQUEST;
+            mPendingFieldClassificationRequest = null;
         }
     }
 
@@ -4839,4 +5636,28 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
         ServiceInfo serviceInfo = mService.getServiceInfo();
         return serviceInfo == null ? Process.INVALID_UID : serviceInfo.applicationInfo.uid;
     }
+
+    // DetectionServiceCallbacks
+    public void onClassificationRequestSuccess(@Nullable FieldClassificationResponse response) {
+        mClassificationState.updateResponseReceived(response);
+    }
+
+    public void onClassificationRequestFailure(int requestId, @Nullable CharSequence message) {
+
+    }
+
+    public void onClassificationRequestTimeout(int requestId) {
+
+    }
+
+    @Override
+    public void onServiceDied(@NonNull RemoteFieldClassificationService service) {
+        Slog.w(TAG, "removing session because service died");
+        synchronized (mLock) {
+            // TODO(b/266379948)
+            // forceRemoveFromServiceLocked();
+        }
+    }
+    // DetectionServiceCallbacks end
+
 }

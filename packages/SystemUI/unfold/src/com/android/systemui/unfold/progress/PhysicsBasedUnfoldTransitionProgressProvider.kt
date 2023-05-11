@@ -27,13 +27,14 @@ import com.android.systemui.unfold.updates.FOLD_UPDATE_FINISH_CLOSED
 import com.android.systemui.unfold.updates.FOLD_UPDATE_FINISH_FULL_OPEN
 import com.android.systemui.unfold.updates.FOLD_UPDATE_FINISH_HALF_OPEN
 import com.android.systemui.unfold.updates.FOLD_UPDATE_START_CLOSING
-import com.android.systemui.unfold.updates.FOLD_UPDATE_UNFOLDED_SCREEN_AVAILABLE
 import com.android.systemui.unfold.updates.FoldStateProvider
 import com.android.systemui.unfold.updates.FoldStateProvider.FoldUpdate
 import com.android.systemui.unfold.updates.FoldStateProvider.FoldUpdatesListener
+import com.android.systemui.unfold.updates.name
+import javax.inject.Inject
 
 /** Maps fold updates to unfold transition progress using DynamicAnimation. */
-class PhysicsBasedUnfoldTransitionProgressProvider(
+class PhysicsBasedUnfoldTransitionProgressProvider @Inject constructor(
     private val foldStateProvider: FoldStateProvider
 ) : UnfoldTransitionProgressProvider, FoldUpdatesListener, DynamicAnimation.OnAnimationEndListener {
 
@@ -75,21 +76,11 @@ class PhysicsBasedUnfoldTransitionProgressProvider(
 
     override fun onFoldUpdate(@FoldUpdate update: Int) {
         when (update) {
-            FOLD_UPDATE_UNFOLDED_SCREEN_AVAILABLE -> {
-                startTransition(startValue = 0f)
-
-                // Stop the animation if the device has already opened by the time when
-                // the display is available as we won't receive the full open event anymore
-                if (foldStateProvider.isFinishedOpening) {
-                    cancelTransition(endValue = 1f, animate = true)
-                }
-            }
             FOLD_UPDATE_FINISH_FULL_OPEN, FOLD_UPDATE_FINISH_HALF_OPEN -> {
                 // Do not cancel if we haven't started the transition yet.
                 // This could happen when we fully unfolded the device before the screen
                 // became available. In this case we start and immediately cancel the animation
-                // in FOLD_UPDATE_UNFOLDED_SCREEN_AVAILABLE event handler, so we don't need to
-                // cancel it here.
+                // in onUnfoldedScreenAvailable event handler, so we don't need to cancel it here.
                 if (isTransitionRunning) {
                     cancelTransition(endValue = 1f, animate = true)
                 }
@@ -117,13 +108,27 @@ class PhysicsBasedUnfoldTransitionProgressProvider(
         }
 
         if (DEBUG) {
-            Log.d(TAG, "onFoldUpdate = $update")
-            Trace.traceCounter(Trace.TRACE_TAG_APP, "fold_update", update)
+            Log.d(TAG, "onFoldUpdate = ${update.name()}")
+            Trace.setCounter("fold_update", update.toLong())
+        }
+    }
+
+    override fun onUnfoldedScreenAvailable() {
+        startTransition(startValue = 0f)
+
+        // Stop the animation if the device has already opened by the time when
+        // the display is available as we won't receive the full open event anymore
+        if (foldStateProvider.isFinishedOpening) {
+            cancelTransition(endValue = 1f, animate = true)
         }
     }
 
     private fun cancelTransition(endValue: Float, animate: Boolean) {
         if (isTransitionRunning && animate) {
+            if (endValue == 1.0f && !isAnimatedCancelRunning) {
+                listeners.forEach { it.onTransitionFinishing() }
+            }
+
             isAnimatedCancelRunning = true
             springAnimation.animateToFinalPosition(endValue)
         } else {
@@ -152,7 +157,10 @@ class PhysicsBasedUnfoldTransitionProgressProvider(
     }
 
     private fun onStartTransition() {
+        Trace.beginSection( "$TAG#onStartTransition")
         listeners.forEach { it.onTransitionStarted() }
+        Trace.endSection()
+
         isTransitionRunning = true
 
         if (DEBUG) {

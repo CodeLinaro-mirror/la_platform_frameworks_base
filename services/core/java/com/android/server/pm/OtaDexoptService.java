@@ -16,6 +16,7 @@
 
 package com.android.server.pm;
 
+import static com.android.server.pm.DexOptHelper.useArtService;
 import static com.android.server.pm.InstructionSets.getAppDexInstructionSets;
 import static com.android.server.pm.InstructionSets.getDexCodeInstructionSets;
 import static com.android.server.pm.PackageManagerService.PLATFORM_PACKAGE_NAME;
@@ -37,6 +38,7 @@ import android.util.Slog;
 import com.android.internal.logging.MetricsLogger;
 import com.android.server.LocalServices;
 import com.android.server.pm.Installer.InstallerException;
+import com.android.server.pm.Installer.LegacyDexoptDisabledException;
 import com.android.server.pm.dex.DexoptOptions;
 import com.android.server.pm.parsing.pkg.AndroidPackageUtils;
 import com.android.server.pm.pkg.AndroidPackage;
@@ -188,7 +190,7 @@ public class OtaDexoptService extends IOtaDexopt.Stub {
                             + pkgSetting.getTransientState()
                             .getLatestForegroundPackageUseTimeInMills());
                 }
-            } catch (Exception ignored) {
+            } catch (RuntimeException ignored) {
             }
         }
     }
@@ -300,6 +302,15 @@ public class OtaDexoptService extends IOtaDexopt.Stub {
                     throws InstallerException {
                 final StringBuilder builder = new StringBuilder();
 
+                if (useArtService()) {
+                    if ((dexFlags & DEXOPT_SECONDARY_DEX) != 0) {
+                        // installd may change the reference profile in place for secondary dex
+                        // files, which isn't safe with the lock free approach in ART Service.
+                        throw new IllegalArgumentException(
+                                "Invalid OTA dexopt call for secondary dex");
+                    }
+                }
+
                 // The current version. For v10, see b/115993344.
                 builder.append("10 ");
 
@@ -352,14 +363,27 @@ public class OtaDexoptService extends IOtaDexopt.Stub {
         PackageDexOptimizer optimizer = new OTADexoptPackageDexOptimizer(
                 collectingInstaller, mPackageManagerService.mInstallLock, mContext);
 
-        optimizer.performDexOpt(pkg, pkgSetting,
-                null /* ISAs */,
-                null /* CompilerStats.PackageStats */,
-                mPackageManagerService.getDexManager().getPackageUseInfoOrDefault(
-                        pkg.getPackageName()),
-                new DexoptOptions(pkg.getPackageName(), compilationReason,
-                        DexoptOptions.DEXOPT_BOOT_COMPLETE));
+        try {
+            optimizer.performDexOpt(pkg, pkgSetting, null /* ISAs */,
+                    null /* CompilerStats.PackageStats */,
+                    mPackageManagerService.getDexManager().getPackageUseInfoOrDefault(
+                            pkg.getPackageName()),
+                    new DexoptOptions(pkg.getPackageName(), compilationReason,
+                            DexoptOptions.DEXOPT_BOOT_COMPLETE));
+        } catch (LegacyDexoptDisabledException e) {
+            // OTA is still allowed to use the legacy dexopt code even when ART Service is enabled.
+            // The installer is isolated and won't call into installd, and the dexopt() method is
+            // overridden to only collect the command above. Hence we shouldn't go into any code
+            // path where this exception is thrown.
+            Slog.wtf(TAG, e);
+        }
 
+        // ART Service compat note: These commands are consumed by the otapreopt binary, which uses
+        // the same legacy dexopt code as installd to invoke dex2oat. It provides output path
+        // implementations (see calculate_odex_file_path and create_cache_path in
+        // frameworks/native/cmds/installd/otapreopt.cpp) to write to different odex files than
+        // those used by ART Service in its ordinary operations, so it doesn't interfere with ART
+        // Service even when dalvik.vm.useartservice is true.
         return commands;
     }
 

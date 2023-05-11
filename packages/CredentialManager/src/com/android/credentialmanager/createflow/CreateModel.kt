@@ -16,38 +16,97 @@
 
 package com.android.credentialmanager.createflow
 
+import android.app.PendingIntent
+import android.content.Intent
 import android.graphics.drawable.Drawable
+import com.android.credentialmanager.common.BaseEntry
+import com.android.credentialmanager.common.CredentialType
+import java.time.Instant
 
-data class ProviderInfo(
+data class CreateCredentialUiState(
+  val enabledProviders: List<EnabledProviderInfo>,
+  val disabledProviders: List<DisabledProviderInfo>? = null,
+  val currentScreenState: CreateScreenState,
+  val requestDisplayInfo: RequestDisplayInfo,
+  val sortedCreateOptionsPairs: List<Pair<CreateOptionInfo, EnabledProviderInfo>>,
+  // Should not change with the real time update of default provider, only determine whether
+  // we're showing provider selection page at the beginning
+  val hasDefaultProvider: Boolean,
+  val activeEntry: ActiveEntry? = null,
+  val remoteEntry: RemoteInfo? = null,
+  val isFromProviderSelection: Boolean? = null,
+)
+
+internal fun hasContentToDisplay(state: CreateCredentialUiState): Boolean {
+    return state.sortedCreateOptionsPairs.isNotEmpty() ||
+        (!state.requestDisplayInfo.preferImmediatelyAvailableCredentials &&
+            state.remoteEntry != null)
+}
+
+open class ProviderInfo(
   val icon: Drawable,
-  val name: String,
+  val id: String,
   val displayName: String,
-  var createOptions: List<CreateOptionInfo>,
-  val isDefault: Boolean,
 )
 
-open class EntryInfo (
-  val entryKey: String,
-  val entrySubkey: String,
-)
+class EnabledProviderInfo(
+  icon: Drawable,
+  id: String,
+  displayName: String,
+  var createOptions: List<CreateOptionInfo>,
+  var remoteEntry: RemoteInfo?,
+) : ProviderInfo(icon, id, displayName)
+
+class DisabledProviderInfo(
+  icon: Drawable,
+  id: String,
+  displayName: String,
+) : ProviderInfo(icon, id, displayName)
 
 class CreateOptionInfo(
+    providerId: String,
+    entryKey: String,
+    entrySubkey: String,
+    pendingIntent: PendingIntent?,
+    fillInIntent: Intent?,
+    val userProviderDisplayName: String,
+    val profileIcon: Drawable?,
+    val passwordCount: Int?,
+    val passkeyCount: Int?,
+    val totalCredentialCount: Int?,
+    val lastUsedTime: Instant?,
+    val footerDescription: String?,
+) : BaseEntry(
+    providerId,
+    entryKey,
+    entrySubkey,
+    pendingIntent,
+    fillInIntent,
+    shouldTerminateUiUponSuccessfulProviderResult = true,
+)
+
+class RemoteInfo(
+  providerId: String,
   entryKey: String,
   entrySubkey: String,
-  val userProviderDisplayName: String,
-  val credentialTypeIcon: Drawable,
-  val profileIcon: Drawable,
-  val passwordCount: Int,
-  val passkeyCount: Int,
-  val totalCredentialCount: Int,
-  val lastUsedTimeMillis: Long?,
-) : EntryInfo(entryKey, entrySubkey)
+  pendingIntent: PendingIntent?,
+  fillInIntent: Intent?,
+) : BaseEntry(
+    providerId,
+    entryKey,
+    entrySubkey,
+    pendingIntent,
+    fillInIntent,
+    shouldTerminateUiUponSuccessfulProviderResult = true,
+)
 
 data class RequestDisplayInfo(
-  val userName: String,
-  val displayName: String,
-  val type: String,
-  val appDomainName: String,
+  val title: String,
+  val subtitle: String?,
+  val type: CredentialType,
+  val appName: String,
+  val typeIcon: Drawable,
+  val preferImmediatelyAvailableCredentials: Boolean,
 )
 
 /**
@@ -55,15 +114,17 @@ data class RequestDisplayInfo(
  * user selects a different entry on the more option page.
  */
 data class ActiveEntry (
-  val activeProvider: ProviderInfo,
-  val activeEntryInfo: EntryInfo,
+  val activeProvider: EnabledProviderInfo,
+  val activeEntryInfo: BaseEntry,
 )
 
 /** The name of the current screen. */
 enum class CreateScreenState {
   PASSKEY_INTRO,
+  MORE_ABOUT_PASSKEYS_INTRO,
   PROVIDER_SELECTION,
   CREATION_OPTION_SELECTION,
   MORE_OPTIONS_SELECTION,
   MORE_OPTIONS_ROW_INTRO,
+  EXTERNAL_ONLY_SELECTION,
 }

@@ -28,9 +28,11 @@ import androidx.test.rule.ActivityTestRule
 import androidx.test.runner.intercepting.SingleActivityFactory
 import com.android.systemui.R
 import com.android.systemui.SysuiTestCase
-import com.android.systemui.broadcast.BroadcastDispatcher
+import com.android.systemui.settings.FakeDisplayTracker
+import com.android.systemui.settings.UserTracker
 import com.android.systemui.util.mockito.any
 import com.google.common.truth.Truth.assertThat
+import java.util.concurrent.Executor
 import org.junit.After
 import org.junit.Before
 import org.junit.Rule
@@ -45,9 +47,13 @@ import org.mockito.MockitoAnnotations
 @TestableLooper.RunWithLooper
 class BrightnessDialogTest : SysuiTestCase() {
 
+    @Mock private lateinit var userTracker: UserTracker
     @Mock private lateinit var brightnessSliderControllerFactory: BrightnessSliderController.Factory
+    @Mock private lateinit var mainExecutor: Executor
     @Mock private lateinit var backgroundHandler: Handler
     @Mock private lateinit var brightnessSliderController: BrightnessSliderController
+
+    private var displayTracker = FakeDisplayTracker(mContext)
 
     @Rule
     @JvmField
@@ -56,8 +62,10 @@ class BrightnessDialogTest : SysuiTestCase() {
             object : SingleActivityFactory<TestDialog>(TestDialog::class.java) {
                 override fun create(intent: Intent?): TestDialog {
                     return TestDialog(
-                        fakeBroadcastDispatcher,
+                        userTracker,
+                        displayTracker,
                         brightnessSliderControllerFactory,
+                        mainExecutor,
                         backgroundHandler
                     )
                 }
@@ -100,8 +108,17 @@ class BrightnessDialogTest : SysuiTestCase() {
     }
 
     class TestDialog(
-        broadcastDispatcher: BroadcastDispatcher,
+        userTracker: UserTracker,
+        displayTracker: FakeDisplayTracker,
         brightnessSliderControllerFactory: BrightnessSliderController.Factory,
+        mainExecutor: Executor,
         backgroundHandler: Handler
-    ) : BrightnessDialog(broadcastDispatcher, brightnessSliderControllerFactory, backgroundHandler)
+    ) :
+        BrightnessDialog(
+            userTracker,
+            displayTracker,
+            brightnessSliderControllerFactory,
+            mainExecutor,
+            backgroundHandler
+        )
 }

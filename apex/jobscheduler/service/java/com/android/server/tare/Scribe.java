@@ -16,6 +16,7 @@
 
 package com.android.server.tare;
 
+import static android.app.tare.EconomyManager.ENABLED_MODE_OFF;
 import static android.text.format.DateUtils.HOUR_IN_MILLIS;
 
 import static com.android.server.tare.TareUtils.appToString;
@@ -24,6 +25,7 @@ import static com.android.server.tare.TareUtils.cakeToString;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.os.Environment;
+import android.os.SystemClock;
 import android.os.UserHandle;
 import android.util.ArraySet;
 import android.util.AtomicFile;
@@ -33,6 +35,7 @@ import android.util.Pair;
 import android.util.Slog;
 import android.util.SparseArray;
 import android.util.SparseArrayMap;
+import android.util.SparseLongArray;
 import android.util.Xml;
 
 import com.android.internal.annotations.GuardedBy;
@@ -88,6 +91,7 @@ public class Scribe {
             "lastStockRecalculationTime";
     private static final String XML_ATTR_REMAINING_CONSUMABLE_CAKES = "remainingConsumableCakes";
     private static final String XML_ATTR_CONSUMPTION_LIMIT = "consumptionLimit";
+    private static final String XML_ATTR_TIME_SINCE_FIRST_SETUP_MS = "timeSinceFirstSetup";
     private static final String XML_ATTR_PR_DISCHARGE = "discharge";
     private static final String XML_ATTR_PR_BATTERY_LEVEL = "batteryLevel";
     private static final String XML_ATTR_PR_PROFIT = "profit";
@@ -112,6 +116,11 @@ public class Scribe {
     private final InternalResourceService mIrs;
     private final Analyst mAnalyst;
 
+    /**
+     * The value of elapsed realtime since TARE was first setup that was read from disk.
+     * This will only be changed when the persisted file is read.
+     */
+    private long mLoadedTimeSinceFirstSetup;
     @GuardedBy("mIrs.getLock()")
     private long mLastReclamationTime;
     @GuardedBy("mIrs.getLock()")
@@ -122,6 +131,9 @@ public class Scribe {
     private long mRemainingConsumableCakes;
     @GuardedBy("mIrs.getLock()")
     private final SparseArrayMap<String, Ledger> mLedgers = new SparseArrayMap<>();
+    /** Offsets used to calculate the total realtime since each user was added. */
+    @GuardedBy("mIrs.getLock()")
+    private final SparseLongArray mRealtimeSinceUsersAddedOffsets = new SparseLongArray();
 
     private final Runnable mCleanRunnable = this::cleanupLedgers;
     private final Runnable mWriteRunnable = this::writeState;
@@ -163,8 +175,9 @@ public class Scribe {
     }
 
     @GuardedBy("mIrs.getLock()")
-    void discardLedgersLocked(final int userId) {
+    void onUserRemovedLocked(final int userId) {
         mLedgers.delete(userId);
+        mRealtimeSinceUsersAddedOffsets.delete(userId);
         postWrite();
     }
 
@@ -215,10 +228,25 @@ public class Scribe {
         return sum;
     }
 
+    /** Returns the cumulative elapsed realtime since TARE was first setup. */
+    long getRealtimeSinceFirstSetupMs(long nowElapsed) {
+        return mLoadedTimeSinceFirstSetup + nowElapsed;
+    }
+
     /** Returns the total amount of cakes that remain to be consumed. */
     @GuardedBy("mIrs.getLock()")
     long getRemainingConsumableCakesLocked() {
         return mRemainingConsumableCakes;
+    }
+
+    @GuardedBy("mIrs.getLock()")
+    SparseLongArray getRealtimeSinceUsersAddedLocked(long nowElapsed) {
+        final SparseLongArray realtimes = new SparseLongArray();
+        for (int i = mRealtimeSinceUsersAddedOffsets.size() - 1; i >= 0; --i) {
+            realtimes.put(mRealtimeSinceUsersAddedOffsets.keyAt(i),
+                    mRealtimeSinceUsersAddedOffsets.valueAt(i) + nowElapsed);
+        }
+        return realtimes;
     }
 
     @GuardedBy("mIrs.getLock()")
@@ -276,7 +304,8 @@ public class Scribe {
                 }
             }
 
-            final long endTimeCutoff = System.currentTimeMillis() - MAX_TRANSACTION_AGE_MS;
+            final long now = System.currentTimeMillis();
+            final long endTimeCutoff = now - MAX_TRANSACTION_AGE_MS;
             long earliestEndTime = Long.MAX_VALUE;
             for (eventType = parser.next(); eventType != XmlPullParser.END_DOCUMENT;
                     eventType = parser.next()) {
@@ -294,6 +323,12 @@ public class Scribe {
                                 parser.getAttributeLong(null, XML_ATTR_LAST_RECLAMATION_TIME);
                         mLastStockRecalculationTime = parser.getAttributeLong(null,
                                 XML_ATTR_LAST_STOCK_RECALCULATION_TIME, 0);
+                        mLoadedTimeSinceFirstSetup =
+                                parser.getAttributeLong(null, XML_ATTR_TIME_SINCE_FIRST_SETUP_MS,
+                                        // If there's no recorded time since first setup, then
+                                        // offset the current elapsed time so it doesn't shift the
+                                        // timing too much.
+                                        -SystemClock.elapsedRealtime());
                         mSatiatedConsumptionLimit =
                                 parser.getAttributeLong(null, XML_ATTR_CONSUMPTION_LIMIT,
                                         mIrs.getInitialSatiatedConsumptionLimitLocked());
@@ -353,6 +388,13 @@ public class Scribe {
     void setLastStockRecalculationTimeLocked(long time) {
         mLastStockRecalculationTime = time;
         postWrite();
+    }
+
+    @GuardedBy("mIrs.getLock()")
+    void setUserAddedTimeLocked(int userId, long timeElapsed) {
+        // Use the current time as an offset so that when we persist the time, it correctly persists
+        // as "time since now".
+        mRealtimeSinceUsersAddedOffsets.put(userId, -timeElapsed);
     }
 
     @GuardedBy("mIrs.getLock()")
@@ -486,6 +528,14 @@ public class Scribe {
             // Don't return early since we need to go through all the ledger tags and get to the end
             // of the user tag.
         }
+        if (curUser != UserHandle.USER_NULL) {
+            mRealtimeSinceUsersAddedOffsets.put(curUser,
+                            parser.getAttributeLong(null, XML_ATTR_TIME_SINCE_FIRST_SETUP_MS,
+                                    // If there's no recorded time since first setup, then
+                                    // offset the current elapsed time so it doesn't shift the
+                                    // timing too much.
+                                    -SystemClock.elapsedRealtime()));
+        }
         long earliestEndTime = Long.MAX_VALUE;
 
         for (int eventType = parser.next(); eventType != XmlPullParser.END_DOCUMENT;
@@ -613,7 +663,7 @@ public class Scribe {
             // Remove mCleanRunnable callbacks since we're going to clean up the ledgers before
             // writing anyway.
             TareHandlerThread.getHandler().removeCallbacks(mCleanRunnable);
-            if (!mIrs.isEnabled()) {
+            if (mIrs.getEnabledMode() == ENABLED_MODE_OFF) {
                 // If it's no longer enabled, we would have cleared all the data in memory and would
                 // accidentally write an empty file, thus deleting all the history.
                 return;
@@ -630,6 +680,8 @@ public class Scribe {
                 out.attributeLong(null, XML_ATTR_LAST_RECLAMATION_TIME, mLastReclamationTime);
                 out.attributeLong(null,
                         XML_ATTR_LAST_STOCK_RECALCULATION_TIME, mLastStockRecalculationTime);
+                out.attributeLong(null, XML_ATTR_TIME_SINCE_FIRST_SETUP_MS,
+                        mLoadedTimeSinceFirstSetup + SystemClock.elapsedRealtime());
                 out.attributeLong(null, XML_ATTR_CONSUMPTION_LIMIT, mSatiatedConsumptionLimit);
                 out.attributeLong(null, XML_ATTR_REMAINING_CONSUMABLE_CAKES,
                         mRemainingConsumableCakes);
@@ -665,6 +717,9 @@ public class Scribe {
 
         out.startTag(null, XML_TAG_USER);
         out.attributeInt(null, XML_ATTR_USER_ID, userId);
+        out.attributeLong(null, XML_ATTR_TIME_SINCE_FIRST_SETUP_MS,
+                mRealtimeSinceUsersAddedOffsets.get(userId, mLoadedTimeSinceFirstSetup)
+                        + SystemClock.elapsedRealtime());
         for (int pIdx = mLedgers.numElementsForKey(userId) - 1; pIdx >= 0; --pIdx) {
             final String pkgName = mLedgers.keyAt(uIdx, pIdx);
             final Ledger ledger = mLedgers.get(userId, pkgName);

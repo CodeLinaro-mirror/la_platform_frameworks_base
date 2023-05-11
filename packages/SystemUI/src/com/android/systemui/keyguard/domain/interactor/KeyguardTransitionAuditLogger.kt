@@ -19,10 +19,12 @@ package com.android.systemui.keyguard.domain.interactor
 import com.android.keyguard.logging.KeyguardLogger
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Application
+import com.android.systemui.plugins.log.LogLevel.VERBOSE
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+
+private val TAG = KeyguardTransitionAuditLogger::class.simpleName!!
 
 /** Collect flows of interest for auditing keyguard transitions. */
 @SysUISingleton
@@ -37,17 +39,61 @@ constructor(
 
     fun start() {
         scope.launch {
-            keyguardInteractor.wakefulnessState.collect { logger.v("WakefulnessState", it) }
-        }
-
-        scope.launch {
-            interactor.finishedKeyguardTransitionStep.collect {
-                logger.i("Finished transition", it)
+            keyguardInteractor.wakefulnessModel.collect {
+                logger.log(TAG, VERBOSE, "WakefulnessModel", it)
             }
         }
 
         scope.launch {
-            interactor.startedKeyguardTransitionStep.collect { logger.i("Started transition", it) }
+            keyguardInteractor.primaryBouncerShowing.collect {
+                logger.log(TAG, VERBOSE, "Primary bouncer showing", it)
+            }
+        }
+
+        scope.launch {
+            keyguardInteractor.alternateBouncerShowing.collect {
+                logger.log(TAG, VERBOSE, "Alternate bouncer showing", it)
+            }
+        }
+
+        scope.launch {
+            keyguardInteractor.isDozing.collect { logger.log(TAG, VERBOSE, "isDozing", it) }
+        }
+
+        scope.launch {
+            keyguardInteractor.isAbleToDream.collect {
+                logger.log(TAG, VERBOSE, "isAbleToDream", it)
+            }
+        }
+
+        scope.launch {
+            keyguardInteractor.isKeyguardOccluded.collect {
+                logger.log(TAG, VERBOSE, "isOccluded", it)
+            }
+        }
+
+        scope.launch {
+            interactor.finishedKeyguardTransitionStep.collect {
+                logger.log(TAG, VERBOSE, "Finished transition", it)
+            }
+        }
+
+        scope.launch {
+            interactor.canceledKeyguardTransitionStep.collect {
+                logger.log(TAG, VERBOSE, "Canceled transition", it)
+            }
+        }
+
+        scope.launch {
+            interactor.startedKeyguardTransitionStep.collect {
+                logger.log(TAG, VERBOSE, "Started transition", it)
+            }
+        }
+
+        scope.launch {
+            keyguardInteractor.dozeTransitionModel.collect {
+                logger.log(TAG, VERBOSE, "Doze transition", it)
+            }
         }
     }
 }

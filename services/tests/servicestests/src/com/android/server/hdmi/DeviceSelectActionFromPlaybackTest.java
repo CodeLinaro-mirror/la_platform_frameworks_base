@@ -102,7 +102,7 @@ public class DeviceSelectActionFromPlaybackTest {
                         Collections.singletonList(HdmiDeviceInfo.DEVICE_PLAYBACK),
                         new FakeAudioDeviceVolumeManagerWrapper()) {
                     @Override
-                    boolean isControlEnabled() {
+                    boolean isCecControlEnabled() {
                         return true;
                     }
 
@@ -120,6 +120,7 @@ public class DeviceSelectActionFromPlaybackTest {
 
         mHdmiControlService.setIoLooper(mMyLooper);
         mHdmiControlService.setHdmiCecConfig(new FakeHdmiCecConfig(context));
+        mHdmiControlService.setDeviceConfig(new FakeDeviceConfigWrapper());
         mNativeWrapper = new FakeNativeWrapper();
         mHdmiCecController = HdmiCecController.createWithNativeWrapper(
                 mHdmiControlService, mNativeWrapper, mHdmiControlService.getAtomWriter());

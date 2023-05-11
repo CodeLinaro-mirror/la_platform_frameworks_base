@@ -16,6 +16,7 @@
 
 package com.android.settingslib.spa.framework.common
 
+import android.net.Uri
 import android.os.Bundle
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -24,9 +25,6 @@ import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.remember
 import com.android.settingslib.spa.framework.compose.LocalNavController
 
-const val INJECT_ENTRY_NAME = "INJECT"
-const val ROOT_ENTRY_NAME = "ROOT"
-
 interface EntryData {
     val pageId: String?
         get() = null
@@ -34,10 +32,17 @@ interface EntryData {
         get() = null
     val isHighlighted: Boolean
         get() = false
+    val arguments: Bundle?
+        get() = null
 }
 
 val LocalEntryDataProvider =
     compositionLocalOf<EntryData> { object : EntryData {} }
+
+typealias UiLayerRenderer = @Composable (arguments: Bundle?) -> Unit
+typealias StatusDataGetter = (arguments: Bundle?) -> EntryStatusData?
+typealias SearchDataGetter = (arguments: Bundle?) -> EntrySearchData?
+typealias SliceDataGetter = (sliceUri: Uri, arguments: Bundle?) -> EntrySliceData?
 
 /**
  * Defines data of a Settings entry.
@@ -46,11 +51,13 @@ data class SettingsEntry(
     // The unique id of this entry, which is computed by name + owner + fromPage + toPage.
     val id: String,
 
-    // The name of the page, which is used to compute the unique id, and need to be stable.
+    // The name of the entry, which is used to compute the unique id, and need to be stable.
     private val name: String,
 
-    // The display name of the page, for better readability.
-    val displayName: String,
+    // The label of the entry, for better readability.
+    // For migration mapping, this should match the android:key field in the old architecture
+    // if applicable.
+    val label: String,
 
     // The owner page of this entry.
     val owner: SettingsPage,
@@ -71,7 +78,10 @@ data class SettingsEntry(
 
     // Indicate whether the status of entry is mutable.
     // If so, for instance, we'll reindex its status for search.
-    val mutableStatus: Boolean = false,
+    val hasMutableStatus: Boolean = false,
+
+    // Indicate whether the entry has SliceProvider support.
+    val hasSliceSupport: Boolean = false,
 
     /**
      * ========================================
@@ -83,13 +93,19 @@ data class SettingsEntry(
      * API to get the status data of the entry, such as isDisabled / isSwitchOff.
      * Returns null if this entry do NOT have any status.
      */
-    private val statusDataImpl: (arguments: Bundle?) -> EntryStatusData? = { null },
+    private val statusDataImpl: StatusDataGetter = { null },
 
     /**
      * API to get Search indexing data for this entry, such as title / keyword.
      * Returns null if this entry do NOT support search.
      */
-    private val searchDataImpl: (arguments: Bundle?) -> EntrySearchData? = { null },
+    private val searchDataImpl: SearchDataGetter = { null },
+
+    /**
+     * API to get Slice data of this entry. The Slice data is implemented as a LiveData,
+     * and is associated with the Slice's lifecycle (pin / unpin) by the framework.
+     */
+    private val sliceDataImpl: SliceDataGetter = { _: Uri, _: Bundle? -> null },
 
     /**
      * API to Render UI of this entry directly. For now, we use it in the internal injection, to
@@ -97,7 +113,7 @@ data class SettingsEntry(
      * injected entry. In the long term, we may deprecate the @Composable Page() API in SPP, and
      * use each entries' UI rendering function in the page instead.
      */
-    private val uiLayoutImpl: (@Composable (arguments: Bundle?) -> Unit) = {},
+    private val uiLayoutImpl: UiLayerRenderer = {},
 ) {
     fun containerPage(): SettingsPage {
         // The Container page of the entry, which is the from-page or
@@ -106,11 +122,11 @@ data class SettingsEntry(
     }
 
     private fun fullArgument(runtimeArguments: Bundle? = null): Bundle {
-        val arguments = Bundle()
-        if (owner.arguments != null) arguments.putAll(owner.arguments)
-        // Put runtime args later, which can override page args.
-        if (runtimeArguments != null) arguments.putAll(runtimeArguments)
-        return arguments
+        return Bundle().apply {
+            if (owner.arguments != null) putAll(owner.arguments)
+            // Put runtime args later, which can override page args.
+            if (runtimeArguments != null) putAll(runtimeArguments)
+        }
     }
 
     fun getStatusData(runtimeArguments: Bundle? = null): EntryStatusData? {
@@ -121,152 +137,28 @@ data class SettingsEntry(
         return searchDataImpl(fullArgument(runtimeArguments))
     }
 
+    fun getSliceData(sliceUri: Uri, runtimeArguments: Bundle? = null): EntrySliceData? {
+        return sliceDataImpl(sliceUri, fullArgument(runtimeArguments))
+    }
+
     @Composable
     fun UiLayout(runtimeArguments: Bundle? = null) {
-        CompositionLocalProvider(provideLocalEntryData()) {
-            uiLayoutImpl(fullArgument(runtimeArguments))
+        val arguments = remember { fullArgument(runtimeArguments) }
+        CompositionLocalProvider(provideLocalEntryData(arguments)) {
+            uiLayoutImpl(arguments)
         }
     }
 
     @Composable
-    fun provideLocalEntryData(): ProvidedValue<EntryData> {
+    private fun provideLocalEntryData(arguments: Bundle): ProvidedValue<EntryData> {
         val controller = LocalNavController.current
         return LocalEntryDataProvider provides remember {
             object : EntryData {
                 override val pageId = containerPage().id
                 override val entryId = id
                 override val isHighlighted = controller.highlightEntryId == id
+                override val arguments = arguments
             }
-        }
-    }
-}
-
-/**
- * The helper to build a Settings Entry instance.
- */
-class SettingsEntryBuilder(private val name: String, private val owner: SettingsPage) {
-    private var displayName = name
-    private var fromPage: SettingsPage? = null
-    private var toPage: SettingsPage? = null
-
-    // Attributes
-    private var isAllowSearch: Boolean = false
-    private var isSearchDataDynamic: Boolean = false
-    private var mutableStatus: Boolean = false
-
-    // Functions
-    private var statusDataFn: (arguments: Bundle?) -> EntryStatusData? = { null }
-    private var searchDataFn: (arguments: Bundle?) -> EntrySearchData? = { null }
-    private var uiLayoutFn: (@Composable (arguments: Bundle?) -> Unit) = { }
-
-    fun build(): SettingsEntry {
-        return SettingsEntry(
-            id = id(),
-            name = name,
-            owner = owner,
-            displayName = displayName,
-
-            // linking data
-            fromPage = fromPage,
-            toPage = toPage,
-
-            // attributes
-            isAllowSearch = isAllowSearch,
-            isSearchDataDynamic = isSearchDataDynamic,
-            mutableStatus = mutableStatus,
-
-            // functions
-            statusDataImpl = statusDataFn,
-            searchDataImpl = searchDataFn,
-            uiLayoutImpl = uiLayoutFn,
-        )
-    }
-
-    fun setDisplayName(displayName: String): SettingsEntryBuilder {
-        this.displayName = displayName
-        return this
-    }
-
-    fun setLink(
-        fromPage: SettingsPage? = null,
-        toPage: SettingsPage? = null
-    ): SettingsEntryBuilder {
-        if (fromPage != null) this.fromPage = fromPage
-        if (toPage != null) this.toPage = toPage
-        return this
-    }
-
-    fun setIsAllowSearch(isAllowSearch: Boolean): SettingsEntryBuilder {
-        this.isAllowSearch = isAllowSearch
-        return this
-    }
-
-    fun setIsSearchDataDynamic(isDynamic: Boolean): SettingsEntryBuilder {
-        this.isSearchDataDynamic = isDynamic
-        return this
-    }
-
-    fun setHasMutableStatus(hasMutableStatus: Boolean): SettingsEntryBuilder {
-        this.mutableStatus = hasMutableStatus
-        return this
-    }
-
-    fun setMacro(fn: (arguments: Bundle?) -> EntryMacro): SettingsEntryBuilder {
-        setStatusDataFn { fn(it).getStatusData() }
-        setSearchDataFn { fn(it).getSearchData() }
-        setUiLayoutFn {
-            val macro = remember { fn(it) }
-            macro.UiLayout()
-        }
-        return this
-    }
-
-    fun setStatusDataFn(fn: (arguments: Bundle?) -> EntryStatusData?): SettingsEntryBuilder {
-        this.statusDataFn = fn
-        return this
-    }
-
-    fun setSearchDataFn(fn: (arguments: Bundle?) -> EntrySearchData?): SettingsEntryBuilder {
-        this.searchDataFn = fn
-        return this
-    }
-
-    fun setUiLayoutFn(fn: @Composable (arguments: Bundle?) -> Unit): SettingsEntryBuilder {
-        this.uiLayoutFn = fn
-        return this
-    }
-
-    // The unique id of this entry, which is computed by name + owner + fromPage + toPage.
-    private fun id(): String {
-        return "$name:${owner.id}(${fromPage?.id}-${toPage?.id})".toHashId()
-    }
-
-    companion object {
-        fun create(entryName: String, owner: SettingsPage): SettingsEntryBuilder {
-            return SettingsEntryBuilder(entryName, owner)
-        }
-
-        fun createLinkFrom(entryName: String, owner: SettingsPage): SettingsEntryBuilder {
-            return create(entryName, owner).setLink(fromPage = owner)
-        }
-
-        fun createLinkTo(entryName: String, owner: SettingsPage): SettingsEntryBuilder {
-            return create(entryName, owner).setLink(toPage = owner)
-        }
-
-        fun create(owner: SettingsPage, entryName: String, displayName: String? = null):
-            SettingsEntryBuilder {
-            return SettingsEntryBuilder(entryName, owner).setDisplayName(displayName ?: entryName)
-        }
-
-        fun createInject(owner: SettingsPage, displayName: String? = null): SettingsEntryBuilder {
-            val name = displayName ?: "${INJECT_ENTRY_NAME}_${owner.displayName}"
-            return createLinkTo(INJECT_ENTRY_NAME, owner).setDisplayName(name)
-        }
-
-        fun createRoot(owner: SettingsPage, displayName: String? = null): SettingsEntryBuilder {
-            val name = displayName ?: "${ROOT_ENTRY_NAME}_${owner.displayName}"
-            return createLinkTo(ROOT_ENTRY_NAME, owner).setDisplayName(name)
         }
     }
 }

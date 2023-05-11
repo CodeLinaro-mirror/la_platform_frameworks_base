@@ -27,15 +27,18 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import android.content.ComponentName;
 import android.content.Context;
 import android.testing.AndroidTestingRunner;
 import android.view.View;
-import android.widget.ImageView;
 
 import androidx.test.filters.SmallTest;
 
 import com.android.internal.logging.UiEventLogger;
+import com.android.systemui.R;
 import com.android.systemui.SysuiTestCase;
+import com.android.systemui.animation.view.LaunchableImageView;
+import com.android.systemui.condition.SelfExecutingMonitor;
 import com.android.systemui.controls.ControlsServiceInfo;
 import com.android.systemui.controls.controller.ControlsController;
 import com.android.systemui.controls.controller.StructureInfo;
@@ -44,6 +47,7 @@ import com.android.systemui.controls.management.ControlsListingController;
 import com.android.systemui.dreams.DreamOverlayStateController;
 import com.android.systemui.dreams.complication.dagger.DreamHomeControlsComplicationComponent;
 import com.android.systemui.plugins.ActivityStarter;
+import com.android.systemui.shared.condition.Monitor;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -53,6 +57,7 @@ import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -84,13 +89,21 @@ public class DreamHomeControlsComplicationTest extends SysuiTestCase {
     private ArgumentCaptor<ControlsListingController.ControlsListingCallback> mCallbackCaptor;
 
     @Mock
-    private ImageView mView;
+    private View mView;
+
+    @Mock
+    private LaunchableImageView mHomeControlsView;
 
     @Mock
     private ActivityStarter mActivityStarter;
 
     @Mock
-    UiEventLogger mUiEventLogger;
+    private UiEventLogger mUiEventLogger;
+
+    @Captor
+    private ArgumentCaptor<DreamOverlayStateController.Callback> mStateCallbackCaptor;
+
+    private Monitor mMonitor;
 
     @Before
     public void setup() {
@@ -102,6 +115,9 @@ public class DreamHomeControlsComplicationTest extends SysuiTestCase {
         when(mControlsComponent.getControlsListingController()).thenReturn(
                 Optional.of(mControlsListingController));
         when(mControlsComponent.getVisibility()).thenReturn(AVAILABLE);
+        when(mView.findViewById(R.id.home_controls_chip)).thenReturn(mHomeControlsView);
+
+        mMonitor = SelfExecutingMonitor.createInstance();
     }
 
     @Test
@@ -116,7 +132,7 @@ public class DreamHomeControlsComplicationTest extends SysuiTestCase {
     public void complicationAvailability_serviceNotAvailable_noFavorites_doNotAddComplication() {
         final DreamHomeControlsComplication.Registrant registrant =
                 new DreamHomeControlsComplication.Registrant(mComplication,
-                        mDreamOverlayStateController, mControlsComponent);
+                        mDreamOverlayStateController, mControlsComponent, mMonitor);
         registrant.start();
 
         setHaveFavorites(false);
@@ -129,7 +145,7 @@ public class DreamHomeControlsComplicationTest extends SysuiTestCase {
     public void complicationAvailability_serviceAvailable_noFavorites_doNotAddComplication() {
         final DreamHomeControlsComplication.Registrant registrant =
                 new DreamHomeControlsComplication.Registrant(mComplication,
-                        mDreamOverlayStateController, mControlsComponent);
+                        mDreamOverlayStateController, mControlsComponent, mMonitor);
         registrant.start();
 
         setHaveFavorites(false);
@@ -139,10 +155,23 @@ public class DreamHomeControlsComplicationTest extends SysuiTestCase {
     }
 
     @Test
+    public void complicationAvailability_serviceAvailable_noFavorites_panel_addComplication() {
+        final DreamHomeControlsComplication.Registrant registrant =
+                new DreamHomeControlsComplication.Registrant(mComplication,
+                        mDreamOverlayStateController, mControlsComponent, mMonitor);
+        registrant.start();
+
+        setHaveFavorites(false);
+        setServiceWithPanel();
+
+        verify(mDreamOverlayStateController).addComplication(mComplication);
+    }
+
+    @Test
     public void complicationAvailability_serviceNotAvailable_haveFavorites_doNotAddComplication() {
         final DreamHomeControlsComplication.Registrant registrant =
                 new DreamHomeControlsComplication.Registrant(mComplication,
-                        mDreamOverlayStateController, mControlsComponent);
+                        mDreamOverlayStateController, mControlsComponent, mMonitor);
         registrant.start();
 
         setHaveFavorites(true);
@@ -155,12 +184,35 @@ public class DreamHomeControlsComplicationTest extends SysuiTestCase {
     public void complicationAvailability_serviceAvailable_haveFavorites_addComplication() {
         final DreamHomeControlsComplication.Registrant registrant =
                 new DreamHomeControlsComplication.Registrant(mComplication,
-                        mDreamOverlayStateController, mControlsComponent);
+                        mDreamOverlayStateController, mControlsComponent, mMonitor);
         registrant.start();
 
         setHaveFavorites(true);
         setServiceAvailable(true);
 
+        verify(mDreamOverlayStateController).addComplication(mComplication);
+    }
+
+    @Test
+    public void complicationAvailability_checkAvailabilityWhenDreamOverlayBecomesActive() {
+        final DreamHomeControlsComplication.Registrant registrant =
+                new DreamHomeControlsComplication.Registrant(mComplication,
+                        mDreamOverlayStateController, mControlsComponent, mMonitor);
+        registrant.start();
+
+        setServiceAvailable(true);
+        setHaveFavorites(false);
+
+        // Complication not available on start.
+        verify(mDreamOverlayStateController, never()).addComplication(mComplication);
+
+        // Favorite controls added, complication should be available now.
+        setHaveFavorites(true);
+
+        // Dream overlay becomes active.
+        setDreamOverlayActive(true);
+
+        // Verify complication is added.
         verify(mDreamOverlayStateController).addComplication(mComplication);
     }
 
@@ -180,9 +232,9 @@ public class DreamHomeControlsComplicationTest extends SysuiTestCase {
 
         final ArgumentCaptor<View.OnClickListener> clickListenerCaptor =
                 ArgumentCaptor.forClass(View.OnClickListener.class);
-        verify(mView).setOnClickListener(clickListenerCaptor.capture());
+        verify(mHomeControlsView).setOnClickListener(clickListenerCaptor.capture());
 
-        clickListenerCaptor.getValue().onClick(mView);
+        clickListenerCaptor.getValue().onClick(mHomeControlsView);
         verify(mUiEventLogger).log(
                 DreamHomeControlsComplication.DreamHomeControlsChipViewController
                         .DreamOverlayEvent.DREAM_HOME_CONTROLS_TAPPED);
@@ -196,8 +248,24 @@ public class DreamHomeControlsComplicationTest extends SysuiTestCase {
 
     private void setServiceAvailable(boolean value) {
         final List<ControlsServiceInfo> serviceInfos = mock(List.class);
+        when(mControlsListingController.getCurrentServices()).thenReturn(serviceInfos);
         when(serviceInfos.isEmpty()).thenReturn(!value);
         triggerControlsListingCallback(serviceInfos);
+    }
+
+    private void setServiceWithPanel() {
+        final List<ControlsServiceInfo> serviceInfos = new ArrayList<>();
+        ControlsServiceInfo csi = mock(ControlsServiceInfo.class);
+        serviceInfos.add(csi);
+        when(csi.getPanelActivity()).thenReturn(new ComponentName("a", "b"));
+        when(mControlsListingController.getCurrentServices()).thenReturn(serviceInfos);
+        triggerControlsListingCallback(serviceInfos);
+    }
+
+    private void setDreamOverlayActive(boolean value) {
+        when(mDreamOverlayStateController.isOverlayActive()).thenReturn(value);
+        verify(mDreamOverlayStateController).addCallback(mStateCallbackCaptor.capture());
+        mStateCallbackCaptor.getValue().onStateChanged();
     }
 
     private void triggerControlsListingCallback(List<ControlsServiceInfo> serviceInfos) {

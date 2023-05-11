@@ -17,12 +17,16 @@
 package com.android.wm.shell.flicker.pip
 
 import android.platform.test.annotations.Presubmit
-import com.android.server.wm.flicker.FlickerTestParameter
+import android.tools.common.Rotation
+import android.tools.common.datatypes.component.ComponentNameMatcher
+import android.tools.device.flicker.legacy.FlickerTest
+import android.tools.device.flicker.legacy.FlickerTestFactory
 import com.android.server.wm.flicker.helpers.SimpleAppHelper
 import org.junit.Test
+import org.junit.runners.Parameterized
 
 /** Base class for pip expand tests */
-abstract class ExitPipToAppTransition(testSpec: FlickerTestParameter) : PipTransition(testSpec) {
+abstract class ExitPipToAppTransition(flicker: FlickerTest) : PipTransition(flicker) {
     protected val testApp = SimpleAppHelper(instrumentation)
 
     /**
@@ -32,7 +36,9 @@ abstract class ExitPipToAppTransition(testSpec: FlickerTestParameter) : PipTrans
     @Presubmit
     @Test
     open fun pipAppWindowRemainInsideVisibleBounds() {
-        testSpec.assertWmVisibleRegion(pipApp) { coversAtMost(displayBounds) }
+        flicker.assertWmVisibleRegion(pipApp.or(ComponentNameMatcher.TRANSITION_SNAPSHOT)) {
+            coversAtMost(displayBounds)
+        }
     }
 
     /**
@@ -42,7 +48,9 @@ abstract class ExitPipToAppTransition(testSpec: FlickerTestParameter) : PipTrans
     @Presubmit
     @Test
     open fun pipAppLayerRemainInsideVisibleBounds() {
-        testSpec.assertLayersVisibleRegion(pipApp) { coversAtMost(displayBounds) }
+        flicker.assertLayersVisibleRegion(pipApp.or(ComponentNameMatcher.TRANSITION_SNAPSHOT)) {
+            coversAtMost(displayBounds)
+        }
     }
 
     /**
@@ -52,7 +60,7 @@ abstract class ExitPipToAppTransition(testSpec: FlickerTestParameter) : PipTrans
     @Presubmit
     @Test
     open fun showBothAppWindowsThenHidePip() {
-        testSpec.assertWm {
+        flicker.assertWm {
             // when the activity is STOPPING, sometimes it becomes invisible in an entry before
             // the window, sometimes in the same entry. This occurs because we log 1x per frame
             // thus we ignore activity here
@@ -71,8 +79,12 @@ abstract class ExitPipToAppTransition(testSpec: FlickerTestParameter) : PipTrans
     @Presubmit
     @Test
     open fun showBothAppLayersThenHidePip() {
-        testSpec.assertLayers {
-            isVisible(testApp).isVisible(pipApp).then().isInvisible(testApp).isVisible(pipApp)
+        flicker.assertLayers {
+            isVisible(testApp)
+                .isVisible(pipApp.or(ComponentNameMatcher.TRANSITION_SNAPSHOT))
+                .then()
+                .isInvisible(testApp)
+                .isVisible(pipApp)
         }
     }
 
@@ -83,7 +95,7 @@ abstract class ExitPipToAppTransition(testSpec: FlickerTestParameter) : PipTrans
     @Presubmit
     @Test
     open fun testPlusPipAppsCoverFullScreenAtStart() {
-        testSpec.assertLayersStart {
+        flicker.assertLayersStart {
             val pipRegion = visibleRegion(pipApp).region
             visibleRegion(testApp).plus(pipRegion).coversExactly(displayBounds)
         }
@@ -96,14 +108,14 @@ abstract class ExitPipToAppTransition(testSpec: FlickerTestParameter) : PipTrans
     @Presubmit
     @Test
     open fun pipAppCoversFullScreenAtEnd() {
-        testSpec.assertLayersEnd { visibleRegion(pipApp).coversExactly(displayBounds) }
+        flicker.assertLayersEnd { visibleRegion(pipApp).coversExactly(displayBounds) }
     }
 
     /** Checks that the visible region of [pipApp] always expands during the animation */
     @Presubmit
     @Test
     open fun pipLayerExpands() {
-        testSpec.assertLayers {
+        flicker.assertLayers {
             val pipLayerList = this.layers { pipApp.layerMatchesAnyOf(it) && it.isVisible }
             pipLayerList.zipWithNext { previous, current ->
                 current.visibleRegion.coversAtLeast(previous.visibleRegion.region)
@@ -113,4 +125,20 @@ abstract class ExitPipToAppTransition(testSpec: FlickerTestParameter) : PipTrans
 
     /** {@inheritDoc} */
     @Presubmit @Test override fun entireScreenCovered() = super.entireScreenCovered()
+
+    companion object {
+        /**
+         * Creates the test configurations.
+         *
+         * See [FlickerTestFactory.nonRotationTests] for configuring screen orientation and
+         * navigation modes.
+         */
+        @Parameterized.Parameters(name = "{0}")
+        @JvmStatic
+        fun getParams(): List<FlickerTest> {
+            return FlickerTestFactory.nonRotationTests(
+                supportedRotations = listOf(Rotation.ROTATION_0)
+            )
+        }
+    }
 }

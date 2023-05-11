@@ -17,29 +17,31 @@
 package com.android.wm.shell.flicker.pip
 
 import android.platform.test.annotations.Presubmit
-import com.android.server.wm.flicker.FlickerTestParameter
+import android.tools.common.Rotation
+import android.tools.common.flicker.subject.region.RegionSubject
+import android.tools.device.flicker.legacy.FlickerTest
+import android.tools.device.flicker.legacy.FlickerTestFactory
 import com.android.server.wm.flicker.helpers.FixedOrientationAppHelper
-import com.android.server.wm.flicker.traces.region.RegionSubject
 import com.android.wm.shell.flicker.Direction
 import org.junit.Test
+import org.junit.runners.Parameterized
 
 /** Base class for pip tests with Launcher shelf height change */
-abstract class MovePipShelfHeightTransition(testSpec: FlickerTestParameter) :
-    PipTransition(testSpec) {
+abstract class MovePipShelfHeightTransition(flicker: FlickerTest) : PipTransition(flicker) {
     protected val testApp = FixedOrientationAppHelper(instrumentation)
 
     /** Checks [pipApp] window remains visible throughout the animation */
     @Presubmit
     @Test
     open fun pipWindowIsAlwaysVisible() {
-        testSpec.assertWm { isAppWindowVisible(pipApp) }
+        flicker.assertWm { isAppWindowVisible(pipApp) }
     }
 
     /** Checks [pipApp] layer remains visible throughout the animation */
     @Presubmit
     @Test
     open fun pipLayerIsAlwaysVisible() {
-        testSpec.assertLayers { isVisible(pipApp) }
+        flicker.assertLayers { isVisible(pipApp) }
     }
 
     /**
@@ -49,7 +51,7 @@ abstract class MovePipShelfHeightTransition(testSpec: FlickerTestParameter) :
     @Presubmit
     @Test
     open fun pipWindowRemainInsideVisibleBounds() {
-        testSpec.assertWmVisibleRegion(pipApp) { coversAtMost(displayBounds) }
+        flicker.assertWmVisibleRegion(pipApp) { coversAtMost(displayBounds) }
     }
 
     /**
@@ -59,7 +61,7 @@ abstract class MovePipShelfHeightTransition(testSpec: FlickerTestParameter) :
     @Presubmit
     @Test
     open fun pipLayerRemainInsideVisibleBounds() {
-        testSpec.assertLayersVisibleRegion(pipApp) { coversAtMost(displayBounds) }
+        flicker.assertLayersVisibleRegion(pipApp) { coversAtMost(displayBounds) }
     }
 
     /**
@@ -67,7 +69,7 @@ abstract class MovePipShelfHeightTransition(testSpec: FlickerTestParameter) :
      * during the animation.
      */
     protected fun pipWindowMoves(direction: Direction) {
-        testSpec.assertWm {
+        flicker.assertWm {
             val pipWindowFrameList =
                 this.windowStates { pipApp.windowMatchesAnyOf(it) && it.isVisible }.map { it.frame }
             when (direction) {
@@ -83,7 +85,7 @@ abstract class MovePipShelfHeightTransition(testSpec: FlickerTestParameter) :
      * during the animation.
      */
     protected fun pipLayerMoves(direction: Direction) {
-        testSpec.assertLayers {
+        flicker.assertLayers {
             val pipLayerRegionList =
                 this.layers { pipApp.layerMatchesAnyOf(it) && it.isVisible }
                     .map { it.visibleRegion }
@@ -103,5 +105,21 @@ abstract class MovePipShelfHeightTransition(testSpec: FlickerTestParameter) :
     private fun assertRegionMovementUp(regions: List<RegionSubject>) {
         regions.zipWithNext { previous, current -> current.isHigherOrEqual(previous.region) }
         regions.last().isHigher(regions.first())
+    }
+
+    companion object {
+        /**
+         * Creates the test configurations.
+         *
+         * See [FlickerTestFactory.nonRotationTests] for configuring screen orientation and
+         * navigation modes.
+         */
+        @Parameterized.Parameters(name = "{0}")
+        @JvmStatic
+        fun getParams(): List<FlickerTest> {
+            return FlickerTestFactory.nonRotationTests(
+                supportedRotations = listOf(Rotation.ROTATION_0)
+            )
+        }
     }
 }

@@ -16,11 +16,12 @@
 
 package com.android.systemui.globalactions;
 
+import static android.content.pm.UserInfo.FLAG_ADMIN;
+
 import static com.google.common.truth.Truth.assertThat;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.spy;
@@ -32,11 +33,13 @@ import android.app.IActivityManager;
 import android.app.admin.DevicePolicyManager;
 import android.app.trust.TrustManager;
 import android.content.pm.PackageManager;
+import android.content.pm.UserInfo;
 import android.content.res.Resources;
 import android.graphics.Color;
 import android.media.AudioManager;
 import android.os.Handler;
 import android.os.UserManager;
+import android.provider.Settings;
 import android.service.dreams.IDreamManager;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
@@ -63,6 +66,7 @@ import com.android.systemui.broadcast.BroadcastDispatcher;
 import com.android.systemui.colorextraction.SysuiColorExtractor;
 import com.android.systemui.plugins.GlobalActions;
 import com.android.systemui.settings.UserContextProvider;
+import com.android.systemui.settings.UserTracker;
 import com.android.systemui.statusbar.NotificationShadeWindowController;
 import com.android.systemui.statusbar.VibratorHelper;
 import com.android.systemui.statusbar.phone.CentralSurfaces;
@@ -103,6 +107,7 @@ public class GlobalActionsDialogLiteTest extends SysuiTestCase {
     @Mock private SecureSettings mSecureSettings;
     @Mock private Resources mResources;
     @Mock private ConfigurationController mConfigurationController;
+    @Mock private UserTracker mUserTracker;
     @Mock private KeyguardStateController mKeyguardStateController;
     @Mock private UserManager mUserManager;
     @Mock private TrustManager mTrustManager;
@@ -152,6 +157,7 @@ public class GlobalActionsDialogLiteTest extends SysuiTestCase {
                 mVibratorHelper,
                 mResources,
                 mConfigurationController,
+                mUserTracker,
                 mKeyguardStateController,
                 mUserManager,
                 mTrustManager,
@@ -549,10 +555,32 @@ public class GlobalActionsDialogLiteTest extends SysuiTestCase {
 
     @Test
     public void testBugreportAction_whenDebugMode_shouldOfferBugreportButtonBeforeProvisioning() {
-        doReturn(1).when(mGlobalSettings).getInt(anyString(), anyInt());
+        UserInfo currentUser = mockCurrentUser(FLAG_ADMIN);
+
+        when(mGlobalActionsDialogLite.getCurrentUser()).thenReturn(currentUser);
+        when(mGlobalSettings.getIntForUser(Settings.Secure.BUGREPORT_IN_POWER_MENU,
+                0, currentUser.id)).thenReturn(1);
 
         GlobalActionsDialogLite.BugReportAction bugReportAction =
                 mGlobalActionsDialogLite.makeBugReportActionForTesting();
         assertThat(bugReportAction.showBeforeProvisioning()).isTrue();
+    }
+
+    @Test
+    public void testBugreportAction_whenUserIsNotAdmin_noBugReportActionBeforeProvisioning() {
+        UserInfo currentUser = mockCurrentUser(0);
+
+        when(mGlobalActionsDialogLite.getCurrentUser()).thenReturn(currentUser);
+        doReturn(1).when(mGlobalSettings)
+                .getIntForUser(Settings.Secure.BUGREPORT_IN_POWER_MENU, 0, currentUser.id);
+
+        GlobalActionsDialogLite.BugReportAction bugReportAction =
+                mGlobalActionsDialogLite.makeBugReportActionForTesting();
+        assertThat(bugReportAction.showBeforeProvisioning()).isFalse();
+    }
+
+    private UserInfo mockCurrentUser(int flags) {
+        return new UserInfo(10, "A User", flags);
+
     }
 }

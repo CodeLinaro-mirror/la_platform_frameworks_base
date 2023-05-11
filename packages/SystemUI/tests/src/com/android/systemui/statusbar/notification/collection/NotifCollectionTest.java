@@ -92,6 +92,8 @@ import com.android.systemui.statusbar.notification.collection.notifcollection.No
 import com.android.systemui.statusbar.notification.collection.notifcollection.NotifCollectionLogger;
 import com.android.systemui.statusbar.notification.collection.notifcollection.NotifDismissInterceptor;
 import com.android.systemui.statusbar.notification.collection.notifcollection.NotifLifetimeExtender;
+import com.android.systemui.statusbar.notification.collection.provider.NotificationDismissibilityProvider;
+import com.android.systemui.statusbar.notification.row.ExpandableNotificationRow;
 import com.android.systemui.util.concurrency.FakeExecutor;
 import com.android.systemui.util.time.FakeSystemClock;
 
@@ -104,6 +106,7 @@ import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.mockito.Spy;
+import org.mockito.stubbing.Answer;
 
 import java.util.Arrays;
 import java.util.Collection;
@@ -166,7 +169,8 @@ public class NotifCollectionTest extends SysuiTestCase {
                 mMainHandler,
                 mBgExecutor,
                 mEulogizer,
-                mock(DumpManager.class));
+                mock(DumpManager.class),
+                mock(NotificationDismissibilityProvider.class));
         mCollection.attach(mGroupCoalescer);
         mCollection.addCollectionListener(mCollectionListener);
         mCollection.setBuildListener(mBuildListener);
@@ -372,6 +376,90 @@ public class NotifCollectionTest extends SysuiTestCase {
                 entry.getSbn().getUser(),
                 channel,
                 NOTIFICATION_CHANNEL_OR_GROUP_UPDATED);
+    }
+
+    @Test
+    public void testScheduleBuildNotificationListWhenChannelChanged() {
+        // GIVEN
+        final NotificationEntryBuilder neb = buildNotif(TEST_PACKAGE, 48);
+        final NotificationChannel channel = new NotificationChannel(
+                "channelId",
+                "channelName",
+                NotificationManager.IMPORTANCE_DEFAULT);
+        neb.setChannel(channel);
+
+        final NotifEvent notif = mNoMan.postNotif(neb);
+        final NotificationEntry entry = mCollectionListener.getEntry(notif.key);
+
+        when(mMainHandler.hasCallbacks(any())).thenReturn(false);
+
+        clearInvocations(mBuildListener);
+
+        // WHEN
+        mNotifHandler.onNotificationChannelModified(TEST_PACKAGE,
+                entry.getSbn().getUser(), channel, NOTIFICATION_CHANNEL_OR_GROUP_UPDATED);
+
+        // THEN
+        verify(mMainHandler).postDelayed(any(), eq(1000L));
+    }
+
+    @Test
+    public void testCancelScheduledBuildNotificationListEventWhenNotifUpdatedSynchronously() {
+        // GIVEN
+        final NotificationEntry entry1 = buildNotif(TEST_PACKAGE, 1)
+                .setGroup(mContext, "group_1")
+                .build();
+        final NotificationEntry entry2 = buildNotif(TEST_PACKAGE, 2)
+                .setGroup(mContext, "group_1")
+                .setContentTitle(mContext, "New version")
+                .build();
+        final NotificationEntry entry3 = buildNotif(TEST_PACKAGE, 3)
+                .setGroup(mContext, "group_1")
+                .build();
+
+        final List<CoalescedEvent> entriesToBePosted = Arrays.asList(
+                new CoalescedEvent(entry1.getKey(), 0, entry1.getSbn(), entry1.getRanking(), null),
+                new CoalescedEvent(entry2.getKey(), 1, entry2.getSbn(), entry2.getRanking(), null),
+                new CoalescedEvent(entry3.getKey(), 2, entry3.getSbn(), entry3.getRanking(), null)
+        );
+
+        when(mMainHandler.hasCallbacks(any())).thenReturn(true);
+
+        // WHEN
+        mNotifHandler.onNotificationBatchPosted(entriesToBePosted);
+
+        // THEN
+        verify(mMainHandler).removeCallbacks(any());
+    }
+
+    @Test
+    public void testBuildNotificationListWhenChannelChanged() {
+        // GIVEN
+        final NotificationEntryBuilder neb = buildNotif(TEST_PACKAGE, 48);
+        final NotificationChannel channel = new NotificationChannel(
+                "channelId",
+                "channelName",
+                NotificationManager.IMPORTANCE_DEFAULT);
+        neb.setChannel(channel);
+
+        final NotifEvent notif = mNoMan.postNotif(neb);
+        final NotificationEntry entry = mCollectionListener.getEntry(notif.key);
+
+        when(mMainHandler.hasCallbacks(any())).thenReturn(false);
+        when(mMainHandler.postDelayed(any(), eq(1000L))).thenAnswer((Answer) invocation -> {
+            final Runnable runnable = invocation.getArgument(0);
+            runnable.run();
+            return null;
+        });
+
+        clearInvocations(mBuildListener);
+
+        // WHEN
+        mNotifHandler.onNotificationChannelModified(TEST_PACKAGE,
+                entry.getSbn().getUser(), channel, NOTIFICATION_CHANNEL_OR_GROUP_UPDATED);
+
+        // THEN
+        verifyBuiltList(List.of(entry));
     }
 
     @Test
@@ -741,22 +829,24 @@ public class NotifCollectionTest extends SysuiTestCase {
     @Test
     public void testGroupChildrenAreDismissedLocallyWhenSummaryIsDismissed() {
         // GIVEN a collection with two grouped notifs in it
-        CollectionEvent notif0 = postNotif(
+        CollectionEvent groupNotif = postNotif(
                 buildNotif(TEST_PACKAGE, 0)
                         .setGroup(mContext, GROUP_1)
                         .setGroupSummary(mContext, true));
-        CollectionEvent notif1 = postNotif(
+        CollectionEvent childNotif = postNotif(
                 buildNotif(TEST_PACKAGE, 1)
                         .setGroup(mContext, GROUP_1));
-        NotificationEntry entry0 = mCollectionListener.getEntry(notif0.key);
-        NotificationEntry entry1 = mCollectionListener.getEntry(notif1.key);
+        NotificationEntry groupEntry = mCollectionListener.getEntry(groupNotif.key);
+        NotificationEntry childEntry = mCollectionListener.getEntry(childNotif.key);
+        ExpandableNotificationRow childRow = mock(ExpandableNotificationRow.class);
+        childEntry.setRow(childRow);
 
         // WHEN the summary is dismissed
-        mCollection.dismissNotification(entry0, defaultStats(entry0));
+        mCollection.dismissNotification(groupEntry, defaultStats(groupEntry));
 
         // THEN all members of the group are marked as dismissed locally
-        assertEquals(DISMISSED, entry0.getDismissState());
-        assertEquals(PARENT_DISMISSED, entry1.getDismissState());
+        assertEquals(DISMISSED, groupEntry.getDismissState());
+        assertEquals(PARENT_DISMISSED, childEntry.getDismissState());
     }
 
     @Test

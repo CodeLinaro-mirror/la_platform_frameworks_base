@@ -20,7 +20,6 @@ import static android.app.StatusBarManager.DISABLE2_NONE;
 import static android.app.StatusBarManager.DISABLE_NONE;
 import static android.inputmethodservice.InputMethodService.BACK_DISPOSITION_DEFAULT;
 import static android.inputmethodservice.InputMethodService.IME_INVISIBLE;
-import static android.view.Display.DEFAULT_DISPLAY;
 import static android.view.Display.INVALID_DISPLAY;
 
 import android.annotation.Nullable;
@@ -38,26 +37,28 @@ import android.hardware.biometrics.BiometricManager.BiometricMultiSensorMode;
 import android.hardware.biometrics.IBiometricContextListener;
 import android.hardware.biometrics.IBiometricSysuiReceiver;
 import android.hardware.biometrics.PromptInfo;
-import android.hardware.display.DisplayManager;
 import android.hardware.fingerprint.IUdfpsRefreshRateRequestCallback;
 import android.inputmethodservice.InputMethodService.BackDispositionMode;
 import android.media.INearbyMediaDevicesProvider;
 import android.media.MediaRoute2Info;
+import android.os.Binder;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.HandlerExecutor;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.Message;
 import android.os.ParcelFileDescriptor;
+import android.os.Process;
 import android.os.RemoteException;
 import android.util.Pair;
 import android.util.SparseArray;
-import android.view.InsetsState.InternalInsetsType;
 import android.view.WindowInsets.Type.InsetsType;
 import android.view.WindowInsetsController.Appearance;
 import android.view.WindowInsetsController.Behavior;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.VisibleForTesting;
 
 import com.android.internal.os.SomeArgs;
 import com.android.internal.statusbar.IAddTileResultCallback;
@@ -68,6 +69,7 @@ import com.android.internal.statusbar.StatusBarIcon;
 import com.android.internal.util.GcUtils;
 import com.android.internal.view.AppearanceRegion;
 import com.android.systemui.dump.DumpHandler;
+import com.android.systemui.settings.DisplayTracker;
 import com.android.systemui.statusbar.CommandQueue.Callbacks;
 import com.android.systemui.statusbar.commandline.CommandRegistry;
 import com.android.systemui.statusbar.policy.CallbackController;
@@ -87,8 +89,7 @@ import java.util.ArrayList;
  * are coalesced, note that they are all idempotent.
  */
 public class CommandQueue extends IStatusBar.Stub implements
-        CallbackController<Callbacks>,
-        DisplayManager.DisplayListener {
+        CallbackController<Callbacks> {
     private static final String TAG = CommandQueue.class.getSimpleName();
 
     private static final int INDEX_MASK = 0xffff;
@@ -163,6 +164,11 @@ public class CommandQueue extends IStatusBar.Stub implements
     private static final int MSG_REGISTER_NEARBY_MEDIA_DEVICE_PROVIDER = 66 << MSG_SHIFT;
     private static final int MSG_UNREGISTER_NEARBY_MEDIA_DEVICE_PROVIDER = 67 << MSG_SHIFT;
     private static final int MSG_TILE_SERVICE_REQUEST_LISTENING_STATE = 68 << MSG_SHIFT;
+    private static final int MSG_SHOW_REAR_DISPLAY_DIALOG = 69 << MSG_SHIFT;
+    private static final int MSG_GO_TO_FULLSCREEN_FROM_SPLIT = 70 << MSG_SHIFT;
+    private static final int MSG_ENTER_STAGE_SPLIT_FROM_RUNNING_APP = 71 << MSG_SHIFT;
+    private static final int MSG_SHOW_MEDIA_OUTPUT_SWITCHER = 72 << MSG_SHIFT;
+    private static final int MSG_TOGGLE_TASKBAR = 73 << MSG_SHIFT;
 
     public static final int FLAG_EXCLUDE_NONE = 0;
     public static final int FLAG_EXCLUDE_SEARCH_PANEL = 1 << 0;
@@ -183,6 +189,7 @@ public class CommandQueue extends IStatusBar.Stub implements
      * event.
      */
     private int mLastUpdatedImeDisplayId = INVALID_DISPLAY;
+    private final DisplayTracker mDisplayTracker;
     private ProtoTracer mProtoTracer;
     private final @Nullable CommandRegistry mRegistry;
     private final @Nullable DumpHandler mDumpHandler;
@@ -223,6 +230,7 @@ public class CommandQueue extends IStatusBar.Stub implements
                 @BackDispositionMode int backDisposition, boolean showImeSwitcher) { }
         default void showRecentApps(boolean triggeredFromAltTab) { }
         default void hideRecentApps(boolean triggeredFromAltTab, boolean triggeredFromHomeKey) { }
+        default void toggleTaskbar() { }
         default void toggleRecentApps() { }
         default void toggleSplitScreen() { }
         default void preloadRecentApps() { }
@@ -329,7 +337,7 @@ public class CommandQueue extends IStatusBar.Stub implements
         /**
          * @see IStatusBar#setBiometicContextListener(IBiometricContextListener)
          */
-        default void setBiometicContextListener(IBiometricContextListener listener) {
+        default void setBiometricContextListener(IBiometricContextListener listener) {
         }
 
         /**
@@ -345,7 +353,7 @@ public class CommandQueue extends IStatusBar.Stub implements
         }
 
         /**
-         * @see DisplayManager.DisplayListener#onDisplayRemoved(int)
+         * @see DisplayTracker.Callback#onDisplayRemoved(int)
          */
         default void onDisplayRemoved(int displayId) {
         }
@@ -364,22 +372,22 @@ public class CommandQueue extends IStatusBar.Stub implements
                 String packageName, LetterboxDetails[] letterboxDetails) { }
 
         /**
-         * @see IStatusBar#showTransient(int, int[], boolean).
+         * @see IStatusBar#showTransient(int, int, boolean).
          */
-        default void showTransient(int displayId, @InternalInsetsType int[] types) { }
+        default void showTransient(int displayId, @InsetsType int types) { }
 
         /**
-         * @see IStatusBar#showTransient(int, int[], boolean).
+         * @see IStatusBar#showTransient(int, int, boolean).
          */
-        default void showTransient(int displayId, @InternalInsetsType int[] types,
+        default void showTransient(int displayId, @InsetsType int types,
                 boolean isGestureOnSystemBar) {
             showTransient(displayId, types);
         }
 
         /**
-         * @see IStatusBar#abortTransient(int, int[]).
+         * @see IStatusBar#abortTransient(int, int).
          */
-        default void abortTransient(int displayId, @InternalInsetsType int[] types) { }
+        default void abortTransient(int displayId, @InsetsType int types) { }
 
         /**
          * Called to notify System UI that a warning about the device going to sleep
@@ -472,48 +480,65 @@ public class CommandQueue extends IStatusBar.Stub implements
          */
         default void unregisterNearbyMediaDevicesProvider(
                 @NonNull INearbyMediaDevicesProvider provider) {}
+
+        /**
+         * @see IStatusBar#showRearDisplayDialog
+         */
+        default void showRearDisplayDialog(int currentBaseState) {}
+
+        /**
+         * @see IStatusBar#goToFullscreenFromSplit
+         */
+        default void goToFullscreenFromSplit() {}
+
+        /**
+         * @see IStatusBar#enterStageSplitFromRunningApp
+         */
+        default void enterStageSplitFromRunningApp(boolean leftOrTop) {}
+
+        /**
+         * @see IStatusBar#showMediaOutputSwitcher
+         */
+        default void showMediaOutputSwitcher(String packageName) {}
     }
 
-    public CommandQueue(Context context) {
-        this(context, null, null, null);
+    @VisibleForTesting
+    public CommandQueue(Context context, DisplayTracker displayTracker) {
+        this(context, displayTracker, null, null, null);
     }
 
     public CommandQueue(
             Context context,
+            DisplayTracker displayTracker,
             ProtoTracer protoTracer,
             CommandRegistry registry,
             DumpHandler dumpHandler
     ) {
+        mDisplayTracker = displayTracker;
         mProtoTracer = protoTracer;
         mRegistry = registry;
         mDumpHandler = dumpHandler;
-        context.getSystemService(DisplayManager.class).registerDisplayListener(this, mHandler);
+        mDisplayTracker.addDisplayChangeCallback(new DisplayTracker.Callback() {
+            @Override
+            public void onDisplayRemoved(int displayId) {
+                synchronized (mLock) {
+                    mDisplayDisabled.remove(displayId);
+                }
+                // This callback is registered with {@link #mHandler} that already posts to run on
+                // main thread, so it is safe to dispatch directly.
+                for (int i = mCallbacks.size() - 1; i >= 0; i--) {
+                    mCallbacks.get(i).onDisplayRemoved(displayId);
+                }
+            }
+        }, new HandlerExecutor(mHandler));
         // We always have default display.
-        setDisabled(DEFAULT_DISPLAY, DISABLE_NONE, DISABLE2_NONE);
+        setDisabled(mDisplayTracker.getDefaultDisplayId(), DISABLE_NONE, DISABLE2_NONE);
     }
-
-    @Override
-    public void onDisplayAdded(int displayId) { }
-
-    @Override
-    public void onDisplayRemoved(int displayId) {
-        synchronized (mLock) {
-            mDisplayDisabled.remove(displayId);
-        }
-        // This callback is registered with {@link #mHandler} that already posts to run on main
-        // thread, so it is safe to dispatch directly.
-        for (int i = mCallbacks.size() - 1; i >= 0; i--) {
-            mCallbacks.get(i).onDisplayRemoved(displayId);
-        }
-    }
-
-    @Override
-    public void onDisplayChanged(int displayId) { }
 
     // TODO(b/118592525): add multi-display support if needed.
     public boolean panelsEnabled() {
-        final int disabled1 = getDisabled1(DEFAULT_DISPLAY);
-        final int disabled2 = getDisabled2(DEFAULT_DISPLAY);
+        final int disabled1 = getDisabled1(mDisplayTracker.getDefaultDisplayId());
+        final int disabled2 = getDisabled2(mDisplayTracker.getDefaultDisplayId());
         return (disabled1 & StatusBarManager.DISABLE_EXPAND) == 0
                 && (disabled2 & StatusBarManager.DISABLE2_NOTIFICATION_SHADE) == 0;
     }
@@ -689,6 +714,13 @@ public class CommandQueue extends IStatusBar.Stub implements
         synchronized (mLock) {
             mHandler.removeMessages(MSG_TOGGLE_APP_SPLIT_SCREEN);
             mHandler.obtainMessage(MSG_TOGGLE_APP_SPLIT_SCREEN, 0, 0, null).sendToTarget();
+        }
+    }
+
+    public void toggleTaskbar() {
+        synchronized (mLock) {
+            mHandler.removeMessages(MSG_TOGGLE_TASKBAR);
+            mHandler.obtainMessage(MSG_TOGGLE_TASKBAR, 0, 0, null).sendToTarget();
         }
     }
 
@@ -1107,17 +1139,23 @@ public class CommandQueue extends IStatusBar.Stub implements
     }
 
     @Override
-    public void showTransient(int displayId, int[] types, boolean isGestureOnSystemBar) {
+    public void showTransient(int displayId, int types, boolean isGestureOnSystemBar) {
         synchronized (mLock) {
-            mHandler.obtainMessage(MSG_SHOW_TRANSIENT, displayId, isGestureOnSystemBar ? 1 : 0,
-                    types).sendToTarget();
+            SomeArgs args = SomeArgs.obtain();
+            args.argi1 = displayId;
+            args.argi2 = types;
+            args.argi3 = isGestureOnSystemBar ? 1 : 0;
+            mHandler.obtainMessage(MSG_SHOW_TRANSIENT, args).sendToTarget();
         }
     }
 
     @Override
-    public void abortTransient(int displayId, int[] types) {
+    public void abortTransient(int displayId, int types) {
         synchronized (mLock) {
-            mHandler.obtainMessage(MSG_ABORT_TRANSIENT, displayId, 0, types).sendToTarget();
+            SomeArgs args = SomeArgs.obtain();
+            args.argi1 = displayId;
+            args.argi2 = types;
+            mHandler.obtainMessage(MSG_ABORT_TRANSIENT, args).sendToTarget();
         }
     }
 
@@ -1226,6 +1264,34 @@ public class CommandQueue extends IStatusBar.Stub implements
     }
 
     @Override
+    public void showRearDisplayDialog(int currentBaseState) {
+        synchronized (mLock) {
+            mHandler.obtainMessage(MSG_SHOW_REAR_DISPLAY_DIALOG, currentBaseState).sendToTarget();
+        }
+    }
+
+    @Override
+    public void enterStageSplitFromRunningApp(boolean leftOrTop) {
+        synchronized (mLock) {
+            mHandler.obtainMessage(MSG_ENTER_STAGE_SPLIT_FROM_RUNNING_APP,
+                    leftOrTop).sendToTarget();
+        }
+    }
+
+    @Override
+    public void showMediaOutputSwitcher(String packageName) {
+        int callingUid = Binder.getCallingUid();
+        if (callingUid != 0 && callingUid != Process.SYSTEM_UID) {
+            throw new SecurityException("Call only allowed from system server.");
+        }
+        synchronized (mLock) {
+            SomeArgs args = SomeArgs.obtain();
+            args.arg1 = packageName;
+            mHandler.obtainMessage(MSG_SHOW_MEDIA_OUTPUT_SWITCHER, args).sendToTarget();
+        }
+    }
+
+    @Override
     public void requestAddTile(
             @NonNull ComponentName componentName,
             @NonNull CharSequence appName,
@@ -1284,6 +1350,11 @@ public class CommandQueue extends IStatusBar.Stub implements
             @NonNull INearbyMediaDevicesProvider provider) {
         mHandler.obtainMessage(MSG_UNREGISTER_NEARBY_MEDIA_DEVICE_PROVIDER, provider)
                 .sendToTarget();
+    }
+
+    @Override
+    public void goToFullscreenFromSplit() {
+        mHandler.obtainMessage(MSG_GO_TO_FULLSCREEN_FROM_SPLIT).sendToTarget();
     }
 
     private final class H extends Handler {
@@ -1352,6 +1423,11 @@ public class CommandQueue extends IStatusBar.Stub implements
                 case MSG_HIDE_RECENT_APPS:
                     for (int i = 0; i < mCallbacks.size(); i++) {
                         mCallbacks.get(i).hideRecentApps(msg.arg1 != 0, msg.arg2 != 0);
+                    }
+                    break;
+                case MSG_TOGGLE_TASKBAR:
+                    for (int i = 0; i < mCallbacks.size(); i++) {
+                        mCallbacks.get(i).toggleTaskbar();
                     }
                     break;
                 case MSG_TOGGLE_RECENT_APPS:
@@ -1542,7 +1618,7 @@ public class CommandQueue extends IStatusBar.Stub implements
                 }
                 case MSG_SET_BIOMETRICS_LISTENER:
                     for (int i = 0; i < mCallbacks.size(); i++) {
-                        mCallbacks.get(i).setBiometicContextListener(
+                        mCallbacks.get(i).setBiometricContextListener(
                                 (IBiometricContextListener) msg.obj);
                     }
                     break;
@@ -1587,17 +1663,21 @@ public class CommandQueue extends IStatusBar.Stub implements
                     args.recycle();
                     break;
                 case MSG_SHOW_TRANSIENT: {
-                    final int displayId = msg.arg1;
-                    final int[] types = (int[]) msg.obj;
-                    final boolean isGestureOnSystemBar = msg.arg2 != 0;
+                    args = (SomeArgs) msg.obj;
+                    final int displayId = args.argi1;
+                    final int types = args.argi2;
+                    final boolean isGestureOnSystemBar = args.argi3 != 0;
+                    args.recycle();
                     for (int i = 0; i < mCallbacks.size(); i++) {
                         mCallbacks.get(i).showTransient(displayId, types, isGestureOnSystemBar);
                     }
                     break;
                 }
                 case MSG_ABORT_TRANSIENT: {
-                    final int displayId = msg.arg1;
-                    final int[] types = (int[]) msg.obj;
+                    args = (SomeArgs) msg.obj;
+                    final int displayId = args.argi1;
+                    final int types = args.argi2;
+                    args.recycle();
                     for (int i = 0; i < mCallbacks.size(); i++) {
                         mCallbacks.get(i).abortTransient(displayId, types);
                     }
@@ -1719,6 +1799,28 @@ public class CommandQueue extends IStatusBar.Stub implements
                     ComponentName component = (ComponentName) msg.obj;
                     for (int i = 0; i < mCallbacks.size(); i++) {
                         mCallbacks.get(i).requestTileServiceListeningState(component);
+                    }
+                    break;
+                case MSG_SHOW_REAR_DISPLAY_DIALOG:
+                    for (int i = 0; i < mCallbacks.size(); i++) {
+                        mCallbacks.get(i).showRearDisplayDialog((Integer) msg.obj);
+                    }
+                    break;
+                case MSG_GO_TO_FULLSCREEN_FROM_SPLIT:
+                    for (int i = 0; i < mCallbacks.size(); i++) {
+                        mCallbacks.get(i).goToFullscreenFromSplit();
+                    }
+                    break;
+                case MSG_ENTER_STAGE_SPLIT_FROM_RUNNING_APP:
+                    for (int i = 0; i < mCallbacks.size(); i++) {
+                        mCallbacks.get(i).enterStageSplitFromRunningApp((Boolean) msg.obj);
+                    }
+                    break;
+                case MSG_SHOW_MEDIA_OUTPUT_SWITCHER:
+                    args = (SomeArgs) msg.obj;
+                    String clientPackageName = (String) args.arg1;
+                    for (int i = 0; i < mCallbacks.size(); i++) {
+                        mCallbacks.get(i).showMediaOutputSwitcher(clientPackageName);
                     }
                     break;
             }

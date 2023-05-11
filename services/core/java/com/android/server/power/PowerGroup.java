@@ -28,6 +28,8 @@ import static com.android.server.power.PowerManagerService.USER_ACTIVITY_SCREEN_
 import static com.android.server.power.PowerManagerService.WAKE_LOCK_DOZE;
 import static com.android.server.power.PowerManagerService.WAKE_LOCK_DRAW;
 import static com.android.server.power.PowerManagerService.WAKE_LOCK_SCREEN_BRIGHT;
+import static com.android.server.power.PowerManagerService.WAKE_LOCK_SCREEN_DIM;
+import static com.android.server.power.PowerManagerService.WAKE_LOCK_STAY_AWAKE;
 
 import android.hardware.display.DisplayManagerInternal;
 import android.hardware.display.DisplayManagerInternal.DisplayPowerRequest;
@@ -324,11 +326,6 @@ public class PowerGroup {
         return mDisplayPowerRequest.policy == DisplayPowerRequest.POLICY_DIM;
     }
 
-    public boolean isPolicyVrLocked() {
-        return mDisplayPowerRequest.isVr();
-
-    }
-
     public boolean isBrightOrDimLocked() {
         return mDisplayPowerRequest.isBrightOrDim();
     }
@@ -339,6 +336,22 @@ public class PowerGroup {
 
     public int getWakeLockSummaryLocked() {
         return mWakeLockSummary;
+    }
+
+    /**
+     * Query whether a wake lock is at least partially responsible for keeping the device awake.
+     *
+     * This does not necessarily mean the wake lock is the sole reason the device is awake; there
+     * could also be user activity keeping the device awake, for example. It just means a wake lock
+     * is being held that would keep the device awake even if nothing else was.
+     *
+     * @return whether the PowerGroup is being kept awake at least in part because a wake lock is
+     *         being held.
+     */
+    public boolean hasWakeLockKeepingScreenOnLocked() {
+        final int screenOnWakeLockMask =
+                WAKE_LOCK_SCREEN_BRIGHT | WAKE_LOCK_SCREEN_DIM | WAKE_LOCK_STAY_AWAKE;
+        return (mWakeLockSummary & (screenOnWakeLockMask)) != 0;
     }
 
     public void setWakeLockSummaryLocked(int summary) {
@@ -382,7 +395,7 @@ public class PowerGroup {
 
     @VisibleForTesting
     int getDesiredScreenPolicyLocked(boolean quiescent, boolean dozeAfterScreenOff,
-            boolean vrModeEnabled, boolean bootCompleted, boolean screenBrightnessBoostInProgress) {
+            boolean bootCompleted, boolean screenBrightnessBoostInProgress) {
         final int wakefulness = getWakefulnessLocked();
         final int wakeLockSummary = getWakeLockSummaryLocked();
         if (wakefulness == WAKEFULNESS_ASLEEP || quiescent) {
@@ -396,13 +409,6 @@ public class PowerGroup {
             }
             // Fall through and preserve the current screen policy if not configured to
             // doze after screen off.  This causes the screen off transition to be skipped.
-        }
-
-        // It is important that POLICY_VR check happens after the wakefulness checks above so
-        // that VR-mode does not prevent displays from transitioning to the correct state when
-        // dozing or sleeping.
-        if (vrModeEnabled) {
-            return DisplayPowerRequest.POLICY_VR;
         }
 
         if ((wakeLockSummary & WAKE_LOCK_SCREEN_BRIGHT) != 0
@@ -419,16 +425,14 @@ public class PowerGroup {
         return mDisplayPowerRequest.policy;
     }
 
-    boolean updateLocked(float screenBrightnessOverride, boolean autoBrightness,
-            boolean useProximitySensor, boolean boostScreenBrightness, int dozeScreenState,
-            float dozeScreenBrightness, boolean overrideDrawWakeLock,
-            PowerSaveState powerSaverState, boolean quiescent, boolean dozeAfterScreenOff,
-            boolean vrModeEnabled, boolean bootCompleted, boolean screenBrightnessBoostInProgress,
-            boolean waitForNegativeProximity) {
+    boolean updateLocked(float screenBrightnessOverride, boolean useProximitySensor,
+            boolean boostScreenBrightness, int dozeScreenState, float dozeScreenBrightness,
+            boolean overrideDrawWakeLock, PowerSaveState powerSaverState, boolean quiescent,
+            boolean dozeAfterScreenOff, boolean bootCompleted,
+            boolean screenBrightnessBoostInProgress, boolean waitForNegativeProximity) {
         mDisplayPowerRequest.policy = getDesiredScreenPolicyLocked(quiescent, dozeAfterScreenOff,
-                vrModeEnabled, bootCompleted, screenBrightnessBoostInProgress);
+                bootCompleted, screenBrightnessBoostInProgress);
         mDisplayPowerRequest.screenBrightnessOverride = screenBrightnessOverride;
-        mDisplayPowerRequest.useAutoBrightness = autoBrightness;
         mDisplayPowerRequest.useProximitySensor = useProximitySensor;
         mDisplayPowerRequest.boostScreenBrightness = boostScreenBrightness;
 

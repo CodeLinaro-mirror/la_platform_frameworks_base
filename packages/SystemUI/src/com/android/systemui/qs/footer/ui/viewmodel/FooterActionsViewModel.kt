@@ -18,6 +18,7 @@ package com.android.systemui.qs.footer.ui.viewmodel
 
 import android.content.Context
 import android.util.Log
+import android.view.ContextThemeWrapper
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
@@ -49,12 +50,15 @@ import kotlinx.coroutines.flow.map
 
 /** A ViewModel for the footer actions. */
 class FooterActionsViewModel(
-    @Application private val context: Context,
+    @Application appContext: Context,
     private val footerActionsInteractor: FooterActionsInteractor,
     private val falsingManager: FalsingManager,
     private val globalActionsDialogLite: GlobalActionsDialogLite,
     showPowerButton: Boolean,
 ) {
+    /** The context themed with the Quick Settings colors. */
+    private val context = ContextThemeWrapper(appContext, R.style.Theme_SystemUI_QuickSettings)
+
     /**
      * Whether the UI rendering this ViewModel should be visible. Note that even when this is false,
      * the UI should still participate to the layout it is included in (i.e. in the View world it
@@ -142,7 +146,7 @@ class FooterActionsViewModel(
                 ContentDescription.Resource(R.string.accessibility_quick_settings_settings)
             ),
             iconTint = null,
-            R.drawable.qs_footer_action_circle,
+            backgroundColor = R.attr.offStateColor,
             this::onSettingsButtonClicked,
         )
 
@@ -160,7 +164,7 @@ class FooterActionsViewModel(
                         context,
                         com.android.internal.R.attr.textColorOnAccent,
                     ),
-                R.drawable.qs_footer_action_circle_color,
+                backgroundColor = com.android.internal.R.attr.colorAccent,
                 this::onPowerButtonClicked,
             )
         } else {
@@ -192,9 +196,9 @@ class FooterActionsViewModel(
      * Observe the device monitoring dialog requests and show the dialog accordingly. This function
      * will suspend indefinitely and will need to be cancelled to stop observing.
      *
-     * Important: [quickSettingsContext] must be the [Context] associated to the [Quick Settings
-     * fragment][com.android.systemui.qs.QSFragment], and the call to this function must be
-     * cancelled when that fragment is destroyed.
+     * Important: [quickSettingsContext] must be the [Context] associated to the
+     * [Quick Settings fragment][com.android.systemui.qs.QSFragment], and the call to this function
+     * must be cancelled when that fragment is destroyed.
      */
     suspend fun observeDeviceMonitoringDialogRequests(quickSettingsContext: Context) {
         footerActionsInteractor.deviceMonitoringDialogRequests.collect {
@@ -260,7 +264,7 @@ class FooterActionsViewModel(
                     ),
                 ),
             iconTint = null,
-            background = R.drawable.qs_footer_action_circle,
+            backgroundColor = R.attr.offStateColor,
             onClick = this::onUserSwitcherClicked,
         )
     }

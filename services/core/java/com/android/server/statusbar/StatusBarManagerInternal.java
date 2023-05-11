@@ -21,7 +21,6 @@ import android.app.ITransientNotificationCallback;
 import android.hardware.fingerprint.IUdfpsRefreshRateRequestCallback;
 import android.os.Bundle;
 import android.os.IBinder;
-import android.view.InsetsState.InternalInsetsType;
 import android.view.WindowInsets.Type.InsetsType;
 import android.view.WindowInsetsController.Appearance;
 import android.view.WindowInsetsController.Behavior;
@@ -123,6 +122,10 @@ public interface StatusBarManagerInternal {
      */
     void onEmergencyActionLaunchGestureDetected();
 
+    /** Toggle the task bar stash state. */
+    void toggleTaskbar();
+
+    /** Toggle recents. */
     void toggleRecentApps();
 
     void setCurrentUser(int newUserId);
@@ -162,11 +165,10 @@ public interface StatusBarManagerInternal {
             LetterboxDetails[] letterboxDetails);
 
     /** @see com.android.internal.statusbar.IStatusBar#showTransient */
-    void showTransient(int displayId, @InternalInsetsType int[] types,
-            boolean isGestureOnSystemBar);
+    void showTransient(int displayId, @InsetsType int types, boolean isGestureOnSystemBar);
 
     /** @see com.android.internal.statusbar.IStatusBar#abortTransient */
-    void abortTransient(int displayId, @InternalInsetsType int[] types);
+    void abortTransient(int displayId, @InsetsType int types);
 
     /**
      * @see com.android.internal.statusbar.IStatusBar#showToast(String, IBinder, CharSequence,
@@ -198,4 +200,31 @@ public interface StatusBarManagerInternal {
      * (IUdfpsRefreshRateRequestCallback)
      */
     void setUdfpsRefreshRateCallback(IUdfpsRefreshRateRequestCallback callback);
+
+    /**
+     * Shows the rear display educational dialog
+     *
+     * @see com.android.internal.statusbar.IStatusBar#showRearDisplayDialog
+     */
+    void showRearDisplayDialog(int currentBaseState);
+
+    /**
+     * Called when requested to go to fullscreen from the active split app.
+     */
+    void goToFullscreenFromSplit();
+
+    /**
+     * Enters stage split from a current running app.
+     *
+     * @see com.android.internal.statusbar.IStatusBar#enterStageSplitFromRunningApp
+     */
+    void enterStageSplitFromRunningApp(boolean leftOrTop);
+
+    /**
+     * Shows the media output switcher dialog.
+     *
+     * @param packageName of the session for which the output switcher is shown.
+     * @see com.android.internal.statusbar.IStatusBar#showMediaOutputSwitcher
+     */
+    void showMediaOutputSwitcher(String packageName);
 }

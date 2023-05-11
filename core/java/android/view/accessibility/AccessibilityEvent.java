@@ -24,6 +24,7 @@ import android.os.Parcel;
 import android.os.Parcelable;
 import android.text.TextUtils;
 import android.util.Log;
+import android.view.View;
 
 import com.android.internal.util.BitUtils;
 
@@ -55,7 +56,7 @@ import java.util.List;
  * accessibility service has not requested to retrieve the window content the event will
  * not contain reference to its source. <strong>Note: </strong> for events of type
  * {@link #TYPE_NOTIFICATION_STATE_CHANGED} the source is never available, and Views that set
- * {@link android.view.View#isAccessibilityDataPrivate()} may not populate all event properties on
+ * {@link android.view.View#isAccessibilityDataSensitive()} may not populate all event properties on
  * events sent from higher up in the view hierarchy.
  * </p>
  * <p>
@@ -303,6 +304,20 @@ import java.util.List;
  * </ul>
  * </p>
  * <p>
+ * <b>View scrolled to</b> - represents the event of a target node brought on screen by
+ * ACTION_SCROLL_IN_DIRECTION.
+ * <em>Type:</em> {@link #TYPE_VIEW_TARGETED_BY_SCROLL}</br>
+ * <em>Properties:</em></br>
+ * <ul>
+ *   <li>{@link #getEventType()} - The type of the event.</li>
+ *   <li>{@link #getSource()} - The source info (for registered clients). This represents the node
+ *   that is brought on screen as a result of the scroll.</li>
+ *   <li>{@link #getClassName()} - The class name of the source.</li>
+ *   <li>{@link #getPackageName()} - The package name of the source.</li>
+ *   <li>{@link #getEventTime()}  - The event time.</li>
+ * </ul>
+ * </p>
+ * <p>
  * <b>Touch interaction start</b> - represents the event of starting a touch
  * interaction, which is the user starts touching the screen.</br>
  * <em>Type:</em> {@link #TYPE_TOUCH_INTERACTION_START}</br>
@@ -519,6 +534,9 @@ public final class AccessibilityEvent extends AccessibilityRecord implements Par
 
     /**
      * Represents the event of an application making an announcement.
+     * <p>
+     * In general, follow the practices described in
+     * {@link View#announceForAccessibility(CharSequence)}.
      */
     public static final int TYPE_ANNOUNCEMENT = 0x00004000;
 
@@ -590,6 +608,11 @@ public final class AccessibilityEvent extends AccessibilityRecord implements Par
      * @see #setSpeechStateChangeTypes
      */
     public static final int TYPE_SPEECH_STATE_CHANGE = 0x02000000;
+
+    /**
+     * Represents the event of a scroll having completed and brought the target node on screen.
+     */
+    public static final int TYPE_VIEW_TARGETED_BY_SCROLL = 0x04000000;
 
     /**
      * Change type for {@link #TYPE_WINDOW_CONTENT_CHANGED} event: The type of change is not
@@ -895,7 +918,8 @@ public final class AccessibilityEvent extends AccessibilityRecord implements Par
                 TYPE_WINDOWS_CHANGED,
                 TYPE_VIEW_CONTEXT_CLICKED,
                 TYPE_ASSIST_READING_CONTEXT,
-                TYPE_SPEECH_STATE_CHANGE
+                TYPE_SPEECH_STATE_CHANGE,
+                TYPE_VIEW_TARGETED_BY_SCROLL
             })
     @Retention(RetentionPolicy.SOURCE)
     public @interface EventType {}
@@ -925,6 +949,7 @@ public final class AccessibilityEvent extends AccessibilityRecord implements Par
      * @see #TYPE_TOUCH_INTERACTION_END
      * @see #TYPE_WINDOWS_CHANGED
      * @see #TYPE_VIEW_CONTEXT_CLICKED
+     * @see #TYPE_VIEW_TARGETED_BY_SCROLL
      */
     public static final int TYPES_ALL_MASK = 0xFFFFFFFF;
 
@@ -1143,17 +1168,17 @@ public final class AccessibilityEvent extends AccessibilityRecord implements Par
      * set to true.
      *
      * <p>
-     * Initial value matches the {@link android.view.View#isAccessibilityDataPrivate} property from
-     * the event's source node, if present, or false by default.
+     * Initial value matches the {@link android.view.View#isAccessibilityDataSensitive} property
+     * from the event's source node, if present, or false by default.
      * </p>
      *
      * @return True if the event should be delivered only to isAccessibilityTool services, false
      * otherwise.
-     * @see #setAccessibilityDataPrivate
+     * @see #setAccessibilityDataSensitive
      */
     @Override
-    public boolean isAccessibilityDataPrivate() {
-        return super.isAccessibilityDataPrivate();
+    public boolean isAccessibilityDataSensitive() {
+        return super.isAccessibilityDataSensitive();
     }
 
     /**
@@ -1168,13 +1193,13 @@ public final class AccessibilityEvent extends AccessibilityRecord implements Par
      * no source) then this method must be called explicitly if you want non-default behavior.
      * </p>
      *
-     * @param accessibilityDataPrivate True if the event should be delivered only to
+     * @param accessibilityDataSensitive True if the event should be delivered only to
      *                                 isAccessibilityTool services, false otherwise.
      * @throws IllegalStateException If called from an AccessibilityService.
      */
     @Override
-    public void setAccessibilityDataPrivate(boolean accessibilityDataPrivate) {
-        super.setAccessibilityDataPrivate(accessibilityDataPrivate);
+    public void setAccessibilityDataSensitive(boolean accessibilityDataSensitive) {
+        super.setAccessibilityDataSensitive(accessibilityDataSensitive);
     }
 
     /**
@@ -1725,6 +1750,7 @@ public final class AccessibilityEvent extends AccessibilityRecord implements Par
             case TYPE_VIEW_CONTEXT_CLICKED: return "TYPE_VIEW_CONTEXT_CLICKED";
             case TYPE_ASSIST_READING_CONTEXT: return "TYPE_ASSIST_READING_CONTEXT";
             case TYPE_SPEECH_STATE_CHANGE: return "TYPE_SPEECH_STATE_CHANGE";
+            case TYPE_VIEW_TARGETED_BY_SCROLL: return "TYPE_VIEW_TARGETED_BY_SCROLL";
             default: return Integer.toHexString(eventType);
         }
     }

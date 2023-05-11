@@ -24,12 +24,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.android.settingslib.spa.framework.common.EntryMacro
 import com.android.settingslib.spa.framework.common.EntrySearchData
-import com.android.settingslib.spa.framework.common.EntryStatusData
 import com.android.settingslib.spa.framework.compose.navigator
 import com.android.settingslib.spa.framework.compose.stateOf
+import com.android.settingslib.spa.framework.util.EntryHighlight
 import com.android.settingslib.spa.framework.util.wrapOnClickWithLog
 import com.android.settingslib.spa.widget.ui.createSettingsIcon
-import com.android.settingslib.spa.widget.util.EntryHighlight
 
 data class SimplePreferenceMacro(
     val title: String,
@@ -55,10 +54,6 @@ data class SimplePreferenceMacro(
             title = this@SimplePreferenceMacro.title,
             keyword = searchKeywords
         )
-    }
-
-    override fun getStatusData(): EntryStatusData {
-        return EntryStatusData(isDisabled = false)
     }
 }
 

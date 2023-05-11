@@ -467,7 +467,8 @@
     <string name="power_charging" msgid="6727132649743436802">"<xliff:g id="LEVEL">%1$s</xliff:g> - <xliff:g id="STATE">%2$s</xliff:g>"</string>
     <string name="power_remaining_charging_duration_only" msgid="8085099012811384899">"<xliff:g id="TIME">%1$s</xliff:g> guztiz kargatu arte"</string>
     <string name="power_charging_duration" msgid="6127154952524919719">"<xliff:g id="LEVEL">%1$s</xliff:g> - <xliff:g id="TIME">%2$s</xliff:g> guztiz kargatu arte"</string>
-    <string name="power_charging_limited" msgid="6971664137170239141">"<xliff:g id="LEVEL">%1$s</xliff:g> - Kargatze-prozesua etenda dago"</string>
+    <string name="power_charging_limited" msgid="8202147604844938236">"<xliff:g id="LEVEL">%1$s</xliff:g> - Kargatze optimizatua"</string>
+    <string name="power_charging_future_paused" msgid="4730177778538118032">"<xliff:g id="LEVEL">%1$s</xliff:g> - Kargatze optimizatua"</string>
     <string name="battery_info_status_unknown" msgid="268625384868401114">"Ezezaguna"</string>
     <string name="battery_info_status_charging" msgid="4279958015430387405">"Kargatzen"</string>
     <string name="battery_info_status_charging_fast" msgid="8027559755902954885">"Bizkor kargatzen"</string>
@@ -521,7 +522,7 @@
     <string name="alarms_and_reminders_label" msgid="6918395649731424294">"Alarmak eta abisuak"</string>
     <string name="alarms_and_reminders_switch_title" msgid="4939393911531826222">"Eman alarmak eta abisuak ezartzeko baimena"</string>
     <string name="alarms_and_reminders_title" msgid="8819933264635406032">"Alarmak eta abisuak"</string>
-    <string name="alarms_and_reminders_footer_title" msgid="6302587438389079695">"Eman alarmak ezartzeko eta denbora-muga duten ekintzak programatzeko baimena aplikazioari. Hala, aplikazioak atzeko planoan funtzionatuko du, eta litekeena da bateria gehiago kontsumitzea.\n\nEz baduzu ematen baimen hori, ez dute funtzionatuko aplikazio honen bidez programatutako alarmek eta denbora-muga duten ekintzek."</string>
+    <string name="alarms_and_reminders_footer_title" msgid="6302587438389079695">"Eman alarmak ezartzeko eta denbora-muga duten ekintzak programatzeko baimena aplikazioari. Hala, aplikazioak atzeko planoan funtzionatuko du, eta litekeena da bateria gehiago kontsumitzea.\n\nBaimen hori ematen ez baduzu, ez dute funtzionatuko aplikazio honen bidez programatutako alarmek eta denbora-muga duten ekintzek."</string>
     <string name="keywords_alarms_and_reminders" msgid="6633360095891110611">"programazioa, alarma, abisua, erlojua"</string>
     <string name="zen_mode_enable_dialog_turn_on" msgid="6418297231575050426">"Aktibatu"</string>
     <string name="zen_mode_settings_turn_on_dialog_title" msgid="2760567063190790696">"Aktibatu ez molestatzeko modua"</string>
@@ -539,6 +540,13 @@
     <string name="media_transfer_this_device_name" product="default" msgid="2357329267148436433">"Telefono hau"</string>
     <string name="media_transfer_this_device_name" product="tablet" msgid="3714653244000242800">"Tableta hau"</string>
     <string name="media_transfer_this_phone" msgid="7194341457812151531">"Telefono hau"</string>
+    <string name="media_output_status_unknown_error" msgid="5098565887497902222">"Ezin da erreproduzitu gailu honetan"</string>
+    <string name="media_output_status_require_premium" msgid="8411255800047014822">"Aldatzeko, bertsio-berritu kontua"</string>
+    <string name="media_output_status_not_support_downloads" msgid="4523828729240373315">"Deskargak ezin dira hemen erreproduzitu"</string>
+    <string name="media_output_status_try_after_ad" msgid="8312579066856015441">"Saiatu berriro iragarkiaren ondoren"</string>
+    <string name="media_output_status_device_in_low_power_mode" msgid="8184631698321758451">"Aktibatu gailua hemen erreproduzitzeko"</string>
+    <string name="media_output_status_unauthorized" msgid="5880222828273853838">"Gailua ez dago erreproduzitzeko onartuta"</string>
+    <string name="media_output_status_track_unsupported" msgid="5576313219317709664">"Ezin da erreproduzitu multimedia-eduki hau hemen"</string>
     <string name="profile_connect_timeout_subtext" msgid="4043408193005851761">"Arazo bat izan da konektatzean. Itzali gailua eta pitz ezazu berriro."</string>
     <string name="media_transfer_wired_device_name" msgid="4447880899964056007">"Audio-gailu kableduna"</string>
     <string name="help_label" msgid="3528360748637781274">"Laguntza eta iritziak"</string>
@@ -563,6 +571,8 @@
     <string name="user_add_user_title" msgid="5457079143694924885">"Beste erabiltzaile bat gehitu nahi duzu?"</string>
     <string name="user_add_user_message_long" msgid="1527434966294733380">"Gailu hau beste pertsona batzuekin partekatzeko, sortu erabiltzaile gehiago. Erabiltzaile bakoitzak bere eremua izango du eta, bertan, aplikazioak, horma-papera eta antzekoak pertsonalizatu ahal izango ditu. Horrez gain, agian erabiltzaile guztiei eragingo dieten ezarpen batzuk ere doi daitezke; adibidez, wifi-konexioarena.\n\nErabiltzaile bat gehitzen duzunean, pertsona horrek berak konfiguratu beharko du bere eremua.\n\nEdozein erabiltzailek egunera ditzake beste erabiltzaile guztien aplikazioak. Baliteke erabilerraztasun-ezarpenak eta -zerbitzuak ez transferitzea erabiltzaile berriei."</string>
     <string name="user_add_user_message_short" msgid="3295959985795716166">"Erabiltzaile bat gehitzen duzunean, erabiltzaile horrek bere eremua konfiguratu beharko du.\n\nEdozein erabiltzailek egunera ditzake beste erabiltzaile guztien aplikazioak."</string>
+    <string name="user_grant_admin_title" msgid="5565796912475193314">"Administratzaile-baimenak eman nahi dizkiozu erabiltzaileari?"</string>
+    <string name="user_grant_admin_message" msgid="7925257971286380976">"Administratzaile-baimenak ematen badizkiozu, hauek egin ahalko ditu: beste erabiltzaile batzuk kudeatu, gailuaren ezarpenak aldatu eta gailuaren jatorrizko datuak berrezarri."</string>
     <string name="user_setup_dialog_title" msgid="8037342066381939995">"Erabiltzailea konfiguratu?"</string>
     <string name="user_setup_dialog_message" msgid="269931619868102841">"Ziurtatu pertsona horrek gailua hartu eta bere eremua konfigura dezakeela"</string>
     <string name="user_setup_profile_dialog_message" msgid="4788197052296962620">"Profila konfiguratu?"</string>
@@ -594,6 +604,8 @@
     <string name="guest_reset_and_restart_dialog_message" msgid="2764425635305200790">"Gonbidatuentzako saio berri bat abiaraziko da, eta saio honetako aplikazio eta datu guztiak ezabatuko"</string>
     <string name="guest_exit_dialog_title" msgid="1846494656849381804">"Gonbidatu modutik irten nahi duzu?"</string>
     <string name="guest_exit_dialog_message" msgid="1743218864242719783">"Gonbidatuentzako saio honetako aplikazioak eta datuak ezabatuko dira"</string>
+    <string name="grant_admin" msgid="4273077214151417783">"Eman administratzaile-baimenak erabiltzaileari"</string>
+    <string name="not_grant_admin" msgid="6985027675930546850">"Ez eman administratzaile-baimenik erabiltzaileari"</string>
     <string name="guest_exit_dialog_button" msgid="1736401897067442044">"Irten"</string>
     <string name="guest_exit_dialog_title_non_ephemeral" msgid="7675327443743162986">"Gonbidatuaren jarduerak gorde nahi dituzu?"</string>
     <string name="guest_exit_dialog_message_non_ephemeral" msgid="223385323235719442">"Saio honetako jarduerak gorde ditzakezu, edo aplikazio eta datu guztiak ezabatu"</string>
@@ -610,7 +622,7 @@
     <string name="user_image_photo_selector" msgid="433658323306627093">"Hautatu argazki bat"</string>
     <string name="failed_attempts_now_wiping_device" msgid="4016329172216428897">"Saiakera oker gehiegi egin dituzu. Gailu honetako datuak ezabatu egingo dira."</string>
     <string name="failed_attempts_now_wiping_user" msgid="469060411789668050">"Saiakera oker gehiegi egin dituzu. Erabiltzailea ezabatu egingo da."</string>
-    <string name="failed_attempts_now_wiping_profile" msgid="7626589520888963129">"Saiakera oker gehiegi egin dituzu. Laneko profila eta bertako datuak ezabatu egingo dira."</string>
+    <string name="failed_attempts_now_wiping_profile" msgid="7626589520888963129">"Saiakera oker gehiegi egin dituzu. Laneko profila eta bertako datuak ezabatuko dira."</string>
     <string name="failed_attempts_now_wiping_dialog_dismiss" msgid="2749889771223578925">"Baztertu"</string>
     <string name="cached_apps_freezer_device_default" msgid="2616594131750144342">"Gailuaren balio lehenetsia"</string>
     <string name="cached_apps_freezer_disabled" msgid="4816382260660472042">"Desgaituta"</string>
@@ -661,4 +673,10 @@
     <string name="back_navigation_animation" msgid="8105467568421689484">"Atzera egiteko keinuaren animazio-igarleak"</string>
     <string name="back_navigation_animation_summary" msgid="741292224121599456">"Gaitu atzera egiteko keinuaren sistemaren animazio-igarleak."</string>
     <string name="back_navigation_animation_dialog" msgid="8696966520944625596">"Atzera egiteko keinuaren sistemaren animazio-igarleak gaitzen ditu ezarpenak. enableOnBackInvokedCallback-ek egiazko gisa ezarrita egon behar du aplikazio bakoitzaren manifestu-fitxategian."</string>
+  <string-array name="udfps_accessibility_touch_hints">
+    <item msgid="1737722959616802157">"Eraman ezkerrera"</item>
+    <item msgid="5425394847942513942">"Eraman behera"</item>
+    <item msgid="7728484337962740316">"Eraman eskuinera"</item>
+    <item msgid="324200556467459329">"Eraman gora"</item>
+  </string-array>
 </resources>

@@ -58,6 +58,7 @@ import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.pm.PackageManagerInternal;
 import android.content.pm.PackageManagerInternal.PackageListObserver;
 import android.content.pm.PermissionInfo;
+import android.content.pm.UserPackage;
 import android.content.res.Resources;
 import android.os.Build;
 import android.os.Bundle;
@@ -78,7 +79,6 @@ import android.util.ArrayMap;
 import android.util.ArraySet;
 import android.util.Log;
 import android.util.LongSparseLongArray;
-import android.util.Pair;
 import android.util.Slog;
 import android.util.SparseBooleanArray;
 
@@ -146,7 +146,7 @@ public final class PermissionPolicyService extends SystemService {
      * scheduled for a package/user.
      */
     @GuardedBy("mLock")
-    private final ArraySet<Pair<String, Integer>> mIsPackageSyncsScheduled = new ArraySet<>();
+    private final ArraySet<UserPackage> mIsPackageSyncsScheduled = new ArraySet<>();
 
     /**
      * Whether an async {@link #resetAppOpPermissionsIfNotRequestedForUid} is currently
@@ -194,27 +194,38 @@ public final class PermissionPolicyService extends SystemService {
 
         mPackageManagerInternal.getPackageList(new PackageListObserver() {
             @Override
-            public void onPackageAdded(String packageName, int uid) {
-                final int userId = UserHandle.getUserId(uid);
-                if (isStarted(userId)) {
-                    synchronizePackagePermissionsAndAppOpsForUser(packageName, userId);
+            public void onPackageAdded(String packageName, int appId) {
+                final int[] userIds = LocalServices.getService(UserManagerInternal.class)
+                        .getUserIds();
+                for (final int userId : userIds) {
+                    if (isStarted(userId)) {
+                        synchronizePackagePermissionsAndAppOpsForUser(packageName, userId);
+                    }
                 }
             }
 
             @Override
-            public void onPackageChanged(String packageName, int uid) {
-                final int userId = UserHandle.getUserId(uid);
-                if (isStarted(userId)) {
-                    synchronizePackagePermissionsAndAppOpsForUser(packageName, userId);
-                    resetAppOpPermissionsIfNotRequestedForUid(uid);
+            public void onPackageChanged(String packageName, int appId) {
+                final int[] userIds = LocalServices.getService(UserManagerInternal.class)
+                        .getUserIds();
+                for (final int userId : userIds) {
+                    if (isStarted(userId)) {
+                        synchronizePackagePermissionsAndAppOpsForUser(packageName, userId);
+                        final int uid = UserHandle.getUid(userId, appId);
+                        resetAppOpPermissionsIfNotRequestedForUid(uid);
+                    }
                 }
             }
 
             @Override
-            public void onPackageRemoved(String packageName, int uid) {
-                final int userId = UserHandle.getUserId(uid);
-                if (isStarted(userId)) {
-                    resetAppOpPermissionsIfNotRequestedForUid(uid);
+            public void onPackageRemoved(String packageName, int appId) {
+                final int[] userIds = LocalServices.getService(UserManagerInternal.class)
+                        .getUserIds();
+                for (final int userId : userIds) {
+                    if (isStarted(userId)) {
+                        final int uid = UserHandle.getUid(userId, appId);
+                        resetAppOpPermissionsIfNotRequestedForUid(uid);
+                    }
                 }
             }
         });
@@ -232,7 +243,7 @@ public final class PermissionPolicyService extends SystemService {
             }
         };
 
-        final ArrayList<PermissionInfo> dangerousPerms =
+        final List<PermissionInfo> dangerousPerms =
                 mPermissionManagerInternal.getAllPermissionsWithProtection(
                         PermissionInfo.PROTECTION_DANGEROUS);
         try {
@@ -374,7 +385,7 @@ public final class PermissionPolicyService extends SystemService {
             @UserIdInt int changedUserId) {
         if (isStarted(changedUserId)) {
             synchronized (mLock) {
-                if (mIsPackageSyncsScheduled.add(new Pair<>(packageName, changedUserId))) {
+                if (mIsPackageSyncsScheduled.add(UserPackage.of(changedUserId, packageName))) {
                     // TODO(b/165030092): migrate this to PermissionThread.getHandler().
                     // synchronizePackagePermissionsAndAppOpsForUser is a heavy operation.
                     // Dispatched on a PermissionThread, it interferes with user switch.
@@ -642,7 +653,7 @@ public final class PermissionPolicyService extends SystemService {
     private void synchronizePackagePermissionsAndAppOpsForUser(@NonNull String packageName,
             @UserIdInt int userId) {
         synchronized (mLock) {
-            mIsPackageSyncsScheduled.remove(new Pair<>(packageName, userId));
+            mIsPackageSyncsScheduled.remove(UserPackage.of(userId, packageName));
         }
 
         if (DEBUG) {
@@ -1130,18 +1141,18 @@ public final class PermissionPolicyService extends SystemService {
                 new ActivityInterceptorCallback() {
                     @Nullable
                     @Override
-                    public ActivityInterceptorCallback.ActivityInterceptResult intercept(
-                            ActivityInterceptorInfo info) {
+                    public ActivityInterceptorCallback.ActivityInterceptResult
+                            onInterceptActivityLaunch(@NonNull ActivityInterceptorInfo info) {
                         return null;
                     }
 
                     @Override
                     public void onActivityLaunched(TaskInfo taskInfo, ActivityInfo activityInfo,
                             ActivityInterceptorInfo info) {
-                        super.onActivityLaunched(taskInfo, activityInfo, info);
                         if (!shouldShowNotificationDialogOrClearFlags(taskInfo,
-                                activityInfo.packageName, info.callingPackage, info.intent,
-                                info.checkedOptions, activityInfo.name, true)
+                                activityInfo.packageName, info.getCallingPackage(),
+                                info.getIntent(), info.getCheckedOptions(), activityInfo.name,
+                                true)
                                 || isNoDisplayActivity(activityInfo)) {
                             return;
                         }
@@ -1318,12 +1329,12 @@ public final class PermissionPolicyService extends SystemService {
                     ACTION_REQUEST_PERMISSIONS_FOR_OTHER);
             grantPermission.putExtra(Intent.EXTRA_PACKAGE_NAME, pkgName);
 
-            final boolean remoteAnimation = info != null && info.checkedOptions != null
-                    && info.checkedOptions.getAnimationType() == ANIM_REMOTE_ANIMATION
-                    && info.clearOptionsAnimation != null;
+            final boolean remoteAnimation = info != null && info.getCheckedOptions() != null
+                    && info.getCheckedOptions().getAnimationType() == ANIM_REMOTE_ANIMATION
+                    && info.getClearOptionsAnimationRunnable() != null;
             ActivityOptions options = remoteAnimation ? ActivityOptions.makeRemoteAnimation(
-                        info.checkedOptions.getRemoteAnimationAdapter(),
-                        info.checkedOptions.getRemoteTransition())
+                        info.getCheckedOptions().getRemoteAnimationAdapter(),
+                        info.getCheckedOptions().getRemoteTransition())
                     : new ActivityOptions(new Bundle());
             options.setTaskOverlay(true, false);
             options.setLaunchTaskId(taskId);
@@ -1333,7 +1344,7 @@ public final class PermissionPolicyService extends SystemService {
                 // animation from the intercepted activity and its siblings to prevent duplication.
                 // This should trigger ActivityRecord#clearOptionsAnimationForSiblings for the
                 // intercepted activity.
-                info.clearOptionsAnimation.run();
+                info.getClearOptionsAnimationRunnable().run();
             }
             try {
                 mContext.startActivityAsUser(grantPermission, options.toBundle(), user);

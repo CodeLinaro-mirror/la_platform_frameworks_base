@@ -79,6 +79,11 @@ public class SoundTrigger {
     }
 
     /**
+     * @hide
+     */
+    public static final String FAKE_HAL_ARCH = "injection";
+
+    /**
      * Status code used when the operation succeeded
      */
     public static final int STATUS_OK = 0;
@@ -1493,6 +1498,45 @@ public class SoundTrigger {
                     + Arrays.toString(keyphrases) + ", data=" + Arrays.toString(data)
                     + ", audioCapabilities=" + Integer.toHexString(audioCapabilities) + "]";
         }
+
+        @Override
+        public final boolean equals(Object obj) {
+            if (this == obj)
+                return true;
+            if (obj == null)
+                return false;
+            if (!(obj instanceof RecognitionConfig))
+                return false;
+            RecognitionConfig other = (RecognitionConfig) obj;
+            if (captureRequested != other.captureRequested) {
+                return false;
+            }
+            if (allowMultipleTriggers != other.allowMultipleTriggers) {
+                return false;
+            }
+            if (!Arrays.equals(keyphrases, other.keyphrases)) {
+                return false;
+            }
+            if (!Arrays.equals(data, other.data)) {
+                return false;
+            }
+            if (audioCapabilities != other.audioCapabilities) {
+                return false;
+            }
+            return true;
+        }
+
+        @Override
+        public final int hashCode() {
+            final int prime = 31;
+            int result = 1;
+            result = prime * result + (captureRequested ? 1 : 0);
+            result = prime * result + (allowMultipleTriggers ? 1 : 0);
+            result = prime * result + Arrays.hashCode(keyphrases);
+            result = prime * result + Arrays.hashCode(data);
+            result = prime * result + audioCapabilities;
+            return result;
+        }
     }
 
     /**
@@ -2017,26 +2061,14 @@ public class SoundTrigger {
      *         - {@link #STATUS_BAD_VALUE} if modules is null
      *         - {@link #STATUS_DEAD_OBJECT} if the binder transaction to the native service fails
      *
-     * @deprecated Please use {@link #listModulesAsOriginator(ArrayList, Identity)} or
+     * @removed Please use {@link #listModulesAsOriginator(ArrayList, Identity)} or
      * {@link #listModulesAsMiddleman(ArrayList, Identity, Identity)}, based on whether the
      * client is acting on behalf of its own identity or a separate identity.
      * @hide
      */
     @UnsupportedAppUsage
     public static int listModules(@NonNull ArrayList<ModuleProperties> modules) {
-        // TODO(ytai): This is a temporary hack to retain prior behavior, which makes
-        //  assumptions about process affinity and Binder context, namely that the binder calling ID
-        //  reliably reflects the originator identity.
-        Identity middlemanIdentity = new Identity();
-        middlemanIdentity.packageName = ActivityThread.currentOpPackageName();
-
-        Identity originatorIdentity = new Identity();
-        originatorIdentity.pid = Binder.getCallingPid();
-        originatorIdentity.uid = Binder.getCallingUid();
-
-        try (SafeCloseable ignored = ClearCallingIdentityContext.create()) {
-            return listModulesAsMiddleman(modules, middlemanIdentity, originatorIdentity);
-        }
+        return STATUS_OK;
     }
 
     /**
@@ -2051,10 +2083,11 @@ public class SoundTrigger {
      *         - {@link #STATUS_NO_INIT} if the native service cannot be reached
      *         - {@link #STATUS_BAD_VALUE} if modules is null
      *         - {@link #STATUS_DEAD_OBJECT} if the binder transaction to the native service fails
-     *
+     * @deprecated Use {@link android.media.soundtrigger.SoundTriggerManager} instead.
      * @hide
      */
     @RequiresPermission(allOf = {RECORD_AUDIO, CAPTURE_AUDIO_HOTWORD})
+    @Deprecated
     public static int listModulesAsOriginator(@NonNull ArrayList<ModuleProperties> modules,
             @NonNull Identity originatorIdentity) {
         try {
@@ -2082,9 +2115,11 @@ public class SoundTrigger {
      *         - {@link #STATUS_BAD_VALUE} if modules is null
      *         - {@link #STATUS_DEAD_OBJECT} if the binder transaction to the native service fails
      *
+     * @deprecated Use {@link android.media.soundtrigger.SoundTriggerManager} instead.
      * @hide
      */
     @RequiresPermission(SOUNDTRIGGER_DELEGATE_IDENTITY)
+    @Deprecated
     public static int listModulesAsMiddleman(@NonNull ArrayList<ModuleProperties> modules,
             @NonNull Identity middlemanIdentity,
             @NonNull Identity originatorIdentity) {
@@ -2123,30 +2158,14 @@ public class SoundTrigger {
      *                is OK.
      * @return a valid sound module in case of success or null in case of error.
      *
-     * @deprecated Please use
-     * {@link #attachModuleAsOriginator(int, StatusListener, Handler, Identity)} or
-     * {@link #attachModuleAsMiddleman(int, StatusListener, Handler, Identity, Identity)}, based
-     * on whether the client is acting on behalf of its own identity or a separate identity.
+     * @removed Use {@link android.media.soundtrigger.SoundTriggerManager} instead.
      * @hide
      */
     @UnsupportedAppUsage
     private static SoundTriggerModule attachModule(int moduleId,
             @NonNull StatusListener listener,
             @Nullable Handler handler) {
-        // TODO(ytai): This is a temporary hack to retain prior behavior, which makes
-        //  assumptions about process affinity and Binder context, namely that the binder calling ID
-        //  reliably reflects the originator identity.
-        Identity middlemanIdentity = new Identity();
-        middlemanIdentity.packageName = ActivityThread.currentOpPackageName();
-
-        Identity originatorIdentity = new Identity();
-        originatorIdentity.pid = Binder.getCallingPid();
-        originatorIdentity.uid = Binder.getCallingUid();
-
-        try (SafeCloseable ignored = ClearCallingIdentityContext.create()) {
-            return attachModuleAsMiddleman(moduleId, listener, handler, middlemanIdentity,
-                    originatorIdentity);
-        }
+            return null;
     }
 
     /**
@@ -2162,10 +2181,11 @@ public class SoundTrigger {
      * @param originatorIdentity The identity of the originator, which will be used for permission
      *                           purposes.
      * @return a valid sound module in case of success or null in case of error.
-     *
+     * @deprecated Use {@link android.media.soundtrigger.SoundTriggerManager} instead.
      * @hide
      */
     @RequiresPermission(SOUNDTRIGGER_DELEGATE_IDENTITY)
+    @Deprecated
     public static SoundTriggerModule attachModuleAsMiddleman(int moduleId,
             @NonNull SoundTrigger.StatusListener listener,
             @Nullable Handler handler, Identity middlemanIdentity,

@@ -103,18 +103,24 @@ public class FullscreenTaskListener implements ShellTaskOrganizer.TaskListener {
         if (mWindowDecorViewModelOptional.isPresent()) {
             SurfaceControl.Transaction t = new SurfaceControl.Transaction();
             createdWindowDecor = mWindowDecorViewModelOptional.get()
-                    .createWindowDecoration(taskInfo, leash, t, t);
+                    .onTaskOpening(taskInfo, leash, t, t);
             t.apply();
         }
         if (!createdWindowDecor) {
             mSyncQueue.runInSync(t -> {
+                if (!leash.isValid()) {
+                    // Task vanished before sync completion
+                    return;
+                }
                 // Reset several properties back to fullscreen (PiP, for example, leaves all these
                 // properties in a bad state).
                 t.setWindowCrop(leash, null);
                 t.setPosition(leash, positionInParent.x, positionInParent.y);
                 t.setAlpha(leash, 1f);
                 t.setMatrix(leash, 1, 0, 0, 1);
-                t.show(leash);
+                if (taskInfo.isVisible) {
+                    t.show(leash);
+                }
             });
         }
     }
@@ -123,16 +129,21 @@ public class FullscreenTaskListener implements ShellTaskOrganizer.TaskListener {
     public void onTaskInfoChanged(RunningTaskInfo taskInfo) {
         final State state = mTasks.get(taskInfo.taskId);
         final Point oldPositionInParent = state.mTaskInfo.positionInParent;
-        state.mTaskInfo = taskInfo;
+
         if (mWindowDecorViewModelOptional.isPresent()) {
-            mWindowDecorViewModelOptional.get().onTaskInfoChanged(state.mTaskInfo);
+            mWindowDecorViewModelOptional.get().onTaskInfoChanged(taskInfo);
         }
+        state.mTaskInfo = taskInfo;
         if (Transitions.ENABLE_SHELL_TRANSITIONS) return;
         updateRecentsForVisibleFullscreenTask(taskInfo);
 
         final Point positionInParent = state.mTaskInfo.positionInParent;
         if (!oldPositionInParent.equals(state.mTaskInfo.positionInParent)) {
             mSyncQueue.runInSync(t -> {
+                if (!state.mLeash.isValid()) {
+                    // Task vanished before sync completion
+                    return;
+                }
                 t.setPosition(state.mLeash, positionInParent.x, positionInParent.y);
             });
         }

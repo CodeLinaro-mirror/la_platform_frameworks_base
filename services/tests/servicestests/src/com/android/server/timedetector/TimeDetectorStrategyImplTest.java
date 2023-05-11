@@ -41,6 +41,7 @@ import android.os.TimestampedValue;
 import com.android.server.SystemClockTime.TimeConfidence;
 import com.android.server.timedetector.TimeDetectorStrategy.Origin;
 import com.android.server.timezonedetector.StateChangeListener;
+import com.android.server.timezonedetector.TestStateChangeListener;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -51,6 +52,8 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 
 import junitparams.JUnitParamsRunner;
@@ -863,8 +866,11 @@ public class TimeDetectorStrategyImplTest {
                 new ConfigurationInternal.Builder(CONFIG_AUTO_ENABLED)
                         .setOriginPriorities(ORIGIN_NETWORK)
                         .build();
-        Script script = new Script().simulateConfigurationInternalChange(configInternal)
-                .verifySystemClockConfidence(TIME_CONFIDENCE_LOW);
+        TestStateChangeListener networkTimeUpdateListener = new TestStateChangeListener();
+        Script script = new Script()
+                .simulateConfigurationInternalChange(configInternal)
+                .verifySystemClockConfidence(TIME_CONFIDENCE_LOW)
+                .addNetworkTimeUpdateListener(networkTimeUpdateListener);
 
         NetworkTimeSuggestion timeSuggestion =
                 script.generateNetworkTimeSuggestion(ARBITRARY_TEST_TIME);
@@ -874,8 +880,14 @@ public class TimeDetectorStrategyImplTest {
         long expectedSystemClockMillis =
                 script.calculateTimeInMillisForNow(timeSuggestion.getUnixEpochTime());
         script.simulateNetworkTimeSuggestion(timeSuggestion)
+                .assertLatestNetworkSuggestion(timeSuggestion)
                 .verifySystemClockConfidence(TIME_CONFIDENCE_HIGH)
                 .verifySystemClockWasSetAndResetCallTracking(expectedSystemClockMillis);
+
+        // Confirm the network time update listener is notified of a change.
+        networkTimeUpdateListener.assertNotificationsReceivedAndReset(0);
+        script.simulateAsyncRunnableExecution();
+        networkTimeUpdateListener.assertNotificationsReceivedAndReset(1);
     }
 
     @Test
@@ -884,14 +896,81 @@ public class TimeDetectorStrategyImplTest {
                 new ConfigurationInternal.Builder(CONFIG_AUTO_DISABLED)
                         .setOriginPriorities(ORIGIN_NETWORK)
                         .build();
-        Script script = new Script().simulateConfigurationInternalChange(configInternal);
+        TestStateChangeListener networkTimeUpdateListener = new TestStateChangeListener();
+        Script script = new Script()
+                .simulateConfigurationInternalChange(configInternal)
+                .addNetworkTimeUpdateListener(networkTimeUpdateListener);
 
         NetworkTimeSuggestion timeSuggestion =
                 script.generateNetworkTimeSuggestion(ARBITRARY_TEST_TIME);
 
         script.simulateTimePassing()
                 .simulateNetworkTimeSuggestion(timeSuggestion)
+                .assertLatestNetworkSuggestion(timeSuggestion)
                 .verifySystemClockWasNotSetAndResetCallTracking();
+
+        // Confirm the network time update listener is notified of a change.
+        networkTimeUpdateListener.assertNotificationsReceivedAndReset(0);
+        script.simulateAsyncRunnableExecution();
+        networkTimeUpdateListener.assertNotificationsReceivedAndReset(1);
+    }
+
+    @Test
+    public void testClearLatestNetworkSuggestion() {
+        ConfigurationInternal configInternal =
+                new ConfigurationInternal.Builder(CONFIG_AUTO_ENABLED)
+                        .setOriginPriorities(ORIGIN_NETWORK, ORIGIN_EXTERNAL)
+                        .build();
+
+        TestStateChangeListener networkTimeUpdateListener = new TestStateChangeListener();
+        Script script = new Script()
+                .simulateConfigurationInternalChange(configInternal)
+                .addNetworkTimeUpdateListener(networkTimeUpdateListener);
+
+        // Create two different time suggestions for the current elapsedRealtimeMillis.
+        ExternalTimeSuggestion externalTimeSuggestion =
+                script.generateExternalTimeSuggestion(ARBITRARY_TEST_TIME);
+        NetworkTimeSuggestion networkTimeSuggestion =
+                script.generateNetworkTimeSuggestion(ARBITRARY_TEST_TIME.plus(Duration.ofHours(5)));
+        script.simulateTimePassing();
+
+        // Suggest an external time: This should cause the device to change time.
+        {
+            long expectedSystemClockMillis =
+                    script.calculateTimeInMillisForNow(externalTimeSuggestion.getUnixEpochTime());
+            script.simulateExternalTimeSuggestion(externalTimeSuggestion)
+                    .verifySystemClockWasSetAndResetCallTracking(expectedSystemClockMillis);
+        }
+
+        // Suggest a network time: This should cause the device to change time because
+        // network > external.
+        {
+            long expectedSystemClockMillis =
+                    script.calculateTimeInMillisForNow(networkTimeSuggestion.getUnixEpochTime());
+            script.simulateNetworkTimeSuggestion(networkTimeSuggestion)
+                    .assertLatestNetworkSuggestion(networkTimeSuggestion)
+                    .verifySystemClockWasSetAndResetCallTracking(expectedSystemClockMillis);
+
+            // Confirm the network time update listener is notified of a change.
+            networkTimeUpdateListener.assertNotificationsReceivedAndReset(0);
+            script.simulateAsyncRunnableExecution();
+            networkTimeUpdateListener.assertNotificationsReceivedAndReset(1);
+        }
+
+        // Clear the network time. This should cause the device to change back to the external time,
+        // which is now the best time available.
+        {
+            long expectedSystemClockMillis =
+                    script.calculateTimeInMillisForNow(externalTimeSuggestion.getUnixEpochTime());
+            script.simulateClearLatestNetworkSuggestion()
+                    .assertLatestNetworkSuggestion(null)
+                    .verifySystemClockWasSetAndResetCallTracking(expectedSystemClockMillis);
+
+            // Confirm network time update listeners are asynchronously notified of a change.
+            networkTimeUpdateListener.assertNotificationsReceivedAndReset(0);
+            script.simulateAsyncRunnableExecution();
+            networkTimeUpdateListener.assertNotificationsReceivedAndReset(1);
+        }
     }
 
     @Test
@@ -901,15 +980,24 @@ public class TimeDetectorStrategyImplTest {
                         .setOriginPriorities(ORIGIN_NETWORK)
                         .setAutoSuggestionLowerBound(TEST_SUGGESTION_LOWER_BOUND)
                         .build();
-        Script script = new Script().simulateConfigurationInternalChange(configInternal)
-                .verifySystemClockConfidence(TIME_CONFIDENCE_LOW);
+        TestStateChangeListener networkTimeUpdateListener = new TestStateChangeListener();
+        Script script = new Script()
+                .simulateConfigurationInternalChange(configInternal)
+                .verifySystemClockConfidence(TIME_CONFIDENCE_LOW)
+                .addNetworkTimeUpdateListener(networkTimeUpdateListener);
 
         Instant belowLowerBound = TEST_SUGGESTION_LOWER_BOUND.minusSeconds(1);
         NetworkTimeSuggestion timeSuggestion =
                 script.generateNetworkTimeSuggestion(belowLowerBound);
         script.simulateNetworkTimeSuggestion(timeSuggestion)
+                .assertLatestNetworkSuggestion(null)
                 .verifySystemClockConfidence(TIME_CONFIDENCE_LOW)
                 .verifySystemClockWasNotSetAndResetCallTracking();
+
+        // Confirm the network time update listener is not notified of a change.
+        networkTimeUpdateListener.assertNotificationsReceivedAndReset(0);
+        script.simulateAsyncRunnableExecution();
+        networkTimeUpdateListener.assertNotificationsReceivedAndReset(0);
     }
 
     @Test
@@ -919,15 +1007,23 @@ public class TimeDetectorStrategyImplTest {
                         .setOriginPriorities(ORIGIN_NETWORK)
                         .setAutoSuggestionLowerBound(TEST_SUGGESTION_LOWER_BOUND)
                         .build();
+        TestStateChangeListener networkTimeUpdateListener = new TestStateChangeListener();
         Script script = new Script().simulateConfigurationInternalChange(configInternal)
-                .verifySystemClockConfidence(TIME_CONFIDENCE_LOW);
+                .verifySystemClockConfidence(TIME_CONFIDENCE_LOW)
+                .addNetworkTimeUpdateListener(networkTimeUpdateListener);
 
         Instant aboveLowerBound = TEST_SUGGESTION_LOWER_BOUND.plusSeconds(1);
         NetworkTimeSuggestion timeSuggestion =
                 script.generateNetworkTimeSuggestion(aboveLowerBound);
         script.simulateNetworkTimeSuggestion(timeSuggestion)
+                .assertLatestNetworkSuggestion(timeSuggestion)
                 .verifySystemClockConfidence(TIME_CONFIDENCE_HIGH)
                 .verifySystemClockWasSetAndResetCallTracking(aboveLowerBound.toEpochMilli());
+
+        // Confirm the network time update listener is notified of a change.
+        networkTimeUpdateListener.assertNotificationsReceivedAndReset(0);
+        script.simulateAsyncRunnableExecution();
+        networkTimeUpdateListener.assertNotificationsReceivedAndReset(1);
     }
 
     @Test
@@ -937,15 +1033,23 @@ public class TimeDetectorStrategyImplTest {
                         .setOriginPriorities(ORIGIN_NETWORK)
                         .setSuggestionUpperBound(TEST_SUGGESTION_UPPER_BOUND)
                         .build();
+        TestStateChangeListener networkTimeUpdateListener = new TestStateChangeListener();
         Script script = new Script().simulateConfigurationInternalChange(configInternal)
-                .verifySystemClockConfidence(TIME_CONFIDENCE_LOW);
+                .verifySystemClockConfidence(TIME_CONFIDENCE_LOW)
+                .addNetworkTimeUpdateListener(networkTimeUpdateListener);
 
         Instant aboveUpperBound = TEST_SUGGESTION_UPPER_BOUND.plusSeconds(1);
         NetworkTimeSuggestion timeSuggestion =
                 script.generateNetworkTimeSuggestion(aboveUpperBound);
         script.simulateNetworkTimeSuggestion(timeSuggestion)
+                .assertLatestNetworkSuggestion(null)
                 .verifySystemClockConfidence(TIME_CONFIDENCE_LOW)
                 .verifySystemClockWasNotSetAndResetCallTracking();
+
+        // Confirm the network time update listener is not notified of a change.
+        networkTimeUpdateListener.assertNotificationsReceivedAndReset(0);
+        script.simulateAsyncRunnableExecution();
+        networkTimeUpdateListener.assertNotificationsReceivedAndReset(0);
     }
 
     @Test
@@ -955,15 +1059,23 @@ public class TimeDetectorStrategyImplTest {
                         .setOriginPriorities(ORIGIN_NETWORK)
                         .setSuggestionUpperBound(TEST_SUGGESTION_UPPER_BOUND)
                         .build();
+        TestStateChangeListener networkTimeUpdateListener = new TestStateChangeListener();
         Script script = new Script().simulateConfigurationInternalChange(configInternal)
-                .verifySystemClockConfidence(TIME_CONFIDENCE_LOW);
+                .verifySystemClockConfidence(TIME_CONFIDENCE_LOW)
+                .addNetworkTimeUpdateListener(networkTimeUpdateListener);
 
         Instant belowUpperBound = TEST_SUGGESTION_UPPER_BOUND.minusSeconds(1);
         NetworkTimeSuggestion timeSuggestion =
                 script.generateNetworkTimeSuggestion(belowUpperBound);
         script.simulateNetworkTimeSuggestion(timeSuggestion)
+                .assertLatestNetworkSuggestion(timeSuggestion)
                 .verifySystemClockConfidence(TIME_CONFIDENCE_HIGH)
                 .verifySystemClockWasSetAndResetCallTracking(belowUpperBound.toEpochMilli());
+
+        // Confirm the network time update listener is notified of a change.
+        networkTimeUpdateListener.assertNotificationsReceivedAndReset(0);
+        script.simulateAsyncRunnableExecution();
+        networkTimeUpdateListener.assertNotificationsReceivedAndReset(1);
     }
 
     @Test
@@ -1745,23 +1857,32 @@ public class TimeDetectorStrategyImplTest {
     }
 
     @Test
-    public void suggestionsFromNetworkOriginNotInPriorityList_areIgnored() {
+    public void suggestionsFromNetworkOriginNotInPriorityList_areNotUsed() {
         ConfigurationInternal configInternal =
                 new ConfigurationInternal.Builder(CONFIG_AUTO_ENABLED)
                         .setOriginPriorities(ORIGIN_TELEPHONY)
                         .build();
-        Script script = new Script().simulateConfigurationInternalChange(configInternal);
+        TestStateChangeListener networkTimeUpdateListener = new TestStateChangeListener();
+        Script script = new Script()
+                .simulateConfigurationInternalChange(configInternal)
+                .addNetworkTimeUpdateListener(networkTimeUpdateListener);
 
         NetworkTimeSuggestion timeSuggestion = script.generateNetworkTimeSuggestion(
                 ARBITRARY_TEST_TIME);
 
         script.simulateNetworkTimeSuggestion(timeSuggestion)
                 .assertLatestNetworkSuggestion(timeSuggestion)
+                .assertLatestNetworkSuggestion(timeSuggestion)
                 .verifySystemClockWasNotSetAndResetCallTracking();
+
+        // Confirm the network time update listener is notified of a change.
+        networkTimeUpdateListener.assertNotificationsReceivedAndReset(0);
+        script.simulateAsyncRunnableExecution();
+        networkTimeUpdateListener.assertNotificationsReceivedAndReset(1);
     }
 
     @Test
-    public void suggestionsFromGnssOriginNotInPriorityList_areIgnored() {
+    public void suggestionsFromGnssOriginNotInPriorityList_areNotUsed() {
         ConfigurationInternal configInternal =
                 new ConfigurationInternal.Builder(CONFIG_AUTO_ENABLED)
                         .setOriginPriorities(ORIGIN_TELEPHONY)
@@ -1777,7 +1898,7 @@ public class TimeDetectorStrategyImplTest {
     }
 
     @Test
-    public void suggestionsFromExternalOriginNotInPriorityList_areIgnored() {
+    public void suggestionsFromExternalOriginNotInPriorityList_areNotUsed() {
         ConfigurationInternal configInternal =
                 new ConfigurationInternal.Builder(CONFIG_AUTO_ENABLED)
                         .setOriginPriorities(ORIGIN_TELEPHONY)
@@ -1815,6 +1936,8 @@ public class TimeDetectorStrategyImplTest {
      * changes and behaving like the real thing should, it also asserts preconditions.
      */
     private static class FakeEnvironment implements TimeDetectorStrategyImpl.Environment {
+
+        private final List<Runnable> mAsyncRunnables = new ArrayList<>();
 
         private ConfigurationInternal mConfigurationInternal;
         private boolean mWakeLockAcquired;
@@ -1900,7 +2023,19 @@ public class TimeDetectorStrategyImplTest {
             // No-op for tests
         }
 
+        @Override
+        public void runAsync(Runnable runnable) {
+            mAsyncRunnables.add(runnable);
+        }
+
         // Methods below are for managing the fake's behavior.
+
+        void runAsyncRunnables() {
+            for (Runnable runnable : mAsyncRunnables) {
+                runnable.run();
+            }
+            mAsyncRunnables.clear();
+        }
 
         void simulateConfigurationInternalChange(ConfigurationInternal configurationInternal) {
             mConfigurationInternal = configurationInternal;
@@ -1941,7 +2076,7 @@ public class TimeDetectorStrategyImplTest {
             assertEquals(expectedSystemClockMillis, mSystemClockMillis);
         }
 
-        public void verifySystemClockConfidenceLatest(@TimeConfidence int expectedConfidence) {
+        void verifySystemClockConfidenceLatest(@TimeConfidence int expectedConfidence) {
             assertEquals(expectedConfidence, mSystemClockConfidence);
         }
 
@@ -2015,6 +2150,11 @@ public class TimeDetectorStrategyImplTest {
             return this;
         }
 
+        Script simulateClearLatestNetworkSuggestion() {
+            mTimeDetectorStrategy.clearLatestNetworkSuggestion();
+            return this;
+        }
+
         Script simulateGnssTimeSuggestion(GnssTimeSuggestion timeSuggestion) {
             mTimeDetectorStrategy.suggestGnssTime(timeSuggestion);
             return this;
@@ -2053,6 +2193,23 @@ public class TimeDetectorStrategyImplTest {
         /** Calls {@link TimeDetectorStrategy#setTimeState(TimeState)}. */
         Script simulateSetTimeState(TimeState timeState) {
             mTimeDetectorStrategy.setTimeState(timeState);
+            return this;
+        }
+
+        /** Calls {@link TimeDetectorStrategy#confirmTime(UnixEpochTime)}. */
+        Script simulateConfirmTime(UnixEpochTime confirmationTime, boolean expectedReturnValue) {
+            assertEquals(expectedReturnValue, mTimeDetectorStrategy.confirmTime(confirmationTime));
+            return this;
+        }
+
+        /** Calls {@link TimeDetectorStrategy#addNetworkTimeUpdateListener(StateChangeListener)}. */
+        Script addNetworkTimeUpdateListener(StateChangeListener listener) {
+            mTimeDetectorStrategy.addNetworkTimeUpdateListener(listener);
+            return this;
+        }
+
+        Script simulateAsyncRunnableExecution() {
+            mFakeEnvironment.runAsyncRunnables();
             return this;
         }
 
@@ -2217,11 +2374,6 @@ public class TimeDetectorStrategyImplTest {
          */
         long calculateTimeInMillisForNow(UnixEpochTime unixEpochTime) {
             return unixEpochTime.at(peekElapsedRealtimeMillis()).getUnixEpochTimeMillis();
-        }
-
-        Script simulateConfirmTime(UnixEpochTime confirmationTime, boolean expectedReturnValue) {
-            assertEquals(expectedReturnValue, mTimeDetectorStrategy.confirmTime(confirmationTime));
-            return this;
         }
     }
 

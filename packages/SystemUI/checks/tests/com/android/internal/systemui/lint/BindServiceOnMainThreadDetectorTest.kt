@@ -19,6 +19,7 @@ package com.android.internal.systemui.lint
 import com.android.tools.lint.checks.infrastructure.TestFiles
 import com.android.tools.lint.detector.api.Detector
 import com.android.tools.lint.detector.api.Issue
+import org.junit.Ignore
 import org.junit.Test
 
 @Suppress("UnstableApiUsage")
@@ -28,6 +29,7 @@ class BindServiceOnMainThreadDetectorTest : SystemUILintDetectorTest() {
 
     override fun getIssues(): List<Issue> = listOf(BindServiceOnMainThreadDetector.ISSUE)
 
+    @Ignore
     @Test
     fun testBindService() {
         lint()
@@ -60,6 +62,7 @@ class BindServiceOnMainThreadDetectorTest : SystemUILintDetectorTest() {
             )
     }
 
+    @Ignore
     @Test
     fun testBindServiceAsUser() {
         lint()
@@ -123,6 +126,32 @@ class BindServiceOnMainThreadDetectorTest : SystemUILintDetectorTest() {
                 0 errors, 1 warnings
                 """
             )
+    }
+
+    @Test
+    fun testSuppressUnbindService() {
+        lint()
+            .files(
+                TestFiles.java(
+                        """
+                    package test.pkg;
+                    import android.content.Context;
+                    import android.content.ServiceConnection;
+
+                    @SuppressLint("BindServiceOnMainThread")
+                    public class TestClass {
+                        public void unbind(Context context, ServiceConnection connection) {
+                          context.unbindService(connection);
+                        }
+                    }
+                """
+                    )
+                    .indented(),
+                *stubs
+            )
+            .issues(BindServiceOnMainThreadDetector.ISSUE)
+            .run()
+            .expectClean()
     }
 
     @Test

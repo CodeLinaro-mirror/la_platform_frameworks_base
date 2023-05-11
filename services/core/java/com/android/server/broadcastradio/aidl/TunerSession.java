@@ -21,15 +21,16 @@ import android.graphics.Bitmap;
 import android.hardware.broadcastradio.ConfigFlag;
 import android.hardware.broadcastradio.IBroadcastRadio;
 import android.hardware.radio.ITuner;
-import android.hardware.radio.ITunerCallback;
 import android.hardware.radio.ProgramList;
 import android.hardware.radio.ProgramSelector;
 import android.hardware.radio.RadioManager;
 import android.os.RemoteException;
+import android.util.ArrayMap;
 import android.util.ArraySet;
 import android.util.IndentingPrintWriter;
 
 import com.android.internal.annotations.GuardedBy;
+import com.android.server.broadcastradio.RadioServiceUserController;
 import com.android.server.utils.Slogf;
 
 import java.util.List;
@@ -40,11 +41,12 @@ final class TunerSession extends ITuner.Stub {
     private static final String TAG = "BcRadioAidlSrv.session";
     private static final int TUNER_EVENT_LOGGER_QUEUE_SIZE = 25;
 
-    private final Object mLock;
+    private final Object mLock = new Object();
 
     private final RadioLogger mLogger;
     private final RadioModule mModule;
     final android.hardware.radio.ITunerCallback mCallback;
+    private final int mTargetSdkVersion;
     private final IBroadcastRadio mService;
 
     @GuardedBy("mLock")
@@ -59,18 +61,17 @@ final class TunerSession extends ITuner.Stub {
     private RadioManager.BandConfig mPlaceHolderConfig;
 
     TunerSession(RadioModule radioModule, IBroadcastRadio service,
-            android.hardware.radio.ITunerCallback callback,
-            Object lock) {
+            android.hardware.radio.ITunerCallback callback, int targetSdkVersion) {
         mModule = Objects.requireNonNull(radioModule, "radioModule cannot be null");
         mService = Objects.requireNonNull(service, "service cannot be null");
         mCallback = Objects.requireNonNull(callback, "callback cannot be null");
-        mLock = Objects.requireNonNull(lock, "lock cannot be null");
+        mTargetSdkVersion = targetSdkVersion;
         mLogger = new RadioLogger(TAG, TUNER_EVENT_LOGGER_QUEUE_SIZE);
     }
 
     @Override
     public void close() {
-        mLogger.logRadioEvent("Close tuner session");
+        mLogger.logRadioEvent("Close tuner");
         close(null);
     }
 
@@ -89,17 +90,19 @@ final class TunerSession extends ITuner.Stub {
             mLogger.logRadioEvent("Close tuner session on error %d", error);
         }
         synchronized (mLock) {
-            if (mIsClosed) return;
-            if (error != null) {
-                try {
-                    mCallback.onError(error);
-                } catch (RemoteException ex) {
-                    Slogf.w(TAG, ex, "mCallback.onError(%s) failed", error);
-                }
+            if (mIsClosed) {
+                return;
             }
             mIsClosed = true;
-            mModule.onTunerSessionClosed(this);
         }
+        if (error != null) {
+            try {
+                mCallback.onError(error);
+            } catch (RemoteException ex) {
+                Slogf.w(TAG, ex, "mCallback.onError(%s) failed", error);
+            }
+        }
+        mModule.onTunerSessionClosed(this);
     }
 
     @Override
@@ -118,12 +121,16 @@ final class TunerSession extends ITuner.Stub {
 
     @Override
     public void setConfiguration(RadioManager.BandConfig config) {
+        if (!RadioServiceUserController.isCurrentOrSystemUser()) {
+            Slogf.w(TAG, "Cannot set configuration for AIDL HAL client from non-current user");
+            return;
+        }
         synchronized (mLock) {
             checkNotClosedLocked();
             mPlaceHolderConfig = Objects.requireNonNull(config, "config cannot be null");
         }
         Slogf.i(TAG, "Ignoring setConfiguration - not applicable for broadcastradio HAL AIDL");
-        mModule.fanoutAidlCallback(cb -> cb.onConfigurationChanged(config));
+        mModule.fanoutAidlCallback((cb, sdkVersion) -> cb.onConfigurationChanged(config));
     }
 
     @Override
@@ -157,6 +164,10 @@ final class TunerSession extends ITuner.Stub {
     public void step(boolean directionDown, boolean skipSubChannel) throws RemoteException {
         mLogger.logRadioEvent("Step with direction %s, skipSubChannel?  %s",
                 directionDown ? "down" : "up", skipSubChannel ? "yes" : "no");
+        if (!RadioServiceUserController.isCurrentOrSystemUser()) {
+            Slogf.w(TAG, "Cannot step on AIDL HAL client from non-current user");
+            return;
+        }
         synchronized (mLock) {
             checkNotClosedLocked();
             try {
@@ -168,9 +179,13 @@ final class TunerSession extends ITuner.Stub {
     }
 
     @Override
-    public void scan(boolean directionDown, boolean skipSubChannel) throws RemoteException {
-        mLogger.logRadioEvent("Scan with direction %s, skipSubChannel? %s",
+    public void seek(boolean directionDown, boolean skipSubChannel) throws RemoteException {
+        mLogger.logRadioEvent("Seek with direction %s, skipSubChannel? %s",
                 directionDown ? "down" : "up", skipSubChannel ? "yes" : "no");
+        if (!RadioServiceUserController.isCurrentOrSystemUser()) {
+            Slogf.w(TAG, "Cannot scan on AIDL HAL client from non-current user");
+            return;
+        }
         synchronized (mLock) {
             checkNotClosedLocked();
             try {
@@ -184,10 +199,19 @@ final class TunerSession extends ITuner.Stub {
     @Override
     public void tune(ProgramSelector selector) throws RemoteException {
         mLogger.logRadioEvent("Tune with selector %s", selector);
+        if (!RadioServiceUserController.isCurrentOrSystemUser()) {
+            Slogf.w(TAG, "Cannot tune on AIDL HAL client from non-current user");
+            return;
+        }
+        android.hardware.broadcastradio.ProgramSelector hwSel =
+                ConversionUtils.programSelectorToHalProgramSelector(selector);
+        if (hwSel == null) {
+            throw new IllegalArgumentException("tune: INVALID_ARGUMENTS for program selector");
+        }
         synchronized (mLock) {
             checkNotClosedLocked();
             try {
-                mService.tune(ConversionUtils.programSelectorToHalProgramSelector(selector));
+                mService.tune(hwSel);
             } catch (RuntimeException ex) {
                 throw ConversionUtils.throwOnError(ex, /* action= */ "tune");
             }
@@ -197,6 +221,10 @@ final class TunerSession extends ITuner.Stub {
     @Override
     public void cancel() {
         Slogf.i(TAG, "Cancel");
+        if (!RadioServiceUserController.isCurrentOrSystemUser()) {
+            Slogf.w(TAG, "Cannot cancel on AIDL HAL client from non-current user");
+            return;
+        }
         synchronized (mLock) {
             checkNotClosedLocked();
             try {
@@ -210,8 +238,7 @@ final class TunerSession extends ITuner.Stub {
 
     @Override
     public void cancelAnnouncement() {
-        // TODO(b/244485175): deperacte cancelAnnouncement
-        Slogf.i(TAG, "Announcements control doesn't involve cancelling at the HAL level in AIDL");
+        Slogf.w(TAG, "Announcements control doesn't involve cancelling at the HAL level in AIDL");
     }
 
     @Override
@@ -222,14 +249,25 @@ final class TunerSession extends ITuner.Stub {
 
     @Override
     public boolean startBackgroundScan() {
-        Slogf.i(TAG, "Explicit background scan trigger is not supported with HAL AIDL");
-        mModule.fanoutAidlCallback(ITunerCallback::onBackgroundScanComplete);
+        Slogf.w(TAG, "Explicit background scan trigger is not supported with HAL AIDL");
+        if (!RadioServiceUserController.isCurrentOrSystemUser()) {
+            Slogf.w(TAG, "Cannot start background scan on AIDL HAL client from non-current user");
+            return false;
+        }
+        mModule.fanoutAidlCallback((cb, sdkVersion) -> {
+            cb.onBackgroundScanComplete();
+        });
         return true;
     }
 
     @Override
     public void startProgramListUpdates(ProgramList.Filter filter) throws RemoteException {
         mLogger.logRadioEvent("Start programList updates %s", filter);
+        if (!RadioServiceUserController.isCurrentOrSystemUser()) {
+            Slogf.w(TAG,
+                    "Cannot start program list updates on AIDL HAL client from non-current user");
+            return;
+        }
         // If the AIDL client provides a null filter, it wants all updates, so use the most broad
         // filter.
         if (filter == null) {
@@ -244,6 +282,10 @@ final class TunerSession extends ITuner.Stub {
         // Note: RadioModule.onTunerSessionProgramListFilterChanged() must be called without mLock
         // held since it can call getProgramListFilter() and onHalProgramInfoUpdated().
         mModule.onTunerSessionProgramListFilterChanged(this);
+    }
+
+    int getTargetSdkVersion() {
+        return mTargetSdkVersion;
     }
 
     ProgramList.Filter getProgramListFilter() {
@@ -281,7 +323,14 @@ final class TunerSession extends ITuner.Stub {
         }
         for (int i = 0; i < chunks.size(); i++) {
             try {
-                mCallback.onProgramListUpdated(chunks.get(i));
+                if (!ConversionUtils.isAtLeastU(getTargetSdkVersion())) {
+                    ProgramList.Chunk downgradedChunk =
+                            ConversionUtils.convertChunkToTargetSdkVersion(chunks.get(i),
+                                    getTargetSdkVersion());
+                    mCallback.onProgramListUpdated(downgradedChunk);
+                } else {
+                    mCallback.onProgramListUpdated(chunks.get(i));
+                }
             } catch (RemoteException ex) {
                 Slogf.w(TAG, ex, "mCallback.onProgramListUpdated() failed");
             }
@@ -291,6 +340,11 @@ final class TunerSession extends ITuner.Stub {
     @Override
     public void stopProgramListUpdates() throws RemoteException {
         mLogger.logRadioEvent("Stop programList updates");
+        if (!RadioServiceUserController.isCurrentOrSystemUser()) {
+            Slogf.w(TAG,
+                    "Cannot stop program list updates on AIDL HAL client from non-current user");
+            return;
+        }
         synchronized (mLock) {
             checkNotClosedLocked();
             mProgramInfoCache = null;
@@ -331,6 +385,10 @@ final class TunerSession extends ITuner.Stub {
     public void setConfigFlag(int flag, boolean value) throws RemoteException {
         mLogger.logRadioEvent("set ConfigFlag %s to %b ",
                 ConfigFlag.$.toString(flag), value);
+        if (!RadioServiceUserController.isCurrentOrSystemUser()) {
+            Slogf.w(TAG, "Cannot set config flag for AIDL HAL client from non-current user");
+            return;
+        }
         synchronized (mLock) {
             checkNotClosedLocked();
             try {
@@ -344,6 +402,10 @@ final class TunerSession extends ITuner.Stub {
     @Override
     public Map<String, String> setParameters(Map<String, String> parameters) {
         mLogger.logRadioEvent("Set parameters ");
+        if (!RadioServiceUserController.isCurrentOrSystemUser()) {
+            Slogf.w(TAG, "Cannot set parameters for AIDL HAL client from non-current user");
+            return new ArrayMap<>();
+        }
         synchronized (mLock) {
             checkNotClosedLocked();
             try {

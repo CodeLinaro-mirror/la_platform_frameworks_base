@@ -19,16 +19,19 @@ package com.android.server.wm.flicker.helpers
 import android.app.Instrumentation
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
+import android.tools.common.datatypes.Rect
+import android.tools.common.datatypes.Region
+import android.tools.common.datatypes.component.IComponentMatcher
+import android.tools.common.traces.ConditionsFactory
+import android.tools.device.apphelpers.StandardAppHelper
+import android.tools.device.helpers.FIND_TIMEOUT
+import android.tools.device.helpers.SYSTEMUI_PACKAGE
+import android.tools.device.traces.parsers.WindowManagerStateHelper
+import android.tools.device.traces.parsers.toFlickerComponent
 import android.util.Log
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.Until
-import com.android.server.wm.flicker.helpers.GestureHelper.Tuple
 import com.android.server.wm.flicker.testapp.ActivityOptions
-import com.android.server.wm.traces.common.Rect
-import com.android.server.wm.traces.common.WindowManagerConditionsFactory
-import com.android.server.wm.traces.common.region.Region
-import com.android.server.wm.traces.parser.toFlickerComponent
-import com.android.server.wm.traces.parser.windowmanager.WindowManagerStateHelper
 
 open class PipAppHelper(instrumentation: Instrumentation) :
     StandardAppHelper(
@@ -55,7 +58,48 @@ open class PipAppHelper(instrumentation: Instrumentation) :
     }
 
     /**
-     * Expands the PIP window my using the pinch out gesture.
+     * Drags the PIP window away from the screen edge while not crossing the display center.
+     *
+     * @throws IllegalStateException if default display bounds are not available
+     */
+    fun dragPipWindowAwayFromEdge(wmHelper: WindowManagerStateHelper, steps: Int) {
+        val initWindowRect = getWindowRect(wmHelper).clone()
+
+        // initial pointer at the center of the window
+        val startX = initWindowRect.centerX()
+        val y = initWindowRect.centerY()
+
+        val displayRect = wmHelper.currentState.wmState.getDefaultDisplay()?.displayRect
+                ?: throw IllegalStateException("Default display is null")
+
+        // the offset to the right of the display center to drag the window to
+        val offset = 20
+
+        // the actual final x coordinate with the offset included
+        // if the pip window is closer to the right edge of the display the offset is positive
+        // otherwise the offset is negative
+        val endX = displayRect.centerX() + offset * (if (isCloserToRightEdge(wmHelper)) 1 else -1)
+
+        // drag the window to the left but not beyond the center of the display
+        uiDevice.drag(startX, y, endX, y, steps)
+    }
+
+    /**
+     * Returns true if PIP window is closer to the right edge of the display than left.
+     *
+     * @throws IllegalStateException if default display bounds are not available
+     */
+    fun isCloserToRightEdge(wmHelper: WindowManagerStateHelper): Boolean {
+        val windowRect = getWindowRect(wmHelper)
+
+        val displayRect = wmHelper.currentState.wmState.getDefaultDisplay()?.displayRect
+                ?: throw IllegalStateException("Default display is null")
+
+        return windowRect.centerX() > displayRect.centerX()
+    }
+
+    /**
+     * Expands the PIP window by using the pinch out gesture.
      *
      * @param percent The percentage by which to increase the pip window size.
      * @throws IllegalArgumentException if percentage isn't between 0.0f and 1.0f
@@ -92,10 +136,62 @@ open class PipAppHelper(instrumentation: Instrumentation) :
 
         // if the distance per step is less than 1, carry out the animation in two steps
         gestureHelper.pinch(
-                Tuple(initLeftX, yCoord), Tuple(initRightX, yCoord),
-                Tuple(finalLeftX, yCoord), Tuple(finalRightX, yCoord), adjustedSteps)
+            GestureHelper.Tuple(initLeftX, yCoord),
+            GestureHelper.Tuple(initRightX, yCoord),
+            GestureHelper.Tuple(finalLeftX, yCoord),
+            GestureHelper.Tuple(finalRightX, yCoord),
+            adjustedSteps
+        )
 
         waitForPipWindowToExpandFrom(wmHelper, Region.from(windowRect))
+    }
+
+    /**
+     * Minimizes the PIP window by using the pinch in gesture.
+     *
+     * @param percent The percentage by which to decrease the pip window size.
+     * @throws IllegalArgumentException if percentage isn't between 0.0f and 1.0f
+     */
+    fun pinchInPipWindow(wmHelper: WindowManagerStateHelper, percent: Float, steps: Int) {
+        // the percentage must be between 0.0f and 1.0f
+        if (percent <= 0.0f || percent > 1.0f) {
+            throw IllegalArgumentException("Percent must be between 0.0f and 1.0f")
+        }
+
+        val windowRect = getWindowRect(wmHelper)
+
+        // first pointer's initial x coordinate is halfway between the left edge and the center
+        val initLeftX = (windowRect.centerX() - windowRect.width / 4).toFloat()
+        // second pointer's initial x coordinate is halfway between the right edge and the center
+        val initRightX = (windowRect.centerX() + windowRect.width / 4).toFloat()
+
+        // decrease by the distance specified through the percentage
+        val distDecrease = windowRect.width * percent
+
+        // get the final x-coordinates and make sure they are not passing the center of the window
+        val finalLeftX = Math.min(initLeftX + (distDecrease / 2), windowRect.centerX().toFloat())
+        val finalRightX = Math.max(initRightX - (distDecrease / 2), windowRect.centerX().toFloat())
+
+        // y-coordinate is the same throughout this animation
+        val yCoord = windowRect.centerY().toFloat()
+
+        var adjustedSteps = MIN_STEPS_TO_ANIMATE
+
+        // if distance per step is at least 1, then we can use the number of steps requested
+        if (distDecrease.toInt() / (steps * 2) >= 1) {
+            adjustedSteps = steps
+        }
+
+        // if the distance per step is less than 1, carry out the animation in two steps
+        gestureHelper.pinch(
+            GestureHelper.Tuple(initLeftX, yCoord),
+            GestureHelper.Tuple(initRightX, yCoord),
+            GestureHelper.Tuple(finalLeftX, yCoord),
+            GestureHelper.Tuple(finalRightX, yCoord),
+            adjustedSteps
+        )
+
+        waitForPipWindowToMinimizeFrom(wmHelper, Region.from(windowRect))
     }
 
     /**
@@ -105,16 +201,16 @@ open class PipAppHelper(instrumentation: Instrumentation) :
     @JvmOverloads
     fun launchViaIntentAndWaitForPip(
         wmHelper: WindowManagerStateHelper,
-        expectedWindowName: String = "",
+        launchedAppComponentMatcherOverride: IComponentMatcher? = null,
         action: String? = null,
         stringExtras: Map<String, String>
     ) {
         launchViaIntentAndWaitShown(
             wmHelper,
-            expectedWindowName,
+            launchedAppComponentMatcherOverride,
             action,
             stringExtras,
-            waitConditions = arrayOf(WindowManagerConditionsFactory.hasPipWindow())
+            waitConditions = arrayOf(ConditionsFactory.hasPipWindow())
         )
 
         wmHelper.StateSyncBuilder().withPipShown().waitForAndVerify()
@@ -168,7 +264,10 @@ open class PipAppHelper(instrumentation: Instrumentation) :
         closePipWindow(WindowManagerStateHelper(mInstrumentation))
     }
 
-    private fun getWindowRect(wmHelper: WindowManagerStateHelper): Rect {
+    /**
+     * Returns the pip window bounds.
+     */
+    fun getWindowRect(wmHelper: WindowManagerStateHelper): Rect {
         val windowRegion = wmHelper.getWindowRegion(this)
         require(!windowRegion.isEmpty) { "Unable to find a PIP window in the current state" }
         return windowRegion.bounds
@@ -231,6 +330,46 @@ open class PipAppHelper(instrumentation: Instrumentation) :
                 val pipRegion = pipAppWindow.frameRegion
                 return@add pipRegion.coversMoreThan(windowRect)
             }
+            .waitForAndVerify()
+    }
+
+    private fun waitForPipWindowToMinimizeFrom(
+        wmHelper: WindowManagerStateHelper,
+        windowRect: Region
+    ) {
+        wmHelper
+            .StateSyncBuilder()
+            .add("pipWindowMinimized") {
+                val pipAppWindow =
+                    it.wmState.visibleWindows.firstOrNull { window ->
+                        this.windowMatchesAnyOf(window)
+                    }
+                        ?: return@add false
+                val pipRegion = pipAppWindow.frameRegion
+                return@add windowRect.coversMoreThan(pipRegion)
+            }
+            .waitForAndVerify()
+    }
+
+    /**
+     * Waits until the PIP window snaps horizontally to the provided bounds.
+     *
+     * @param finalBounds the bounds to wait for PIP window to snap to
+     */
+    fun waitForPipToSnapTo(wmHelper: WindowManagerStateHelper, finalBounds: android.graphics.Rect) {
+        wmHelper
+            .StateSyncBuilder()
+            .add("pipWindowSnapped") {
+                val pipAppWindow =
+                    it.wmState.visibleWindows.firstOrNull { window ->
+                        this.windowMatchesAnyOf(window)
+                    }
+                        ?: return@add false
+                val pipRegionBounds = pipAppWindow.frameRegion.bounds
+                return@add pipRegionBounds.left == finalBounds.left &&
+                    pipRegionBounds.right == finalBounds.right
+            }
+            .add(ConditionsFactory.isWMStateComplete())
             .waitForAndVerify()
     }
 

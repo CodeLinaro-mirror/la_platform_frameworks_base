@@ -112,6 +112,19 @@ public interface PackageState {
     int getAppId();
 
     /**
+     * Retrieves effective hidden API policy for this app. The state can be dependent on
+     * {@link #getAndroidPackage()} availability and whether the app is a system app.
+     *
+     * Note that during process start, this policy may be mutated by device specific process
+     * configuration, so this value isn't truly final.
+     *
+     * @return The (mostly) final {@link ApplicationInfo.HiddenApiEnforcementPolicy} that should be
+     * applied to this package.
+     */
+    @ApplicationInfo.HiddenApiEnforcementPolicy
+    int getHiddenApiEnforcementPolicy();
+
+    /**
      * @see PackageInfo#packageName
      * @see AndroidPackage#getPackageName()
      */
@@ -131,20 +144,12 @@ public interface PackageState {
     String getSecondaryCpuAbi();
 
     /**
-     * @see AndroidPackage#isPrivileged()
+     * @see ApplicationInfo#seInfo
+     * @return The SE info for this package, which may be overridden by a system configured value,
+     * or null if the package isn't available.
      */
-    boolean isPrivileged();
-
-    /**
-     * @see AndroidPackage#isSystem()
-     */
-    boolean isSystem();
-
-    /**
-     * Whether this app is on the /data partition having been upgraded from a preinstalled app on a
-     * system partition.
-     */
-    boolean isUpdatedSystemApp();
+    @Nullable
+    String getSeInfo();
 
     /**
      * @return State for a user or {@link PackageUserState#DEFAULT} if the state doesn't exist.
@@ -153,10 +158,38 @@ public interface PackageState {
     PackageUserState getStateForUser(@NonNull UserHandle user);
 
     /**
-     * @see R.styleable#AndroidManifestUsesLibrary
+     * List of shared libraries that this package declares a dependency on. This includes all
+     * types of libraries, system or app provided and Java or native.
+     * <p/>
+     * This includes libraries declared in the manifest under the following tags:
+     * <ul>
+     *     <li>uses-library</li>
+     *     <li>uses-native-library</li>
+     *     <li>uses-sdk-library</li>
+     *     <li>uses-static-library</li>
+     * </ul>
      */
     @NonNull
-    List<SharedLibrary> getUsesLibraries();
+    List<SharedLibrary> getSharedLibraryDependencies();
+
+    /** Whether this represents an APEX module. This is different from an APK inside an APEX. */
+    boolean isApex();
+
+    /**
+     * @see ApplicationInfo#PRIVATE_FLAG_PRIVILEGED
+     */
+    boolean isPrivileged();
+
+    /**
+     * @see ApplicationInfo#FLAG_SYSTEM
+     */
+    boolean isSystem();
+
+    /**
+     * Whether this app is on the /data partition having been upgraded from a preinstalled app on a
+     * system partition.
+     */
+    boolean isUpdatedSystemApp();
 
     // Methods below this comment are not yet exposed as API
 
@@ -346,19 +379,19 @@ public interface PackageState {
     boolean isInstallPermissionsFixed();
 
     /**
-     * @see AndroidPackage#isOdm()
+     * @see ApplicationInfo#PRIVATE_FLAG_ODM
      * @hide
      */
     boolean isOdm();
 
     /**
-     * @see AndroidPackage#isOem()
+     * @see ApplicationInfo#PRIVATE_FLAG_OEM
      * @hide
      */
     boolean isOem();
 
     /**
-     * @see AndroidPackage#isProduct()
+     * @see ApplicationInfo#PRIVATE_FLAG_PRODUCT
      * @hide
      */
     boolean isProduct();
@@ -370,7 +403,7 @@ public interface PackageState {
     boolean isRequiredForSystemUser();
 
     /**
-     * @see AndroidPackage#isSystemExt()
+     * @see ApplicationInfo#PRIVATE_FLAG_SYSTEM_EXT
      * @hide
      */
     boolean isSystemExt();
@@ -389,8 +422,15 @@ public interface PackageState {
     boolean isApkInUpdatedApex();
 
     /**
-     * @see AndroidPackage#isVendor()
+     * @see ApplicationInfo#PRIVATE_FLAG_VENDOR
      * @hide
      */
     boolean isVendor();
+
+    /**
+     * The name of the APEX module containing this package, if it is an APEX or APK-in-APEX.
+     * @hide
+     */
+    @Nullable
+    String getApexModuleName();
 }

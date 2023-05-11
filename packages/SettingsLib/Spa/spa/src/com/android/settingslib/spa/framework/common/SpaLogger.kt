@@ -16,7 +16,8 @@
 
 package com.android.settingslib.spa.framework.common
 
-import android.util.Log
+import android.app.settings.SettingsEnums
+import android.os.Bundle
 
 // Defines the category of the log, for quick filter
 enum class LogCategory {
@@ -31,16 +32,20 @@ enum class LogCategory {
 }
 
 // Defines the log events in Spa.
-enum class LogEvent {
+enum class LogEvent(val action: Int) {
     // Page related events.
-    PAGE_ENTER,
-    PAGE_LEAVE,
+    PAGE_ENTER(SettingsEnums.PAGE_VISIBLE),
+    PAGE_LEAVE(SettingsEnums.PAGE_HIDE),
 
     // Entry related events.
-    ENTRY_CLICK,
-    ENTRY_SWITCH_ON,
-    ENTRY_SWITCH_OFF,
+    ENTRY_CLICK(SettingsEnums.ACTION_SETTINGS_TILE_CLICK),
+    ENTRY_SWITCH(SettingsEnums.ACTION_SETTINGS_PREFERENCE_CHANGE),
 }
+
+internal const val LOG_DATA_DISPLAY_NAME = "name"
+internal const val LOG_DATA_SWITCH_STATUS = "switch"
+
+const val LOG_DATA_SESSION_NAME = "session"
 
 /**
  * The interface of logger in Spa
@@ -54,18 +59,7 @@ interface SpaLogger {
         id: String,
         event: LogEvent,
         category: LogCategory = LogCategory.DEFAULT,
-        details: String? = null
+        extraData: Bundle = Bundle.EMPTY
     ) {
-    }
-}
-
-class LocalLogger : SpaLogger {
-    override fun message(tag: String, msg: String, category: LogCategory) {
-        Log.d("SpaMsg-$category", "[$tag] $msg")
-    }
-
-    override fun event(id: String, event: LogEvent, category: LogCategory, details: String?) {
-        val extraMsg = if (details == null) "" else " ($details)"
-        Log.d("SpaEvent-$category", "[$id] $event$extraMsg")
     }
 }

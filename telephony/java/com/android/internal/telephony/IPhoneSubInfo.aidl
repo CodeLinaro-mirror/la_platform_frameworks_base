@@ -17,6 +17,7 @@
 package com.android.internal.telephony;
 
 import android.telephony.ImsiEncryptionInfo;
+import android.net.Uri;
 
 /**
  * Interface used to retrieve various phone-related subscriber information.
@@ -179,6 +180,19 @@ interface IPhoneSubInfo {
     String getIsimImpi(int subId);
 
     /**
+     * Fetches the ISIM PrivateUserIdentity (EF_IMPI) based on subId
+     *
+     * @param subId subscriptionId
+     * @return IMPI (IMS private user identity) of type string or null if EF_IMPI is not available.
+     * @throws IllegalArgumentException if the subscriptionId is not valid
+     * @throws IllegalStateException in case the ISIM hasn’t been loaded.
+     * @throws SecurityException if the caller does not have the required permission
+     */
+    @JavaPassthrough(annotation="@android.annotation.RequiresPermission("
+            + "android.Manifest.permission.USE_ICC_AUTH_WITH_DEVICE_IDENTIFIER)")
+    String getImsPrivateUserIdentity(int subId, String callingPackage, String callingFeatureId);
+
+    /**
      * Returns the IMS home network domain name that was loaded from the ISIM.
      * @return the IMS domain name, or null if not present or not loaded
      */
@@ -190,6 +204,14 @@ interface IPhoneSubInfo {
      *      not present or not loaded
      */
     String[] getIsimImpu(int subId);
+
+    /**
+     * Fetches the ISIM public user identities (EF_IMPU) from UICC based on subId
+     */
+    @JavaPassthrough(annotation="@android.annotation.RequiresPermission(" +
+    "anyOf={android.Manifest.permission.READ_PHONE_NUMBERS, android.Manifest.permission.READ_PRIVILEGED_PHONE_STATE})")
+     List<Uri> getImsPublicUserIdentities(int subId, String callingPackage,
+                                           String callingFeatureId);
 
     /**
      * Returns the IMS Service Table (IST) that was loaded from the ISIM.
@@ -220,18 +242,17 @@ interface IPhoneSubInfo {
             String callingPackage, String callingFeatureId);
 
     /**
-     * Fetches the EFPSISMSC value from the SIM that contains the Public Service Identity
-     * of the SM-SC (either a SIP URI or tel URI), the value is common for both appType
-     * {@link #APPTYPE_ISIM} and {@link #APPTYPE_SIM}.
-     * The EFPSISMSC value is used by the ME to submit SMS over IP as defined in 24.341 [55].
+     * Fetches the EF_PSISMSC value from the UICC that contains the Public Service Identity of
+     * the SM-SC (either a SIP URI or tel URI). The EF_PSISMSC of ISIM and USIM can be found in
+     * DF_TELECOM.
+     * The EF_PSISMSC value is used by the ME to submit SMS over IP as defined in 24.341 [55].
      *
-     * @param appType ICC Application type {@link #APPTYPE_ISIM} or {@link #APPTYPE_USIM}
-     * @return SIP URI or tel URI of the Public Service Identity of the SM-SC
+     * @return Uri : Public Service Identity of SM-SC
      * @throws SecurityException if the caller does not have the required permission/privileges
      * @hide
      */
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission(android.Manifest.permission.READ_PRIVILEGED_PHONE_STATE)")
-    String getSmscIdentity(int subId, int appType);
+    Uri getSmscIdentity(int subId, int appType);
 
     /**
      * Fetches the sim service table from the EFUST/EFIST based on the application type
@@ -249,9 +270,9 @@ interface IPhoneSubInfo {
      * @param appType of type int of either {@link #APPTYPE_USIM} or {@link #APPTYPE_ISIM}.
      * @return HexString represents sim service table else null.
      * @throws SecurityException if the caller does not have the required permission/privileges
+     * @throws IllegalStateException in case if phone or UiccApplication is not available.
      * @hide
      */
-
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission(android.Manifest.permission.READ_PRIVILEGED_PHONE_STATE)")
     String getSimServiceTable(int subId, int appType);
 }

@@ -83,6 +83,7 @@ final class DialogFillUi {
         void onDatasetPicked(@NonNull Dataset dataset);
         void onDismissed();
         void onCanceled();
+        void onShown();
         void startIntentSender(IntentSender intentSender);
     }
 
@@ -117,7 +118,9 @@ final class DialogFillUi {
         final LayoutInflater inflater = LayoutInflater.from(mContext);
         final View decor = inflater.inflate(R.layout.autofill_fill_dialog, null);
 
-        setServiceIcon(decor, serviceIcon);
+        if (response.getShowFillDialogIcon()) {
+            setServiceIcon(decor, serviceIcon);
+        }
         setHeader(decor, response);
 
         mVisibleDatasetsMaxCount = getVisibleDatasetsMaxCount();
@@ -146,7 +149,7 @@ final class DialogFillUi {
         mDialog.setContentView(decor);
         setDialogParamsAsBottomSheet();
         mDialog.setOnCancelListener((d) -> mCallback.onCanceled());
-
+        mDialog.setOnShowListener((d) -> mCallback.onShown());
         show();
     }
 

@@ -20,12 +20,14 @@ import android.os.PowerManager
 import android.os.VibrationEffect
 import android.testing.AndroidTestingRunner
 import android.testing.TestableLooper
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityManager
 import android.widget.ImageView
 import android.widget.TextView
+import androidx.core.animation.doOnCancel
 import androidx.test.filters.SmallTest
 import com.android.internal.logging.testing.UiEventLoggerFake
 import com.android.systemui.R
@@ -35,11 +37,16 @@ import com.android.systemui.common.shared.model.ContentDescription
 import com.android.systemui.common.shared.model.ContentDescription.Companion.loadContentDescription
 import com.android.systemui.common.shared.model.Icon
 import com.android.systemui.common.shared.model.Text
+import com.android.systemui.common.shared.model.TintedIcon
+import com.android.systemui.dump.DumpManager
 import com.android.systemui.plugins.FalsingManager
 import com.android.systemui.statusbar.VibratorHelper
 import com.android.systemui.statusbar.policy.ConfigurationController
+import com.android.systemui.temporarydisplay.ViewPriority
 import com.android.systemui.util.concurrency.FakeExecutor
 import com.android.systemui.util.mockito.any
+import com.android.systemui.util.mockito.argumentCaptor
+import com.android.systemui.util.mockito.capture
 import com.android.systemui.util.mockito.eq
 import com.android.systemui.util.time.FakeSystemClock
 import com.android.systemui.util.view.ViewUtil
@@ -51,6 +58,7 @@ import org.junit.runner.RunWith
 import org.mockito.ArgumentCaptor
 import org.mockito.ArgumentMatchers.anyInt
 import org.mockito.Mock
+import org.mockito.Mockito.never
 import org.mockito.Mockito.verify
 import org.mockito.Mockito.`when` as whenever
 import org.mockito.MockitoAnnotations
@@ -59,17 +67,20 @@ import org.mockito.MockitoAnnotations
 @RunWith(AndroidTestingRunner::class)
 @TestableLooper.RunWithLooper
 class ChipbarCoordinatorTest : SysuiTestCase() {
-    private lateinit var underTest: FakeChipbarCoordinator
+    private lateinit var underTest: ChipbarCoordinator
 
     @Mock private lateinit var logger: ChipbarLogger
     @Mock private lateinit var accessibilityManager: AccessibilityManager
     @Mock private lateinit var configurationController: ConfigurationController
+    @Mock private lateinit var dumpManager: DumpManager
     @Mock private lateinit var powerManager: PowerManager
     @Mock private lateinit var windowManager: WindowManager
     @Mock private lateinit var falsingManager: FalsingManager
     @Mock private lateinit var falsingCollector: FalsingCollector
     @Mock private lateinit var viewUtil: ViewUtil
     @Mock private lateinit var vibratorHelper: VibratorHelper
+    @Mock private lateinit var swipeGestureHandler: SwipeChipbarAwayGestureHandler
+    private lateinit var chipbarAnimator: TestChipbarAnimator
     private lateinit var fakeWakeLockBuilder: WakeLockFake.Builder
     private lateinit var fakeWakeLock: WakeLockFake
     private lateinit var fakeClock: FakeSystemClock
@@ -89,23 +100,89 @@ class ChipbarCoordinatorTest : SysuiTestCase() {
         fakeWakeLockBuilder.setWakeLock(fakeWakeLock)
 
         uiEventLoggerFake = UiEventLoggerFake()
+        chipbarAnimator = TestChipbarAnimator()
 
         underTest =
-            FakeChipbarCoordinator(
+            ChipbarCoordinator(
                 context,
                 logger,
                 windowManager,
                 fakeExecutor,
                 accessibilityManager,
                 configurationController,
+                dumpManager,
                 powerManager,
+                chipbarAnimator,
                 falsingManager,
                 falsingCollector,
+                swipeGestureHandler,
                 viewUtil,
                 vibratorHelper,
                 fakeWakeLockBuilder,
+                fakeClock,
             )
         underTest.start()
+    }
+
+    @Test
+    fun displayView_contentDescription_iconHasDescription() {
+        underTest.displayView(
+            createChipbarInfo(
+                Icon.Resource(R.drawable.ic_cake, ContentDescription.Loaded("loadedCD")),
+                Text.Loaded("text"),
+                endItem = null,
+            )
+        )
+
+        val contentDescView = getChipbarView().getInnerView()
+        assertThat(contentDescView.contentDescription.toString()).contains("loadedCD")
+        assertThat(contentDescView.contentDescription.toString()).contains("text")
+    }
+
+    @Test
+    fun displayView_contentDescription_iconHasNoDescription() {
+        underTest.displayView(
+            createChipbarInfo(
+                Icon.Resource(R.drawable.ic_cake, contentDescription = null),
+                Text.Loaded("text"),
+                endItem = null,
+            )
+        )
+
+        val contentDescView = getChipbarView().getInnerView()
+        assertThat(contentDescView.contentDescription.toString()).isEqualTo("text")
+    }
+
+    @Test
+    fun displayView_contentDescription_endIsLoading() {
+        underTest.displayView(
+            createChipbarInfo(
+                Icon.Resource(R.drawable.ic_cake, ContentDescription.Loaded("loadedCD")),
+                Text.Loaded("text"),
+                endItem = ChipbarEndItem.Loading,
+            )
+        )
+
+        val contentDescView = getChipbarView().getInnerView()
+        val loadingDesc = context.resources.getString(R.string.media_transfer_loading)
+        assertThat(contentDescView.contentDescription.toString()).contains("text")
+        assertThat(contentDescView.contentDescription.toString()).contains(loadingDesc)
+    }
+
+    @Test
+    fun displayView_contentDescription_endNotLoading() {
+        underTest.displayView(
+            createChipbarInfo(
+                Icon.Resource(R.drawable.ic_cake, ContentDescription.Loaded("loadedCD")),
+                Text.Loaded("text"),
+                endItem = ChipbarEndItem.Error,
+            )
+        )
+
+        val contentDescView = getChipbarView().getInnerView()
+        val loadingDesc = context.resources.getString(R.string.media_transfer_loading)
+        assertThat(contentDescView.contentDescription.toString()).contains("text")
+        assertThat(contentDescView.contentDescription.toString()).doesNotContain(loadingDesc)
     }
 
     @Test
@@ -285,6 +362,105 @@ class ChipbarCoordinatorTest : SysuiTestCase() {
     }
 
     @Test
+    fun displayView_loading_animationStarted() {
+        underTest.displayView(
+            createChipbarInfo(
+                Icon.Resource(R.id.check_box, null),
+                Text.Loaded("text"),
+                endItem = ChipbarEndItem.Loading,
+            )
+        )
+
+        assertThat(underTest.loadingDetails!!.animator.isStarted).isTrue()
+    }
+
+    @Test
+    fun displayView_notLoading_noAnimation() {
+        underTest.displayView(
+            createChipbarInfo(
+                Icon.Resource(R.id.check_box, null),
+                Text.Loaded("text"),
+                endItem = ChipbarEndItem.Error,
+            )
+        )
+
+        assertThat(underTest.loadingDetails).isNull()
+    }
+
+    @Test
+    fun displayView_loadingThenNotLoading_animationStopped() {
+        underTest.displayView(
+            createChipbarInfo(
+                Icon.Resource(R.id.check_box, null),
+                Text.Loaded("text"),
+                endItem = ChipbarEndItem.Loading,
+            )
+        )
+
+        val animator = underTest.loadingDetails!!.animator
+        var cancelled = false
+        animator.doOnCancel { cancelled = true }
+
+        underTest.displayView(
+            createChipbarInfo(
+                Icon.Resource(R.id.check_box, null),
+                Text.Loaded("text"),
+                endItem = ChipbarEndItem.Button(Text.Loaded("button")) {},
+            )
+        )
+
+        assertThat(cancelled).isTrue()
+        assertThat(underTest.loadingDetails).isNull()
+    }
+
+    @Test
+    fun displayView_loadingThenHideView_animationStopped() {
+        underTest.displayView(
+            createChipbarInfo(
+                Icon.Resource(R.id.check_box, null),
+                Text.Loaded("text"),
+                endItem = ChipbarEndItem.Loading,
+            )
+        )
+
+        val animator = underTest.loadingDetails!!.animator
+        var cancelled = false
+        animator.doOnCancel { cancelled = true }
+
+        underTest.removeView(DEVICE_ID, "TestReason")
+
+        assertThat(cancelled).isTrue()
+        assertThat(underTest.loadingDetails).isNull()
+    }
+
+    @Test
+    fun displayView_loadingThenNewLoading_animationStaysTheSame() {
+        underTest.displayView(
+            createChipbarInfo(
+                Icon.Resource(R.id.check_box, null),
+                Text.Loaded("text"),
+                endItem = ChipbarEndItem.Loading,
+            )
+        )
+
+        val animator = underTest.loadingDetails!!.animator
+        var cancelled = false
+        animator.doOnCancel { cancelled = true }
+
+        underTest.displayView(
+            createChipbarInfo(
+                Icon.Resource(R.id.check_box, null),
+                Text.Loaded("new text"),
+                endItem = ChipbarEndItem.Loading,
+            )
+        )
+
+        assertThat(underTest.loadingDetails!!.animator).isEqualTo(animator)
+        assertThat(underTest.loadingDetails!!.animator.isStarted).isTrue()
+        assertThat(cancelled).isFalse()
+    }
+
+    @Test
     fun displayView_vibrationEffect_doubleClickEffect() {
         underTest.displayView(
             createChipbarInfo(
@@ -296,6 +472,26 @@ class ChipbarCoordinatorTest : SysuiTestCase() {
         )
 
         verify(vibratorHelper).vibrate(VibrationEffect.get(VibrationEffect.EFFECT_DOUBLE_CLICK))
+    }
+
+    /** Regression test for b/266119467. */
+    @Test
+    fun displayView_animationFailure_viewsStillBecomeVisible() {
+        chipbarAnimator.allowAnimation = false
+
+        underTest.displayView(
+            createChipbarInfo(
+                Icon.Resource(R.id.check_box, null),
+                Text.Loaded("text"),
+                endItem = ChipbarEndItem.Loading,
+            )
+        )
+
+        val view = getChipbarView()
+        assertThat(view.getInnerView().alpha).isEqualTo(1f)
+        assertThat(view.getStartIconView().alpha).isEqualTo(1f)
+        assertThat(view.getLoadingIcon().alpha).isEqualTo(1f)
+        assertThat(view.getChipTextView().alpha).isEqualTo(1f)
     }
 
     @Test
@@ -363,27 +559,152 @@ class ChipbarCoordinatorTest : SysuiTestCase() {
         verify(logger).logViewUpdate(eq(WINDOW_TITLE), eq("new title text"), any())
     }
 
+    /** Regression test for b/266209420. */
+    @Test
+    fun displayViewThenImmediateRemoval_viewStillRemoved() {
+        underTest.displayView(
+            createChipbarInfo(
+                Icon.Resource(R.drawable.ic_cake, contentDescription = null),
+                Text.Loaded("title text"),
+                endItem = ChipbarEndItem.Error,
+            ),
+        )
+        val chipbarView = getChipbarView()
+
+        underTest.removeView(DEVICE_ID, "test reason")
+
+        verify(windowManager).removeView(chipbarView)
+    }
+
+    /** Regression test for b/266209420. */
+    @Test
+    fun removeView_animationFailure_viewStillRemoved() {
+        chipbarAnimator.allowAnimation = false
+
+        underTest.displayView(
+            createChipbarInfo(
+                Icon.Resource(R.drawable.ic_cake, contentDescription = null),
+                Text.Loaded("title text"),
+                endItem = ChipbarEndItem.Error,
+            ),
+        )
+        val chipbarView = getChipbarView()
+
+        underTest.removeView(DEVICE_ID, "test reason")
+
+        verify(windowManager).removeView(chipbarView)
+    }
+
+    @Test
+    fun swipeToDismiss_false_neverListensForGesture() {
+        underTest.displayView(
+            createChipbarInfo(
+                Icon.Resource(R.drawable.ic_cake, contentDescription = null),
+                Text.Loaded("title text"),
+                endItem = ChipbarEndItem.Loading,
+                allowSwipeToDismiss = false,
+            )
+        )
+
+        verify(swipeGestureHandler, never()).addOnGestureDetectedCallback(any(), any())
+    }
+
+    @Test
+    fun swipeToDismiss_true_listensForGesture() {
+        underTest.displayView(
+            createChipbarInfo(
+                Icon.Resource(R.drawable.ic_cake, contentDescription = null),
+                Text.Loaded("title text"),
+                endItem = ChipbarEndItem.Loading,
+                allowSwipeToDismiss = true,
+            )
+        )
+
+        verify(swipeGestureHandler).addOnGestureDetectedCallback(any(), any())
+    }
+
+    @Test
+    fun swipeToDismiss_swipeOccurs_viewDismissed() {
+        underTest.displayView(
+            createChipbarInfo(
+                Icon.Resource(R.drawable.ic_cake, contentDescription = null),
+                Text.Loaded("title text"),
+                endItem = ChipbarEndItem.Loading,
+                allowSwipeToDismiss = true,
+            )
+        )
+        val view = getChipbarView()
+
+        val callbackCaptor = argumentCaptor<(MotionEvent) -> Unit>()
+        verify(swipeGestureHandler).addOnGestureDetectedCallback(any(), capture(callbackCaptor))
+
+        callbackCaptor.value.invoke(MotionEvent.obtain(0L, 0L, 0, 0f, 0f, 0))
+
+        verify(windowManager).removeView(view)
+    }
+
+    @Test
+    fun swipeToDismiss_viewUpdatedToFalse_swipeOccurs_viewNotDismissed() {
+        underTest.displayView(
+            createChipbarInfo(
+                Icon.Resource(R.drawable.ic_cake, contentDescription = null),
+                Text.Loaded("title text"),
+                endItem = ChipbarEndItem.Loading,
+                allowSwipeToDismiss = true,
+            )
+        )
+        val view = getChipbarView()
+        val callbackCaptor = argumentCaptor<(MotionEvent) -> Unit>()
+        verify(swipeGestureHandler).addOnGestureDetectedCallback(any(), capture(callbackCaptor))
+
+        // WHEN the view is updated to not allow swipe-to-dismiss
+        underTest.displayView(
+            createChipbarInfo(
+                Icon.Resource(R.drawable.ic_cake, contentDescription = null),
+                Text.Loaded("title text"),
+                endItem = ChipbarEndItem.Loading,
+                allowSwipeToDismiss = false,
+            )
+        )
+
+        // THEN the callback is removed
+        verify(swipeGestureHandler).removeOnGestureDetectedCallback(any())
+
+        // And WHEN the old callback is invoked
+        callbackCaptor.value.invoke(MotionEvent.obtain(0L, 0L, 0, 0f, 0f, 0))
+
+        // THEN it is ignored and view isn't removed
+        verify(windowManager, never()).removeView(view)
+    }
+
     private fun createChipbarInfo(
         startIcon: Icon,
         text: Text,
         endItem: ChipbarEndItem?,
         vibrationEffect: VibrationEffect? = null,
+        allowSwipeToDismiss: Boolean = false,
     ): ChipbarInfo {
         return ChipbarInfo(
-            startIcon,
+            TintedIcon(startIcon, tintAttr = null),
             text,
             endItem,
             vibrationEffect,
+            allowSwipeToDismiss,
             windowTitle = WINDOW_TITLE,
             wakeReason = WAKE_REASON,
             timeoutMs = TIMEOUT,
+            id = DEVICE_ID,
+            priority = ViewPriority.NORMAL,
         )
     }
 
+    private fun ViewGroup.getInnerView() = this.requireViewById<ViewGroup>(R.id.chipbar_inner)
+
     private fun ViewGroup.getStartIconView() = this.requireViewById<ImageView>(R.id.start_icon)
 
-    private fun ViewGroup.getChipText(): String =
-        (this.requireViewById<TextView>(R.id.text)).text as String
+    private fun ViewGroup.getChipTextView() = this.requireViewById<TextView>(R.id.text)
+
+    private fun ViewGroup.getChipText(): String = this.getChipTextView().text as String
 
     private fun ViewGroup.getLoadingIcon(): View = this.requireViewById(R.id.loading)
 
@@ -396,8 +717,28 @@ class ChipbarCoordinatorTest : SysuiTestCase() {
         verify(windowManager).addView(viewCaptor.capture(), any())
         return viewCaptor.value as ViewGroup
     }
+
+    /** Test class that lets us disallow animations. */
+    inner class TestChipbarAnimator : ChipbarAnimator() {
+        var allowAnimation: Boolean = true
+
+        override fun animateViewIn(innerView: ViewGroup, onAnimationEnd: Runnable): Boolean {
+            if (!allowAnimation) {
+                return false
+            }
+            return super.animateViewIn(innerView, onAnimationEnd)
+        }
+
+        override fun animateViewOut(innerView: ViewGroup, onAnimationEnd: Runnable): Boolean {
+            if (!allowAnimation) {
+                return false
+            }
+            return super.animateViewOut(innerView, onAnimationEnd)
+        }
+    }
 }
 
 private const val TIMEOUT = 10000
 private const val WINDOW_TITLE = "Test Chipbar Window Title"
 private const val WAKE_REASON = "TEST_CHIPBAR_WAKE_REASON"
+private const val DEVICE_ID = "id"

@@ -1,6 +1,5 @@
 package com.android.systemui.statusbar.phone;
 
-import android.app.NotificationManager;
 import android.content.Context;
 import android.content.res.Resources;
 import android.graphics.Color;
@@ -11,6 +10,7 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.widget.FrameLayout;
 
+import androidx.annotation.ColorInt;
 import androidx.annotation.NonNull;
 import androidx.annotation.VisibleForTesting;
 import androidx.collection.ArrayMap;
@@ -38,6 +38,7 @@ import com.android.systemui.statusbar.notification.NotificationWakeUpCoordinator
 import com.android.systemui.statusbar.notification.PropertyAnimator;
 import com.android.systemui.statusbar.notification.collection.ListEntry;
 import com.android.systemui.statusbar.notification.collection.NotificationEntry;
+import com.android.systemui.statusbar.notification.collection.provider.SectionStyleProvider;
 import com.android.systemui.statusbar.notification.stack.AnimationProperties;
 import com.android.systemui.statusbar.window.StatusBarWindowController;
 import com.android.wm.shell.bubbles.Bubbles;
@@ -62,6 +63,8 @@ public class NotificationIconAreaController implements
 
     public static final String HIGH_PRIORITY = "high_priority";
     private static final long AOD_ICONS_APPEAR_DURATION = 200;
+    @ColorInt
+    private static final int DEFAULT_AOD_ICON_COLOR = 0xffffffff;
 
     private final ContrastColorUtil mContrastColorUtil;
     private final Runnable mUpdateStatusBarIcons = this::updateStatusBarIcons;
@@ -70,6 +73,7 @@ public class NotificationIconAreaController implements
     private final NotificationWakeUpCoordinator mWakeUpCoordinator;
     private final KeyguardBypassController mBypassController;
     private final DozeParameters mDozeParameters;
+    private final SectionStyleProvider mSectionStyleProvider;
     private final Optional<Bubbles> mBubblesOptional;
     private final StatusBarWindowController mStatusBarWindowController;
     private final ScreenOffAnimationController mScreenOffAnimationController;
@@ -84,7 +88,7 @@ public class NotificationIconAreaController implements
     private NotificationIconContainer mShelfIcons;
     private NotificationIconContainer mAodIcons;
     private final ArrayList<Rect> mTintAreas = new ArrayList<>();
-    private Context mContext;
+    private final Context mContext;
 
     private final DemoModeController mDemoModeController;
 
@@ -114,6 +118,7 @@ public class NotificationIconAreaController implements
             NotificationMediaManager notificationMediaManager,
             NotificationListener notificationListener,
             DozeParameters dozeParameters,
+            SectionStyleProvider sectionStyleProvider,
             Optional<Bubbles> bubblesOptional,
             DemoModeController demoModeController,
             DarkIconDispatcher darkIconDispatcher,
@@ -125,6 +130,7 @@ public class NotificationIconAreaController implements
         mStatusBarStateController.addCallback(this);
         mMediaManager = notificationMediaManager;
         mDozeParameters = dozeParameters;
+        mSectionStyleProvider = sectionStyleProvider;
         mWakeUpCoordinator = wakeUpCoordinator;
         wakeUpCoordinator.addListener(this);
         mBypassController = keyguardBypassController;
@@ -257,19 +263,13 @@ public class NotificationIconAreaController implements
     protected boolean shouldShowNotificationIcon(NotificationEntry entry,
             boolean showAmbient, boolean showLowPriority, boolean hideDismissed,
             boolean hideRepliedMessages, boolean hideCurrentMedia, boolean hidePulsing) {
-        if (entry.getRanking().isAmbient() && !showAmbient) {
+        if (!showAmbient && mSectionStyleProvider.isMinimized(entry)) {
             return false;
         }
         if (hideCurrentMedia && entry.getKey().equals(mMediaManager.getMediaNotificationKey())) {
             return false;
         }
-        if (!showLowPriority && entry.getImportance() < NotificationManager.IMPORTANCE_DEFAULT) {
-            return false;
-        }
-        if (!entry.isTopLevelChild()) {
-            return false;
-        }
-        if (entry.getRow().getVisibility() == View.GONE) {
+        if (!showLowPriority && mSectionStyleProvider.isSilent(entry)) {
             return false;
         }
         if (entry.isRowDismissed() && hideDismissed) {
@@ -567,7 +567,7 @@ public class NotificationIconAreaController implements
 
     private void reloadAodColor() {
         mAodIconTint = Utils.getColorAttrDefaultColor(mContext,
-                R.attr.wallpaperTextColor);
+                R.attr.wallpaperTextColor, DEFAULT_AOD_ICON_COLOR);
     }
 
     private void updateAodIconColors() {

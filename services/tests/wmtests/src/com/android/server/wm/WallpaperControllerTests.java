@@ -52,8 +52,10 @@ import android.graphics.Rect;
 import android.os.IBinder;
 import android.os.RemoteException;
 import android.platform.test.annotations.Presubmit;
+import android.util.MergedConfiguration;
 import android.view.DisplayCutout;
 import android.view.DisplayInfo;
+import android.view.DisplayShape;
 import android.view.Gravity;
 import android.view.InsetsState;
 import android.view.PrivacyIndicatorBounds;
@@ -61,6 +63,7 @@ import android.view.RoundedCorners;
 import android.view.Surface;
 import android.view.SurfaceControl;
 import android.view.WindowManager;
+import android.window.ClientWindowFrames;
 
 import androidx.test.filters.SmallTest;
 
@@ -165,7 +168,8 @@ public class WallpaperControllerTests extends WindowTestsBase {
         final DisplayInfo info = dc.computeScreenConfiguration(config, Surface.ROTATION_0);
         final DisplayCutout cutout = dc.calculateDisplayCutoutForRotation(Surface.ROTATION_0);
         final DisplayFrames displayFrames = new DisplayFrames(new InsetsState(),
-                info, cutout, RoundedCorners.NO_ROUNDED_CORNERS, new PrivacyIndicatorBounds());
+                info, cutout, RoundedCorners.NO_ROUNDED_CORNERS, new PrivacyIndicatorBounds(),
+                DisplayShape.NONE);
         wallpaperWindow.mToken.applyFixedRotationTransform(info, displayFrames, config);
 
         // Check that the wallpaper has the same frame in landscape than in portrait
@@ -311,12 +315,12 @@ public class WallpaperControllerTests extends WindowTestsBase {
         r.applyFixedRotationTransform(mDisplayContent.getDisplayInfo(),
                 mDisplayContent.mDisplayFrames, mDisplayContent.getConfiguration());
         // Invisible requested activity should not share its rotation transform.
-        r.mVisibleRequested = false;
+        r.setVisibleRequested(false);
         mDisplayContent.mWallpaperController.adjustWallpaperWindows();
         assertFalse(wallpaperToken.hasFixedRotationTransform());
 
         // Wallpaper should link the transform of its target.
-        r.mVisibleRequested = true;
+        r.setVisibleRequested(true);
         mDisplayContent.mWallpaperController.adjustWallpaperWindows();
         assertEquals(appWin, mDisplayContent.mWallpaperController.getWallpaperTarget());
         assertTrue(r.hasFixedRotationTransform());
@@ -335,6 +339,29 @@ public class WallpaperControllerTests extends WindowTestsBase {
         doReturn(true).when(mDisplayContent).isKeyguardLocked();
         mDisplayContent.mWallpaperController.adjustWallpaperWindows();
         assertEquals(appWin, mDisplayContent.mWallpaperController.getWallpaperTarget());
+    }
+
+    @Test
+    public void testWallpaperReportConfigChange() {
+        final WindowState wallpaperWindow = createWallpaperWindow(mDisplayContent);
+        createWallpaperTargetWindow(mDisplayContent);
+        final WallpaperWindowToken wallpaperToken = wallpaperWindow.mToken.asWallpaperToken();
+        makeWindowVisible(wallpaperWindow);
+        wallpaperWindow.mLayoutSeq = mDisplayContent.mLayoutSeq;
+        // Assume the token was invisible and the latest config was reported.
+        wallpaperToken.commitVisibility(false);
+        wallpaperWindow.fillClientWindowFramesAndConfiguration(new ClientWindowFrames(),
+                new MergedConfiguration(), true /* useLatestConfig */, false /* relayoutVisible */);
+        assertTrue(wallpaperWindow.isLastConfigReportedToClient());
+
+        final Rect bounds = wallpaperToken.getBounds();
+        wallpaperToken.setBounds(new Rect(0, 0, bounds.width() / 2, bounds.height() / 2));
+        assertFalse(wallpaperWindow.isLastConfigReportedToClient());
+        // If there is a pending config change when changing to visible, it should tell the client
+        // to redraw by WindowState#reportResized.
+        wallpaperToken.commitVisibility(true);
+        waitUntilHandlersIdle();
+        assertTrue(wallpaperWindow.isLastConfigReportedToClient());
     }
 
     @Test
@@ -369,18 +396,9 @@ public class WallpaperControllerTests extends WindowTestsBase {
         final SurfaceControl.Transaction t = mock(SurfaceControl.Transaction.class);
         token.finishSync(t, false /* cancel */);
         transit.onTransactionReady(transit.getSyncId(), t);
-        dc.mTransitionController.finishTransition(transit);
+        dc.mTransitionController.finishTransition(transit.getToken());
         assertFalse(wallpaperWindow.isVisible());
         assertFalse(token.isVisible());
-
-        // Assume wallpaper was visible. When transaction is ready without wallpaper target,
-        // wallpaper should be requested to be invisible.
-        token.setVisibility(true);
-        transit = dc.mTransitionController.createTransition(TRANSIT_CLOSE);
-        dc.mTransitionController.collect(token);
-        transit.onTransactionReady(transit.getSyncId(), t);
-        assertFalse(token.isVisibleRequested());
-        assertTrue(token.isVisible());
     }
 
     private static void prepareSmallerSecondDisplay(DisplayContent dc, int width, int height) {
@@ -400,7 +418,7 @@ public class WallpaperControllerTests extends WindowTestsBase {
         dc.updateOrientation();
         dc.sendNewConfiguration();
         spyOn(wallpaperWindow);
-        doReturn(new Rect(0, 0, width, height)).when(wallpaperWindow).getLastReportedBounds();
+        doReturn(new Rect(0, 0, width, height)).when(wallpaperWindow).getParentFrame();
     }
 
     @Test

@@ -16,11 +16,19 @@
 
 package android.credentials;
 
+import java.util.List;
+
+import android.credentials.CredentialProviderInfo;
+import android.credentials.ClearCredentialStateRequest;
 import android.credentials.CreateCredentialRequest;
 import android.credentials.GetCredentialRequest;
-import android.credentials.IClearCredentialSessionCallback;
+import android.credentials.RegisterCredentialDescriptionRequest;
+import android.credentials.UnregisterCredentialDescriptionRequest;
+import android.credentials.IClearCredentialStateCallback;
 import android.credentials.ICreateCredentialCallback;
 import android.credentials.IGetCredentialCallback;
+import android.credentials.ISetEnabledProvidersCallback;
+import android.content.ComponentName;
 import android.os.ICancellationSignal;
 
 /**
@@ -34,5 +42,18 @@ interface ICredentialManager {
 
     @nullable ICancellationSignal executeCreateCredential(in CreateCredentialRequest request, in ICreateCredentialCallback callback, String callingPackage);
 
-    @nullable ICancellationSignal clearCredentialSession(in IClearCredentialSessionCallback callback, String callingPackage);
+    @nullable ICancellationSignal clearCredentialState(in ClearCredentialStateRequest request, in IClearCredentialStateCallback callback, String callingPackage);
+
+    void setEnabledProviders(in List<String> providers, in int userId, in ISetEnabledProvidersCallback callback);
+
+    void registerCredentialDescription(in RegisterCredentialDescriptionRequest request, String callingPackage);
+
+    void unregisterCredentialDescription(in UnregisterCredentialDescriptionRequest request, String callingPackage);
+
+    boolean isEnabledCredentialProviderService(in ComponentName componentName, String callingPackage);
+
+    List<CredentialProviderInfo> getCredentialProviderServices(in int userId, in int providerFilter);
+
+    List<CredentialProviderInfo> getCredentialProviderServicesForTesting(in int providerFilter);
 }
+

@@ -172,9 +172,9 @@ public class RootWindowContainerTests extends WindowTestsBase {
     @Test
     public void testTaskLayerRank() {
         final Task rootTask = new TaskBuilder(mSupervisor).build();
-        final Task task1 = new TaskBuilder(mSupervisor).setParentTaskFragment(rootTask).build();
+        final Task task1 = new TaskBuilder(mSupervisor).setParentTask(rootTask).build();
         final ActivityRecord activity1 = new ActivityBuilder(mAtm).setTask(task1).build();
-        activity1.mVisibleRequested = true;
+        activity1.setVisibleRequested(true);
         mWm.mRoot.rankTaskLayers();
 
         assertEquals(1, task1.mLayerRank);
@@ -183,7 +183,7 @@ public class RootWindowContainerTests extends WindowTestsBase {
 
         final Task task2 = new TaskBuilder(mSupervisor).build();
         final ActivityRecord activity2 = new ActivityBuilder(mAtm).setTask(task2).build();
-        activity2.mVisibleRequested = true;
+        activity2.setVisibleRequested(true);
         mWm.mRoot.rankTaskLayers();
 
         // Note that ensureActivitiesVisible is disabled in SystemServicesTestRule, so both the
@@ -200,8 +200,8 @@ public class RootWindowContainerTests extends WindowTestsBase {
         assertEquals(2, task2.mLayerRank);
 
         // The rank should be updated to invisible when device went to sleep.
-        activity1.mVisibleRequested = false;
-        activity2.mVisibleRequested = false;
+        activity1.setVisibleRequested(false);
+        activity2.setVisibleRequested(false);
         doReturn(true).when(mAtm).isSleepingOrShuttingDownLocked();
         doReturn(true).when(mRootWindowContainer).putTasksToSleep(anyBoolean(), anyBoolean());
         mSupervisor.mGoingToSleepWakeLock = mock(PowerManager.WakeLock.class);
@@ -645,7 +645,7 @@ public class RootWindowContainerTests extends WindowTestsBase {
         final TaskDisplayArea taskDisplayArea = mRootWindowContainer.getDefaultTaskDisplayArea();
         final Task targetRootTask = taskDisplayArea.createRootTask(WINDOWING_MODE_FULLSCREEN,
                 ACTIVITY_TYPE_STANDARD, false /* onTop */);
-        final Task targetTask = new TaskBuilder(mSupervisor).setParentTaskFragment(targetRootTask)
+        final Task targetTask = new TaskBuilder(mSupervisor).setParentTask(targetRootTask)
                 .build();
 
         // Create Recents on secondary display.

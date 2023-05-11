@@ -28,6 +28,7 @@ import static android.view.WindowInsets.Type.ime;
 
 import static com.android.internal.config.sysui.SystemUiDeviceConfigFlags.HOME_BUTTON_LONG_PRESS_DURATION_MS;
 import static com.android.systemui.navigationbar.NavigationBar.NavBarActionEvent.NAVBAR_ASSIST_LONGPRESS;
+import static com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_SCREEN_PINNING;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -44,14 +45,12 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import android.content.BroadcastReceiver;
+import android.app.ActivityManager;
 import android.content.Context;
-import android.content.IntentFilter;
 import android.content.res.Resources;
 import android.hardware.display.DisplayManagerGlobal;
 import android.os.Handler;
 import android.os.SystemClock;
-import android.os.UserHandle;
 import android.provider.DeviceConfig;
 import android.telecom.TelecomManager;
 import android.testing.AndroidTestingRunner;
@@ -59,6 +58,7 @@ import android.testing.TestableLooper;
 import android.testing.TestableLooper.RunWithLooper;
 import android.view.Display;
 import android.view.DisplayInfo;
+import android.view.IWindowManager;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewRootImpl;
@@ -79,7 +79,6 @@ import com.android.systemui.accessibility.AccessibilityButtonModeObserver;
 import com.android.systemui.accessibility.AccessibilityButtonTargetsObserver;
 import com.android.systemui.accessibility.SystemActions;
 import com.android.systemui.assist.AssistManager;
-import com.android.systemui.broadcast.BroadcastDispatcher;
 import com.android.systemui.dump.DumpManager;
 import com.android.systemui.keyguard.WakefulnessLifecycle;
 import com.android.systemui.model.SysUiState;
@@ -89,11 +88,14 @@ import com.android.systemui.navigationbar.gestural.EdgeBackGestureHandler;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.recents.OverviewProxyService;
 import com.android.systemui.recents.Recents;
+import com.android.systemui.settings.DisplayTracker;
+import com.android.systemui.settings.FakeDisplayTracker;
 import com.android.systemui.settings.UserContextProvider;
 import com.android.systemui.settings.UserTracker;
 import com.android.systemui.shade.NotificationShadeWindowView;
 import com.android.systemui.shade.ShadeController;
 import com.android.systemui.shared.rotation.RotationButtonController;
+import com.android.systemui.shared.system.TaskStackChangeListeners;
 import com.android.systemui.statusbar.CommandQueue;
 import com.android.systemui.statusbar.NotificationRemoteInputManager;
 import com.android.systemui.statusbar.NotificationShadeDepthController;
@@ -119,6 +121,7 @@ import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
 import java.util.Optional;
+import java.util.concurrent.Executor;
 
 @RunWith(AndroidTestingRunner.class)
 @RunWithLooper(setAsMainLooper = true)
@@ -166,13 +169,11 @@ public class NavigationBarTest extends SysuiTestCase {
     @Mock
     private Handler mHandler;
     @Mock
-    private BroadcastDispatcher mBroadcastDispatcher;
+    private UserTracker mUserTracker;
     @Mock
     private UiEventLogger mUiEventLogger;
     @Mock
     private ViewTreeObserver mViewTreeObserver;
-    @Mock
-    EdgeBackGestureHandler mEdgeBackGestureHandler;
     NavBarHelper mNavBarHelper;
     @Mock
     private LightBarController mLightBarController;
@@ -204,8 +205,14 @@ public class NavigationBarTest extends SysuiTestCase {
     private Resources mResources;
     @Mock
     private ViewRootImpl mViewRootImpl;
+    @Mock
+    private EdgeBackGestureHandler.Factory mEdgeBackGestureHandlerFactory;
+    @Mock
+    private EdgeBackGestureHandler mEdgeBackGestureHandler;
     private FakeExecutor mFakeExecutor = new FakeExecutor(new FakeSystemClock());
     private DeviceConfigProxyFake mDeviceConfigProxyFake = new DeviceConfigProxyFake();
+    private TaskStackChangeListeners mTaskStackChangeListeners =
+            TaskStackChangeListeners.getTestInstance();
 
     @Rule
     public final LeakCheckedTest.SysuiLeakCheck mLeakCheck = new LeakCheckedTest.SysuiLeakCheck();
@@ -231,6 +238,7 @@ public class NavigationBarTest extends SysuiTestCase {
                 .thenReturn(mContext);
         when(mNavigationBarView.getResources()).thenReturn(mResources);
         when(mNavigationBarView.getViewRootImpl()).thenReturn(mViewRootImpl);
+        when(mEdgeBackGestureHandlerFactory.create(any())).thenReturn(mEdgeBackGestureHandler);
         setupSysuiDependency();
         // This class inflates views that call Dependency.get, thus these injections are still
         // necessary.
@@ -247,7 +255,9 @@ public class NavigationBarTest extends SysuiTestCase {
                     mSystemActions, mOverviewProxyService,
                     () -> mock(AssistManager.class), () -> Optional.of(mCentralSurfaces),
                     mKeyguardStateController, mock(NavigationModeController.class),
-                    mock(UserTracker.class), mock(DumpManager.class)));
+                    mEdgeBackGestureHandlerFactory, mock(IWindowManager.class),
+                    mock(UserTracker.class), mock(DisplayTracker.class), mock(DumpManager.class),
+                    mock(CommandQueue.class)));
             mNavigationBar = createNavBar(mContext);
             mExternalDisplayNavigationBar = createNavBar(mSysuiTestableContextExternal);
         });
@@ -315,14 +325,10 @@ public class NavigationBarTest extends SysuiTestCase {
     }
 
     @Test
-    public void testRegisteredWithDispatcher() {
+    public void testRegisteredWithUserTracker() {
         mNavigationBar.init();
         mNavigationBar.onViewAttached();
-        verify(mBroadcastDispatcher).registerReceiverWithHandler(
-                any(BroadcastReceiver.class),
-                any(IntentFilter.class),
-                any(Handler.class),
-                any(UserHandle.class));
+        verify(mUserTracker).addCallback(any(UserTracker.Callback.class), any(Executor.class));
     }
 
     @Test
@@ -438,6 +444,20 @@ public class NavigationBarTest extends SysuiTestCase {
         verify(mNavigationBarView).setVisibility(View.INVISIBLE);
     }
 
+    @Test
+    public void testOnInit_readCurrentSysuiState() {
+        mNavigationBar.init();
+        verify(mNavBarHelper, times(1)).getCurrentSysuiState();
+    }
+
+    @Test
+    public void testScreenPinningEnabled_updatesSysuiState() {
+        mNavigationBar.init();
+        mTaskStackChangeListeners.getListenerImpl().onLockTaskModeChanged(
+                ActivityManager.LOCK_TASK_MODE_PINNED);
+        verify(mMockSysUiState).setFlag(eq(SYSUI_STATE_SCREEN_PINNING), eq(true));
+    }
+
     private NavigationBar createNavBar(Context context) {
         DeviceProvisionedController deviceProvisionedController =
                 mock(DeviceProvisionedController.class);
@@ -457,7 +477,7 @@ public class NavigationBarTest extends SysuiTestCase {
                 mStatusBarStateController,
                 mStatusBarKeyguardViewManager,
                 mMockSysUiState,
-                mBroadcastDispatcher,
+                mUserTracker,
                 mCommandQueue,
                 Optional.of(mock(Pip.class)),
                 Optional.of(mock(Recents.class)),
@@ -479,10 +499,11 @@ public class NavigationBarTest extends SysuiTestCase {
                 mDeadZone,
                 mDeviceConfigProxyFake,
                 mNavigationBarTransitions,
-                mEdgeBackGestureHandler,
                 Optional.of(mock(BackAnimation.class)),
                 mUserContextProvider,
-                mWakefulnessLifecycle));
+                mWakefulnessLifecycle,
+                mTaskStackChangeListeners,
+                new FakeDisplayTracker(mContext)));
     }
 
     private void processAllMessages() {

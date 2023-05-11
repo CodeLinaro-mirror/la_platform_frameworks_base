@@ -43,12 +43,14 @@ import com.android.systemui.biometrics.AuthRippleController;
 import com.android.systemui.doze.util.BurnInHelperKt;
 import com.android.systemui.dump.DumpManager;
 import com.android.systemui.flags.FeatureFlags;
+import com.android.systemui.keyguard.data.repository.FakeKeyguardBouncerRepository;
 import com.android.systemui.keyguard.data.repository.FakeKeyguardRepository;
 import com.android.systemui.keyguard.data.repository.KeyguardTransitionRepository;
 import com.android.systemui.keyguard.domain.interactor.KeyguardInteractor;
 import com.android.systemui.keyguard.domain.interactor.KeyguardTransitionInteractor;
 import com.android.systemui.plugins.FalsingManager;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
+import com.android.systemui.statusbar.CommandQueue;
 import com.android.systemui.statusbar.StatusBarState;
 import com.android.systemui.statusbar.VibratorHelper;
 import com.android.systemui.statusbar.policy.ConfigurationController;
@@ -68,6 +70,7 @@ import org.mockito.quality.Strictness;
 
 public class LockIconViewControllerBaseTest extends SysuiTestCase {
     protected static final String UNLOCKED_LABEL = "unlocked";
+    protected static final String LOCKED_LABEL = "locked";
     protected static final int PADDING = 10;
 
     protected MockitoSession mStaticMockSession;
@@ -90,6 +93,7 @@ public class LockIconViewControllerBaseTest extends SysuiTestCase {
     protected @Mock AuthRippleController mAuthRippleController;
     protected @Mock FeatureFlags mFeatureFlags;
     protected @Mock KeyguardTransitionRepository mTransitionRepository;
+    protected @Mock CommandQueue mCommandQueue;
     protected FakeExecutor mDelayableExecutor = new FakeExecutor(new FakeSystemClock());
 
     protected LockIconViewController mUnderTest;
@@ -130,6 +134,7 @@ public class LockIconViewControllerBaseTest extends SysuiTestCase {
         Rect windowBounds = new Rect(0, 0, 800, 1200);
         when(mWindowManager.getCurrentWindowMetrics().getBounds()).thenReturn(windowBounds);
         when(mResources.getString(R.string.accessibility_unlock_button)).thenReturn(UNLOCKED_LABEL);
+        when(mResources.getString(R.string.accessibility_lock_icon)).thenReturn(LOCKED_LABEL);
         when(mResources.getDrawable(anyInt(), any())).thenReturn(mIconDrawable);
         when(mResources.getDimensionPixelSize(R.dimen.lock_icon_padding)).thenReturn(PADDING);
         when(mAuthController.getScaleFactor()).thenReturn(1f);
@@ -155,7 +160,12 @@ public class LockIconViewControllerBaseTest extends SysuiTestCase {
                 mAuthRippleController,
                 mResources,
                 new KeyguardTransitionInteractor(mTransitionRepository),
-                new KeyguardInteractor(new FakeKeyguardRepository()),
+                new KeyguardInteractor(
+                        new FakeKeyguardRepository(),
+                        mCommandQueue,
+                        mFeatureFlags,
+                        new FakeKeyguardBouncerRepository()
+                ),
                 mFeatureFlags
         );
     }

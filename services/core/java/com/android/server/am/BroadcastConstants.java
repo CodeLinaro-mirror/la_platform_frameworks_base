@@ -136,12 +136,42 @@ public class BroadcastConstants {
     private static final boolean DEFAULT_MODERN_QUEUE_ENABLED = true;
 
     /**
-     * For {@link BroadcastQueueModernImpl}: Maximum number of process queues to
-     * dispatch broadcasts to simultaneously.
+     * For {@link BroadcastQueueModernImpl}: Maximum dispatch parallelism
+     * that we'll tolerate for ordinary broadcast dispatch.
      */
     public int MAX_RUNNING_PROCESS_QUEUES = DEFAULT_MAX_RUNNING_PROCESS_QUEUES;
     private static final String KEY_MAX_RUNNING_PROCESS_QUEUES = "bcast_max_running_process_queues";
-    private static final int DEFAULT_MAX_RUNNING_PROCESS_QUEUES = 4;
+    private static final int DEFAULT_MAX_RUNNING_PROCESS_QUEUES =
+            ActivityManager.isLowRamDeviceStatic() ? 2 : 4;
+
+    /**
+     * For {@link BroadcastQueueModernImpl}: Additional running process queue parallelism beyond
+     * {@link #MAX_RUNNING_PROCESS_QUEUES} for dispatch of "urgent" broadcasts.
+     */
+    public int EXTRA_RUNNING_URGENT_PROCESS_QUEUES = DEFAULT_EXTRA_RUNNING_URGENT_PROCESS_QUEUES;
+    private static final String KEY_EXTRA_RUNNING_URGENT_PROCESS_QUEUES =
+            "bcast_extra_running_urgent_process_queues";
+    private static final int DEFAULT_EXTRA_RUNNING_URGENT_PROCESS_QUEUES = 1;
+
+    /**
+     * For {@link BroadcastQueueModernImpl}: Maximum number of consecutive urgent
+     * broadcast dispatches allowed before letting broadcasts in lower priority queue
+     * to be scheduled in order to avoid starvation.
+     */
+    public int MAX_CONSECUTIVE_URGENT_DISPATCHES = DEFAULT_MAX_CONSECUTIVE_URGENT_DISPATCHES;
+    private static final String KEY_MAX_CONSECUTIVE_URGENT_DISPATCHES =
+            "bcast_max_consecutive_urgent_dispatches";
+    private static final int DEFAULT_MAX_CONSECUTIVE_URGENT_DISPATCHES = 3;
+
+    /**
+     * For {@link BroadcastQueueModernImpl}: Maximum number of consecutive normal
+     * broadcast dispatches allowed before letting broadcasts in lower priority queue
+     * to be scheduled in order to avoid starvation.
+     */
+    public int MAX_CONSECUTIVE_NORMAL_DISPATCHES = DEFAULT_MAX_CONSECUTIVE_NORMAL_DISPATCHES;
+    private static final String KEY_MAX_CONSECUTIVE_NORMAL_DISPATCHES =
+            "bcast_max_consecutive_normal_dispatches";
+    private static final int DEFAULT_MAX_CONSECUTIVE_NORMAL_DISPATCHES = 10;
 
     /**
      * For {@link BroadcastQueueModernImpl}: Maximum number of active broadcasts
@@ -150,7 +180,8 @@ public class BroadcastConstants {
      */
     public int MAX_RUNNING_ACTIVE_BROADCASTS = DEFAULT_MAX_RUNNING_ACTIVE_BROADCASTS;
     private static final String KEY_MAX_RUNNING_ACTIVE_BROADCASTS = "bcast_max_running_active_broadcasts";
-    private static final int DEFAULT_MAX_RUNNING_ACTIVE_BROADCASTS = 16;
+    private static final int DEFAULT_MAX_RUNNING_ACTIVE_BROADCASTS =
+            ActivityManager.isLowRamDeviceStatic() ? 8 : 16;
 
     /**
      * For {@link BroadcastQueueModernImpl}: Maximum number of pending
@@ -159,7 +190,8 @@ public class BroadcastConstants {
      */
     public int MAX_PENDING_BROADCASTS = DEFAULT_MAX_PENDING_BROADCASTS;
     private static final String KEY_MAX_PENDING_BROADCASTS = "bcast_max_pending_broadcasts";
-    private static final int DEFAULT_MAX_PENDING_BROADCASTS = 256;
+    private static final int DEFAULT_MAX_PENDING_BROADCASTS =
+            ActivityManager.isLowRamDeviceStatic() ? 128 : 256;
 
     /**
      * For {@link BroadcastQueueModernImpl}: Delay to apply to normal
@@ -167,7 +199,7 @@ public class BroadcastConstants {
      */
     public long DELAY_NORMAL_MILLIS = DEFAULT_DELAY_NORMAL_MILLIS;
     private static final String KEY_DELAY_NORMAL_MILLIS = "bcast_delay_normal_millis";
-    private static final long DEFAULT_DELAY_NORMAL_MILLIS = 0;
+    private static final long DEFAULT_DELAY_NORMAL_MILLIS = +500;
 
     /**
      * For {@link BroadcastQueueModernImpl}: Delay to apply to broadcasts
@@ -175,7 +207,7 @@ public class BroadcastConstants {
      */
     public long DELAY_CACHED_MILLIS = DEFAULT_DELAY_CACHED_MILLIS;
     private static final String KEY_DELAY_CACHED_MILLIS = "bcast_delay_cached_millis";
-    private static final long DEFAULT_DELAY_CACHED_MILLIS = +30_000;
+    private static final long DEFAULT_DELAY_CACHED_MILLIS = +120_000;
 
     /**
      * For {@link BroadcastQueueModernImpl}: Delay to apply to urgent
@@ -193,7 +225,7 @@ public class BroadcastConstants {
     public int MAX_HISTORY_COMPLETE_SIZE = DEFAULT_MAX_HISTORY_COMPLETE_SIZE;
     private static final String KEY_MAX_HISTORY_COMPLETE_SIZE = "bcast_max_history_complete_size";
     private static final int DEFAULT_MAX_HISTORY_COMPLETE_SIZE =
-            ActivityManager.isLowRamDeviceStatic() ? 10 : 50;
+            ActivityManager.isLowRamDeviceStatic() ? 64 : 256;
 
     /**
      * For {@link BroadcastQueueModernImpl}: Maximum number of summarized
@@ -202,7 +234,7 @@ public class BroadcastConstants {
     public int MAX_HISTORY_SUMMARY_SIZE = DEFAULT_MAX_HISTORY_SUMMARY_SIZE;
     private static final String KEY_MAX_HISTORY_SUMMARY_SIZE = "bcast_max_history_summary_size";
     private static final int DEFAULT_MAX_HISTORY_SUMMARY_SIZE =
-            ActivityManager.isLowRamDeviceStatic() ? 25 : 300;
+            ActivityManager.isLowRamDeviceStatic() ? 256 : 1024;
 
     // Settings override tracking for this instance
     private String mSettingsKey;
@@ -245,6 +277,10 @@ public class BroadcastConstants {
         DeviceConfig.addOnPropertiesChangedListener(NAMESPACE_ACTIVITY_MANAGER_NATIVE_BOOT,
                 new HandlerExecutor(handler), this::updateDeviceConfigConstants);
         updateDeviceConfigConstants();
+    }
+
+    public int getMaxRunningQueues() {
+        return MAX_RUNNING_PROCESS_QUEUES + EXTRA_RUNNING_URGENT_PROCESS_QUEUES;
     }
 
     private void updateSettingsConstants() {
@@ -314,6 +350,15 @@ public class BroadcastConstants {
                     DEFAULT_MODERN_QUEUE_ENABLED);
             MAX_RUNNING_PROCESS_QUEUES = getDeviceConfigInt(KEY_MAX_RUNNING_PROCESS_QUEUES,
                     DEFAULT_MAX_RUNNING_PROCESS_QUEUES);
+            EXTRA_RUNNING_URGENT_PROCESS_QUEUES = getDeviceConfigInt(
+                    KEY_EXTRA_RUNNING_URGENT_PROCESS_QUEUES,
+                    DEFAULT_EXTRA_RUNNING_URGENT_PROCESS_QUEUES);
+            MAX_CONSECUTIVE_URGENT_DISPATCHES = getDeviceConfigInt(
+                    KEY_MAX_CONSECUTIVE_URGENT_DISPATCHES,
+                    DEFAULT_MAX_CONSECUTIVE_URGENT_DISPATCHES);
+            MAX_CONSECUTIVE_NORMAL_DISPATCHES = getDeviceConfigInt(
+                    KEY_MAX_CONSECUTIVE_NORMAL_DISPATCHES,
+                    DEFAULT_MAX_CONSECUTIVE_NORMAL_DISPATCHES);
             MAX_RUNNING_ACTIVE_BROADCASTS = getDeviceConfigInt(KEY_MAX_RUNNING_ACTIVE_BROADCASTS,
                     DEFAULT_MAX_RUNNING_ACTIVE_BROADCASTS);
             MAX_PENDING_BROADCASTS = getDeviceConfigInt(KEY_MAX_PENDING_BROADCASTS,
@@ -369,6 +414,10 @@ public class BroadcastConstants {
                     TimeUtils.formatDuration(DELAY_URGENT_MILLIS)).println();
             pw.print(KEY_MAX_HISTORY_COMPLETE_SIZE, MAX_HISTORY_COMPLETE_SIZE).println();
             pw.print(KEY_MAX_HISTORY_SUMMARY_SIZE, MAX_HISTORY_SUMMARY_SIZE).println();
+            pw.print(KEY_MAX_CONSECUTIVE_URGENT_DISPATCHES,
+                    MAX_CONSECUTIVE_URGENT_DISPATCHES).println();
+            pw.print(KEY_MAX_CONSECUTIVE_NORMAL_DISPATCHES,
+                    MAX_CONSECUTIVE_NORMAL_DISPATCHES).println();
             pw.decreaseIndent();
             pw.println();
         }

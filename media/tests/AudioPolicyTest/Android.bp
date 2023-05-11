@@ -14,10 +14,12 @@ android_test {
         "androidx.test.ext.junit",
         "androidx.test.rules",
         "guava",
+        "guava-android-testlib",
         "hamcrest-library",
         "platform-test-annotations",
     ],
     platform_apis: true,
     certificate: "platform",
     resource_dirs: ["res"],
+    test_suites: ["device-tests"],
 }

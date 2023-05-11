@@ -20,6 +20,7 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.graphics.ImageFormat;
 import android.graphics.PixelFormat;
+import android.hardware.HardwareBuffer;
 import android.hardware.camera2.CameraExtensionCharacteristics;
 import android.hardware.camera2.params.OutputConfiguration;
 import android.hardware.camera2.params.StreamConfigurationMap;
@@ -94,6 +95,31 @@ public final class CameraExtensionUtils {
         return surfaceInfo;
     }
 
+    public static @Nullable Surface getPostviewSurface(
+            @Nullable OutputConfiguration outputConfig,
+            @NonNull HashMap<Integer, List<Size>> supportedPostviewSizes,
+            @NonNull int captureFormat) {
+        if (outputConfig == null) return null;
+
+        SurfaceInfo surfaceInfo = querySurface(outputConfig.getSurface());
+        if (surfaceInfo.mFormat == captureFormat) {
+            if (supportedPostviewSizes.containsKey(captureFormat)) {
+                Size postviewSize = new Size(surfaceInfo.mWidth, surfaceInfo.mHeight);
+                if (supportedPostviewSizes.get(surfaceInfo.mFormat)
+                        .contains(postviewSize)) {
+                    return outputConfig.getSurface();
+                } else {
+                    throw new IllegalArgumentException("Postview size not supported!");
+                }
+            }
+        } else {
+            throw new IllegalArgumentException("Postview format should be equivalent to " +
+                    " the capture format!");
+        }
+
+        return null;
+    }
+
     public static Surface getBurstCaptureSurface(
             @NonNull List<OutputConfiguration> outputConfigs,
             @NonNull HashMap<Integer, List<Size>> supportedCaptureSizes) {
@@ -124,6 +150,7 @@ public final class CameraExtensionUtils {
             SurfaceInfo surfaceInfo = querySurface(config.getSurface());
             if ((surfaceInfo.mFormat ==
                     CameraExtensionCharacteristics.NON_PROCESSING_INPUT_FORMAT) ||
+                    ((surfaceInfo.mUsage & HardwareBuffer.USAGE_COMPOSER_OVERLAY) != 0) ||
                     // The default RGBA_8888 is also implicitly supported because camera will
                     // internally override it to
                     // 'CameraExtensionCharacteristics.NON_PROCESSING_INPUT_FORMAT'

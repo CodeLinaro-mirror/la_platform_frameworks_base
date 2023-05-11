@@ -13,12 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package com.android.systemui.notetask
 
+import android.view.KeyEvent
+import androidx.annotation.VisibleForTesting
 import com.android.systemui.statusbar.CommandQueue
 import com.android.wm.shell.bubbles.Bubbles
-import dagger.Lazy
 import java.util.Optional
 import javax.inject.Inject
 
@@ -26,22 +26,28 @@ import javax.inject.Inject
 internal class NoteTaskInitializer
 @Inject
 constructor(
-    private val optionalBubbles: Optional<Bubbles>,
-    private val lazyNoteTaskController: Lazy<NoteTaskController>,
+    private val controller: NoteTaskController,
     private val commandQueue: CommandQueue,
+    private val optionalBubbles: Optional<Bubbles>,
     @NoteTaskEnabledKey private val isEnabled: Boolean,
 ) {
 
-    private val callbacks =
+    @VisibleForTesting
+    val callbacks =
         object : CommandQueue.Callbacks {
             override fun handleSystemKey(keyCode: Int) {
-                lazyNoteTaskController.get().handleSystemKey(keyCode)
+                if (keyCode == KeyEvent.KEYCODE_STYLUS_BUTTON_TAIL) {
+                    controller.showNoteTask(NoteTaskEntryPoint.TAIL_BUTTON)
+                }
             }
         }
 
     fun initialize() {
-        if (isEnabled && optionalBubbles.isPresent) {
-            commandQueue.addCallback(callbacks)
-        }
+        controller.setNoteTaskShortcutEnabled(isEnabled)
+
+        // Guard against feature not being enabled or mandatory dependencies aren't available.
+        if (!isEnabled || optionalBubbles.isEmpty) return
+
+        commandQueue.addCallback(callbacks)
     }
 }

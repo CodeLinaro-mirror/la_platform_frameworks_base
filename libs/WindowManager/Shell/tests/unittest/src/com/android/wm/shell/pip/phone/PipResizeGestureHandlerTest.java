@@ -37,7 +37,8 @@ import com.android.wm.shell.common.FloatingContentCoordinator;
 import com.android.wm.shell.common.ShellExecutor;
 import com.android.wm.shell.pip.PipBoundsAlgorithm;
 import com.android.wm.shell.pip.PipBoundsState;
-import com.android.wm.shell.pip.PipKeepClearAlgorithm;
+import com.android.wm.shell.pip.PipDisplayLayoutState;
+import com.android.wm.shell.pip.PipKeepClearAlgorithmInterface;
 import com.android.wm.shell.pip.PipSnapAlgorithm;
 import com.android.wm.shell.pip.PipTaskOrganizer;
 import com.android.wm.shell.pip.PipTransitionController;
@@ -85,15 +86,21 @@ public class PipResizeGestureHandlerTest extends ShellTestCase {
 
     private PipBoundsState mPipBoundsState;
 
+    private PipSizeSpecHandler mPipSizeSpecHandler;
+
+    private PipDisplayLayoutState mPipDisplayLayoutState;
+
     @Before
     public void setUp() throws Exception {
         MockitoAnnotations.initMocks(this);
-        mPipBoundsState = new PipBoundsState(mContext);
+        mPipDisplayLayoutState = new PipDisplayLayoutState(mContext);
+        mPipSizeSpecHandler = new PipSizeSpecHandler(mContext, mPipDisplayLayoutState);
+        mPipBoundsState = new PipBoundsState(mContext, mPipSizeSpecHandler, mPipDisplayLayoutState);
         final PipSnapAlgorithm pipSnapAlgorithm = new PipSnapAlgorithm();
-        final PipKeepClearAlgorithm pipKeepClearAlgorithm =
-                new PipKeepClearAlgorithm() {};
+        final PipKeepClearAlgorithmInterface pipKeepClearAlgorithm =
+                new PipKeepClearAlgorithmInterface() {};
         final PipBoundsAlgorithm pipBoundsAlgorithm = new PipBoundsAlgorithm(mContext,
-                mPipBoundsState, pipSnapAlgorithm, pipKeepClearAlgorithm);
+                mPipBoundsState, pipSnapAlgorithm, pipKeepClearAlgorithm, mPipSizeSpecHandler);
         final PipMotionHelper motionHelper = new PipMotionHelper(mContext, mPipBoundsState,
                 mPipTaskOrganizer, mPhonePipMenuController, pipSnapAlgorithm,
                 mMockPipTransitionController, mFloatingContentCoordinator);

@@ -73,7 +73,6 @@ cc_defaults {
     target: {
         android: {
             include_dirs: [
-                "external/skia/src/effects",
                 "external/skia/src/image",
                 "external/skia/src/utils",
                 "external/skia/src/gpu",
@@ -214,6 +213,15 @@ filegroup {
     path: "apex/java",
 }
 
+java_api_contribution {
+    name: "framework-graphics-public-stubs",
+    api_surface: "public",
+    api_file: "api/current.txt",
+    visibility: [
+        "//build/orchestrator/apis",
+    ],
+}
+
 // ------------------------
 // APEX
 // ------------------------
@@ -324,11 +332,14 @@ cc_defaults {
         "jni/android_graphics_Matrix.cpp",
         "jni/android_graphics_Picture.cpp",
         "jni/android_graphics_DisplayListCanvas.cpp",
+        "jni/android_graphics_Mesh.cpp",
         "jni/android_graphics_RenderNode.cpp",
         "jni/android_nio_utils.cpp",
         "jni/android_util_PathParser.cpp",
 
         "jni/Bitmap.cpp",
+        "jni/BufferUtils.cpp",
+        "jni/HardwareBufferHelpers.cpp",
         "jni/BitmapFactory.cpp",
         "jni/ByteBufferStreamAdaptor.cpp",
         "jni/Camera.cpp",
@@ -337,9 +348,11 @@ cc_defaults {
         "jni/CreateJavaOutputStreamAdaptor.cpp",
         "jni/FontFamily.cpp",
         "jni/FontUtils.cpp",
+        "jni/Gainmap.cpp",
         "jni/Graphics.cpp",
         "jni/ImageDecoder.cpp",
         "jni/Interpolator.cpp",
+        "jni/MeshSpecification.cpp",
         "jni/MaskFilter.cpp",
         "jni/NinePatch.cpp",
         "jni/NinePatchPeeker.cpp",
@@ -351,6 +364,7 @@ cc_defaults {
         "jni/PathMeasure.cpp",
         "jni/Picture.cpp",
         "jni/Region.cpp",
+        "jni/ScopedParcel.cpp",
         "jni/Shader.cpp",
         "jni/RenderEffect.cpp",
         "jni/Typeface.cpp",
@@ -361,27 +375,30 @@ cc_defaults {
         "jni/text/LineBreaker.cpp",
         "jni/text/MeasuredText.cpp",
         "jni/text/TextShaper.cpp",
+        "jni/text/GraphemeBreak.cpp",
     ],
 
-    header_libs: ["android_graphics_jni_headers"],
+    header_libs: [
+        "android_graphics_jni_headers",
+        "libnativewindow_headers",
+    ],
 
     include_dirs: [
         "external/skia/include/private",
         "external/skia/src/codec",
         "external/skia/src/core",
-        "external/skia/src/effects",
-        "external/skia/src/image",
-        "external/skia/src/images",
     ],
 
     shared_libs: [
         "libbase",
         "libcutils",
         "libharfbuzz_ng",
+        "libimage_io",
+        "libjpeg",
+        "libjpegrecoverymap",
         "liblog",
         "libminikin",
         "libz",
-        "libjpeg",
     ],
 
     static_libs: [
@@ -395,6 +412,7 @@ cc_defaults {
                 "jni/AnimatedImageDrawable.cpp",
                 "jni/android_graphics_TextureLayer.cpp",
                 "jni/android_graphics_HardwareRenderer.cpp",
+                "jni/android_graphics_HardwareBufferRenderer.cpp",
                 "jni/BitmapRegionDecoder.cpp",
                 "jni/GIFMovie.cpp",
                 "jni/GraphicsStatsService.cpp",
@@ -490,6 +508,7 @@ cc_defaults {
         "canvas/CanvasOpBuffer.cpp",
         "canvas/CanvasOpRasterizer.cpp",
         "effects/StretchEffect.cpp",
+        "effects/GainmapRenderer.cpp",
         "pipeline/skia/HolePunch.cpp",
         "pipeline/skia/SkiaDisplayList.cpp",
         "pipeline/skia/SkiaRecordingCanvas.cpp",
@@ -518,9 +537,11 @@ cc_defaults {
         "AnimatorManager.cpp",
         "CanvasTransform.cpp",
         "DamageAccumulator.cpp",
+        "Gainmap.cpp",
         "Interpolator.cpp",
         "LightingInfo.cpp",
         "Matrix.cpp",
+        "Mesh.cpp",
         "MemoryPolicy.cpp",
         "PathParser.cpp",
         "Properties.cpp",
@@ -532,6 +553,7 @@ cc_defaults {
         "RootRenderNode.cpp",
         "SkiaCanvas.cpp",
         "SkiaInterpolator.cpp",
+        "Tonemapper.cpp",
         "VectorDrawable.cpp",
     ],
 
@@ -570,6 +592,7 @@ cc_defaults {
                 "renderthread/VulkanSurface.cpp",
                 "renderthread/RenderProxy.cpp",
                 "renderthread/RenderThread.cpp",
+                "renderthread/HintSessionWrapper.cpp",
                 "service/GraphicsStatsService.cpp",
                 "thread/CommonPool.cpp",
                 "utils/GLUtils.cpp",
@@ -636,7 +659,7 @@ cc_library_static {
 cc_defaults {
     name: "hwui_test_defaults",
     defaults: ["hwui_defaults"],
-    test_suites: ["device-tests"],
+    test_suites: ["general-tests"],
     header_libs: ["libandroid_headers_private"],
     target: {
         android: {

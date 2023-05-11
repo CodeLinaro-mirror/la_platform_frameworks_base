@@ -91,7 +91,7 @@ public final class TimeZoneDetectorService extends ITimeZoneDetectorService.Stub
             deviceActivityMonitor.addListener(new DeviceActivityMonitor.Listener() {
                 @Override
                 public void onFlightComplete() {
-                    timeZoneDetectorStrategy.enableTelephonyTimeZoneFallback();
+                    timeZoneDetectorStrategy.enableTelephonyTimeZoneFallback("onFlightComplete()");
                 }
             });
 
@@ -300,12 +300,13 @@ public final class TimeZoneDetectorService extends ITimeZoneDetectorService.Stub
     }
 
     /** Provided for command-line access. This is not exposed as a binder API. */
-    void suggestGeolocationTimeZone(@NonNull GeolocationTimeZoneSuggestion timeZoneSuggestion) {
+    void handleLocationAlgorithmEvent(@NonNull LocationAlgorithmEvent locationAlgorithmEvent) {
         enforceSuggestGeolocationTimeZonePermission();
-        Objects.requireNonNull(timeZoneSuggestion);
+        Objects.requireNonNull(locationAlgorithmEvent);
 
         mHandler.post(
-                () -> mTimeZoneDetectorStrategy.suggestGeolocationTimeZone(timeZoneSuggestion));
+                () -> mTimeZoneDetectorStrategy.handleLocationAlgorithmEvent(
+                        locationAlgorithmEvent));
     }
 
     @Override
@@ -345,7 +346,7 @@ public final class TimeZoneDetectorService extends ITimeZoneDetectorService.Stub
     }
 
     @Override
-    public boolean setManualTimeZone(@NonNull ManualTimeZoneSuggestion timeZoneSuggestion) {
+    public boolean setManualTimeZone(@NonNull ManualTimeZoneSuggestion suggestion) {
         enforceManageTimeZoneDetectorPermission();
 
         // This calls suggestManualTimeZone() as the logic is identical, it only differs in the
@@ -355,34 +356,34 @@ public final class TimeZoneDetectorService extends ITimeZoneDetectorService.Stub
         try {
             final boolean bypassUserPolicyChecks = false;
             return mTimeZoneDetectorStrategy.suggestManualTimeZone(
-                    userId, timeZoneSuggestion, bypassUserPolicyChecks);
+                    userId, suggestion, bypassUserPolicyChecks);
         } finally {
             mCallerIdentityInjector.restoreCallingIdentity(token);
         }
     }
 
     @Override
-    public boolean suggestManualTimeZone(@NonNull ManualTimeZoneSuggestion timeZoneSuggestion) {
+    public boolean suggestManualTimeZone(@NonNull ManualTimeZoneSuggestion suggestion) {
         enforceSuggestManualTimeZonePermission();
-        Objects.requireNonNull(timeZoneSuggestion);
+        Objects.requireNonNull(suggestion);
 
         int userId = mCallerIdentityInjector.getCallingUserId();
         final long token = mCallerIdentityInjector.clearCallingIdentity();
         try {
             final boolean bypassUserPolicyChecks = false;
             return mTimeZoneDetectorStrategy.suggestManualTimeZone(
-                    userId, timeZoneSuggestion, bypassUserPolicyChecks);
+                    userId, suggestion, bypassUserPolicyChecks);
         } finally {
             mCallerIdentityInjector.restoreCallingIdentity(token);
         }
     }
 
     @Override
-    public void suggestTelephonyTimeZone(@NonNull TelephonyTimeZoneSuggestion timeZoneSuggestion) {
+    public void suggestTelephonyTimeZone(@NonNull TelephonyTimeZoneSuggestion suggestion) {
         enforceSuggestTelephonyTimeZonePermission();
-        Objects.requireNonNull(timeZoneSuggestion);
+        Objects.requireNonNull(suggestion);
 
-        mHandler.post(() -> mTimeZoneDetectorStrategy.suggestTelephonyTimeZone(timeZoneSuggestion));
+        mHandler.post(() -> mTimeZoneDetectorStrategy.suggestTelephonyTimeZone(suggestion));
     }
 
     boolean isTelephonyTimeZoneDetectionSupported() {
@@ -401,9 +402,9 @@ public final class TimeZoneDetectorService extends ITimeZoneDetectorService.Stub
      * Sends a signal to enable telephony fallback. Provided for command-line access for use
      * during tests. This is not exposed as a binder API.
      */
-    void enableTelephonyFallback() {
+    void enableTelephonyFallback(@NonNull String reason) {
         enforceManageTimeZoneDetectorPermission();
-        mTimeZoneDetectorStrategy.enableTelephonyTimeZoneFallback();
+        mTimeZoneDetectorStrategy.enableTelephonyTimeZoneFallback(reason);
     }
 
     /**

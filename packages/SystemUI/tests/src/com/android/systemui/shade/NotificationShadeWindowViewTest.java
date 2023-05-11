@@ -25,24 +25,32 @@ import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import static kotlinx.coroutines.flow.FlowKt.emptyFlow;
+
 import android.os.SystemClock;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
 import android.view.MotionEvent;
+import android.view.ViewGroup;
 
 import androidx.test.filters.SmallTest;
 
+import com.android.keyguard.KeyguardSecurityContainerController;
 import com.android.keyguard.LockIconViewController;
 import com.android.keyguard.dagger.KeyguardBouncerComponent;
 import com.android.systemui.R;
 import com.android.systemui.SysuiTestCase;
+import com.android.systemui.biometrics.domain.interactor.UdfpsOverlayInteractor;
 import com.android.systemui.classifier.FalsingCollectorFake;
 import com.android.systemui.dock.DockManager;
-import com.android.systemui.flags.FeatureFlags;
 import com.android.systemui.keyguard.KeyguardUnlockAnimationController;
+import com.android.systemui.keyguard.domain.interactor.AlternateBouncerInteractor;
+import com.android.systemui.keyguard.domain.interactor.KeyguardTransitionInteractor;
 import com.android.systemui.keyguard.ui.viewmodel.KeyguardBouncerViewModel;
+import com.android.systemui.keyguard.ui.viewmodel.PrimaryBouncerToGoneTransitionViewModel;
 import com.android.systemui.statusbar.DragDownHelper;
 import com.android.systemui.statusbar.LockscreenShadeTransitionController;
+import com.android.systemui.statusbar.NotificationInsetsController;
 import com.android.systemui.statusbar.NotificationShadeDepthController;
 import com.android.systemui.statusbar.NotificationShadeWindowController;
 import com.android.systemui.statusbar.SysuiStatusBarStateController;
@@ -88,9 +96,15 @@ public class NotificationShadeWindowViewTest extends SysuiTestCase {
     @Mock private KeyguardUnlockAnimationController mKeyguardUnlockAnimationController;
     @Mock private AmbientState mAmbientState;
     @Mock private PulsingGestureListener mPulsingGestureListener;
-    @Mock private FeatureFlags mFeatureFlags;
     @Mock private KeyguardBouncerViewModel mKeyguardBouncerViewModel;
     @Mock private KeyguardBouncerComponent.Factory mKeyguardBouncerComponentFactory;
+    @Mock private KeyguardBouncerComponent mKeyguardBouncerComponent;
+    @Mock private KeyguardSecurityContainerController mKeyguardSecurityContainerController;
+    @Mock private NotificationInsetsController mNotificationInsetsController;
+    @Mock private AlternateBouncerInteractor mAlternateBouncerInteractor;
+    @Mock private UdfpsOverlayInteractor mUdfpsOverlayInteractor;
+    @Mock private KeyguardTransitionInteractor mKeyguardTransitionInteractor;
+    @Mock private PrimaryBouncerToGoneTransitionViewModel mPrimaryBouncerToGoneTransitionViewModel;
 
     @Captor private ArgumentCaptor<NotificationShadeWindowView.InteractionEventHandler>
             mInteractionEventHandlerCaptor;
@@ -104,10 +118,19 @@ public class NotificationShadeWindowViewTest extends SysuiTestCase {
         when(mView.findViewById(R.id.notification_stack_scroller))
                 .thenReturn(mNotificationStackScrollLayout);
 
+        when(mView.findViewById(R.id.keyguard_bouncer_container)).thenReturn(mock(ViewGroup.class));
+        when(mKeyguardBouncerComponentFactory.create(any(ViewGroup.class))).thenReturn(
+                mKeyguardBouncerComponent);
+        when(mKeyguardBouncerComponent.getSecurityContainerController()).thenReturn(
+                mKeyguardSecurityContainerController);
+
         when(mStatusBarStateController.isDozing()).thenReturn(false);
         mDependency.injectTestDependency(ShadeController.class, mShadeController);
 
         when(mDockManager.isDocked()).thenReturn(false);
+
+        when(mKeyguardTransitionInteractor.getLockscreenToDreamingTransition())
+                .thenReturn(emptyFlow());
 
         mController = new NotificationShadeWindowViewController(
                 mLockscreenShadeTransitionController,
@@ -125,11 +148,15 @@ public class NotificationShadeWindowViewTest extends SysuiTestCase {
                 mCentralSurfaces,
                 mNotificationShadeWindowController,
                 mKeyguardUnlockAnimationController,
+                mNotificationInsetsController,
                 mAmbientState,
                 mPulsingGestureListener,
-                mFeatureFlags,
                 mKeyguardBouncerViewModel,
-                mKeyguardBouncerComponentFactory
+                mKeyguardBouncerComponentFactory,
+                mAlternateBouncerInteractor,
+                mUdfpsOverlayInteractor,
+                mKeyguardTransitionInteractor,
+                mPrimaryBouncerToGoneTransitionViewModel
         );
         mController.setupExpandedStatusBar();
         mController.setDragDownHelper(mDragDownHelper);
@@ -152,7 +179,8 @@ public class NotificationShadeWindowViewTest extends SysuiTestCase {
 
         // WHEN showing alt auth, not dozing, drag down helper doesn't want to intercept
         when(mStatusBarStateController.isDozing()).thenReturn(false);
-        when(mStatusBarKeyguardViewManager.isShowingAlternateAuth()).thenReturn(true);
+        when(mAlternateBouncerInteractor.isVisibleState()).thenReturn(true);
+        when(mUdfpsOverlayInteractor.canInterceptTouchInUdfpsBounds(any())).thenReturn(true);
         when(mDragDownHelper.onInterceptTouchEvent(any())).thenReturn(false);
 
         // THEN we should intercept touch
@@ -165,7 +193,7 @@ public class NotificationShadeWindowViewTest extends SysuiTestCase {
 
         // WHEN not showing alt auth, not dozing, drag down helper doesn't want to intercept
         when(mStatusBarStateController.isDozing()).thenReturn(false);
-        when(mStatusBarKeyguardViewManager.isShowingAlternateAuth()).thenReturn(false);
+        when(mAlternateBouncerInteractor.isVisibleState()).thenReturn(false);
         when(mDragDownHelper.onInterceptTouchEvent(any())).thenReturn(false);
 
         // THEN we shouldn't intercept touch
@@ -178,7 +206,7 @@ public class NotificationShadeWindowViewTest extends SysuiTestCase {
 
         // WHEN showing alt auth, not dozing, drag down helper doesn't want to intercept
         when(mStatusBarStateController.isDozing()).thenReturn(false);
-        when(mStatusBarKeyguardViewManager.isShowingAlternateAuth()).thenReturn(true);
+        when(mAlternateBouncerInteractor.isVisibleState()).thenReturn(true);
         when(mDragDownHelper.onInterceptTouchEvent(any())).thenReturn(false);
 
         // THEN we should handle the touch

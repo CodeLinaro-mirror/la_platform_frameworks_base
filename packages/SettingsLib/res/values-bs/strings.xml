@@ -467,7 +467,8 @@
     <string name="power_charging" msgid="6727132649743436802">"<xliff:g id="LEVEL">%1$s</xliff:g> – <xliff:g id="STATE">%2$s</xliff:g>"</string>
     <string name="power_remaining_charging_duration_only" msgid="8085099012811384899">"<xliff:g id="TIME">%1$s</xliff:g> do potpune napunjenosti"</string>
     <string name="power_charging_duration" msgid="6127154952524919719">"<xliff:g id="LEVEL">%1$s</xliff:g> – <xliff:g id="TIME">%2$s</xliff:g> do potpune napunjenosti"</string>
-    <string name="power_charging_limited" msgid="6971664137170239141">"<xliff:g id="LEVEL">%1$s</xliff:g> - Punjenje je pauzirano"</string>
+    <string name="power_charging_limited" msgid="8202147604844938236">"<xliff:g id="LEVEL">%1$s</xliff:g> – punjenje je optimizirano"</string>
+    <string name="power_charging_future_paused" msgid="4730177778538118032">"<xliff:g id="LEVEL">%1$s</xliff:g> – punjenje je optimizirano"</string>
     <string name="battery_info_status_unknown" msgid="268625384868401114">"Nepoznato"</string>
     <string name="battery_info_status_charging" msgid="4279958015430387405">"Punjenje"</string>
     <string name="battery_info_status_charging_fast" msgid="8027559755902954885">"Brzo punjenje"</string>
@@ -521,7 +522,7 @@
     <string name="alarms_and_reminders_label" msgid="6918395649731424294">"Alarmi i podsjetnici"</string>
     <string name="alarms_and_reminders_switch_title" msgid="4939393911531826222">"Dozvoli postavljanje alarma i podsjetnika"</string>
     <string name="alarms_and_reminders_title" msgid="8819933264635406032">"Alarmi i podsjetnici"</string>
-    <string name="alarms_and_reminders_footer_title" msgid="6302587438389079695">"Dozvolite ovoj aplikaciji da postavlja alarme i zakazuje vremenski osjetljive radnje. Ovim će se omogućiti aplikaciji da radi u pozadini, čime se može povećati potrošnja baterije.\n\nAko je ovo odobrenje isključeno, postojeći alarmi i događaji zasnovani na vremenu koje je ova aplikacija zakazala neće funkcionirati."</string>
+    <string name="alarms_and_reminders_footer_title" msgid="6302587438389079695">"Dozvolite ovoj aplikaciji da postavlja alarme i zakazuje vremenski osjetljive radnje. Ovim će se omogućiti aplikaciji da radi u pozadini, čime se može povećati potrošnja baterije.\n\nAko je ovo odobrenje isključeno, postojeći alarmi i događaji zasnovani na vremenu, a koje je ova aplikacija zakazala, neće funkcionirati."</string>
     <string name="keywords_alarms_and_reminders" msgid="6633360095891110611">"raspored, alarm, podsjetnik, sat"</string>
     <string name="zen_mode_enable_dialog_turn_on" msgid="6418297231575050426">"Uključi"</string>
     <string name="zen_mode_settings_turn_on_dialog_title" msgid="2760567063190790696">"Uključi način rada Ne ometaj"</string>
@@ -539,6 +540,13 @@
     <string name="media_transfer_this_device_name" product="default" msgid="2357329267148436433">"Ovaj telefon"</string>
     <string name="media_transfer_this_device_name" product="tablet" msgid="3714653244000242800">"Ovaj tablet"</string>
     <string name="media_transfer_this_phone" msgid="7194341457812151531">"Ovaj telefon"</string>
+    <string name="media_output_status_unknown_error" msgid="5098565887497902222">"Nije moguće reproducirati na uređaju"</string>
+    <string name="media_output_status_require_premium" msgid="8411255800047014822">"Nadogradite račun da promijenite"</string>
+    <string name="media_output_status_not_support_downloads" msgid="4523828729240373315">"Nije moguće reproducirati preuzimanja ovdje"</string>
+    <string name="media_output_status_try_after_ad" msgid="8312579066856015441">"Pokušajte ponovo nakon oglasa"</string>
+    <string name="media_output_status_device_in_low_power_mode" msgid="8184631698321758451">"Aktivirajte uređaj da reproducirate ovdje"</string>
+    <string name="media_output_status_unauthorized" msgid="5880222828273853838">"Uređaj nije odobren za reprodukciju"</string>
+    <string name="media_output_status_track_unsupported" msgid="5576313219317709664">"Nije moguće ovdje reproducirati medij"</string>
     <string name="profile_connect_timeout_subtext" msgid="4043408193005851761">"Došlo je do problema prilikom povezivanja. Isključite, pa ponovo uključite uređaj"</string>
     <string name="media_transfer_wired_device_name" msgid="4447880899964056007">"Žičani audio uređaj"</string>
     <string name="help_label" msgid="3528360748637781274">"Pomoć i povratne informacije"</string>
@@ -563,6 +571,8 @@
     <string name="user_add_user_title" msgid="5457079143694924885">"Dodati novog korisnika?"</string>
     <string name="user_add_user_message_long" msgid="1527434966294733380">"Ovaj uređaj možete dijeliti s drugima ako napravite dodatne korisnike. Svaki korisnik ima svoj prostor koji može prilagoditi pomoću aplikacija, pozadinske slike i slično. Korisnici također mogu prilagoditi postavke uređaja koje utiču na sve ostale korisnike, kao što je WiFi.\n\nKada dodate novog korisnika, ta osoba treba postaviti svoj prostor.\n\nSvaki korisnik može ažurirati aplikacije za sve ostale korisnike. Postavke i usluge pristupačnosti možda se neće prenijeti na novog korisnika."</string>
     <string name="user_add_user_message_short" msgid="3295959985795716166">"Kada dodate novog korisnika, ta osoba treba postaviti svoj prostor. \n\nSvaki korisnik može ažurirati aplikacije za sve ostale korisnike."</string>
+    <string name="user_grant_admin_title" msgid="5565796912475193314">"Dati privilegije administratora?"</string>
+    <string name="user_grant_admin_message" msgid="7925257971286380976">"Kao administrator će moći upravljati drugim korisnicima, promijeniti postavke uređaja i vratiti uređaj na fabričke postavke."</string>
     <string name="user_setup_dialog_title" msgid="8037342066381939995">"Postaviti korisnika sada?"</string>
     <string name="user_setup_dialog_message" msgid="269931619868102841">"Provjerite može li osoba uzeti uređaj i postaviti svoj prostor"</string>
     <string name="user_setup_profile_dialog_message" msgid="4788197052296962620">"Postaviti profil sada?"</string>
@@ -594,6 +604,8 @@
     <string name="guest_reset_and_restart_dialog_message" msgid="2764425635305200790">"Ovim ćete pokrenuti novu sesiju gosta i izbrisati sve aplikacije i podatke iz trenutne sesije"</string>
     <string name="guest_exit_dialog_title" msgid="1846494656849381804">"Napustiti način rada za gosta?"</string>
     <string name="guest_exit_dialog_message" msgid="1743218864242719783">"Ovim ćete izbrisati aplikacije i podatke iz trenutne sesije gosta"</string>
+    <string name="grant_admin" msgid="4273077214151417783">"Dajte korisniku privilegije administratora"</string>
+    <string name="not_grant_admin" msgid="6985027675930546850">"Nemojte dati korisniku privilegije administratora"</string>
     <string name="guest_exit_dialog_button" msgid="1736401897067442044">"Napusti"</string>
     <string name="guest_exit_dialog_title_non_ephemeral" msgid="7675327443743162986">"Sačuvati aktivnost gosta?"</string>
     <string name="guest_exit_dialog_message_non_ephemeral" msgid="223385323235719442">"Možete sačuvati aktivnost iz ove sesije ili izbrisati sve aplikacije i podatke"</string>
@@ -661,4 +673,10 @@
     <string name="back_navigation_animation" msgid="8105467568421689484">"Animacije predvidljivog pokreta unazad"</string>
     <string name="back_navigation_animation_summary" msgid="741292224121599456">"Omogućite animacije sistema za predvidljivi pokret unazad."</string>
     <string name="back_navigation_animation_dialog" msgid="8696966520944625596">"Ova postavka omogućava animacije sistema za animaciju predvidljivih pokreta. Potrebno je po aplikaciji postaviti vrijednost za enableOnBackInvokedCallback na tačno u fajlu deklaracije."</string>
+  <string-array name="udfps_accessibility_touch_hints">
+    <item msgid="1737722959616802157">"Pomjeranje ulijevo"</item>
+    <item msgid="5425394847942513942">"Pomjeranje nadolje"</item>
+    <item msgid="7728484337962740316">"Pomjeranje udesno"</item>
+    <item msgid="324200556467459329">"Pomjeranje nagore"</item>
+  </string-array>
 </resources>

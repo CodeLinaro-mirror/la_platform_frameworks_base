@@ -21,6 +21,7 @@ import android.annotation.Nullable;
 import android.companion.virtual.IVirtualDevice;
 import android.graphics.Point;
 import android.hardware.SensorManager;
+import android.hardware.input.HostUsiVersion;
 import android.os.Handler;
 import android.os.PowerManager;
 import android.util.IntArray;
@@ -233,13 +234,14 @@ public abstract class DisplayManagerInternal {
      * @param requestedMinimalPostProcessing The preferred minimal post processing setting for the
      * display. This is true when there is at least one visible window that wants minimal post
      * processng on.
+     * @param disableHdrConversion The preferred HDR conversion setting for the window.
      * @param inTraversal True if called from WindowManagerService during a window traversal
      * prior to call to performTraversalInTransactionFromWindowManager.
      */
     public abstract void setDisplayProperties(int displayId, boolean hasContent,
             float requestedRefreshRate, int requestedModeId, float requestedMinRefreshRate,
             float requestedMaxRefreshRate, boolean requestedMinimalPostProcessing,
-            boolean inTraversal);
+            boolean disableHdrConversion, boolean inTraversal);
 
     /**
      * Applies an offset to the contents of a display, for example to avoid burn-in.
@@ -403,6 +405,19 @@ public abstract class DisplayManagerInternal {
     public abstract SurfaceControl.DisplayPrimaries getDisplayNativePrimaries(int displayId);
 
     /**
+     * Get the version of the Universal Stylus Initiative (USI) Protocol supported by the display.
+     * @param displayId The id of the display.
+     * @return The USI version, or null if not supported
+     */
+    @Nullable
+    public abstract HostUsiVersion getHostUsiVersion(int displayId);
+
+    /**
+     * Get all available DisplayGroupIds.
+     */
+    public abstract IntArray getDisplayGroupIds();
+
+    /**
      * Describes the requested power state of the display.
      *
      * This object is intended to describe the general characteristics of the
@@ -412,7 +427,7 @@ public abstract class DisplayManagerInternal {
      * the PowerManagerService to focus on the global power state and not
      * have to micro-manage screen off animations, auto-brightness and other effects.
      */
-    public static final class DisplayPowerRequest {
+    public static class DisplayPowerRequest {
         // Policy: Turn screen off as if the user pressed the power button
         // including playing a screen off animation if applicable.
         public static final int POLICY_OFF = 0;
@@ -423,8 +438,6 @@ public abstract class DisplayManagerInternal {
         public static final int POLICY_DIM = 2;
         // Policy: Make the screen bright as usual.
         public static final int POLICY_BRIGHT = 3;
-        // Policy: Keep the screen and display optimized for VR mode.
-        public static final int POLICY_VR = 4;
 
         // The basic overall policy to apply: off, doze, dim or bright.
         public int policy;
@@ -440,9 +453,6 @@ public abstract class DisplayManagerInternal {
         // An override of the screen auto-brightness adjustment factor in the range -1 (dimmer) to
         // 1 (brighter). Set to Float.NaN if there's no override.
         public float screenAutoBrightnessAdjustmentOverride;
-
-        // If true, enables automatic brightness control.
-        public boolean useAutoBrightness;
 
         // If true, scales the brightness to a fraction of desired (as defined by
         // screenLowPowerBrightnessFactor).
@@ -473,7 +483,6 @@ public abstract class DisplayManagerInternal {
             policy = POLICY_BRIGHT;
             useProximitySensor = false;
             screenBrightnessOverride = PowerManager.BRIGHTNESS_INVALID_FLOAT;
-            useAutoBrightness = false;
             screenAutoBrightnessAdjustmentOverride = Float.NaN;
             screenLowPowerBrightnessFactor = 0.5f;
             blockScreenOn = false;
@@ -489,15 +498,10 @@ public abstract class DisplayManagerInternal {
             return policy == POLICY_BRIGHT || policy == POLICY_DIM;
         }
 
-        public boolean isVr() {
-            return policy == POLICY_VR;
-        }
-
         public void copyFrom(DisplayPowerRequest other) {
             policy = other.policy;
             useProximitySensor = other.useProximitySensor;
             screenBrightnessOverride = other.screenBrightnessOverride;
-            useAutoBrightness = other.useAutoBrightness;
             screenAutoBrightnessAdjustmentOverride = other.screenAutoBrightnessAdjustmentOverride;
             screenLowPowerBrightnessFactor = other.screenLowPowerBrightnessFactor;
             blockScreenOn = other.blockScreenOn;
@@ -519,7 +523,6 @@ public abstract class DisplayManagerInternal {
                     && useProximitySensor == other.useProximitySensor
                     && floatEquals(screenBrightnessOverride,
                             other.screenBrightnessOverride)
-                    && useAutoBrightness == other.useAutoBrightness
                     && floatEquals(screenAutoBrightnessAdjustmentOverride,
                             other.screenAutoBrightnessAdjustmentOverride)
                     && screenLowPowerBrightnessFactor
@@ -545,7 +548,6 @@ public abstract class DisplayManagerInternal {
             return "policy=" + policyToString(policy)
                     + ", useProximitySensor=" + useProximitySensor
                     + ", screenBrightnessOverride=" + screenBrightnessOverride
-                    + ", useAutoBrightness=" + useAutoBrightness
                     + ", screenAutoBrightnessAdjustmentOverride="
                     + screenAutoBrightnessAdjustmentOverride
                     + ", screenLowPowerBrightnessFactor=" + screenLowPowerBrightnessFactor
@@ -566,8 +568,6 @@ public abstract class DisplayManagerInternal {
                     return "DIM";
                 case POLICY_BRIGHT:
                     return "BRIGHT";
-                case POLICY_VR:
-                    return "VR";
                 default:
                     return Integer.toString(policy);
             }

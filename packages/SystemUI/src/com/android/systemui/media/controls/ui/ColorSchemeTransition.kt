@@ -29,7 +29,8 @@ import com.android.internal.annotations.VisibleForTesting
 import com.android.settingslib.Utils
 import com.android.systemui.media.controls.models.player.MediaViewHolder
 import com.android.systemui.monet.ColorScheme
-import com.android.systemui.ripple.MultiRippleController
+import com.android.systemui.surfaceeffects.ripple.MultiRippleController
+import com.android.systemui.surfaceeffects.turbulencenoise.TurbulenceNoiseController
 
 /**
  * A [ColorTransition] is an object that updates the colors of views each time [updateColorScheme]
@@ -102,13 +103,21 @@ internal constructor(
     private val context: Context,
     private val mediaViewHolder: MediaViewHolder,
     private val multiRippleController: MultiRippleController,
+    private val turbulenceNoiseController: TurbulenceNoiseController,
     animatingColorTransitionFactory: AnimatingColorTransitionFactory
 ) {
     constructor(
         context: Context,
         mediaViewHolder: MediaViewHolder,
         multiRippleController: MultiRippleController,
-    ) : this(context, mediaViewHolder, multiRippleController, ::AnimatingColorTransition)
+        turbulenceNoiseController: TurbulenceNoiseController
+    ) : this(
+        context,
+        mediaViewHolder,
+        multiRippleController,
+        turbulenceNoiseController,
+        ::AnimatingColorTransition
+    )
 
     val bgColor = context.getColor(com.android.systemui.R.color.material_dynamic_secondary95)
     val surfaceColor =
@@ -129,6 +138,7 @@ internal constructor(
             mediaViewHolder.actionPlayPause.backgroundTintList = accentColorList
             mediaViewHolder.gutsViewHolder.setAccentPrimaryColor(accentPrimary)
             multiRippleController.updateColor(accentPrimary)
+            turbulenceNoiseController.updateNoiseColor(accentPrimary)
         }
 
     val accentSecondary =
@@ -152,8 +162,8 @@ internal constructor(
                     context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
                         UI_MODE_NIGHT_YES
                 )
-                    colorScheme.accent1[2]
-                else colorScheme.accent1[3]
+                    colorScheme.accent1.s100
+                else colorScheme.accent1.s200
             },
             { seamlessColor: Int ->
                 val accentColorList = ColorStateList.valueOf(seamlessColor)
@@ -191,7 +201,9 @@ internal constructor(
         animatingColorTransitionFactory(
             loadDefaultColor(R.attr.textColorSecondary),
             ::textSecondaryFromScheme
-        ) { textSecondary -> mediaViewHolder.artistText.setTextColor(textSecondary) }
+        ) { textSecondary ->
+            mediaViewHolder.artistText.setTextColor(textSecondary)
+        }
 
     val textTertiary =
         animatingColorTransitionFactory(
@@ -220,7 +232,14 @@ internal constructor(
 
     fun updateColorScheme(colorScheme: ColorScheme?): Boolean {
         var anyChanged = false
-        colorTransitions.forEach { anyChanged = it.updateColorScheme(colorScheme) || anyChanged }
+        colorTransitions.forEach {
+            val isChanged = it.updateColorScheme(colorScheme)
+
+            // Ignore changes to colorSeamless, since that is expected when toggling dark mode
+            if (it == colorSeamless) return@forEach
+
+            anyChanged = isChanged || anyChanged
+        }
         colorScheme?.let { mediaViewHolder.gutsViewHolder.colorScheme = colorScheme }
         return anyChanged
     }

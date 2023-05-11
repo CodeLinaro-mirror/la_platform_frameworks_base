@@ -34,6 +34,7 @@ import android.util.Log;
 import android.util.SparseArray;
 
 import com.android.internal.annotations.GuardedBy;
+import com.android.server.broadcastradio.RadioServiceUserController;
 import com.android.server.utils.Slogf;
 
 import java.util.ArrayList;
@@ -76,7 +77,7 @@ public final class BroadcastRadioServiceImpl {
                 }
 
                 RadioModule radioModule =
-                        RadioModule.tryLoadingModule(moduleId, name, newBinder, mLock);
+                        RadioModule.tryLoadingModule(moduleId, name, newBinder);
                 if (radioModule == null) {
                     Slogf.w(TAG, "No module %s with id %d (HAL AIDL)", name, moduleId);
                     return;
@@ -149,8 +150,7 @@ public final class BroadcastRadioServiceImpl {
     public BroadcastRadioServiceImpl(ArrayList<String> serviceNameList) {
         mNextModuleId = 0;
         if (DEBUG) {
-            Slogf.d(TAG, "Initializing BroadcastRadioServiceImpl %s",
-                    IBroadcastRadio.DESCRIPTOR);
+            Slogf.d(TAG, "Initializing BroadcastRadioServiceImpl %s", IBroadcastRadio.DESCRIPTOR);
         }
         for (int i = 0; i < serviceNameList.size(); i++) {
             try {
@@ -169,7 +169,7 @@ public final class BroadcastRadioServiceImpl {
         synchronized (mLock) {
             List<RadioManager.ModuleProperties> moduleList = new ArrayList<>(mModules.size());
             for (int i = 0; i < mModules.size(); i++) {
-                moduleList.add(mModules.valueAt(i).mProperties);
+                moduleList.add(mModules.valueAt(i).getProperties());
             }
             return moduleList;
         }
@@ -199,9 +199,14 @@ public final class BroadcastRadioServiceImpl {
      */
     @Nullable
     public ITuner openSession(int moduleId, @Nullable RadioManager.BandConfig legacyConfig,
-            boolean withAudio, ITunerCallback callback) throws RemoteException {
+            boolean withAudio, ITunerCallback callback, int targetSdkVersion)
+            throws RemoteException {
         if (DEBUG) {
             Slogf.d(TAG, "Open AIDL radio session");
+        }
+        if (!RadioServiceUserController.isCurrentOrSystemUser()) {
+            Slogf.e(TAG, "Cannot open tuner on AIDL HAL client for non-current user");
+            throw new IllegalStateException("Cannot open session for non-current user");
         }
         Objects.requireNonNull(callback);
 
@@ -218,7 +223,7 @@ public final class BroadcastRadioServiceImpl {
             }
         }
 
-        TunerSession tunerSession = radioModule.openSession(callback);
+        TunerSession tunerSession = radioModule.openSession(callback, targetSdkVersion);
         if (legacyConfig != null) {
             tunerSession.setConfiguration(legacyConfig);
         }

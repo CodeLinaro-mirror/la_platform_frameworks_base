@@ -48,6 +48,18 @@ jobject android_view_InputDevice_create(JNIEnv* env, const InputDeviceInfo& devi
         return NULL;
     }
 
+    std::optional<KeyboardLayoutInfo> layoutInfo = deviceInfo.getKeyboardLayoutInfo();
+    ScopedLocalRef<jstring> keyboardLanguageTagObj(env,
+                                                   env->NewStringUTF(
+                                                           layoutInfo
+                                                                   ? layoutInfo->languageTag.c_str()
+                                                                   : NULL));
+    ScopedLocalRef<jstring> keyboardLayoutTypeObj(env,
+                                                  env->NewStringUTF(
+                                                          layoutInfo
+                                                                  ? layoutInfo->layoutType.c_str()
+                                                                  : NULL));
+
     ScopedLocalRef<jobject> kcmObj(env,
             android_view_KeyCharacterMap_create(env, deviceInfo.getId(),
             deviceInfo.getKeyCharacterMap()));
@@ -56,6 +68,7 @@ jobject android_view_InputDevice_create(JNIEnv* env, const InputDeviceInfo& devi
     }
 
     const InputDeviceIdentifier& ident = deviceInfo.getIdentifier();
+    const auto usiVersion = deviceInfo.getUsiVersion().value_or(InputDeviceUsiVersion{-1, -1});
 
     ScopedLocalRef<jobject>
             inputDeviceObj(env,
@@ -66,10 +79,12 @@ jobject android_view_InputDevice_create(JNIEnv* env, const InputDeviceInfo& devi
                                           static_cast<int32_t>(ident.product), descriptorObj.get(),
                                           deviceInfo.isExternal(), deviceInfo.getSources(),
                                           deviceInfo.getKeyboardType(), kcmObj.get(),
-                                          deviceInfo.getCountryCode(), deviceInfo.hasVibrator(),
-                                          deviceInfo.hasMic(), deviceInfo.hasButtonUnderPad(),
-                                          deviceInfo.hasSensor(), deviceInfo.hasBattery(),
-                                          deviceInfo.supportsUsi()));
+                                          keyboardLanguageTagObj.get(), keyboardLayoutTypeObj.get(),
+                                          deviceInfo.hasVibrator(), deviceInfo.hasMic(),
+                                          deviceInfo.hasButtonUnderPad(), deviceInfo.hasSensor(),
+                                          deviceInfo.hasBattery(), usiVersion.majorVersion,
+                                          usiVersion.minorVersion,
+                                          deviceInfo.getAssociatedDisplayId()));
     // Note: We do not populate the Bluetooth address into the InputDevice object to avoid leaking
     // it to apps that do not have the Bluetooth permission.
 
@@ -85,20 +100,18 @@ jobject android_view_InputDevice_create(JNIEnv* env, const InputDeviceInfo& devi
     return env->NewLocalRef(inputDeviceObj.get());
 }
 
-
 int register_android_view_InputDevice(JNIEnv* env)
 {
     gInputDeviceClassInfo.clazz = FindClassOrDie(env, "android/view/InputDevice");
     gInputDeviceClassInfo.clazz = MakeGlobalRefOrDie(env, gInputDeviceClassInfo.clazz);
 
-    gInputDeviceClassInfo.ctor =
-            GetMethodIDOrDie(env, gInputDeviceClassInfo.clazz, "<init>",
-                             "(IIILjava/lang/String;IILjava/lang/"
-                             "String;ZIILandroid/view/KeyCharacterMap;IZZZZZZ)V");
+    gInputDeviceClassInfo.ctor = GetMethodIDOrDie(env, gInputDeviceClassInfo.clazz, "<init>",
+                                                  "(IIILjava/lang/String;IILjava/lang/"
+                                                  "String;ZIILandroid/view/KeyCharacterMap;Ljava/"
+                                                  "lang/String;Ljava/lang/String;ZZZZZIII)V");
 
-    gInputDeviceClassInfo.addMotionRange = GetMethodIDOrDie(env, gInputDeviceClassInfo.clazz,
-            "addMotionRange", "(IIFFFFF)V");
-
+    gInputDeviceClassInfo.addMotionRange =
+            GetMethodIDOrDie(env, gInputDeviceClassInfo.clazz, "addMotionRange", "(IIFFFFF)V");
     return 0;
 }
 

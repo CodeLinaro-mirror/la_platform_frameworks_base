@@ -16,10 +16,15 @@
 
 package com.android.settingslib.spaprivileged.template.app
 
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.UserHandle
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.remember
@@ -27,26 +32,50 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.android.settingslib.spa.framework.compose.LifecycleEffect
 import com.android.settingslib.spa.framework.compose.LogCompositions
 import com.android.settingslib.spa.framework.compose.TimeMeasurer.Companion.rememberTimeMeasurer
 import com.android.settingslib.spa.framework.compose.rememberLazyListStateAndHideKeyboardWhenStartScroll
 import com.android.settingslib.spa.framework.compose.toState
+import com.android.settingslib.spa.widget.ui.CategoryTitle
 import com.android.settingslib.spa.widget.ui.PlaceholderTitle
+import com.android.settingslib.spa.widget.ui.Spinner
+import com.android.settingslib.spa.widget.ui.SpinnerOption
 import com.android.settingslib.spaprivileged.R
-import com.android.settingslib.spaprivileged.model.app.AppListConfig
+import com.android.settingslib.spaprivileged.framework.compose.DisposableBroadcastReceiverAsUser
+import com.android.settingslib.spaprivileged.model.app.AppEntry
 import com.android.settingslib.spaprivileged.model.app.AppListData
 import com.android.settingslib.spaprivileged.model.app.AppListModel
 import com.android.settingslib.spaprivileged.model.app.AppListViewModel
 import com.android.settingslib.spaprivileged.model.app.AppRecord
+import com.android.settingslib.spaprivileged.model.app.IAppListViewModel
+import com.android.settingslib.spaprivileged.model.app.userId
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
 
 private const val TAG = "AppList"
 private const val CONTENT_TYPE_HEADER = "header"
 
-internal data class AppListState(
+/**
+ * The config used to load the App List.
+ */
+data class AppListConfig(
+    val userIds: List<Int>,
+    val showInstantApps: Boolean,
+)
+
+data class AppListState(
     val showSystem: State<Boolean>,
-    val option: State<Int>,
     val searchQuery: State<String>,
+)
+
+data class AppListInput<T : AppRecord>(
+    val config: AppListConfig,
+    val listModel: AppListModel<T>,
+    val state: AppListState,
+    val header: @Composable () -> Unit,
+    val noItemMessage: String? = null,
+    val bottomPadding: Dp,
 )
 
 /**
@@ -55,35 +84,55 @@ internal data class AppListState(
  * This UI element will take the remaining space on the screen to show the App List.
  */
 @Composable
-internal fun <T : AppRecord> AppList(
-    config: AppListConfig,
-    listModel: AppListModel<T>,
-    state: AppListState,
-    header: @Composable () -> Unit,
-    appItem: @Composable (itemState: AppListItemModel<T>) -> Unit,
-    bottomPadding: Dp,
-    appListDataSupplier: @Composable () -> State<AppListData<T>?> = {
-        loadAppListData(config, listModel, state)
-    },
-) {
-    LogCompositions(TAG, config.userId.toString())
-    val appListData = appListDataSupplier()
-    AppListWidget(appListData, listModel, header, appItem, bottomPadding)
+fun <T : AppRecord> AppListInput<T>.AppList() {
+    AppListImpl { rememberViewModel(config, listModel, state) }
 }
 
 @Composable
-private fun <T : AppRecord> AppListWidget(
+internal fun <T : AppRecord> AppListInput<T>.AppListImpl(
+    viewModelSupplier: @Composable () -> IAppListViewModel<T>,
+) {
+    LogCompositions(TAG, config.userIds.toString())
+    val viewModel = viewModelSupplier()
+    Column(Modifier.fillMaxSize()) {
+        val optionsState = viewModel.spinnerOptionsFlow.collectAsState(null, Dispatchers.IO)
+        SpinnerOptions(optionsState, viewModel.optionFlow)
+        val appListData = viewModel.appListDataFlow.collectAsState(null, Dispatchers.IO)
+        listModel.AppListWidget(appListData, header, bottomPadding, noItemMessage)
+    }
+}
+
+@Composable
+private fun SpinnerOptions(
+    optionsState: State<List<SpinnerOption>?>,
+    optionFlow: MutableStateFlow<Int?>,
+) {
+    val options = optionsState.value
+    LaunchedEffect(options) {
+        if (options != null && !options.any { it.id == optionFlow.value }) {
+            // Reset to first option if the available options changed, and the current selected one
+            // does not in the new options.
+            optionFlow.value = options.let { it.firstOrNull()?.id ?: -1 }
+        }
+    }
+    if (options != null) {
+        Spinner(options, optionFlow.collectAsState().value) { optionFlow.value = it }
+    }
+}
+
+@Composable
+private fun <T : AppRecord> AppListModel<T>.AppListWidget(
     appListData: State<AppListData<T>?>,
-    listModel: AppListModel<T>,
     header: @Composable () -> Unit,
-    appItem: @Composable (itemState: AppListItemModel<T>) -> Unit,
     bottomPadding: Dp,
+    noItemMessage: String?
 ) {
     val timeMeasurer = rememberTimeMeasurer(TAG)
     appListData.value?.let { (list, option) ->
         timeMeasurer.logFirst("app list first loaded")
         if (list.isEmpty()) {
-            PlaceholderTitle(stringResource(R.string.no_applications))
+            header()
+            PlaceholderTitle(noItemMessage ?: stringResource(R.string.no_applications))
             return
         }
         LazyColumn(
@@ -95,30 +144,55 @@ private fun <T : AppRecord> AppListWidget(
                 header()
             }
 
-            items(count = list.size, key = { option to list[it].record.app.packageName }) {
+            items(count = list.size, key = { list[it].record.itemKey(option) }) {
+                remember(list) { getGroupTitleIfFirst(option, list, it) }
+                    ?.let { group -> CategoryTitle(title = group) }
+
                 val appEntry = list[it]
-                val summary = listModel.getSummary(option, appEntry.record) ?: "".toState()
-                val itemModel = remember(appEntry) {
+                val summary = getSummary(option, appEntry.record) ?: "".toState()
+                remember(appEntry) {
                     AppListItemModel(appEntry.record, appEntry.label, summary)
-                }
-                appItem(itemModel)
+                }.AppItem()
             }
         }
     }
 }
 
+private fun <T : AppRecord> T.itemKey(option: Int) =
+    listOf(option, app.packageName, app.userId)
+
+/** Returns group title if this is the first item of the group. */
+private fun <T : AppRecord> AppListModel<T>.getGroupTitleIfFirst(
+    option: Int,
+    list: List<AppEntry<T>>,
+    index: Int,
+): String? = getGroupTitle(option, list[index].record)?.takeIf {
+    index == 0 || it != getGroupTitle(option, list[index - 1].record)
+}
+
 @Composable
-private fun <T : AppRecord> loadAppListData(
+private fun <T : AppRecord> rememberViewModel(
     config: AppListConfig,
     listModel: AppListModel<T>,
     state: AppListState,
-): State<AppListData<T>?> {
-    val viewModel: AppListViewModel<T> = viewModel(key = config.userId.toString())
+): AppListViewModel<T> {
+    val viewModel: AppListViewModel<T> = viewModel(key = config.userIds.toString())
     viewModel.appListConfig.setIfAbsent(config)
     viewModel.listModel.setIfAbsent(listModel)
     viewModel.showSystem.Sync(state.showSystem)
-    viewModel.option.Sync(state.option)
     viewModel.searchQuery.Sync(state.searchQuery)
 
-    return viewModel.appListDataFlow.collectAsState(null, Dispatchers.Default)
+    LifecycleEffect(onStart = { viewModel.reloadApps() })
+    val intentFilter = IntentFilter(Intent.ACTION_PACKAGE_ADDED).apply {
+        addAction(Intent.ACTION_PACKAGE_REMOVED)
+        addAction(Intent.ACTION_PACKAGE_CHANGED)
+        addDataScheme("package")
+    }
+    for (userId in config.userIds) {
+        DisposableBroadcastReceiverAsUser(
+            intentFilter = intentFilter,
+            userHandle = UserHandle.of(userId),
+        ) { viewModel.reloadApps() }
+    }
+    return viewModel
 }

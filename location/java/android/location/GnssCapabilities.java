@@ -25,6 +25,7 @@ import android.os.Parcelable;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.Executor;
@@ -38,33 +39,35 @@ public final class GnssCapabilities implements Parcelable {
     /** @hide */
     public static final int TOP_HAL_CAPABILITY_SCHEDULING = 1;
     /** @hide */
-    public static final int TOP_HAL_CAPABILITY_MSB = 2;
+    public static final int TOP_HAL_CAPABILITY_MSB = 1 << 1;
     /** @hide */
-    public static final int TOP_HAL_CAPABILITY_MSA = 4;
+    public static final int TOP_HAL_CAPABILITY_MSA = 1 << 2;
     /** @hide */
-    public static final int TOP_HAL_CAPABILITY_SINGLE_SHOT = 8;
+    public static final int TOP_HAL_CAPABILITY_SINGLE_SHOT = 1 << 3;
     /** @hide */
-    public static final int TOP_HAL_CAPABILITY_ON_DEMAND_TIME = 16;
+    public static final int TOP_HAL_CAPABILITY_ON_DEMAND_TIME = 1 << 4;
     /** @hide */
-    public static final int TOP_HAL_CAPABILITY_GEOFENCING = 32;
+    public static final int TOP_HAL_CAPABILITY_GEOFENCING = 1 << 5;
     /** @hide */
-    public static final int TOP_HAL_CAPABILITY_MEASUREMENTS = 64;
+    public static final int TOP_HAL_CAPABILITY_MEASUREMENTS = 1 << 6;
     /** @hide */
-    public static final int TOP_HAL_CAPABILITY_NAV_MESSAGES = 128;
+    public static final int TOP_HAL_CAPABILITY_NAV_MESSAGES = 1 << 7;
     /** @hide */
-    public static final int TOP_HAL_CAPABILITY_LOW_POWER_MODE = 256;
+    public static final int TOP_HAL_CAPABILITY_LOW_POWER_MODE = 1 << 8;
     /** @hide */
-    public static final int TOP_HAL_CAPABILITY_SATELLITE_BLOCKLIST = 512;
+    public static final int TOP_HAL_CAPABILITY_SATELLITE_BLOCKLIST = 1 << 9;
     /** @hide */
-    public static final int TOP_HAL_CAPABILITY_MEASUREMENT_CORRECTIONS = 1024;
+    public static final int TOP_HAL_CAPABILITY_MEASUREMENT_CORRECTIONS = 1 << 10;
     /** @hide */
-    public static final int TOP_HAL_CAPABILITY_ANTENNA_INFO = 2048;
+    public static final int TOP_HAL_CAPABILITY_ANTENNA_INFO = 1 << 11;
     /** @hide */
-    public static final int TOP_HAL_CAPABILITY_CORRELATION_VECTOR = 4096;
+    public static final int TOP_HAL_CAPABILITY_CORRELATION_VECTOR = 1 << 12;
     /** @hide */
-    public static final int TOP_HAL_CAPABILITY_SATELLITE_PVT = 8192;
+    public static final int TOP_HAL_CAPABILITY_SATELLITE_PVT = 1 << 13;
     /** @hide */
-    public static final int TOP_HAL_CAPABILITY_MEASUREMENT_CORRECTIONS_FOR_DRIVING = 16384;
+    public static final int TOP_HAL_CAPABILITY_MEASUREMENT_CORRECTIONS_FOR_DRIVING = 1 << 14;
+    /** @hide */
+    public static final int TOP_HAL_CAPABILITY_ACCUMULATED_DELTA_RANGE = 1 << 15;
 
     /** @hide */
     @IntDef(flag = true, prefix = {"TOP_HAL_CAPABILITY_"}, value = {TOP_HAL_CAPABILITY_SCHEDULING,
@@ -74,7 +77,8 @@ public final class GnssCapabilities implements Parcelable {
             TOP_HAL_CAPABILITY_LOW_POWER_MODE, TOP_HAL_CAPABILITY_SATELLITE_BLOCKLIST,
             TOP_HAL_CAPABILITY_MEASUREMENT_CORRECTIONS, TOP_HAL_CAPABILITY_ANTENNA_INFO,
             TOP_HAL_CAPABILITY_CORRELATION_VECTOR, TOP_HAL_CAPABILITY_SATELLITE_PVT,
-            TOP_HAL_CAPABILITY_MEASUREMENT_CORRECTIONS_FOR_DRIVING})
+            TOP_HAL_CAPABILITY_MEASUREMENT_CORRECTIONS_FOR_DRIVING,
+            TOP_HAL_CAPABILITY_ACCUMULATED_DELTA_RANGE})
 
     @Retention(RetentionPolicy.SOURCE)
     public @interface TopHalCapabilityFlags {}
@@ -119,30 +123,50 @@ public final class GnssCapabilities implements Parcelable {
     @Retention(RetentionPolicy.SOURCE)
     public @interface SubHalPowerCapabilityFlags {}
 
+    /** The capability is unknown to be supported or not. */
+    public static final int CAPABILITY_UNKNOWN = 0;
+    /** The capability is supported. */
+    public static final int CAPABILITY_SUPPORTED = 1;
+    /** The capability is not supported. */
+    public static final int CAPABILITY_UNSUPPORTED = 2;
+
+    /** @hide */
+    @IntDef(flag = true, prefix = {"CAPABILITY_"}, value = {CAPABILITY_UNKNOWN,
+            CAPABILITY_SUPPORTED,
+            CAPABILITY_UNSUPPORTED})
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface CapabilitySupportType {}
+
+
     /**
      * Returns an empty GnssCapabilities object.
      *
      * @hide
      */
     public static GnssCapabilities empty() {
-        return new GnssCapabilities(0, 0, 0, new ArrayList<>());
+        return new GnssCapabilities(/*topFlags=*/ 0, /*isAdrCapabilityKnown=*/ false,
+                /*measurementCorrectionsFlags=*/ 0, /*powerFlags=*/ 0, /*gnssSignalTypes=*/
+                Collections.emptyList());
     }
 
     private final @TopHalCapabilityFlags int mTopFlags;
+    private final boolean mIsAdrCapabilityKnown;
     private final @SubHalMeasurementCorrectionsCapabilityFlags int mMeasurementCorrectionsFlags;
     private final @SubHalPowerCapabilityFlags int mPowerFlags;
     private final @NonNull List<GnssSignalType> mGnssSignalTypes;
 
     private GnssCapabilities(
             @TopHalCapabilityFlags int topFlags,
+            boolean isAdrCapabilityKnown,
             @SubHalMeasurementCorrectionsCapabilityFlags int measurementCorrectionsFlags,
             @SubHalPowerCapabilityFlags int powerFlags,
             @NonNull List<GnssSignalType> gnssSignalTypes) {
         Objects.requireNonNull(gnssSignalTypes);
         mTopFlags = topFlags;
+        mIsAdrCapabilityKnown = isAdrCapabilityKnown;
         mMeasurementCorrectionsFlags = measurementCorrectionsFlags;
         mPowerFlags = powerFlags;
-        mGnssSignalTypes = gnssSignalTypes;
+        mGnssSignalTypes = Collections.unmodifiableList(gnssSignalTypes);
     }
 
     /**
@@ -150,12 +174,13 @@ public final class GnssCapabilities implements Parcelable {
      *
      * @hide
      */
-    public GnssCapabilities withTopHalFlags(@TopHalCapabilityFlags int flags) {
-        if (mTopFlags == flags) {
+    public GnssCapabilities withTopHalFlags(@TopHalCapabilityFlags int flags,
+            boolean isAdrCapabilityKnown) {
+        if (mTopFlags == flags && mIsAdrCapabilityKnown == isAdrCapabilityKnown) {
             return this;
         } else {
-            return new GnssCapabilities(flags, mMeasurementCorrectionsFlags, mPowerFlags,
-                    new ArrayList<>(mGnssSignalTypes));
+            return new GnssCapabilities(flags, isAdrCapabilityKnown,
+                    mMeasurementCorrectionsFlags, mPowerFlags, mGnssSignalTypes);
         }
     }
 
@@ -170,8 +195,8 @@ public final class GnssCapabilities implements Parcelable {
         if (mMeasurementCorrectionsFlags == flags) {
             return this;
         } else {
-            return new GnssCapabilities(mTopFlags, flags, mPowerFlags,
-                    new ArrayList<>(mGnssSignalTypes));
+            return new GnssCapabilities(mTopFlags, mIsAdrCapabilityKnown, flags, mPowerFlags,
+                    mGnssSignalTypes);
         }
     }
 
@@ -185,8 +210,8 @@ public final class GnssCapabilities implements Parcelable {
         if (mPowerFlags == flags) {
             return this;
         } else {
-            return new GnssCapabilities(mTopFlags, mMeasurementCorrectionsFlags, flags,
-                    new ArrayList<>(mGnssSignalTypes));
+            return new GnssCapabilities(mTopFlags, mIsAdrCapabilityKnown,
+                    mMeasurementCorrectionsFlags, flags, mGnssSignalTypes);
         }
     }
 
@@ -200,8 +225,8 @@ public final class GnssCapabilities implements Parcelable {
         if (mGnssSignalTypes.equals(gnssSignalTypes)) {
             return this;
         } else {
-            return new GnssCapabilities(mTopFlags, mMeasurementCorrectionsFlags, mPowerFlags,
-                    new ArrayList<>(gnssSignalTypes));
+            return new GnssCapabilities(mTopFlags, mIsAdrCapabilityKnown,
+                    mMeasurementCorrectionsFlags, mPowerFlags, new ArrayList<>(gnssSignalTypes));
         }
     }
 
@@ -236,7 +261,11 @@ public final class GnssCapabilities implements Parcelable {
     }
 
     /**
-     * Returns {@code true} if GNSS chipset supports on demand time, {@code false} otherwise.
+     * Returns {@code true} if GNSS chipset requests periodic time signal injection from the
+     * platform in addition to on-demand and occasional time updates, {@code false} otherwise.
+     *
+     * <p><em>Note: The naming of this capability and the behavior it controls differ substantially.
+     * This is the result of a historic implementation bug, b/73893222.</em>
      */
     public boolean hasOnDemandTime() {
         return (mTopFlags & TOP_HAL_CAPABILITY_ON_DEMAND_TIME) != 0;
@@ -361,6 +390,28 @@ public final class GnssCapabilities implements Parcelable {
     }
 
     /**
+     * Returns {@link #CAPABILITY_SUPPORTED} if GNSS chipset supports accumulated delta
+     * range, {@link #CAPABILITY_UNSUPPORTED} if GNSS chipset does not support accumulated
+     * delta range, and {@link #CAPABILITY_UNKNOWN} if it is unknown, which means GNSS
+     * chipset may or may not support accumulated delta range.
+     *
+     * <p>The accumulated delta range information can be queried in
+     * {@link android.location.GnssMeasurement#getAccumulatedDeltaRangeState()},
+     * {@link android.location.GnssMeasurement#getAccumulatedDeltaRangeMeters()}, and
+     * {@link android.location.GnssMeasurement#getAccumulatedDeltaRangeUncertaintyMeters()}.
+     */
+    public @CapabilitySupportType int hasAccumulatedDeltaRange() {
+        if (!mIsAdrCapabilityKnown) {
+            return CAPABILITY_UNKNOWN;
+        }
+        if ((mTopFlags & TOP_HAL_CAPABILITY_ACCUMULATED_DELTA_RANGE) != 0) {
+            return CAPABILITY_SUPPORTED;
+        } else {
+            return CAPABILITY_UNSUPPORTED;
+        }
+    }
+
+    /**
      * Returns {@code true} if GNSS chipset supports line-of-sight satellite identification
      * measurement corrections, {@code false} otherwise.
      */
@@ -467,6 +518,7 @@ public final class GnssCapabilities implements Parcelable {
 
         GnssCapabilities that = (GnssCapabilities) o;
         return mTopFlags == that.mTopFlags
+                && mIsAdrCapabilityKnown == that.mIsAdrCapabilityKnown
                 && mMeasurementCorrectionsFlags == that.mMeasurementCorrectionsFlags
                 && mPowerFlags == that.mPowerFlags
                 && mGnssSignalTypes.equals(that.mGnssSignalTypes);
@@ -474,15 +526,16 @@ public final class GnssCapabilities implements Parcelable {
 
     @Override
     public int hashCode() {
-        return Objects.hash(mTopFlags, mMeasurementCorrectionsFlags, mPowerFlags, mGnssSignalTypes);
+        return Objects.hash(mTopFlags, mIsAdrCapabilityKnown, mMeasurementCorrectionsFlags,
+                mPowerFlags, mGnssSignalTypes);
     }
 
     public static final @NonNull Creator<GnssCapabilities> CREATOR =
             new Creator<GnssCapabilities>() {
                 @Override
                 public GnssCapabilities createFromParcel(Parcel in) {
-                    return new GnssCapabilities(in.readInt(), in.readInt(), in.readInt(),
-                            in.createTypedArrayList(GnssSignalType.CREATOR));
+                    return new GnssCapabilities(in.readInt(), in.readBoolean(), in.readInt(),
+                            in.readInt(), in.createTypedArrayList(GnssSignalType.CREATOR));
                 }
 
                 @Override
@@ -499,6 +552,7 @@ public final class GnssCapabilities implements Parcelable {
     @Override
     public void writeToParcel(@NonNull Parcel parcel, int flags) {
         parcel.writeInt(mTopFlags);
+        parcel.writeBoolean(mIsAdrCapabilityKnown);
         parcel.writeInt(mMeasurementCorrectionsFlags);
         parcel.writeInt(mPowerFlags);
         parcel.writeTypedList(mGnssSignalTypes);
@@ -553,6 +607,11 @@ public final class GnssCapabilities implements Parcelable {
         if (hasMeasurementCorrectionsForDriving()) {
             builder.append("MEASUREMENT_CORRECTIONS_FOR_DRIVING ");
         }
+        if (hasAccumulatedDeltaRange() == CAPABILITY_SUPPORTED) {
+            builder.append("ACCUMULATED_DELTA_RANGE ");
+        } else if (hasAccumulatedDeltaRange() == CAPABILITY_UNKNOWN) {
+            builder.append("ACCUMULATED_DELTA_RANGE(unknown) ");
+        }
         if (hasMeasurementCorrectionsLosSats()) {
             builder.append("LOS_SATS ");
         }
@@ -598,19 +657,22 @@ public final class GnssCapabilities implements Parcelable {
     public static final class Builder {
 
         private @TopHalCapabilityFlags int mTopFlags;
+        private boolean mIsAdrCapabilityKnown;
         private @SubHalMeasurementCorrectionsCapabilityFlags int mMeasurementCorrectionsFlags;
         private @SubHalPowerCapabilityFlags int mPowerFlags;
         private @NonNull List<GnssSignalType> mGnssSignalTypes;
 
         public Builder() {
             mTopFlags = 0;
+            mIsAdrCapabilityKnown = false;
             mMeasurementCorrectionsFlags = 0;
             mPowerFlags = 0;
-            mGnssSignalTypes = new ArrayList<>();
+            mGnssSignalTypes = Collections.emptyList();
         }
 
         public Builder(@NonNull GnssCapabilities capabilities) {
             mTopFlags = capabilities.mTopFlags;
+            mIsAdrCapabilityKnown = capabilities.mIsAdrCapabilityKnown;
             mMeasurementCorrectionsFlags = capabilities.mMeasurementCorrectionsFlags;
             mPowerFlags = capabilities.mPowerFlags;
             mGnssSignalTypes = capabilities.mGnssSignalTypes;
@@ -741,6 +803,23 @@ public final class GnssCapabilities implements Parcelable {
         }
 
         /**
+         * Sets accumulated delta range capability.
+         */
+        public @NonNull Builder setHasAccumulatedDeltaRange(@CapabilitySupportType int capable) {
+            if (capable == CAPABILITY_UNKNOWN) {
+                mIsAdrCapabilityKnown = false;
+                mTopFlags = setFlag(mTopFlags, TOP_HAL_CAPABILITY_ACCUMULATED_DELTA_RANGE, false);
+            } else if (capable == CAPABILITY_SUPPORTED) {
+                mIsAdrCapabilityKnown = true;
+                mTopFlags = setFlag(mTopFlags, TOP_HAL_CAPABILITY_ACCUMULATED_DELTA_RANGE, true);
+            } else if (capable == CAPABILITY_UNSUPPORTED) {
+                mIsAdrCapabilityKnown = true;
+                mTopFlags = setFlag(mTopFlags, TOP_HAL_CAPABILITY_ACCUMULATED_DELTA_RANGE, false);
+            }
+            return this;
+        }
+
+        /**
          * Sets measurement corrections line-of-sight satellites capability.
          */
         public @NonNull Builder setHasMeasurementCorrectionsLosSats(boolean capable) {
@@ -831,8 +910,8 @@ public final class GnssCapabilities implements Parcelable {
          * Builds a new GnssCapabilities.
          */
         public @NonNull GnssCapabilities build() {
-            return new GnssCapabilities(mTopFlags, mMeasurementCorrectionsFlags, mPowerFlags,
-                    new ArrayList<>(mGnssSignalTypes));
+            return new GnssCapabilities(mTopFlags, mIsAdrCapabilityKnown,
+                    mMeasurementCorrectionsFlags, mPowerFlags, new ArrayList<>(mGnssSignalTypes));
         }
 
         private static int setFlag(int value, int flag, boolean set) {

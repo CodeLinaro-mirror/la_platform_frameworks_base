@@ -22,7 +22,6 @@ import static android.view.WindowManager.LayoutParams.PRIVATE_FLAG_TRUSTED_OVERL
 import static android.view.WindowManager.LayoutParams.TYPE_APPLICATION;
 
 import android.content.Context;
-import android.graphics.PointF;
 import android.graphics.Rect;
 import android.graphics.Region;
 import android.hardware.input.InputManager;
@@ -38,6 +37,7 @@ import android.view.InputEventReceiver;
 import android.view.MotionEvent;
 import android.view.PointerIcon;
 import android.view.SurfaceControl;
+import android.view.ViewConfiguration;
 import android.view.WindowManagerGlobal;
 
 import com.android.internal.view.BaseIWindow;
@@ -48,7 +48,6 @@ import com.android.internal.view.BaseIWindow;
  * Task edges are for resizing with a mouse.
  * Task corners are for resizing with touch input.
  */
-// TODO(b/251270585): investigate how to pass taps in corners to the tasks
 class DragResizeInputListener implements AutoCloseable {
     private static final String TAG = "DragResizeInputListener";
 
@@ -63,7 +62,7 @@ class DragResizeInputListener implements AutoCloseable {
     private final SurfaceControl mDecorationSurface;
     private final InputChannel mInputChannel;
     private final TaskResizeInputEventReceiver mInputEventReceiver;
-    private final com.android.wm.shell.windowdecor.DragResizeCallback mCallback;
+    private final DragPositioningCallback mCallback;
 
     private int mWidth;
     private int mHeight;
@@ -76,7 +75,7 @@ class DragResizeInputListener implements AutoCloseable {
     private Rect mRightBottomCornerBounds;
 
     private int mDragPointerId = -1;
-    private int mTouchSlop;
+    private DragDetector mDragDetector;
 
     DragResizeInputListener(
             Context context,
@@ -84,7 +83,7 @@ class DragResizeInputListener implements AutoCloseable {
             Choreographer choreographer,
             int displayId,
             SurfaceControl decorationSurface,
-            DragResizeCallback callback) {
+            DragPositioningCallback callback) {
         mInputManager = context.getSystemService(InputManager.class);
         mHandler = handler;
         mChoreographer = choreographer;
@@ -105,6 +104,7 @@ class DragResizeInputListener implements AutoCloseable {
                     FLAG_NOT_FOCUSABLE,
                     PRIVATE_FLAG_TRUSTED_OVERLAY,
                     TYPE_APPLICATION,
+                    null /* windowToken */,
                     mFocusGrantToken,
                     TAG + " of " + decorationSurface.toString(),
                     mInputChannel);
@@ -115,6 +115,8 @@ class DragResizeInputListener implements AutoCloseable {
         mInputEventReceiver = new TaskResizeInputEventReceiver(
                 mInputChannel, mHandler, mChoreographer);
         mCallback = callback;
+        mDragDetector = new DragDetector(mInputEventReceiver);
+        mDragDetector.setTouchSlop(ViewConfiguration.get(context).getScaledTouchSlop());
     }
 
     /**
@@ -146,7 +148,7 @@ class DragResizeInputListener implements AutoCloseable {
         mHeight = height;
         mResizeHandleThickness = resizeHandleThickness;
         mCornerSize = cornerSize;
-        mTouchSlop = touchSlop;
+        mDragDetector.setTouchSlop(touchSlop);
 
         Region touchRegion = new Region();
         final Rect topInputBounds = new Rect(0, 0, mWidth, mResizeHandleThickness);
@@ -214,6 +216,7 @@ class DragResizeInputListener implements AutoCloseable {
 
     @Override
     public void close() {
+        mInputEventReceiver.dispose();
         mInputChannel.dispose();
         try {
             mWindowSession.remove(mFakeWindow);
@@ -222,13 +225,12 @@ class DragResizeInputListener implements AutoCloseable {
         }
     }
 
-    private class TaskResizeInputEventReceiver extends InputEventReceiver {
+    private class TaskResizeInputEventReceiver extends InputEventReceiver
+            implements DragDetector.MotionEventHandler {
         private final Choreographer mChoreographer;
         private final Runnable mConsumeBatchEventRunnable;
         private boolean mConsumeBatchEventScheduled;
         private boolean mShouldHandleEvents;
-        private boolean mDragging;
-        private final PointF mActionDownPoint = new PointF();
 
         private TaskResizeInputEventReceiver(
                 InputChannel inputChannel, Handler handler, Choreographer choreographer) {
@@ -270,13 +272,15 @@ class DragResizeInputListener implements AutoCloseable {
             if (!(inputEvent instanceof MotionEvent)) {
                 return false;
             }
+            return mDragDetector.onMotionEvent((MotionEvent) inputEvent);
+        }
 
-            MotionEvent e = (MotionEvent) inputEvent;
+        @Override
+        public boolean handleMotionEvent(MotionEvent e) {
             boolean result = false;
             // Check if this is a touch event vs mouse event.
             // Touch events are tracked in four corners. Other events are tracked in resize edges.
             boolean isTouch = (e.getSource() & SOURCE_TOUCHSCREEN) == SOURCE_TOUCHSCREEN;
-
             switch (e.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN: {
                     float x = e.getX(0);
@@ -290,9 +294,8 @@ class DragResizeInputListener implements AutoCloseable {
                         mDragPointerId = e.getPointerId(0);
                         float rawX = e.getRawX(0);
                         float rawY = e.getRawY(0);
-                        mActionDownPoint.set(rawX, rawY);
                         int ctrlType = calculateCtrlType(isTouch, x, y);
-                        mCallback.onDragResizeStart(ctrlType, rawX, rawY);
+                        mCallback.onDragPositioningStart(ctrlType, rawX, rawY);
                         result = true;
                     }
                     break;
@@ -304,33 +307,18 @@ class DragResizeInputListener implements AutoCloseable {
                     int dragPointerIndex = e.findPointerIndex(mDragPointerId);
                     float rawX = e.getRawX(dragPointerIndex);
                     float rawY = e.getRawY(dragPointerIndex);
-                    if (isTouch) {
-                        // Check for touch slop for touch events
-                        float dx = rawX - mActionDownPoint.x;
-                        float dy = rawY - mActionDownPoint.y;
-                        if (!mDragging && Math.hypot(dx, dy) > mTouchSlop) {
-                            mDragging = true;
-                        }
-                    } else {
-                        // For all other types allow immediate dragging.
-                        mDragging = true;
-                    }
-                    if (mDragging) {
-                        mCallback.onDragResizeMove(rawX, rawY);
-                        result = true;
-                    }
+                    mCallback.onDragPositioningMove(rawX, rawY);
+                    result = true;
                     break;
                 }
                 case MotionEvent.ACTION_UP:
                 case MotionEvent.ACTION_CANCEL: {
-                    if (mDragging) {
+                    if (mShouldHandleEvents) {
                         int dragPointerIndex = e.findPointerIndex(mDragPointerId);
-                        mCallback.onDragResizeEnd(
+                        mCallback.onDragPositioningEnd(
                                 e.getRawX(dragPointerIndex), e.getRawY(dragPointerIndex));
                     }
-                    mDragging = false;
                     mShouldHandleEvents = false;
-                    mActionDownPoint.set(0, 0);
                     mDragPointerId = -1;
                     result = true;
                     break;

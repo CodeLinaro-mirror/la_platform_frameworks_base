@@ -35,7 +35,7 @@ namespace aapt {
 
 class MockFileCollection : public io::IFileCollection {
  public:
-  MOCK_METHOD1(FindFile, io::IFile*(const StringPiece& path));
+  MOCK_METHOD1(FindFile, io::IFile*(StringPiece path));
   MOCK_METHOD0(Iterator, std::unique_ptr<io::IFileCollectionIterator>());
   MOCK_METHOD0(GetDirSeparator, char());
 };
@@ -491,7 +491,7 @@ TEST(ProtoSerializeTest, SerializeAndDeserializePrimitives) {
   EXPECT_THAT(bp->value.data, Eq(ResourceUtils::MakeEmpty()->value.data));
 }
 
-static void ExpectConfigSerializes(const StringPiece& config_str) {
+static void ExpectConfigSerializes(StringPiece config_str) {
   const ConfigDescription expected_config = test::ParseConfigOrDie(config_str);
   pb::Configuration pb_config;
   SerializeConfig(expected_config, &pb_config);
@@ -581,9 +581,13 @@ TEST(ProtoSerializeTest, SerializeDeserializeConfiguration) {
 
   ExpectConfigSerializes("v8");
 
+  ExpectConfigSerializes("en-feminine");
+  ExpectConfigSerializes("en-neuter-v34");
+  ExpectConfigSerializes("feminine-v34");
+
   ExpectConfigSerializes(
-      "mcc123-mnc456-b+en+GB-ldltr-sw300dp-w300dp-h400dp-large-long-round-widecg-highdr-land-car-"
-      "night-xhdpi-stylus-keysexposed-qwerty-navhidden-dpad-300x200-v23");
+      "mcc123-mnc456-b+en+GB-masculine-ldltr-sw300dp-w300dp-h400dp-large-long-round-widecg-highdr-"
+      "land-car-night-xhdpi-stylus-keysexposed-qwerty-navhidden-dpad-300x200-v23");
 }
 
 TEST(ProtoSerializeTest, SerializeAndDeserializeOverlayable) {
@@ -1024,4 +1028,28 @@ TEST(ProtoSerializeTest, CustomResourceTypes) {
   EXPECT_THAT(*(custom_layout->path), Eq("res/layout/bar.xml"));
 }
 
+TEST(ProtoSerializeTest, SerializeDynamicRef) {
+  std::unique_ptr<IAaptContext> context =
+      test::ContextBuilder().SetCompilationPackage("app").SetPackageId(0x7f).Build();
+  std::unique_ptr<ResourceTable> table = test::ResourceTableBuilder().Build();
+  table->included_packages_.insert({20, "foobar"});
+  table->included_packages_.insert({30, "barfoo"});
+
+  ResourceTable new_table;
+  pb::ResourceTable pb_table;
+  MockFileCollection files;
+  std::string error;
+  SerializeTableToPb(*table, &pb_table, context->GetDiagnostics());
+  ASSERT_TRUE(DeserializeTableFromPb(pb_table, &files, &new_table, &error));
+  EXPECT_THAT(error, IsEmpty());
+
+  int result = new_table.included_packages_.size();
+  EXPECT_THAT(result, Eq(2));
+  auto it = new_table.included_packages_.begin();
+  EXPECT_THAT(it->first, Eq(20));
+  EXPECT_THAT(it->second, Eq("foobar"));
+  it++;
+  EXPECT_THAT(it->first, Eq(30));
+  EXPECT_THAT(it->second, Eq("barfoo"));
+}
 }  // namespace aapt

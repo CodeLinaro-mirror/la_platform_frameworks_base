@@ -61,6 +61,7 @@ import android.os.Binder;
 import android.os.Handler;
 import android.os.RemoteException;
 import android.os.ServiceManager;
+import android.os.SystemProperties;
 import android.os.UserHandle;
 import android.os.UserManager;
 import android.service.notification.NotificationListenerService;
@@ -68,10 +69,14 @@ import android.service.notification.NotificationListenerService.RankingMap;
 import android.util.Log;
 import android.util.Pair;
 import android.util.SparseArray;
+import android.view.IWindowManager;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
 import android.view.WindowManager;
+import android.window.ScreenCapture;
+import android.window.ScreenCapture.ScreenCaptureListener;
+import android.window.ScreenCapture.ScreenshotSync;
 
 import androidx.annotation.MainThread;
 import androidx.annotation.Nullable;
@@ -125,6 +130,39 @@ public class BubbleController implements ConfigurationChangeListener {
     private static final String SYSTEM_DIALOG_REASON_KEY = "reason";
     private static final String SYSTEM_DIALOG_REASON_GESTURE_NAV = "gestureNav";
 
+    // TODO(b/256873975) Should use proper flag when available to shell/launcher
+    /**
+     * Whether bubbles are showing in the bubble bar from launcher. This is only available
+     * on large screens and {@link BubbleController#isShowingAsBubbleBar()} should be used
+     * to check all conditions that indicate if the bubble bar is in use.
+     */
+    private static final boolean BUBBLE_BAR_ENABLED =
+            SystemProperties.getBoolean("persist.wm.debug.bubble_bar", false);
+
+
+    /**
+     * Common interface to send updates to bubble views.
+     */
+    public interface BubbleViewCallback {
+        /** Called when the provided bubble should be removed. */
+        void removeBubble(Bubble removedBubble);
+        /** Called when the provided bubble should be added. */
+        void addBubble(Bubble addedBubble);
+        /** Called when the provided bubble should be updated. */
+        void updateBubble(Bubble updatedBubble);
+        /** Called when the provided bubble should be selected. */
+        void selectionChanged(BubbleViewProvider selectedBubble);
+        /** Called when the provided bubble's suppression state has changed. */
+        void suppressionChanged(Bubble bubble, boolean isSuppressed);
+        /** Called when the expansion state of bubbles has changed. */
+        void expansionChanged(boolean isExpanded);
+        /**
+         * Called when the order of the bubble list has changed. Depending on the expanded state
+         * the pointer might need to be updated.
+         */
+        void bubbleOrderChanged(List<Bubble> bubbleOrder, boolean updatePointer);
+    }
+
     private final Context mContext;
     private final BubblesImpl mImpl = new BubblesImpl();
     private Bubbles.BubbleExpandListener mExpandListener;
@@ -143,15 +181,12 @@ public class BubbleController implements ConfigurationChangeListener {
     private final SyncTransactionQueue mSyncQueue;
     private final ShellController mShellController;
     private final ShellCommandHandler mShellCommandHandler;
+    private final IWindowManager mWmService;
 
     // Used to post to main UI thread
     private final ShellExecutor mMainExecutor;
     private final Handler mMainHandler;
-
     private final ShellExecutor mBackgroundExecutor;
-
-    // Whether or not we should show bubbles pinned at the bottom of the screen.
-    private boolean mIsBubbleBarEnabled;
 
     private BubbleLogger mLogger;
     private BubbleData mBubbleData;
@@ -237,7 +272,8 @@ public class BubbleController implements ConfigurationChangeListener {
             @ShellMainThread Handler mainHandler,
             @ShellBackgroundThread ShellExecutor bgExecutor,
             TaskViewTransitions taskViewTransitions,
-            SyncTransactionQueue syncQueue) {
+            SyncTransactionQueue syncQueue,
+            IWindowManager wmService) {
         mContext = context;
         mShellCommandHandler = shellCommandHandler;
         mShellController = shellController;
@@ -269,6 +305,7 @@ public class BubbleController implements ConfigurationChangeListener {
         mOneHandedOptional = oneHandedOptional;
         mDragAndDropController = dragAndDropController;
         mSyncQueue = syncQueue;
+        mWmService = wmService;
         shellInit.addInitCallback(this::onInit, this);
     }
 
@@ -475,8 +512,13 @@ public class BubbleController implements ConfigurationChangeListener {
 
     @VisibleForTesting
     public void onStatusBarStateChanged(boolean isShade) {
+        boolean didChange = mIsStatusBarShade != isShade;
+        if (DEBUG_BUBBLE_CONTROLLER) {
+            Log.d(TAG, "onStatusBarStateChanged isShade=" + isShade + " didChange=" + didChange);
+        }
         mIsStatusBarShade = isShade;
-        if (!mIsStatusBarShade) {
+        if (!mIsStatusBarShade && didChange) {
+            // Only collapse stack on change
             collapseStack();
         }
 
@@ -528,10 +570,10 @@ public class BubbleController implements ConfigurationChangeListener {
         mDataRepository.removeBubblesForUser(removedUserId, parentUserId);
     }
 
-    // TODO(b/256873975): Should pass this into the constructor once flags are available to shell.
-    /** Sets whether the bubble bar is enabled (i.e. bubbles pinned to bottom on large screens). */
-    public void setBubbleBarEnabled(boolean enabled) {
-        mIsBubbleBarEnabled = enabled;
+    /** Whether bubbles are showing in the bubble bar. */
+    public boolean isShowingAsBubbleBar() {
+        // TODO(b/269670598): should also check that we're in gesture nav
+        return BUBBLE_BAR_ENABLED && mBubblePositioner.isLargeScreen();
     }
 
     /** Whether this userId belongs to the current user. */
@@ -598,12 +640,6 @@ public class BubbleController implements ConfigurationChangeListener {
                 mStackView.setExpandListener(mExpandListener);
             }
             mStackView.setUnbubbleConversationCallback(mSysuiProxy::onUnbubbleConversation);
-        }
-
-        if (mIsBubbleBarEnabled && mBubblePositioner.isLargeScreen()) {
-            mBubblePositioner.setUsePinnedLocation(true);
-        } else {
-            mBubblePositioner.setUsePinnedLocation(false);
         }
 
         addToWindowManagerMaybe();
@@ -709,7 +745,7 @@ public class BubbleController implements ConfigurationChangeListener {
         IntentFilter filter = new IntentFilter();
         filter.addAction(Intent.ACTION_CLOSE_SYSTEM_DIALOGS);
         filter.addAction(Intent.ACTION_SCREEN_OFF);
-        mContext.registerReceiver(mBroadcastReceiver, filter);
+        mContext.registerReceiver(mBroadcastReceiver, filter, Context.RECEIVER_EXPORTED);
     }
 
     private final BroadcastReceiver mBroadcastReceiver = new BroadcastReceiver() {
@@ -976,21 +1012,79 @@ public class BubbleController implements ConfigurationChangeListener {
     }
 
     /**
-     * Adds and expands bubble for a specific intent. These bubbles are <b>not</b> backed by a n
-     * otification and remain until the user dismisses the bubble or bubble stack. Only one intent
-     * bubble is supported at a time.
+     * This method has different behavior depending on:
+     *    - if an app bubble exists
+     *    - if an app bubble is expanded
+     *
+     * If no app bubble exists, this will add and expand a bubble with the provided intent. The
+     * intent must be explicit (i.e. include a package name or fully qualified component class name)
+     * and the activity for it should be resizable.
+     *
+     * If an app bubble exists, this will toggle the visibility of it, i.e. if the app bubble is
+     * expanded, calling this method will collapse it. If the app bubble is not expanded, calling
+     * this method will expand it.
+     *
+     * These bubbles are <b>not</b> backed by a notification and remain until the user dismisses
+     * the bubble or bubble stack.
+     *
+     * Some notes:
+     *    - Only one app bubble is supported at a time
+     *    - Calling this method with a different intent than the existing app bubble will do nothing
      *
      * @param intent the intent to display in the bubble expanded view.
      */
-    public void showAppBubble(Intent intent) {
-        if (intent == null || intent.getPackage() == null) return;
+    public void showOrHideAppBubble(Intent intent) {
+        if (intent == null || intent.getPackage() == null) {
+            Log.w(TAG, "App bubble failed to show, invalid intent: " + intent
+                    + ((intent != null) ? " with package: " + intent.getPackage() : " "));
+            return;
+        }
 
         PackageManager packageManager = getPackageManagerForUser(mContext, mCurrentUserId);
         if (!isResizableActivity(intent, packageManager, KEY_APP_BUBBLE)) return;
 
-        Bubble b = new Bubble(intent, UserHandle.of(mCurrentUserId), mMainExecutor);
-        b.setShouldAutoExpand(true);
-        inflateAndAdd(b, /* suppressFlyout= */ true, /* showInShade= */ false);
+        Bubble existingAppBubble = mBubbleData.getBubbleInStackWithKey(KEY_APP_BUBBLE);
+        if (existingAppBubble != null) {
+            BubbleViewProvider selectedBubble = mBubbleData.getSelectedBubble();
+            if (isStackExpanded()) {
+                if (selectedBubble != null && KEY_APP_BUBBLE.equals(selectedBubble.getKey())) {
+                    // App bubble is expanded, lets collapse
+                    collapseStack();
+                } else {
+                    // App bubble is not selected, select it
+                    mBubbleData.setSelectedBubble(existingAppBubble);
+                }
+            } else {
+                // App bubble is not selected, select it & expand
+                mBubbleData.setSelectedBubble(existingAppBubble);
+                mBubbleData.setExpanded(true);
+            }
+        } else {
+            // App bubble does not exist, lets add and expand it
+            Bubble b = new Bubble(intent, UserHandle.of(mCurrentUserId), mMainExecutor);
+            b.setShouldAutoExpand(true);
+            inflateAndAdd(b, /* suppressFlyout= */ true, /* showInShade= */ false);
+        }
+    }
+
+    /**
+     * Performs a screenshot that may exclude the bubble layer, if one is present. The screenshot
+     * can be access via the supplied {@link ScreenshotSync#get()} asynchronously.
+     *
+     * TODO(b/267324693): Implement the exclude layer functionality in screenshot.
+     */
+    public void getScreenshotExcludingBubble(int displayId,
+            Pair<ScreenCaptureListener, ScreenshotSync> screenCaptureListener) {
+        try {
+            mWmService.captureDisplay(displayId, null, screenCaptureListener.first);
+        } catch (RemoteException e) {
+            Log.e(TAG, "Failed to capture screenshot");
+        }
+    }
+
+    /** Sets the app bubble's taskId which is cached for SysUI. */
+    public void setAppBubbleTaskId(int taskId) {
+        mImpl.mCachedState.setAppBubbleTaskId(taskId);
     }
 
     /**
@@ -1249,6 +1343,58 @@ public class BubbleController implements ConfigurationChangeListener {
         });
     }
 
+    private final BubbleViewCallback mBubbleViewCallback = new BubbleViewCallback() {
+        @Override
+        public void removeBubble(Bubble removedBubble) {
+            if (mStackView != null) {
+                mStackView.removeBubble(removedBubble);
+            }
+        }
+
+        @Override
+        public void addBubble(Bubble addedBubble) {
+            if (mStackView != null) {
+                mStackView.addBubble(addedBubble);
+            }
+        }
+
+        @Override
+        public void updateBubble(Bubble updatedBubble) {
+            if (mStackView != null) {
+                mStackView.updateBubble(updatedBubble);
+            }
+        }
+
+        @Override
+        public void bubbleOrderChanged(List<Bubble> bubbleOrder, boolean updatePointer) {
+            if (mStackView != null) {
+                mStackView.updateBubbleOrder(bubbleOrder, updatePointer);
+            }
+        }
+
+        @Override
+        public void suppressionChanged(Bubble bubble, boolean isSuppressed) {
+            if (mStackView != null) {
+                mStackView.setBubbleSuppressed(bubble, isSuppressed);
+            }
+        }
+
+        @Override
+        public void expansionChanged(boolean isExpanded) {
+            if (mStackView != null) {
+                mStackView.setExpanded(isExpanded);
+            }
+        }
+
+        @Override
+        public void selectionChanged(BubbleViewProvider selectedBubble) {
+            if (mStackView != null) {
+                mStackView.setSelectedBubble(selectedBubble);
+            }
+
+        }
+    };
+
     @SuppressWarnings("FieldCanBeLocal")
     private final BubbleData.Listener mBubbleDataListener = new BubbleData.Listener() {
 
@@ -1271,7 +1417,8 @@ public class BubbleController implements ConfigurationChangeListener {
             // Lazy load overflow bubbles from disk
             loadOverflowBubblesFromDisk();
 
-            mStackView.updateOverflowButtonDot();
+            // If bubbles in the overflow have a dot, make sure the overflow shows a dot
+            updateOverflowButtonDot();
 
             // Update bubbles in overflow.
             if (mOverflowListener != null) {
@@ -1286,9 +1433,7 @@ public class BubbleController implements ConfigurationChangeListener {
                 final Bubble bubble = removed.first;
                 @Bubbles.DismissReason final int reason = removed.second;
 
-                if (mStackView != null) {
-                    mStackView.removeBubble(bubble);
-                }
+                mBubbleViewCallback.removeBubble(bubble);
 
                 // Leave the notification in place if we're dismissing due to user switching, or
                 // because DND is suppressing the bubble. In both of those cases, we need to be able
@@ -1318,49 +1463,47 @@ public class BubbleController implements ConfigurationChangeListener {
             }
             mDataRepository.removeBubbles(mCurrentUserId, bubblesToBeRemovedFromRepository);
 
-            if (update.addedBubble != null && mStackView != null) {
+            if (update.addedBubble != null) {
                 mDataRepository.addBubble(mCurrentUserId, update.addedBubble);
-                mStackView.addBubble(update.addedBubble);
+                mBubbleViewCallback.addBubble(update.addedBubble);
             }
 
-            if (update.updatedBubble != null && mStackView != null) {
-                mStackView.updateBubble(update.updatedBubble);
+            if (update.updatedBubble != null) {
+                mBubbleViewCallback.updateBubble(update.updatedBubble);
             }
 
-            if (update.suppressedBubble != null && mStackView != null) {
-                mStackView.setBubbleSuppressed(update.suppressedBubble, true);
+            if (update.suppressedBubble != null) {
+                mBubbleViewCallback.suppressionChanged(update.suppressedBubble, true);
             }
 
-            if (update.unsuppressedBubble != null && mStackView != null) {
-                mStackView.setBubbleSuppressed(update.unsuppressedBubble, false);
+            if (update.unsuppressedBubble != null) {
+                mBubbleViewCallback.suppressionChanged(update.unsuppressedBubble, false);
             }
 
             boolean collapseStack = update.expandedChanged && !update.expanded;
 
             // At this point, the correct bubbles are inflated in the stack.
             // Make sure the order in bubble data is reflected in bubble row.
-            if (update.orderChanged && mStackView != null) {
+            if (update.orderChanged) {
                 mDataRepository.addBubbles(mCurrentUserId, update.bubbles);
                 // if the stack is going to be collapsed, do not update pointer position
                 // after reordering
-                mStackView.updateBubbleOrder(update.bubbles, !collapseStack);
+                mBubbleViewCallback.bubbleOrderChanged(update.bubbles, !collapseStack);
             }
 
             if (collapseStack) {
-                mStackView.setExpanded(false);
+                mBubbleViewCallback.expansionChanged(/* expanded= */ false);
                 mSysuiProxy.requestNotificationShadeTopUi(false, TAG);
             }
 
-            if (update.selectionChanged && mStackView != null) {
-                mStackView.setSelectedBubble(update.selectedBubble);
+            if (update.selectionChanged) {
+                mBubbleViewCallback.selectionChanged(update.selectedBubble);
             }
 
             // Expanding? Apply this last.
             if (update.expandedChanged && update.expanded) {
-                if (mStackView != null) {
-                    mStackView.setExpanded(true);
-                    mSysuiProxy.requestNotificationShadeTopUi(true, TAG);
-                }
+                mBubbleViewCallback.expansionChanged(/* expanded= */ true);
+                mSysuiProxy.requestNotificationShadeTopUi(true, TAG);
             }
 
             mSysuiProxy.notifyInvalidateNotifications("BubbleData.Listener.applyUpdate");
@@ -1370,6 +1513,19 @@ public class BubbleController implements ConfigurationChangeListener {
             mImpl.mCachedState.update(update);
         }
     };
+
+    private void updateOverflowButtonDot() {
+        BubbleOverflow overflow = mBubbleData.getOverflow();
+        if (overflow == null) return;
+
+        for (Bubble b : mBubbleData.getOverflowBubbles()) {
+            if (b.showDot()) {
+                overflow.setShowDot(true);
+                return;
+            }
+        }
+        overflow.setShowDot(false);
+    }
 
     private boolean handleDismissalInterception(BubbleEntry entry,
             @Nullable List<BubbleEntry> children, IntConsumer removeCallback) {
@@ -1571,6 +1727,7 @@ public class BubbleController implements ConfigurationChangeListener {
             private HashSet<String> mSuppressedBubbleKeys = new HashSet<>();
             private HashMap<String, String> mSuppressedGroupToNotifKeys = new HashMap<>();
             private HashMap<String, Bubble> mShortcutIdToBubble = new HashMap<>();
+            private int mAppBubbleTaskId = INVALID_TASK_ID;
 
             private ArrayList<Bubble> mTmpBubbles = new ArrayList<>();
 
@@ -1602,10 +1759,20 @@ public class BubbleController implements ConfigurationChangeListener {
 
                 mSuppressedBubbleKeys.clear();
                 mShortcutIdToBubble.clear();
+                mAppBubbleTaskId = INVALID_TASK_ID;
                 for (Bubble b : mTmpBubbles) {
                     mShortcutIdToBubble.put(b.getShortcutId(), b);
                     updateBubbleSuppressedState(b);
+
+                    if (KEY_APP_BUBBLE.equals(b.getKey())) {
+                        mAppBubbleTaskId = b.getTaskId();
+                    }
                 }
+            }
+
+            /** Sets the app bubble's taskId which is cached for SysUI. */
+            synchronized void setAppBubbleTaskId(int taskId) {
+                mAppBubbleTaskId = taskId;
             }
 
             /**
@@ -1657,6 +1824,8 @@ public class BubbleController implements ConfigurationChangeListener {
                 for (String key : mSuppressedGroupToNotifKeys.keySet()) {
                     pw.println("   suppressing: " + key);
                 }
+
+                pw.print("mAppBubbleTaskId: " + mAppBubbleTaskId);
             }
         }
 
@@ -1700,10 +1869,28 @@ public class BubbleController implements ConfigurationChangeListener {
         }
 
         @Override
-        public void showAppBubble(Intent intent) {
+        public void showOrHideAppBubble(Intent intent) {
             mMainExecutor.execute(() -> {
-                BubbleController.this.showAppBubble(intent);
+                BubbleController.this.showOrHideAppBubble(intent);
             });
+        }
+
+        @Override
+        public boolean isAppBubbleTaskId(int taskId) {
+            return mCachedState.mAppBubbleTaskId == taskId;
+        }
+
+        @Override
+        @Nullable
+        public ScreenshotSync getScreenshotExcludingBubble(int displayId) {
+            Pair<ScreenCaptureListener, ScreenshotSync> screenCaptureListener =
+                    ScreenCapture.createSyncCaptureListener();
+
+            mMainExecutor.execute(
+                    () -> BubbleController.this.getScreenshotExcludingBubble(displayId,
+                            screenCaptureListener));
+
+            return screenCaptureListener.second;
         }
 
         @Override
@@ -1813,13 +2000,6 @@ public class BubbleController implements ConfigurationChangeListener {
         public void onUserRemoved(int removedUserId) {
             mMainExecutor.execute(() -> {
                 BubbleController.this.onUserRemoved(removedUserId);
-            });
-        }
-
-        @Override
-        public void setBubbleBarEnabled(boolean enabled) {
-            mMainExecutor.execute(() -> {
-                BubbleController.this.setBubbleBarEnabled(enabled);
             });
         }
 

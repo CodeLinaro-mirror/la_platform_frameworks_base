@@ -16,6 +16,7 @@
 
 package com.android.server.pm.permission;
 
+import static android.Manifest.permission.CAMERA;
 import static android.Manifest.permission.CAPTURE_AUDIO_HOTWORD;
 import static android.Manifest.permission.CAPTURE_AUDIO_OUTPUT;
 import static android.Manifest.permission.RECORD_AUDIO;
@@ -50,6 +51,7 @@ import android.content.pm.ParceledListSlice;
 import android.content.pm.PermissionGroupInfo;
 import android.content.pm.PermissionInfo;
 import android.content.pm.permission.SplitPermissionInfoParcelable;
+import android.health.connect.HealthConnectManager;
 import android.os.Binder;
 import android.os.IBinder;
 import android.os.Process;
@@ -74,6 +76,7 @@ import com.android.server.pm.UserManagerInternal;
 import com.android.server.pm.UserManagerService;
 import com.android.server.pm.permission.PermissionManagerServiceInternal.HotwordDetectionServiceProvider;
 import com.android.server.pm.pkg.AndroidPackage;
+import com.android.server.pm.pkg.PackageState;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -92,6 +95,7 @@ import java.util.function.BiFunction;
  * Manages all permissions and handles permissions related tasks.
  */
 public class PermissionManagerService extends IPermissionManager.Stub {
+
     private static final String LOG_TAG = PermissionManagerService.class.getSimpleName();
 
     /** Map of IBinder -> Running AttributionSource */
@@ -117,7 +121,7 @@ public class PermissionManagerService extends IPermissionManager.Stub {
     private final AppOpsManager mAppOpsManager;
 
     private final Context mContext;
-    private final PermissionManagerServiceImpl mPermissionManagerServiceImpl;
+    private final PermissionManagerServiceInterface mPermissionManagerServiceImpl;
 
     @NonNull
     private final AttributionSourceRegistry mAttributionSourceRegistry;
@@ -150,6 +154,8 @@ public class PermissionManagerService extends IPermissionManager.Stub {
 
         mPermissionManagerServiceImpl = new PermissionManagerServiceImpl(context,
                 availableFeatures);
+        //mPermissionManagerServiceImpl = new PermissionManagerServiceLoggingDecorator(
+        //        LocalServices.getService(PermissionManagerServiceInterface.class));
     }
 
     /**
@@ -466,7 +472,7 @@ public class PermissionManagerService extends IPermissionManager.Stub {
 
     @Override
     public PermissionInfo getPermissionInfo(String permissionName, String packageName, int flags) {
-        return mPermissionManagerServiceImpl.getPermissionInfo(permissionName, packageName, flags);
+        return mPermissionManagerServiceImpl.getPermissionInfo(permissionName, flags, packageName);
     }
 
     @Override
@@ -680,9 +686,9 @@ public class PermissionManagerService extends IPermissionManager.Stub {
         }
 
         @Override
-        public void onPackageAdded(@NonNull AndroidPackage pkg, boolean isInstantApp,
+        public void onPackageAdded(@NonNull PackageState packageState, boolean isInstantApp,
                 @Nullable AndroidPackage oldPkg) {
-            mPermissionManagerServiceImpl.onPackageAdded(pkg, isInstantApp, oldPkg);
+            mPermissionManagerServiceImpl.onPackageAdded(packageState, isInstantApp, oldPkg);
         }
 
         @Override
@@ -713,9 +719,9 @@ public class PermissionManagerService extends IPermissionManager.Stub {
 
         @Override
         public void onPackageUninstalled(@NonNull String packageName, int appId,
-                @Nullable AndroidPackage pkg, @NonNull List<AndroidPackage> sharedUserPkgs,
-                @UserIdInt int userId) {
-            mPermissionManagerServiceImpl.onPackageUninstalled(packageName, appId,
+                @NonNull PackageState packageState, @Nullable AndroidPackage pkg,
+                @NonNull List<AndroidPackage> sharedUserPkgs, @UserIdInt int userId) {
+            mPermissionManagerServiceImpl.onPackageUninstalled(packageName, appId, packageState,
                     pkg, sharedUserPkgs, userId);
         }
 
@@ -756,6 +762,11 @@ public class PermissionManagerService extends IPermissionManager.Stub {
         }
         @NonNull
         @Override
+        public Set<String> getInstalledPermissions(@NonNull String packageName) {
+            return mPermissionManagerServiceImpl.getInstalledPermissions(packageName);
+        }
+        @NonNull
+        @Override
         public Set<String> getGrantedPermissions(@NonNull String packageName,
                 @UserIdInt int userId) {
             return mPermissionManagerServiceImpl.getGrantedPermissions(packageName, userId);
@@ -791,14 +802,14 @@ public class PermissionManagerService extends IPermissionManager.Stub {
 
         @NonNull
         @Override
-        public ArrayList<PermissionInfo> getAllPermissionsWithProtection(
+        public List<PermissionInfo> getAllPermissionsWithProtection(
                 @PermissionInfo.Protection int protection) {
             return mPermissionManagerServiceImpl.getAllPermissionsWithProtection(protection);
         }
 
         @NonNull
         @Override
-        public ArrayList<PermissionInfo> getAllPermissionsWithProtectionFlags(
+        public List<PermissionInfo> getAllPermissionsWithProtectionFlags(
                 @PermissionInfo.ProtectionFlags int protectionFlags) {
             return mPermissionManagerServiceImpl
                     .getAllPermissionsWithProtectionFlags(protectionFlags);
@@ -1100,7 +1111,7 @@ public class PermissionManagerService extends IPermissionManager.Stub {
                     if (resolvedPackageName == null) {
                         return;
                     }
-                    appOpsManager.finishOp(accessorSource.getToken(), op,
+                    appOpsManager.finishOp(attributionSourceState.token, op,
                             accessorSource.getUid(), resolvedPackageName,
                             accessorSource.getAttributionTag());
                 } else {
@@ -1109,8 +1120,9 @@ public class PermissionManagerService extends IPermissionManager.Stub {
                     if (resolvedAttributionSource.getPackageName() == null) {
                         return;
                     }
-                    appOpsManager.finishProxyOp(AppOpsManager.opToPublicName(op),
-                            resolvedAttributionSource, skipCurrentFinish);
+                    appOpsManager.finishProxyOp(attributionSourceState.token,
+                            AppOpsManager.opToPublicName(op), resolvedAttributionSource,
+                            skipCurrentFinish);
                 }
                 RegisteredAttribution registered =
                         sRunningAttributionSources.remove(current.getToken());
@@ -1156,7 +1168,8 @@ public class PermissionManagerService extends IPermissionManager.Stub {
             if (permissionInfo == null) {
                 try {
                     permissionInfo = context.getPackageManager().getPermissionInfo(permission, 0);
-                    if (PLATFORM_PACKAGE_NAME.equals(permissionInfo.packageName)) {
+                    if (PLATFORM_PACKAGE_NAME.equals(permissionInfo.packageName)
+                            || HealthConnectManager.isHealthPermission(context, permission)) {
                         // Double addition due to concurrency is fine - the backing
                         // store is concurrent.
                         sPlatformPermissions.put(permission, permissionInfo);
@@ -1225,10 +1238,11 @@ public class PermissionManagerService extends IPermissionManager.Stub {
                         && next.getNext() == null);
                 final boolean selfAccess = singleReceiverFromDatasource || next == null;
 
-                final int opMode = performOpTransaction(context, op, current, message,
-                        forDataDelivery, /*startDataDelivery*/ false, skipCurrentChecks,
-                        selfAccess, singleReceiverFromDatasource, AppOpsManager.OP_NONE,
-                        AppOpsManager.ATTRIBUTION_FLAGS_NONE, AppOpsManager.ATTRIBUTION_FLAGS_NONE,
+                final int opMode = performOpTransaction(context, attributionSource.getToken(), op,
+                        current, message, forDataDelivery, /*startDataDelivery*/ false,
+                        skipCurrentChecks, selfAccess, singleReceiverFromDatasource,
+                        AppOpsManager.OP_NONE, AppOpsManager.ATTRIBUTION_FLAGS_NONE,
+                        AppOpsManager.ATTRIBUTION_FLAGS_NONE,
                         AppOpsManager.ATTRIBUTION_CHAIN_ID_NONE);
 
                 switch (opMode) {
@@ -1301,7 +1315,9 @@ public class PermissionManagerService extends IPermissionManager.Stub {
                     // Bg location is one-off runtime modifier permission and has no app op
                     if (sPlatformPermissions.containsKey(permission)
                             && !Manifest.permission.ACCESS_BACKGROUND_LOCATION.equals(permission)
-                            && !Manifest.permission.BODY_SENSORS_BACKGROUND.equals(permission)) {
+                            && !Manifest.permission.BODY_SENSORS_BACKGROUND.equals(permission)
+                            && !Manifest.permission.BODY_SENSORS_WRIST_TEMPERATURE_BACKGROUND
+                            .equals(permission)) {
                         Slog.wtf(LOG_TAG, "Platform runtime permission " + permission
                                 + " with no app op defined!");
                     }
@@ -1331,10 +1347,10 @@ public class PermissionManagerService extends IPermissionManager.Stub {
                         attributionSource, next, fromDatasource, startDataDelivery, selfAccess,
                         isLinkTrusted) : ATTRIBUTION_FLAGS_NONE;
 
-                final int opMode = performOpTransaction(context, op, current, message,
-                        forDataDelivery, startDataDelivery, skipCurrentChecks, selfAccess,
-                        singleReceiverFromDatasource, attributedOp, proxyAttributionFlags,
-                        proxiedAttributionFlags, attributionChainId);
+                final int opMode = performOpTransaction(context, attributionSource.getToken(), op,
+                        current, message, forDataDelivery, startDataDelivery, skipCurrentChecks,
+                        selfAccess, singleReceiverFromDatasource, attributedOp,
+                        proxyAttributionFlags, proxiedAttributionFlags, attributionChainId);
 
                 switch (opMode) {
                     case AppOpsManager.MODE_ERRORED: {
@@ -1365,14 +1381,15 @@ public class PermissionManagerService extends IPermissionManager.Stub {
             boolean permissionGranted = context.checkPermission(permission, /*pid*/ -1,
                     uid) == PackageManager.PERMISSION_GRANTED;
 
-            // Override certain permissions checks for the HotwordDetectionService. This service is
-            // an isolated service, which ordinarily cannot hold permissions.
+            // Override certain permissions checks for the shared isolated process for both
+            // HotwordDetectionService and VisualQueryDetectionService, which ordinarily cannot hold
+            // any permissions.
             // There's probably a cleaner, more generalizable way to do this. For now, this is
             // the only use case for this, so simply override here.
             if (!permissionGranted
                     && Process.isIsolated(uid) // simple check which fails-fast for the common case
                     && (permission.equals(RECORD_AUDIO) || permission.equals(CAPTURE_AUDIO_HOTWORD)
-                    || permission.equals(CAPTURE_AUDIO_OUTPUT))) {
+                    || permission.equals(CAPTURE_AUDIO_OUTPUT) || permission.equals(CAMERA))) {
                 HotwordDetectionServiceProvider hotwordServiceProvider =
                         permissionManagerServiceInt.getHotwordDetectionServiceProvider();
                 permissionGranted = hotwordServiceProvider != null
@@ -1479,8 +1496,8 @@ public class PermissionManagerService extends IPermissionManager.Stub {
                         attributionSource, next, /*fromDatasource*/ false, startDataDelivery,
                         selfAccess, isLinkTrusted) : ATTRIBUTION_FLAGS_NONE;
 
-                final int opMode = performOpTransaction(context, op, current, message,
-                        forDataDelivery, startDataDelivery, skipCurrentChecks, selfAccess,
+                final int opMode = performOpTransaction(context, current.getToken(), op, current,
+                        message, forDataDelivery, startDataDelivery, skipCurrentChecks, selfAccess,
                         /*fromDatasource*/ false, AppOpsManager.OP_NONE, proxyAttributionFlags,
                         proxiedAttributionFlags, attributionChainId);
 
@@ -1502,7 +1519,8 @@ public class PermissionManagerService extends IPermissionManager.Stub {
         }
 
         @SuppressWarnings("ConstantConditions")
-        private static int performOpTransaction(@NonNull Context context, int op,
+        private static int performOpTransaction(@NonNull Context context,
+                @NonNull IBinder chainStartToken, int op,
                 @NonNull AttributionSource attributionSource, @Nullable String message,
                 boolean forDataDelivery, boolean startDataDelivery, boolean skipProxyOperation,
                 boolean selfAccess, boolean singleReceiverFromDatasource, int attributedOp,
@@ -1564,7 +1582,7 @@ public class PermissionManagerService extends IPermissionManager.Stub {
                 if (selfAccess) {
                     try {
                         startedOpResult = appOpsManager.startOpNoThrow(
-                                resolvedAttributionSource.getToken(), startedOp,
+                                chainStartToken, startedOp,
                                 resolvedAttributionSource.getUid(),
                                 resolvedAttributionSource.getPackageName(),
                                 /*startIfModeDefault*/ false,
@@ -1575,14 +1593,14 @@ public class PermissionManagerService extends IPermissionManager.Stub {
                                 + " platform defined runtime permission "
                                 + AppOpsManager.opToPermission(op) + " while not having "
                                 + Manifest.permission.UPDATE_APP_OPS_STATS);
-                        startedOpResult = appOpsManager.startProxyOpNoThrow(attributedOp,
-                                attributionSource, message, skipProxyOperation,
+                        startedOpResult = appOpsManager.startProxyOpNoThrow(chainStartToken,
+                                attributedOp, attributionSource, message, skipProxyOperation,
                                 proxyAttributionFlags, proxiedAttributionFlags, attributionChainId);
                     }
                 } else {
                     try {
-                        startedOpResult = appOpsManager.startProxyOpNoThrow(startedOp,
-                                resolvedAttributionSource, message, skipProxyOperation,
+                        startedOpResult = appOpsManager.startProxyOpNoThrow(chainStartToken,
+                                startedOp, resolvedAttributionSource, message, skipProxyOperation,
                                 proxyAttributionFlags, proxiedAttributionFlags, attributionChainId);
                     } catch (SecurityException e) {
                         //TODO 195339480: remove

@@ -18,6 +18,7 @@ package com.android.server.wm;
 
 import static android.app.WindowConfiguration.ACTIVITY_TYPE_HOME;
 import static android.app.WindowConfiguration.ACTIVITY_TYPE_UNDEFINED;
+import static android.content.res.Configuration.GRAMMATICAL_GENDER_NOT_SPECIFIED;
 import static android.content.res.Configuration.ORIENTATION_LANDSCAPE;
 import static android.content.res.Configuration.ORIENTATION_PORTRAIT;
 
@@ -324,7 +325,7 @@ public class WindowProcessControllerTests extends WindowTestsBase {
     @Test
     public void testComputeOomAdjFromActivities() {
         final ActivityRecord activity = createActivityRecord(mWpc);
-        activity.mVisibleRequested = true;
+        activity.setVisibleRequested(true);
         final int[] callbackResult = { 0 };
         final int visible = 1;
         final int paused = 2;
@@ -359,7 +360,7 @@ public class WindowProcessControllerTests extends WindowTestsBase {
         assertEquals(visible, callbackResult[0]);
 
         callbackResult[0] = 0;
-        activity.mVisibleRequested = false;
+        activity.setVisibleRequested(false);
         activity.setState(PAUSED, "test");
         mWpc.computeOomAdjFromActivities(callback);
         assertEquals(paused, callbackResult[0]);
@@ -380,7 +381,7 @@ public class WindowProcessControllerTests extends WindowTestsBase {
         final VisibleActivityProcessTracker tracker = mAtm.mVisibleActivityProcessTracker;
         spyOn(tracker);
         final ActivityRecord activity = createActivityRecord(mWpc);
-        activity.mVisibleRequested = true;
+        activity.setVisibleRequested(true);
         activity.setState(STARTED, "test");
 
         verify(tracker).onAnyActivityVisible(mWpc);
@@ -398,7 +399,7 @@ public class WindowProcessControllerTests extends WindowTestsBase {
         assertTrue(mWpc.hasForegroundActivities());
 
         activity.setVisibility(false);
-        activity.mVisibleRequested = false;
+        activity.setVisibleRequested(false);
         activity.setState(STOPPED, "test");
 
         verify(tracker).onAllActivitiesInvisible(mWpc);
@@ -413,20 +414,22 @@ public class WindowProcessControllerTests extends WindowTestsBase {
     @Test
     public void testTopActivityUiModeChangeScheduleConfigChange() {
         final ActivityRecord activity = createActivityRecord(mWpc);
-        activity.mVisibleRequested = true;
-        doReturn(true).when(activity).applyAppSpecificConfig(anyInt(), any());
+        activity.setVisibleRequested(true);
+        doReturn(true).when(activity).applyAppSpecificConfig(anyInt(), any(), anyInt());
         mWpc.updateAppSpecificSettingsForAllActivitiesInPackage(DEFAULT_COMPONENT_PACKAGE_NAME,
-                Configuration.UI_MODE_NIGHT_YES, LocaleList.forLanguageTags("en-XA"));
+                Configuration.UI_MODE_NIGHT_YES, LocaleList.forLanguageTags("en-XA"),
+                GRAMMATICAL_GENDER_NOT_SPECIFIED);
         verify(activity).ensureActivityConfiguration(anyInt(), anyBoolean());
     }
 
     @Test
     public void testTopActivityUiModeChangeForDifferentPackage_noScheduledConfigChange() {
         final ActivityRecord activity = createActivityRecord(mWpc);
-        activity.mVisibleRequested = true;
+        activity.setVisibleRequested(true);
         mWpc.updateAppSpecificSettingsForAllActivitiesInPackage("com.different.package",
-                Configuration.UI_MODE_NIGHT_YES, LocaleList.forLanguageTags("en-XA"));
-        verify(activity, never()).applyAppSpecificConfig(anyInt(), any());
+                Configuration.UI_MODE_NIGHT_YES, LocaleList.forLanguageTags("en-XA"),
+                GRAMMATICAL_GENDER_NOT_SPECIFIED);
+        verify(activity, never()).applyAppSpecificConfig(anyInt(), any(), anyInt());
         verify(activity, never()).ensureActivityConfiguration(anyInt(), anyBoolean());
     }
 

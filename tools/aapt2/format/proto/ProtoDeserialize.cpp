@@ -354,6 +354,7 @@ bool DeserializeConfigFromPb(const pb::Configuration& pb_config, ConfigDescripti
   out_config->screenWidth = static_cast<uint16_t>(pb_config.screen_width());
   out_config->screenHeight = static_cast<uint16_t>(pb_config.screen_height());
   out_config->sdkVersion = static_cast<uint16_t>(pb_config.sdk_version());
+  out_config->grammaticalInflection = pb_config.grammatical_gender();
   return true;
 }
 
@@ -560,6 +561,11 @@ bool DeserializeTableFromPb(const pb::ResourceTable& pb_table, io::IFileCollecti
       *out_error = "invalid source pool";
       return false;
     }
+  }
+
+  for (const pb::DynamicRefTable& dynamic_ref : pb_table.dynamic_ref_table()) {
+    out_table->included_packages_.insert(
+        {dynamic_ref.package_id().id(), dynamic_ref.package_name()});
   }
 
   // Deserialize the overlayable groups of the table

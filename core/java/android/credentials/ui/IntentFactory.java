@@ -16,8 +16,13 @@
 
 package android.credentials.ui;
 
+import android.annotation.NonNull;
+import android.annotation.SuppressLint;
+import android.annotation.TestApi;
 import android.content.ComponentName;
 import android.content.Intent;
+import android.content.res.Resources;
+import android.os.IBinder;
 import android.os.Parcel;
 import android.os.ResultReceiver;
 
@@ -28,34 +33,81 @@ import java.util.ArrayList;
  *
  * @hide
  */
+@TestApi
 public class IntentFactory {
-    /** Generate a new launch intent to the . */
-    public static Intent newIntent(
-            RequestInfo requestInfo,
-            ArrayList<ProviderData> enabledProviderDataList,
-            ArrayList<DisabledProviderData> disabledProviderDataList,
-            ResultReceiver resultReceiver) {
+    /** Generate a new launch intent to the Credential Selector UI. */
+    @NonNull
+    public static Intent createCredentialSelectorIntent(
+            @NonNull RequestInfo requestInfo,
+            @SuppressLint("ConcreteCollection") // Concrete collection needed for marshalling.
+                    @NonNull
+                    ArrayList<ProviderData> enabledProviderDataList,
+            @SuppressLint("ConcreteCollection") // Concrete collection needed for marshalling.
+                    @NonNull
+                    ArrayList<DisabledProviderData> disabledProviderDataList,
+            @NonNull ResultReceiver resultReceiver) {
         Intent intent = new Intent();
-        // TODO: define these as proper config strings.
-        String activityName = "com.android.credentialmanager/.CredentialSelectorActivity";
-        intent.setComponent(ComponentName.unflattenFromString(activityName));
+        ComponentName componentName =
+                ComponentName.unflattenFromString(
+                        Resources.getSystem()
+                                .getString(
+                                        com.android.internal.R.string
+                                                .config_credentialManagerDialogComponent));
+        intent.setComponent(componentName);
 
         intent.putParcelableArrayListExtra(
                 ProviderData.EXTRA_ENABLED_PROVIDER_DATA_LIST, enabledProviderDataList);
         intent.putParcelableArrayListExtra(
                 ProviderData.EXTRA_DISABLED_PROVIDER_DATA_LIST, disabledProviderDataList);
         intent.putExtra(RequestInfo.EXTRA_REQUEST_INFO, requestInfo);
-        intent.putExtra(Constants.EXTRA_RESULT_RECEIVER,
-                toIpcFriendlyResultReceiver(resultReceiver));
+        intent.putExtra(
+                Constants.EXTRA_RESULT_RECEIVER, toIpcFriendlyResultReceiver(resultReceiver));
 
         return intent;
     }
 
     /**
-    * Convert an instance of a "locally-defined" ResultReceiver to an instance of
-    * {@link android.os.ResultReceiver} itself, which the receiving process will be able to
-    * unmarshall.
-    */
+     * Creates an Intent that cancels any UI matching the given request token id.
+     *
+     * @hide
+     */
+    @NonNull
+    public static Intent createCancelUiIntent(@NonNull IBinder requestToken) {
+        Intent intent = new Intent();
+        ComponentName componentName =
+                ComponentName.unflattenFromString(
+                        Resources.getSystem()
+                                .getString(
+                                        com.android.internal.R.string
+                                                .config_credentialManagerDialogComponent));
+        intent.setComponent(componentName);
+        intent.putExtra(CancelUiRequest.EXTRA_CANCEL_UI_REQUEST, new CancelUiRequest(requestToken));
+        return intent;
+    }
+
+    /**
+     * Notify the UI that providers have been enabled/disabled.
+     *
+     * @hide
+     */
+    @NonNull
+    public static Intent createProviderUpdateIntent() {
+        Intent intent = new Intent();
+        ComponentName componentName =
+                ComponentName.unflattenFromString(
+                        Resources.getSystem()
+                                .getString(
+                                        com.android.internal.R.string
+                                                .config_credentialManagerReceiverComponent));
+        intent.setComponent(componentName);
+        intent.setAction(Constants.CREDMAN_ENABLED_PROVIDERS_UPDATED);
+        return intent;
+    }
+
+    /**
+     * Convert an instance of a "locally-defined" ResultReceiver to an instance of {@link
+     * android.os.ResultReceiver} itself, which the receiving process will be able to unmarshall.
+     */
     private static <T extends ResultReceiver> ResultReceiver toIpcFriendlyResultReceiver(
             T resultReceiver) {
         final Parcel parcel = Parcel.obtain();

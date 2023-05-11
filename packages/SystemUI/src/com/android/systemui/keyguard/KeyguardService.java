@@ -17,7 +17,6 @@
 package com.android.systemui.keyguard;
 
 import static android.content.pm.PackageManager.PERMISSION_GRANTED;
-import static android.view.Display.DEFAULT_DISPLAY;
 import static android.view.RemoteAnimationTarget.MODE_CLOSING;
 import static android.view.RemoteAnimationTarget.MODE_OPENING;
 import static android.view.WindowManager.TRANSIT_CLOSE;
@@ -77,7 +76,9 @@ import com.android.internal.policy.IKeyguardDrawnCallback;
 import com.android.internal.policy.IKeyguardExitCallback;
 import com.android.internal.policy.IKeyguardService;
 import com.android.internal.policy.IKeyguardStateCallback;
+import com.android.keyguard.mediator.ScreenOnCoordinator;
 import com.android.systemui.SystemUIApplication;
+import com.android.systemui.settings.DisplayTracker;
 import com.android.wm.shell.transition.ShellTransitions;
 import com.android.wm.shell.transition.Transitions;
 
@@ -91,7 +92,9 @@ public class KeyguardService extends Service {
 
     private final KeyguardViewMediator mKeyguardViewMediator;
     private final KeyguardLifecyclesDispatcher mKeyguardLifecyclesDispatcher;
+    private final ScreenOnCoordinator mScreenOnCoordinator;
     private final ShellTransitions mShellTransitions;
+    private final DisplayTracker mDisplayTracker;
 
     private static int newModeToLegacyMode(int newMode) {
         switch (newMode) {
@@ -220,6 +223,7 @@ public class KeyguardService extends Service {
                                 synchronized (mFinishCallbacks) {
                                     if (mFinishCallbacks.remove(transition) == null) return;
                                 }
+                                info.releaseAllSurfaces();
                                 Slog.d(TAG, "Finish IRemoteAnimationRunner.");
                                 finishCallback.onTransitionFinished(null /* wct */, null /* t */);
                             }
@@ -235,6 +239,8 @@ public class KeyguardService extends Service {
                     synchronized (mFinishCallbacks) {
                         origFinishCB = mFinishCallbacks.remove(transition);
                     }
+                    info.releaseAllSurfaces();
+                    t.close();
                     if (origFinishCB == null) {
                         // already finished (or not started yet), so do nothing.
                         return;
@@ -251,11 +257,15 @@ public class KeyguardService extends Service {
     @Inject
     public KeyguardService(KeyguardViewMediator keyguardViewMediator,
                            KeyguardLifecyclesDispatcher keyguardLifecyclesDispatcher,
-                           ShellTransitions shellTransitions) {
+                           ScreenOnCoordinator screenOnCoordinator,
+                           ShellTransitions shellTransitions,
+                           DisplayTracker displayTracker) {
         super();
         mKeyguardViewMediator = keyguardViewMediator;
         mKeyguardLifecyclesDispatcher = keyguardLifecyclesDispatcher;
+        mScreenOnCoordinator = screenOnCoordinator;
         mShellTransitions = shellTransitions;
+        mDisplayTracker = displayTracker;
     }
 
     @Override
@@ -288,7 +298,7 @@ public class KeyguardService extends Service {
             definition.addRemoteAnimation(TRANSIT_OLD_KEYGUARD_UNOCCLUDE,
                     unoccludeAnimationAdapter);
             ActivityTaskManager.getInstance().registerRemoteAnimationsForDisplay(
-                    DEFAULT_DISPLAY, definition);
+                    mDisplayTracker.getDefaultDisplayId(), definition);
             return;
         }
         Slog.d(TAG, "KeyguardService registerRemote: TRANSIT_KEYGUARD_GOING_AWAY");
@@ -423,12 +433,15 @@ public class KeyguardService extends Service {
             t.apply();
             mBinder.setOccluded(true /* isOccluded */, true /* animate */);
             finishCallback.onTransitionFinished(null /* wct */, null /* wctCB */);
+            info.releaseAllSurfaces();
         }
 
         @Override
         public void mergeAnimation(IBinder transition, TransitionInfo info,
                 SurfaceControl.Transaction t, IBinder mergeTarget,
                 IRemoteTransitionFinishedCallback finishCallback) {
+            t.close();
+            info.releaseAllSurfaces();
         }
     };
 
@@ -440,12 +453,15 @@ public class KeyguardService extends Service {
             t.apply();
             mBinder.setOccluded(false /* isOccluded */, true /* animate */);
             finishCallback.onTransitionFinished(null /* wct */, null /* wctCB */);
+            info.releaseAllSurfaces();
         }
 
         @Override
         public void mergeAnimation(IBinder transition, TransitionInfo info,
                 SurfaceControl.Transaction t, IBinder mergeTarget,
                 IRemoteTransitionFinishedCallback finishCallback) {
+            t.close();
+            info.releaseAllSurfaces();
         }
     };
 
@@ -538,6 +554,31 @@ public class KeyguardService extends Service {
             checkPermission();
             mKeyguardLifecyclesDispatcher.dispatch(KeyguardLifecyclesDispatcher.SCREEN_TURNING_ON,
                     callback);
+
+            final String onDrawWaitingTraceTag = "Waiting for KeyguardDrawnCallback#onDrawn";
+            final int traceCookie = System.identityHashCode(callback);
+            Trace.beginAsyncSection(onDrawWaitingTraceTag, traceCookie);
+
+            // Ensure the drawn callback is only ever called once
+            mScreenOnCoordinator.onScreenTurningOn(new Runnable() {
+                boolean mInvoked;
+                @Override
+                public void run() {
+                    if (callback == null) return;
+                    if (!mInvoked) {
+                        mInvoked = true;
+                        try {
+                            Trace.endAsyncSection(onDrawWaitingTraceTag, traceCookie);
+                            callback.onDrawn();
+                        } catch (RemoteException e) {
+                            Log.w(TAG, "Exception calling onDrawn():", e);
+                        }
+                    } else {
+                        Log.w(TAG, "KeyguardDrawnCallback#onDrawn() invoked > 1 times");
+                    }
+                }
+            });
+
             Trace.endSection();
         }
 
@@ -546,6 +587,7 @@ public class KeyguardService extends Service {
             Trace.beginSection("KeyguardService.mBinder#onScreenTurnedOn");
             checkPermission();
             mKeyguardLifecyclesDispatcher.dispatch(KeyguardLifecyclesDispatcher.SCREEN_TURNED_ON);
+            mScreenOnCoordinator.onScreenTurnedOn();
             Trace.endSection();
         }
 
@@ -560,6 +602,7 @@ public class KeyguardService extends Service {
             checkPermission();
             mKeyguardViewMediator.onScreenTurnedOff();
             mKeyguardLifecyclesDispatcher.dispatch(KeyguardLifecyclesDispatcher.SCREEN_TURNED_OFF);
+            mScreenOnCoordinator.onScreenTurnedOff();
         }
 
         @Override // Binder interface

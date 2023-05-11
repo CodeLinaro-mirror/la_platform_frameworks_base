@@ -49,12 +49,12 @@ interface IWindowSession {
     int addToDisplay(IWindow window, in WindowManager.LayoutParams attrs,
             in int viewVisibility, in int layerStackId, int requestedVisibleTypes,
             out InputChannel outInputChannel, out InsetsState insetsState,
-            out InsetsSourceControl[] activeControls, out Rect attachedFrame,
+            out InsetsSourceControl.Array activeControls, out Rect attachedFrame,
             out float[] sizeCompatScale);
     int addToDisplayAsUser(IWindow window, in WindowManager.LayoutParams attrs,
             in int viewVisibility, in int layerStackId, in int userId, int requestedVisibleTypes,
             out InputChannel outInputChannel, out InsetsState insetsState,
-            out InsetsSourceControl[] activeControls, out Rect attachedFrame,
+            out InsetsSourceControl.Array activeControls, out Rect attachedFrame,
             out float[] sizeCompatScale);
     int addToDisplayWithoutInputChannel(IWindow window, in WindowManager.LayoutParams attrs,
             in int viewVisibility, in int layerStackId, out InsetsState insetsState,
@@ -91,7 +91,7 @@ interface IWindowSession {
             int requestedWidth, int requestedHeight, int viewVisibility,
             int flags, int seq, int lastSyncSeqId, out ClientWindowFrames outFrames,
             out MergedConfiguration outMergedConfiguration, out SurfaceControl outSurfaceControl,
-            out InsetsState insetsState, out InsetsSourceControl[] activeControls,
+            out InsetsState insetsState, out InsetsSourceControl.Array activeControls,
             out Bundle bundle);
 
     /**
@@ -151,6 +151,12 @@ interface IWindowSession {
 
     @UnsupportedAppUsage
     boolean performHapticFeedback(int effectId, boolean always);
+
+    /**
+     * Called by attached views to perform predefined haptic feedback without requiring VIBRATE
+     * permission.
+     */
+    oneway void performHapticFeedbackAsync(int effectId, boolean always);
 
     /**
      * Initiate the drag operation itself
@@ -299,7 +305,8 @@ interface IWindowSession {
     */
     void grantInputChannel(int displayId, in SurfaceControl surface, in IWindow window,
             in IBinder hostInputToken, int flags, int privateFlags, int type,
-            in IBinder focusGrantToken, String inputHandleName, out InputChannel outInputChannel);
+            in IBinder windowToken, in IBinder focusGrantToken, String inputHandleName,
+            out InputChannel outInputChannel);
 
     /**
      * Update the flags on an input channel associated with a particular surface.
@@ -352,4 +359,6 @@ interface IWindowSession {
      * Returns whether this window needs to cancel draw and retry later.
      */
     boolean cancelDraw(IWindow window);
+
+    boolean transferEmbeddedTouchFocusToHost(IWindow embeddedWindow);
 }

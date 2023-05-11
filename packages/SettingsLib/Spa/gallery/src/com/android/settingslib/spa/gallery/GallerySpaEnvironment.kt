@@ -17,16 +17,21 @@
 package com.android.settingslib.spa.gallery
 
 import android.content.Context
-import com.android.settingslib.spa.framework.common.LocalLogger
+import com.android.settingslib.spa.debug.DebugLogger
 import com.android.settingslib.spa.framework.common.SettingsPageProviderRepository
 import com.android.settingslib.spa.framework.common.SpaEnvironment
 import com.android.settingslib.spa.framework.common.createSettingsPage
 import com.android.settingslib.spa.gallery.button.ActionButtonPageProvider
+import com.android.settingslib.spa.gallery.dialog.AlertDialogPageProvider
 import com.android.settingslib.spa.gallery.home.HomePageProvider
+import com.android.settingslib.spa.gallery.itemList.ItemListPageProvider
+import com.android.settingslib.spa.gallery.itemList.ItemOperatePageProvider
+import com.android.settingslib.spa.gallery.itemList.OperateListPageProvider
 import com.android.settingslib.spa.gallery.page.ArgumentPageProvider
 import com.android.settingslib.spa.gallery.page.ChartPageProvider
 import com.android.settingslib.spa.gallery.page.FooterPageProvider
 import com.android.settingslib.spa.gallery.page.IllustrationPageProvider
+import com.android.settingslib.spa.gallery.page.LoadingBarPageProvider
 import com.android.settingslib.spa.gallery.page.ProgressBarPageProvider
 import com.android.settingslib.spa.gallery.page.SettingsPagerPageProvider
 import com.android.settingslib.spa.gallery.page.SliderPageProvider
@@ -37,6 +42,7 @@ import com.android.settingslib.spa.gallery.preference.SwitchPreferencePageProvid
 import com.android.settingslib.spa.gallery.preference.TwoTargetSwitchPreferencePageProvider
 import com.android.settingslib.spa.gallery.ui.CategoryPageProvider
 import com.android.settingslib.spa.gallery.ui.SpinnerPageProvider
+import com.android.settingslib.spa.slice.SpaSliceBroadcastReceiver
 
 /**
  * Enum to define all SPP name here.
@@ -47,6 +53,8 @@ enum class SettingsPageProviderEnum(val displayName: String) {
     HOME("home"),
     PREFERENCE("preference"),
     ARGUMENT("argument"),
+    ITEM_LIST("itemList"),
+    ITEM_OP_PAGE("itemOp"),
 
     // Add your SPPs
 }
@@ -70,7 +78,12 @@ class GallerySpaEnvironment(context: Context) : SpaEnvironment(context) {
                 CategoryPageProvider,
                 ActionButtonPageProvider,
                 ProgressBarPageProvider,
+                LoadingBarPageProvider,
                 ChartPageProvider,
+                AlertDialogPageProvider,
+                ItemListPageProvider,
+                ItemOperatePageProvider,
+                OperateListPageProvider,
             ),
             rootPages = listOf(
                 HomePageProvider.createSettingsPage(),
@@ -78,9 +91,12 @@ class GallerySpaEnvironment(context: Context) : SpaEnvironment(context) {
         )
     }
 
+    override val logger = DebugLogger()
+
     override val browseActivityClass = GalleryMainActivity::class.java
+    override val sliceBroadcastReceiverClass = SpaSliceBroadcastReceiver::class.java
 
-    override val entryProviderAuthorities = "com.android.spa.gallery.provider"
-
-    override val logger = LocalLogger()
+    // For debugging
+    override val searchProviderAuthorities = "com.android.spa.gallery.search.provider"
+    override val sliceProviderAuthorities = "com.android.spa.gallery.slice.provider"
 }

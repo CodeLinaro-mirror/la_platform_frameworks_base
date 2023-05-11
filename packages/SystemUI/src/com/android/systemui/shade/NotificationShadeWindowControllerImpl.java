@@ -19,6 +19,7 @@ package com.android.systemui.shade;
 import static android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE;
 import static android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
 import static android.view.WindowManager.LayoutParams.PRIVATE_FLAG_BEHAVIOR_CONTROLLED;
+import static android.view.WindowManager.LayoutParams.PRIVATE_FLAG_OPTIMIZE_MEASURE;
 
 import static com.android.systemui.DejankUtils.whitelistIpcs;
 import static com.android.systemui.statusbar.NotificationRemoteInputManager.ENABLE_REMOTE_INPUT;
@@ -44,6 +45,7 @@ import android.view.WindowManager;
 import android.view.WindowManager.LayoutParams;
 import android.view.WindowManagerGlobal;
 
+import com.android.internal.annotations.VisibleForTesting;
 import com.android.keyguard.KeyguardUpdateMonitor;
 import com.android.systemui.Dumpable;
 import com.android.systemui.R;
@@ -51,13 +53,13 @@ import com.android.systemui.biometrics.AuthController;
 import com.android.systemui.colorextraction.SysuiColorExtractor;
 import com.android.systemui.dagger.SysUISingleton;
 import com.android.systemui.dump.DumpManager;
+import com.android.systemui.dump.DumpsysTableLogger;
 import com.android.systemui.keyguard.KeyguardViewMediator;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.plugins.statusbar.StatusBarStateController.StateListener;
 import com.android.systemui.statusbar.NotificationShadeWindowController;
 import com.android.systemui.statusbar.StatusBarState;
 import com.android.systemui.statusbar.SysuiStatusBarStateController;
-import com.android.systemui.statusbar.phone.CentralSurfaces;
 import com.android.systemui.statusbar.phone.DozeParameters;
 import com.android.systemui.statusbar.phone.KeyguardBypassController;
 import com.android.systemui.statusbar.phone.ScreenOffAnimationController;
@@ -70,12 +72,9 @@ import com.android.systemui.statusbar.policy.KeyguardStateController;
 import java.io.PrintWriter;
 import java.lang.ref.Reference;
 import java.lang.ref.WeakReference;
-import java.lang.reflect.Field;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
-import java.util.Set;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
@@ -89,12 +88,14 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
         Dumpable, ConfigurationListener {
 
     private static final String TAG = "NotificationShadeWindowController";
+    private static final int MAX_STATE_CHANGES_BUFFER_SIZE = 100;
 
     private final Context mContext;
     private final WindowManager mWindowManager;
     private final IActivityManager mActivityManager;
     private final DozeParameters mDozeParameters;
     private final KeyguardStateController mKeyguardStateController;
+    private final ShadeWindowLogger mLogger;
     private final LayoutParams mLpChanged;
     private final long mLockScreenDisplayTimeout;
     private final float mKeyguardPreferredRefreshRate; // takes precedence over max
@@ -107,7 +108,7 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
     private boolean mHasTopUi;
     private boolean mHasTopUiChanged;
     private float mScreenBrightnessDoze;
-    private final State mCurrentState = new State();
+    private final NotificationShadeWindowState mCurrentState = new NotificationShadeWindowState();
     private OtherwisedCollapsedListener mListener;
     private ForcePluginOpenListener mForcePluginOpenListener;
     private Consumer<Integer> mScrimsVisibilityListener;
@@ -124,6 +125,9 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
     private int mDeferWindowLayoutParams;
     private boolean mLastKeyguardRotationAllowed;
 
+    private final NotificationShadeWindowState.Buffer mStateBuffer =
+            new NotificationShadeWindowState.Buffer(MAX_STATE_CHANGES_BUFFER_SIZE);
+
     @Inject
     public NotificationShadeWindowControllerImpl(Context context, WindowManager windowManager,
             IActivityManager activityManager, DozeParameters dozeParameters,
@@ -136,12 +140,14 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
             KeyguardStateController keyguardStateController,
             ScreenOffAnimationController screenOffAnimationController,
             AuthController authController,
-            ShadeExpansionStateManager shadeExpansionStateManager) {
+            ShadeExpansionStateManager shadeExpansionStateManager,
+            ShadeWindowLogger logger) {
         mContext = context;
         mWindowManager = windowManager;
         mActivityManager = activityManager;
         mDozeParameters = dozeParameters;
         mKeyguardStateController = keyguardStateController;
+        mLogger = logger;
         mScreenBrightnessDoze = mDozeParameters.getScreenBrightnessDoze();
         mLpChanged = new LayoutParams();
         mKeyguardViewMediator = keyguardViewMediator;
@@ -158,6 +164,7 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
                         SysuiStatusBarStateController.RANK_STATUS_BAR_WINDOW_CONTROLLER);
         configurationController.addCallback(this);
         shadeExpansionStateManager.addQsExpansionListener(this::onQsExpansionChanged);
+        shadeExpansionStateManager.addFullExpansionListener(this::onShadeExpansionFullyChanged);
 
         float desiredPreferredRefreshRate = context.getResources()
                 .getInteger(R.integer.config_keyguardRefreshRate);
@@ -204,6 +211,14 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
         }
     }
 
+    @VisibleForTesting
+    void onShadeExpansionFullyChanged(Boolean isExpanded) {
+        if (mCurrentState.panelExpanded != isExpanded) {
+            mCurrentState.panelExpanded = isExpanded;
+            apply(mCurrentState);
+        }
+    }
+
     /**
      * Register a listener to monitor scrims visibility
      * @param listener A listener to monitor scrims visibility
@@ -236,10 +251,10 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
         mLp.token = new Binder();
         mLp.gravity = Gravity.TOP;
         mLp.setFitInsetsTypes(0 /* types */);
-        mLp.softInputMode = LayoutParams.SOFT_INPUT_ADJUST_RESIZE;
         mLp.setTitle("NotificationShade");
         mLp.packageName = mContext.getPackageName();
         mLp.layoutInDisplayCutoutMode = LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
+        mLp.privateFlags |= PRIVATE_FLAG_OPTIMIZE_MEASURE;
 
         // We use BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE here, however, there is special logic in
         // window manager which disables the transient show behavior.
@@ -285,10 +300,10 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
         mNotificationShadeView.setSystemUiVisibility(vis);
     }
 
-    private void applyKeyguardFlags(State state) {
-        final boolean keyguardOrAod = state.mKeyguardShowing
-                || (state.mDozing && mDozeParameters.getAlwaysOn());
-        if ((keyguardOrAod && !state.mBackdropShowing && !state.mLightRevealScrimOpaque)
+    private void applyKeyguardFlags(NotificationShadeWindowState state) {
+        final boolean keyguardOrAod = state.keyguardShowing
+                || (state.dozing && mDozeParameters.getAlwaysOn());
+        if ((keyguardOrAod && !state.mediaBackdropShowing && !state.lightRevealScrimOpaque)
                 || mKeyguardViewMediator.isAnimatingBetweenKeyguardAndSurfaceBehind()) {
             // Show the wallpaper if we're on keyguard/AOD and the wallpaper is not occluded by a
             // solid backdrop. Also, show it if we are currently animating between the
@@ -299,28 +314,31 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
             mLpChanged.flags &= ~LayoutParams.FLAG_SHOW_WALLPAPER;
         }
 
-        if (state.mDozing) {
+        if (state.dozing) {
             mLpChanged.privateFlags |= LayoutParams.SYSTEM_FLAG_HIDE_NON_SYSTEM_OVERLAY_WINDOWS;
         } else {
             mLpChanged.privateFlags &= ~LayoutParams.SYSTEM_FLAG_HIDE_NON_SYSTEM_OVERLAY_WINDOWS;
         }
 
         if (mKeyguardPreferredRefreshRate > 0) {
-            boolean onKeyguard = state.mStatusBarState == StatusBarState.KEYGUARD
-                    && !state.mKeyguardFadingAway && !state.mKeyguardGoingAway;
+            boolean onKeyguard = state.statusBarState == StatusBarState.KEYGUARD
+                    && !state.keyguardFadingAway && !state.keyguardGoingAway;
             if (onKeyguard
                     && mAuthController.isUdfpsEnrolled(KeyguardUpdateMonitor.getCurrentUser())) {
+                // both max and min display refresh rate must be set to take effect:
                 mLpChanged.preferredMaxDisplayRefreshRate = mKeyguardPreferredRefreshRate;
+                mLpChanged.preferredMinDisplayRefreshRate = mKeyguardPreferredRefreshRate;
             } else {
                 mLpChanged.preferredMaxDisplayRefreshRate = 0;
+                mLpChanged.preferredMinDisplayRefreshRate = 0;
             }
             Trace.setCounter("display_set_preferred_refresh_rate",
                     (long) mKeyguardPreferredRefreshRate);
         } else if (mKeyguardMaxRefreshRate > 0) {
             boolean bypassOnKeyguard = mKeyguardBypassController.getBypassEnabled()
-                    && state.mStatusBarState == StatusBarState.KEYGUARD
-                    && !state.mKeyguardFadingAway && !state.mKeyguardGoingAway;
-            if (state.mDozing || bypassOnKeyguard) {
+                    && state.statusBarState == StatusBarState.KEYGUARD
+                    && !state.keyguardFadingAway && !state.keyguardGoingAway;
+            if (state.dozing || bypassOnKeyguard) {
                 mLpChanged.preferredMaxDisplayRefreshRate = mKeyguardMaxRefreshRate;
             } else {
                 mLpChanged.preferredMaxDisplayRefreshRate = 0;
@@ -329,7 +347,7 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
                     (long) mLpChanged.preferredMaxDisplayRefreshRate);
         }
 
-        if (state.mBouncerShowing && !isDebuggable()) {
+        if (state.bouncerShowing && !isDebuggable()) {
             mLpChanged.flags |= LayoutParams.FLAG_SECURE;
         } else {
             mLpChanged.flags &= ~LayoutParams.FLAG_SECURE;
@@ -340,8 +358,8 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
         return Build.IS_DEBUGGABLE;
     }
 
-    private void adjustScreenOrientation(State state) {
-        if (state.mBouncerShowing || state.isKeyguardShowingAndNotOccluded() || state.mDozing) {
+    private void adjustScreenOrientation(NotificationShadeWindowState state) {
+        if (state.bouncerShowing || state.isKeyguardShowingAndNotOccluded() || state.dozing) {
             if (mKeyguardStateController.isKeyguardScreenRotationAllowed()) {
                 mLpChanged.screenOrientation = ActivityInfo.SCREEN_ORIENTATION_USER;
             } else {
@@ -352,10 +370,10 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
         }
     }
 
-    private void applyFocusableFlag(State state) {
-        boolean panelFocusable = state.mNotificationShadeFocusable && state.mPanelExpanded;
-        if (state.mBouncerShowing && (state.mKeyguardOccluded || state.mKeyguardNeedsInput)
-                || ENABLE_REMOTE_INPUT && state.mRemoteInputActive
+    private void applyFocusableFlag(NotificationShadeWindowState state) {
+        boolean panelFocusable = state.notificationShadeFocusable && state.panelExpanded;
+        if (state.bouncerShowing && (state.keyguardOccluded || state.keyguardNeedsInput)
+                || ENABLE_REMOTE_INPUT && state.remoteInputActive
                 // Make the panel focusable if we're doing the screen off animation, since the light
                 // reveal scrim is drawing in the panel and should consume touch events so that they
                 // don't go to the app behind.
@@ -365,7 +383,7 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
         } else if (state.isKeyguardShowingAndNotOccluded() || panelFocusable) {
             mLpChanged.flags &= ~LayoutParams.FLAG_NOT_FOCUSABLE;
             // Make sure to remove FLAG_ALT_FOCUSABLE_IM when keyguard needs input.
-            if (state.mKeyguardNeedsInput && state.isKeyguardShowingAndNotOccluded()) {
+            if (state.keyguardNeedsInput && state.isKeyguardShowingAndNotOccluded()) {
                 mLpChanged.flags &= ~LayoutParams.FLAG_ALT_FOCUSABLE_IM;
             } else {
                 mLpChanged.flags |= LayoutParams.FLAG_ALT_FOCUSABLE_IM;
@@ -374,26 +392,26 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
             mLpChanged.flags |= LayoutParams.FLAG_NOT_FOCUSABLE;
             mLpChanged.flags &= ~LayoutParams.FLAG_ALT_FOCUSABLE_IM;
         }
-
-        mLpChanged.softInputMode = LayoutParams.SOFT_INPUT_ADJUST_RESIZE;
     }
 
-    private void applyForceShowNavigationFlag(State state) {
-        if (state.mPanelExpanded || state.mBouncerShowing
-                || ENABLE_REMOTE_INPUT && state.mRemoteInputActive) {
+    private void applyForceShowNavigationFlag(NotificationShadeWindowState state) {
+        if (state.panelExpanded || state.bouncerShowing
+                || ENABLE_REMOTE_INPUT && state.remoteInputActive) {
             mLpChanged.privateFlags |= LayoutParams.PRIVATE_FLAG_STATUS_FORCE_SHOW_NAVIGATION;
         } else {
             mLpChanged.privateFlags &= ~LayoutParams.PRIVATE_FLAG_STATUS_FORCE_SHOW_NAVIGATION;
         }
     }
 
-    private void applyVisibility(State state) {
+    private void applyVisibility(NotificationShadeWindowState state) {
         boolean visible = isExpanded(state);
-        if (state.mForcePluginOpen) {
+        mLogger.logApplyVisibility(visible);
+        if (state.forcePluginOpen) {
             if (mListener != null) {
                 mListener.setWouldOtherwiseCollapse(visible);
             }
             visible = true;
+            mLogger.d("Visibility forced to be true");
         }
         if (mNotificationShadeView != null) {
             if (visible) {
@@ -404,16 +422,16 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
         }
     }
 
-    private boolean isExpanded(State state) {
-        return !state.mForceCollapsed && (state.isKeyguardShowingAndNotOccluded()
-                || state.mPanelVisible || state.mKeyguardFadingAway || state.mBouncerShowing
-                || state.mHeadsUpShowing
-                || state.mScrimsVisibility != ScrimController.TRANSPARENT)
-                || state.mBackgroundBlurRadius > 0
-                || state.mLaunchingActivity;
+    private boolean isExpanded(NotificationShadeWindowState state) {
+        return !state.forceWindowCollapsed && (state.isKeyguardShowingAndNotOccluded()
+                || state.panelVisible || state.keyguardFadingAway || state.bouncerShowing
+                || state.headsUpNotificationShowing
+                || state.scrimsVisibility != ScrimController.TRANSPARENT)
+                || state.backgroundBlurRadius > 0
+                || state.launchingActivityFromNotification;
     }
 
-    private void applyFitsSystemWindows(State state) {
+    private void applyFitsSystemWindows(NotificationShadeWindowState state) {
         boolean fitsSystemWindows = !state.isKeyguardShowingAndNotOccluded();
         if (mNotificationShadeView != null
                 && mNotificationShadeView.getFitsSystemWindows() != fitsSystemWindows) {
@@ -422,21 +440,21 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
         }
     }
 
-    private void applyUserActivityTimeout(State state) {
+    private void applyUserActivityTimeout(NotificationShadeWindowState state) {
         if (state.isKeyguardShowingAndNotOccluded()
-                && state.mStatusBarState == StatusBarState.KEYGUARD
-                && !state.mQsExpanded) {
-            mLpChanged.userActivityTimeout = state.mBouncerShowing
+                && state.statusBarState == StatusBarState.KEYGUARD
+                && !state.qsExpanded) {
+            mLpChanged.userActivityTimeout = state.bouncerShowing
                     ? KeyguardViewMediator.AWAKE_INTERVAL_BOUNCER_MS : mLockScreenDisplayTimeout;
         } else {
             mLpChanged.userActivityTimeout = -1;
         }
     }
 
-    private void applyInputFeatures(State state) {
+    private void applyInputFeatures(NotificationShadeWindowState state) {
         if (state.isKeyguardShowingAndNotOccluded()
-                && state.mStatusBarState == StatusBarState.KEYGUARD
-                && !state.mQsExpanded && !state.mForceUserActivity) {
+                && state.statusBarState == StatusBarState.KEYGUARD
+                && !state.qsExpanded && !state.forceUserActivity) {
             mLpChanged.inputFeatures |=
                     LayoutParams.INPUT_FEATURE_DISABLE_USER_ACTIVITY;
         } else {
@@ -445,7 +463,7 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
         }
     }
 
-    private void applyStatusBarColorSpaceAgnosticFlag(State state) {
+    private void applyStatusBarColorSpaceAgnosticFlag(NotificationShadeWindowState state) {
         if (!isExpanded(state)) {
             mLpChanged.privateFlags |= LayoutParams.PRIVATE_FLAG_COLOR_SPACE_AGNOSTIC;
         } else {
@@ -456,6 +474,7 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
 
     private void applyWindowLayoutParams() {
         if (mDeferWindowLayoutParams == 0 && mLp != null && mLp.copyFrom(mLpChanged) != 0) {
+            mLogger.logApplyingWindowLayoutParams(mLp);
             Trace.beginSection("updateViewLayout");
             mWindowManager.updateViewLayout(mNotificationShadeView, mLp);
             Trace.endSection();
@@ -470,7 +489,8 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
         applyWindowLayoutParams();
     }
 
-    private void apply(State state) {
+    private void apply(NotificationShadeWindowState state) {
+        logState(state);
         applyKeyguardFlags(state);
         applyFocusableFlag(state);
         applyForceShowNavigationFlag(state);
@@ -499,6 +519,38 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
         notifyStateChangedCallbacks();
     }
 
+    private void logState(NotificationShadeWindowState state) {
+        mStateBuffer.insert(
+                state.keyguardShowing,
+                state.keyguardOccluded,
+                state.keyguardNeedsInput,
+                state.panelVisible,
+                state.panelExpanded,
+                state.notificationShadeFocusable,
+                state.bouncerShowing,
+                state.keyguardFadingAway,
+                state.keyguardGoingAway,
+                state.qsExpanded,
+                state.headsUpNotificationShowing,
+                state.lightRevealScrimOpaque,
+                state.forceWindowCollapsed,
+                state.forceDozeBrightness,
+                state.forceUserActivity,
+                state.launchingActivityFromNotification,
+                state.mediaBackdropShowing,
+                state.wallpaperSupportsAmbientMode,
+                state.windowNotTouchable,
+                state.componentsForcingTopUi,
+                state.forceOpenTokens,
+                state.statusBarState,
+                state.remoteInputActive,
+                state.forcePluginOpen,
+                state.dozing,
+                state.scrimsVisibility,
+                state.backgroundBlurRadius
+        );
+    }
+
     @Override
     public void notifyStateChangedCallbacks() {
         // Copy callbacks to separate ArrayList to avoid concurrent modification
@@ -507,36 +559,37 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
                 .filter(Objects::nonNull)
                 .collect(Collectors.toList());
         for (StatusBarWindowCallback cb : activeCallbacks) {
-            cb.onStateChanged(mCurrentState.mKeyguardShowing,
-                    mCurrentState.mKeyguardOccluded,
-                    mCurrentState.mBouncerShowing,
-                    mCurrentState.mDozing,
-                    mCurrentState.mPanelExpanded);
+            cb.onStateChanged(mCurrentState.keyguardShowing,
+                    mCurrentState.keyguardOccluded,
+                    mCurrentState.bouncerShowing,
+                    mCurrentState.dozing,
+                    mCurrentState.panelExpanded,
+                    mCurrentState.dreaming);
         }
     }
 
-    private void applyModalFlag(State state) {
-        if (state.mHeadsUpShowing) {
+    private void applyModalFlag(NotificationShadeWindowState state) {
+        if (state.headsUpNotificationShowing) {
             mLpChanged.flags |= LayoutParams.FLAG_NOT_TOUCH_MODAL;
         } else {
             mLpChanged.flags &= ~LayoutParams.FLAG_NOT_TOUCH_MODAL;
         }
     }
 
-    private void applyBrightness(State state) {
-        if (state.mForceDozeBrightness) {
+    private void applyBrightness(NotificationShadeWindowState state) {
+        if (state.forceDozeBrightness) {
             mLpChanged.screenBrightness = mScreenBrightnessDoze;
         } else {
             mLpChanged.screenBrightness = LayoutParams.BRIGHTNESS_OVERRIDE_NONE;
         }
     }
 
-    private void applyHasTopUi(State state) {
-        mHasTopUiChanged = !state.mComponentsForcingTopUi.isEmpty() || isExpanded(state);
+    private void applyHasTopUi(NotificationShadeWindowState state) {
+        mHasTopUiChanged = !state.componentsForcingTopUi.isEmpty() || isExpanded(state);
     }
 
-    private void applyNotTouchable(State state) {
-        if (state.mNotTouchable) {
+    private void applyNotTouchable(NotificationShadeWindowState state) {
+        if (state.windowNotTouchable) {
             mLpChanged.flags |= LayoutParams.FLAG_NOT_TOUCHABLE;
         } else {
             mLpChanged.flags &= ~LayoutParams.FLAG_NOT_TOUCHABLE;
@@ -558,86 +611,88 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
 
     @Override
     public void setKeyguardShowing(boolean showing) {
-        mCurrentState.mKeyguardShowing = showing;
+        mCurrentState.keyguardShowing = showing;
         apply(mCurrentState);
     }
 
     @Override
     public void setKeyguardOccluded(boolean occluded) {
-        mCurrentState.mKeyguardOccluded = occluded;
+        mCurrentState.keyguardOccluded = occluded;
         apply(mCurrentState);
     }
 
     @Override
     public void setKeyguardNeedsInput(boolean needsInput) {
-        mCurrentState.mKeyguardNeedsInput = needsInput;
+        mCurrentState.keyguardNeedsInput = needsInput;
         apply(mCurrentState);
     }
 
     @Override
     public void setPanelVisible(boolean visible) {
-        if (mCurrentState.mPanelVisible == visible
-                && mCurrentState.mNotificationShadeFocusable == visible) {
+        if (mCurrentState.panelVisible == visible
+                && mCurrentState.notificationShadeFocusable == visible) {
             return;
         }
-        mCurrentState.mPanelVisible = visible;
-        mCurrentState.mNotificationShadeFocusable = visible;
+        mLogger.logShadeVisibleAndFocusable(visible);
+        mCurrentState.panelVisible = visible;
+        mCurrentState.notificationShadeFocusable = visible;
         apply(mCurrentState);
     }
 
     @Override
     public void setNotificationShadeFocusable(boolean focusable) {
-        mCurrentState.mNotificationShadeFocusable = focusable;
+        mLogger.logShadeFocusable(focusable);
+        mCurrentState.notificationShadeFocusable = focusable;
         apply(mCurrentState);
     }
 
     @Override
     public void setBouncerShowing(boolean showing) {
-        mCurrentState.mBouncerShowing = showing;
+        mCurrentState.bouncerShowing = showing;
         apply(mCurrentState);
     }
 
     @Override
     public void setBackdropShowing(boolean showing) {
-        mCurrentState.mBackdropShowing = showing;
+        mCurrentState.mediaBackdropShowing = showing;
         apply(mCurrentState);
     }
 
     @Override
     public void setKeyguardFadingAway(boolean keyguardFadingAway) {
-        mCurrentState.mKeyguardFadingAway = keyguardFadingAway;
+        mCurrentState.keyguardFadingAway = keyguardFadingAway;
         apply(mCurrentState);
     }
 
     private void onQsExpansionChanged(Boolean expanded) {
-        mCurrentState.mQsExpanded = expanded;
+        mCurrentState.qsExpanded = expanded;
         apply(mCurrentState);
     }
 
     @Override
     public void setForceUserActivity(boolean forceUserActivity) {
-        mCurrentState.mForceUserActivity = forceUserActivity;
+        mCurrentState.forceUserActivity = forceUserActivity;
         apply(mCurrentState);
     }
 
     @Override
     public void setLaunchingActivity(boolean launching) {
-        mCurrentState.mLaunchingActivity = launching;
+        mCurrentState.launchingActivityFromNotification = launching;
         apply(mCurrentState);
     }
 
     @Override
     public boolean isLaunchingActivity() {
-        return mCurrentState.mLaunchingActivity;
+        return mCurrentState.launchingActivityFromNotification;
     }
 
     @Override
     public void setScrimsVisibility(int scrimsVisibility) {
-        if (scrimsVisibility == mCurrentState.mScrimsVisibility) {
+        if (scrimsVisibility == mCurrentState.scrimsVisibility) {
             return;
         }
         boolean wasExpanded = isExpanded(mCurrentState);
-        mCurrentState.mScrimsVisibility = scrimsVisibility;
+        mCurrentState.scrimsVisibility = scrimsVisibility;
         if (wasExpanded != isExpanded(mCurrentState)) {
             apply(mCurrentState);
         }
@@ -651,31 +706,31 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
      */
     @Override
     public void setBackgroundBlurRadius(int backgroundBlurRadius) {
-        if (mCurrentState.mBackgroundBlurRadius == backgroundBlurRadius) {
+        if (mCurrentState.backgroundBlurRadius == backgroundBlurRadius) {
             return;
         }
-        mCurrentState.mBackgroundBlurRadius = backgroundBlurRadius;
+        mCurrentState.backgroundBlurRadius = backgroundBlurRadius;
         apply(mCurrentState);
     }
 
     @Override
     public void setHeadsUpShowing(boolean showing) {
-        mCurrentState.mHeadsUpShowing = showing;
+        mCurrentState.headsUpNotificationShowing = showing;
         apply(mCurrentState);
     }
 
     @Override
     public void setLightRevealScrimOpaque(boolean opaque) {
-        if (mCurrentState.mLightRevealScrimOpaque == opaque) {
+        if (mCurrentState.lightRevealScrimOpaque == opaque) {
             return;
         }
-        mCurrentState.mLightRevealScrimOpaque = opaque;
+        mCurrentState.lightRevealScrimOpaque = opaque;
         apply(mCurrentState);
     }
 
     @Override
     public void setWallpaperSupportsAmbientMode(boolean supportsAmbientMode) {
-        mCurrentState.mWallpaperSupportsAmbientMode = supportsAmbientMode;
+        mCurrentState.wallpaperSupportsAmbientMode = supportsAmbientMode;
         apply(mCurrentState);
     }
 
@@ -683,7 +738,7 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
      * @param state The {@link StatusBarStateController} of the status bar.
      */
     private void setStatusBarState(int state) {
-        mCurrentState.mStatusBarState = state;
+        mCurrentState.statusBarState = state;
         apply(mCurrentState);
     }
 
@@ -694,22 +749,13 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
      */
     @Override
     public void setForceWindowCollapsed(boolean force) {
-        mCurrentState.mForceCollapsed = force;
-        apply(mCurrentState);
-    }
-
-    @Override
-    public void setPanelExpanded(boolean isExpanded) {
-        if (mCurrentState.mPanelExpanded == isExpanded) {
-            return;
-        }
-        mCurrentState.mPanelExpanded = isExpanded;
+        mCurrentState.forceWindowCollapsed = force;
         apply(mCurrentState);
     }
 
     @Override
     public void onRemoteInputActive(boolean remoteInputActive) {
-        mCurrentState.mRemoteInputActive = remoteInputActive;
+        mCurrentState.remoteInputActive = remoteInputActive;
         apply(mCurrentState);
     }
 
@@ -719,33 +765,38 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
      */
     @Override
     public void setForceDozeBrightness(boolean forceDozeBrightness) {
-        if (mCurrentState.mForceDozeBrightness == forceDozeBrightness) {
+        if (mCurrentState.forceDozeBrightness == forceDozeBrightness) {
             return;
         }
-        mCurrentState.mForceDozeBrightness = forceDozeBrightness;
+        mCurrentState.forceDozeBrightness = forceDozeBrightness;
         apply(mCurrentState);
     }
 
     @Override
     public void setDozing(boolean dozing) {
-        mCurrentState.mDozing = dozing;
+        mCurrentState.dozing = dozing;
         apply(mCurrentState);
     }
 
-    private final Set<Object> mForceOpenTokens = new HashSet<>();
+    @Override
+    public void setDreaming(boolean dreaming) {
+        mCurrentState.dreaming = dreaming;
+        apply(mCurrentState);
+    }
+
     @Override
     public void setForcePluginOpen(boolean forceOpen, Object token) {
         if (forceOpen) {
-            mForceOpenTokens.add(token);
+            mCurrentState.forceOpenTokens.add(token);
         } else {
-            mForceOpenTokens.remove(token);
+            mCurrentState.forceOpenTokens.remove(token);
         }
-        final boolean previousForceOpenState = mCurrentState.mForcePluginOpen;
-        mCurrentState.mForcePluginOpen = !mForceOpenTokens.isEmpty();
-        if (previousForceOpenState != mCurrentState.mForcePluginOpen) {
+        final boolean previousForceOpenState = mCurrentState.forcePluginOpen;
+        mCurrentState.forcePluginOpen = !mCurrentState.forceOpenTokens.isEmpty();
+        if (previousForceOpenState != mCurrentState.forcePluginOpen) {
             apply(mCurrentState);
             if (mForcePluginOpenListener != null) {
-                mForcePluginOpenListener.onChange(mCurrentState.mForcePluginOpen);
+                mForcePluginOpenListener.onChange(mCurrentState.forcePluginOpen);
             }
         }
     }
@@ -755,12 +806,12 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
      */
     @Override
     public boolean getForcePluginOpen() {
-        return mCurrentState.mForcePluginOpen;
+        return mCurrentState.forcePluginOpen;
     }
 
     @Override
     public void setNotTouchable(boolean notTouchable) {
-        mCurrentState.mNotTouchable = notTouchable;
+        mCurrentState.windowNotTouchable = notTouchable;
         apply(mCurrentState);
     }
 
@@ -769,7 +820,7 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
      */
     @Override
     public boolean getPanelExpanded() {
-        return mCurrentState.mPanelExpanded;
+        return mCurrentState.panelExpanded;
     }
 
     @Override
@@ -792,11 +843,16 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
         if (mNotificationShadeView != null && mNotificationShadeView.getViewRootImpl() != null) {
             mNotificationShadeView.getViewRootImpl().dump("  ", pw);
         }
+        new DumpsysTableLogger(
+                TAG,
+                NotificationShadeWindowState.TABLE_HEADERS,
+                mStateBuffer.toList()
+        ).printTableData(pw);
     }
 
     @Override
     public boolean isShowingWallpaper() {
-        return !mCurrentState.mBackdropShowing;
+        return !mCurrentState.mediaBackdropShowing;
     }
 
     @Override
@@ -826,7 +882,7 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
      */
     @Override
     public void setKeyguardGoingAway(boolean goingAway) {
-        mCurrentState.mKeyguardGoingAway = goingAway;
+        mCurrentState.keyguardGoingAway = goingAway;
         apply(mCurrentState);
     }
 
@@ -838,75 +894,11 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
     @Override
     public void setRequestTopUi(boolean requestTopUi, String componentTag) {
         if (requestTopUi) {
-            mCurrentState.mComponentsForcingTopUi.add(componentTag);
+            mCurrentState.componentsForcingTopUi.add(componentTag);
         } else {
-            mCurrentState.mComponentsForcingTopUi.remove(componentTag);
+            mCurrentState.componentsForcingTopUi.remove(componentTag);
         }
         apply(mCurrentState);
-    }
-
-    private static class State {
-        boolean mKeyguardShowing;
-        boolean mKeyguardOccluded;
-        boolean mKeyguardNeedsInput;
-        boolean mPanelVisible;
-        boolean mPanelExpanded;
-        boolean mNotificationShadeFocusable;
-        boolean mBouncerShowing;
-        boolean mKeyguardFadingAway;
-        boolean mKeyguardGoingAway;
-        boolean mQsExpanded;
-        boolean mHeadsUpShowing;
-        boolean mLightRevealScrimOpaque;
-        boolean mForceCollapsed;
-        boolean mForceDozeBrightness;
-        boolean mForceUserActivity;
-        boolean mLaunchingActivity;
-        boolean mBackdropShowing;
-        boolean mWallpaperSupportsAmbientMode;
-        boolean mNotTouchable;
-        Set<String> mComponentsForcingTopUi = new HashSet<>();
-
-        /**
-         * The status bar state from {@link CentralSurfaces}.
-         */
-        int mStatusBarState;
-
-        boolean mRemoteInputActive;
-        boolean mForcePluginOpen;
-        boolean mDozing;
-        int mScrimsVisibility;
-        int mBackgroundBlurRadius;
-
-        private boolean isKeyguardShowingAndNotOccluded() {
-            return mKeyguardShowing && !mKeyguardOccluded;
-        }
-
-        @Override
-        public String toString() {
-            StringBuilder result = new StringBuilder();
-            String newLine = "\n";
-            result.append("Window State {");
-            result.append(newLine);
-
-            Field[] fields = this.getClass().getDeclaredFields();
-
-            // Print field names paired with their values
-            for (Field field : fields) {
-                result.append("  ");
-                try {
-                    result.append(field.getName());
-                    result.append(": ");
-                    //requires access to private field:
-                    result.append(field.get(this));
-                } catch (IllegalAccessException ex) {
-                }
-                result.append(newLine);
-            }
-            result.append("}");
-
-            return result.toString();
-        }
     }
 
     private final StateListener mStateListener = new StateListener() {
@@ -918,6 +910,11 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
         @Override
         public void onDozingChanged(boolean isDozing) {
             setDozing(isDozing);
+        }
+
+        @Override
+        public void onDreamingChanged(boolean isDreaming) {
+            setDreaming(isDreaming);
         }
     };
 }

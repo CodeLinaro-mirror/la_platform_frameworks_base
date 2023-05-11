@@ -1000,24 +1000,25 @@ public abstract class CameraMetadata<TKey> {
      * camera's crop region is set to maximum size, the FOV of the physical streams for the
      * ultrawide lens will be the same as the logical stream, by making the crop region
      * smaller than its active array size to compensate for the smaller focal length.</p>
-     * <p>There are two ways for the application to capture RAW images from a logical camera
-     * with RAW capability:</p>
+     * <p>For a logical camera, typically the underlying physical cameras have different RAW
+     * capabilities (such as resolution or CFA pattern). There are two ways for the
+     * application to capture RAW images from the logical camera:</p>
      * <ul>
-     * <li>Because the underlying physical cameras may have different RAW capabilities (such
-     * as resolution or CFA pattern), to maintain backward compatibility, when a RAW stream
-     * is configured, the camera device makes sure the default active physical camera remains
-     * active and does not switch to other physical cameras. (One exception is that, if the
-     * logical camera consists of identical image sensors and advertises multiple focalLength
-     * due to different lenses, the camera device may generate RAW images from different
-     * physical cameras based on the focalLength being set by the application.) This
-     * backward-compatible approach usually results in loss of optical zoom, to telephoto
-     * lens or to ultrawide lens.</li>
-     * <li>Alternatively, to take advantage of the full zoomRatio range of the logical camera,
-     * the application should use {@link android.hardware.camera2.MultiResolutionImageReader }
-     * to capture RAW images from the currently active physical camera. Because different
-     * physical camera may have different RAW characteristics, the application needs to use
-     * the characteristics and result metadata of the active physical camera for the
-     * relevant RAW metadata.</li>
+     * <li>If the logical camera has RAW capability, the application can create and use RAW
+     * streams in the same way as before. In case a RAW stream is configured, to maintain
+     * backward compatibility, the camera device makes sure the default active physical
+     * camera remains active and does not switch to other physical cameras. (One exception
+     * is that, if the logical camera consists of identical image sensors and advertises
+     * multiple focalLength due to different lenses, the camera device may generate RAW
+     * images from different physical cameras based on the focalLength being set by the
+     * application.) This backward-compatible approach usually results in loss of optical
+     * zoom, to telephoto lens or to ultrawide lens.</li>
+     * <li>Alternatively, if supported by the device,
+     * {@link android.hardware.camera2.MultiResolutionImageReader }
+     * can be used to capture RAW images from one of the underlying physical cameras (
+     * depending on current zoom level). Because different physical cameras may have
+     * different RAW characteristics, the application needs to use the characteristics
+     * and result metadata of the active physical camera for the relevant RAW metadata.</li>
      * </ul>
      * <p>The capture request and result metadata tags required for backward compatible camera
      * functionalities will be solely based on the logical camera capability. On the other
@@ -1489,6 +1490,31 @@ public abstract class CameraMetadata<TKey> {
     public static final int SCALER_AVAILABLE_STREAM_USE_CASES_VIDEO_CALL = 0x5;
 
     /**
+     * <p>Cropped RAW stream when the client chooses to crop the field of view.</p>
+     * <p>Certain types of image sensors can run in binned modes in order to improve signal to
+     * noise ratio while capturing frames. However, at certain zoom levels and / or when
+     * other scene conditions are deemed fit, the camera sub-system may choose to un-bin and
+     * remosaic the sensor's output. This results in a RAW frame which is cropped in field
+     * of view and yet has the same number of pixels as full field of view RAW, thereby
+     * improving image detail.</p>
+     * <p>The resultant field of view of the RAW stream will be greater than or equal to
+     * croppable non-RAW streams. The effective crop region for this RAW stream will be
+     * reflected in the CaptureResult key {@link CaptureResult#SCALER_RAW_CROP_REGION android.scaler.rawCropRegion}.</p>
+     * <p>If this stream use case is set on a non-RAW stream, i.e. not one of :</p>
+     * <ul>
+     * <li>{@link android.graphics.ImageFormat#RAW_SENSOR RAW_SENSOR}</li>
+     * <li>{@link android.graphics.ImageFormat#RAW10 RAW10}</li>
+     * <li>{@link android.graphics.ImageFormat#RAW12 RAW12}</li>
+     * </ul>
+     * <p>session configuration is not guaranteed to succeed.</p>
+     * <p>This stream use case may not be supported on some devices.</p>
+     *
+     * @see CaptureResult#SCALER_RAW_CROP_REGION
+     * @see CameraCharacteristics#SCALER_AVAILABLE_STREAM_USE_CASES
+     */
+    public static final int SCALER_AVAILABLE_STREAM_USE_CASES_CROPPED_RAW = 0x6;
+
+    /**
      * <p>Vendor defined use cases. These depend on the vendor implementation.</p>
      * @see CameraCharacteristics#SCALER_AVAILABLE_STREAM_USE_CASES
      * @hide
@@ -1695,17 +1721,14 @@ public abstract class CameraMetadata<TKey> {
      * <p>This camera device doesn't support readout timestamp and onReadoutStarted
      * callback.</p>
      * @see CameraCharacteristics#SENSOR_READOUT_TIMESTAMP
-     * @hide
      */
     public static final int SENSOR_READOUT_TIMESTAMP_NOT_SUPPORTED = 0;
 
     /**
      * <p>This camera device supports the onReadoutStarted callback as well as outputting
-     * readout timestamp for streams with TIMESTAMP_BASE_READOUT_SENSOR timestamp base. The
-     * readout timestamp is generated by the camera hardware and it has the same accuracy
-     * and timing characteristics of the start-of-exposure time.</p>
+     * readout timestamps. The readout timestamp is generated by the camera hardware and it
+     * has the same accuracy and timing characteristics of the start-of-exposure time.</p>
      * @see CameraCharacteristics#SENSOR_READOUT_TIMESTAMP
-     * @hide
      */
     public static final int SENSOR_READOUT_TIMESTAMP_HARDWARE = 1;
 
@@ -3244,6 +3267,28 @@ public abstract class CameraMetadata<TKey> {
     public static final int CONTROL_SETTINGS_OVERRIDE_VENDOR_START = 0x4000;
 
     //
+    // Enumeration values for CaptureRequest#CONTROL_AUTOFRAMING
+    //
+
+    /**
+     * <p>Disable autoframing.</p>
+     * @see CaptureRequest#CONTROL_AUTOFRAMING
+     */
+    public static final int CONTROL_AUTOFRAMING_OFF = 0;
+
+    /**
+     * <p>Enable autoframing to keep people in the frame's field of view.</p>
+     * @see CaptureRequest#CONTROL_AUTOFRAMING
+     */
+    public static final int CONTROL_AUTOFRAMING_ON = 1;
+
+    /**
+     * <p>Automatically select ON or OFF based on the system level preferences.</p>
+     * @see CaptureRequest#CONTROL_AUTOFRAMING
+     */
+    public static final int CONTROL_AUTOFRAMING_AUTO = 2;
+
+    //
     // Enumeration values for CaptureRequest#EDGE_MODE
     //
 
@@ -3995,6 +4040,29 @@ public abstract class CameraMetadata<TKey> {
      * @see CaptureResult#CONTROL_AF_SCENE_CHANGE
      */
     public static final int CONTROL_AF_SCENE_CHANGE_DETECTED = 1;
+
+    //
+    // Enumeration values for CaptureResult#CONTROL_AUTOFRAMING_STATE
+    //
+
+    /**
+     * <p>Auto-framing is inactive.</p>
+     * @see CaptureResult#CONTROL_AUTOFRAMING_STATE
+     */
+    public static final int CONTROL_AUTOFRAMING_STATE_INACTIVE = 0;
+
+    /**
+     * <p>Auto-framing is in process - either zooming in, zooming out or pan is taking place.</p>
+     * @see CaptureResult#CONTROL_AUTOFRAMING_STATE
+     */
+    public static final int CONTROL_AUTOFRAMING_STATE_FRAMING = 1;
+
+    /**
+     * <p>Auto-framing has reached a stable state (frame/fov is not being adjusted). The state
+     * may transition back to FRAMING if the scene changes.</p>
+     * @see CaptureResult#CONTROL_AUTOFRAMING_STATE
+     */
+    public static final int CONTROL_AUTOFRAMING_STATE_CONVERGED = 2;
 
     //
     // Enumeration values for CaptureResult#FLASH_STATE

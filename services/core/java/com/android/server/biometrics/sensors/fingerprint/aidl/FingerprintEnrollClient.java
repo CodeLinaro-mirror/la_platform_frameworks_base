@@ -24,7 +24,6 @@ import android.hardware.biometrics.BiometricFingerprintConstants;
 import android.hardware.biometrics.BiometricFingerprintConstants.FingerprintAcquired;
 import android.hardware.biometrics.BiometricStateListener;
 import android.hardware.biometrics.common.ICancellationSignal;
-import android.hardware.biometrics.common.OperationContext;
 import android.hardware.biometrics.fingerprint.PointerContext;
 import android.hardware.fingerprint.Fingerprint;
 import android.hardware.fingerprint.FingerprintManager;
@@ -42,6 +41,7 @@ import com.android.server.biometrics.HardwareAuthTokenUtils;
 import com.android.server.biometrics.log.BiometricContext;
 import com.android.server.biometrics.log.BiometricLogger;
 import com.android.server.biometrics.log.CallbackWithProbe;
+import com.android.server.biometrics.log.OperationContextExt;
 import com.android.server.biometrics.log.Probe;
 import com.android.server.biometrics.sensors.BiometricNotificationUtils;
 import com.android.server.biometrics.sensors.BiometricUtils;
@@ -185,9 +185,9 @@ class FingerprintEnrollClient extends EnrollClient<AidlSession> implements Udfps
                 HardwareAuthTokenUtils.toHardwareAuthToken(mHardwareAuthToken);
 
         if (session.hasContextMethods()) {
-            final OperationContext opContext = getOperationContext();
+            final OperationContextExt opContext = getOperationContext();
             final ICancellationSignal cancel = session.getSession().enrollWithContext(
-                    hat, opContext);
+                    hat, opContext.toAidlContext());
             getBiometricContext().subscribe(opContext, ctx -> {
                 try {
                     session.getSession().onContextChanged(ctx);
@@ -219,22 +219,20 @@ class FingerprintEnrollClient extends EnrollClient<AidlSession> implements Udfps
     }
 
     @Override
-    public void onPointerDown(int x, int y, float minor, float major) {
+    public void onPointerDown(PointerContext pc) {
         try {
             mIsPointerDown = true;
 
             final AidlSession session = getFreshDaemon();
             if (session.hasContextMethods()) {
-                final PointerContext context = new PointerContext();
-                context.pointerId = 0;
-                context.x = x;
-                context.y = y;
-                context.minor = minor;
-                context.major = major;
-                context.isAod = getBiometricContext().isAod();
-                session.getSession().onPointerDownWithContext(context);
+                session.getSession().onPointerDownWithContext(pc);
             } else {
-                session.getSession().onPointerDown(0 /* pointerId */, x, y, minor, major);
+                session.getSession().onPointerDown(pc.pointerId, (int) pc.x, (int) pc.y, pc.minor,
+                        pc.major);
+            }
+
+            if (getListener() != null) {
+                getListener().onUdfpsPointerDown(getSensorId());
             }
         } catch (RemoteException e) {
             Slog.e(TAG, "Unable to send pointer down", e);
@@ -242,17 +240,19 @@ class FingerprintEnrollClient extends EnrollClient<AidlSession> implements Udfps
     }
 
     @Override
-    public void onPointerUp() {
+    public void onPointerUp(PointerContext pc) {
         try {
             mIsPointerDown = false;
 
             final AidlSession session = getFreshDaemon();
             if (session.hasContextMethods()) {
-                final PointerContext context = new PointerContext();
-                context.pointerId = 0;
-                session.getSession().onPointerUpWithContext(context);
+                session.getSession().onPointerUpWithContext(pc);
             } else {
-                session.getSession().onPointerUp(0 /* pointerId */);
+                session.getSession().onPointerUp(pc.pointerId);
+            }
+
+            if (getListener() != null) {
+                getListener().onUdfpsPointerUp(getSensorId());
             }
         } catch (RemoteException e) {
             Slog.e(TAG, "Unable to send pointer up", e);
@@ -274,8 +274,5 @@ class FingerprintEnrollClient extends EnrollClient<AidlSession> implements Udfps
     }
 
     @Override
-    public void onPowerPressed() {
-        onAcquired(BiometricFingerprintConstants.FINGERPRINT_ACQUIRED_POWER_PRESSED,
-                0 /* vendorCode */);
-    }
+    public void onPowerPressed() {}
 }

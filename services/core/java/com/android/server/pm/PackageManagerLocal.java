@@ -30,7 +30,6 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Consumer;
 
 /**
  * In-process API for server side PackageManager related infrastructure.
@@ -150,6 +149,16 @@ public interface PackageManagerLocal {
         @NonNull
         Map<String, PackageState> getPackageStates();
 
+        /**
+         * Returns a map of all disabled system {@link PackageState PackageStates} on the device.
+         *
+         * @return Mapping of package name to disabled system {@link PackageState}.
+         *
+         * @hide Pending API
+         */
+        @NonNull
+        Map<String, PackageState> getDisabledSystemPackageStates();
+
         @Override
         void close();
     }
@@ -167,15 +176,15 @@ public interface PackageManagerLocal {
         PackageState getPackageState(@NonNull String packageName);
 
         /**
-         * Iterates on all states. This should only be used when either the target package name
-         * is not known or the large majority of the states are expected to be used.
-         *
+         * Returns a map of all {@link PackageState PackageStates} on the device.
+         * <p>
          * This will cause app visibility filtering to be invoked on each state on the device,
-         * which can be expensive.
+         * which can be expensive. Prefer {@link #getPackageState(String)} if possible.
          *
-         * @param consumer Block to accept each state as it becomes available post-filtering.
+         * @return Mapping of package name to {@link PackageState}.
          */
-        void forAllPackageStates(@NonNull Consumer<PackageState> consumer);
+        @NonNull
+        Map<String, PackageState> getPackageStates();
 
         @Override
         void close();

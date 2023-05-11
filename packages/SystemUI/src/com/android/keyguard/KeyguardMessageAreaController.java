@@ -92,22 +92,28 @@ public class KeyguardMessageAreaController<T extends KeyguardMessageArea>
     }
 
     public void setMessage(CharSequence s) {
-        mView.setMessage(s);
+        setMessage(s, true);
+    }
+
+    /**
+     * Sets a message to the underlying text view.
+     */
+    public void setMessage(CharSequence s, boolean animate) {
+        mView.setMessage(s, animate);
     }
 
     public void setMessage(int resId) {
-        mView.setMessage(resId);
+        String message = resId != 0 ? mView.getResources().getString(resId) : null;
+        setMessage(message);
     }
 
     public void setNextMessageColor(ColorStateList colorState) {
         mView.setNextMessageColor(colorState);
     }
 
-    /**
-     * Reload colors from resources.
-     **/
-    public void reloadColors() {
-        mView.reloadColor();
+    /** Returns the message of the underlying TextView. */
+    public CharSequence getMessage() {
+        return mView.getText();
     }
 
     /** Factory for creating {@link com.android.keyguard.KeyguardMessageAreaController}. */

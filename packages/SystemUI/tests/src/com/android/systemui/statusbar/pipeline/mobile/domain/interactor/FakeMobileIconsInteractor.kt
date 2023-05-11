@@ -16,17 +16,22 @@
 
 package com.android.systemui.statusbar.pipeline.mobile.domain.interactor
 
-import android.telephony.SubscriptionInfo
 import android.telephony.TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_LTE_ADVANCED_PRO
 import android.telephony.TelephonyManager.NETWORK_TYPE_GSM
 import android.telephony.TelephonyManager.NETWORK_TYPE_LTE
 import android.telephony.TelephonyManager.NETWORK_TYPE_UMTS
 import com.android.settingslib.SignalIcon.MobileIconGroup
 import com.android.settingslib.mobile.TelephonyIcons
+import com.android.systemui.log.table.TableLogBuffer
+import com.android.systemui.statusbar.pipeline.mobile.data.model.MobileConnectivityModel
+import com.android.systemui.statusbar.pipeline.mobile.data.model.SubscriptionModel
 import com.android.systemui.statusbar.pipeline.mobile.util.MobileMappingsProxy
 import kotlinx.coroutines.flow.MutableStateFlow
 
-class FakeMobileIconsInteractor(mobileMappings: MobileMappingsProxy) : MobileIconsInteractor {
+class FakeMobileIconsInteractor(
+    mobileMappings: MobileMappingsProxy,
+    val tableLogBuffer: TableLogBuffer,
+) : MobileIconsInteractor {
     val THREE_G_KEY = mobileMappings.toIconKey(THREE_G)
     val LTE_KEY = mobileMappings.toIconKey(LTE)
     val FOUR_G_KEY = mobileMappings.toIconKey(FOUR_G)
@@ -47,11 +52,17 @@ class FakeMobileIconsInteractor(mobileMappings: MobileMappingsProxy) : MobileIco
 
     override val isDefaultConnectionFailed = MutableStateFlow(false)
 
-    private val _filteredSubscriptions = MutableStateFlow<List<SubscriptionInfo>>(listOf())
-    override val filteredSubscriptions = _filteredSubscriptions
+    override val filteredSubscriptions = MutableStateFlow<List<SubscriptionModel>>(listOf())
 
     private val _activeDataConnectionHasDataEnabled = MutableStateFlow(false)
     override val activeDataConnectionHasDataEnabled = _activeDataConnectionHasDataEnabled
+
+    override val alwaysShowDataRatIcon = MutableStateFlow(false)
+
+    override val alwaysUseCdmaLevel = MutableStateFlow(false)
+    override val defaultDataSubId = MutableStateFlow(DEFAULT_DATA_SUB_ID)
+
+    override val defaultMobileNetworkConnectivity = MutableStateFlow(MobileConnectivityModel())
 
     private val _defaultMobileIconMapping = MutableStateFlow(TEST_MAPPING)
     override val defaultMobileIconMapping = _defaultMobileIconMapping
@@ -62,13 +73,17 @@ class FakeMobileIconsInteractor(mobileMappings: MobileMappingsProxy) : MobileIco
     private val _isUserSetup = MutableStateFlow(true)
     override val isUserSetup = _isUserSetup
 
+    override val isForceHidden = MutableStateFlow(false)
+
     /** Always returns a new fake interactor */
     override fun createMobileConnectionInteractorForSubId(subId: Int): MobileIconInteractor {
-        return FakeMobileIconInteractor()
+        return FakeMobileIconInteractor(tableLogBuffer)
     }
 
     companion object {
         val DEFAULT_ICON = TelephonyIcons.G
+
+        const val DEFAULT_DATA_SUB_ID = 1
 
         // Use [MobileMappings] to define some simple definitions
         const val THREE_G = NETWORK_TYPE_GSM

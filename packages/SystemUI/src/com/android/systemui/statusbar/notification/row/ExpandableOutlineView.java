@@ -24,12 +24,16 @@ import android.graphics.Path;
 import android.graphics.Rect;
 import android.graphics.RectF;
 import android.util.AttributeSet;
+import android.util.IndentingPrintWriter;
 import android.view.View;
 import android.view.ViewOutlineProvider;
 
 import com.android.systemui.R;
 import com.android.systemui.statusbar.notification.RoundableState;
 import com.android.systemui.statusbar.notification.stack.NotificationChildrenContainer;
+import com.android.systemui.util.DumpUtilsKt;
+
+import java.io.PrintWriter;
 
 /**
  * Like {@link ExpandableView}, but setting an outline for the height and clipping.
@@ -43,7 +47,6 @@ public abstract class ExpandableOutlineView extends ExpandableView {
     private float mOutlineAlpha = -1f;
     private boolean mAlwaysRoundBothCorners;
     private Path mTmpPath = new Path();
-    private int mBackgroundTop;
 
     /**
      * {@code false} if the children views of the {@link ExpandableOutlineView} are translated when
@@ -59,7 +62,7 @@ public abstract class ExpandableOutlineView extends ExpandableView {
                 // Only when translating just the contents, does the outline need to be shifted.
                 int translation = !mDismissUsingRowTranslationX ? (int) getTranslation() : 0;
                 int left = Math.max(translation, 0);
-                int top = mClipTopAmount + mBackgroundTop;
+                int top = mClipTopAmount;
                 int right = getWidth() + Math.min(translation, 0);
                 int bottom = Math.max(getActualHeight() - mClipBottomAmount, top);
                 outline.setRect(left, top, right, bottom);
@@ -84,7 +87,7 @@ public abstract class ExpandableOutlineView extends ExpandableView {
         int right;
         int bottom;
         int height;
-        float topRoundness = mAlwaysRoundBothCorners ? getMaxRadius() : getTopCornerRadius();
+        float topRadius = mAlwaysRoundBothCorners ? getMaxRadius() : getTopCornerRadius();
         if (!mCustomOutline) {
             // The outline just needs to be shifted if we're translating the contents. Otherwise
             // it's already in the right place.
@@ -92,12 +95,12 @@ public abstract class ExpandableOutlineView extends ExpandableView {
                     ? (int) getTranslation() : 0;
             int halfExtraWidth = (int) (mExtraWidthForClipping / 2.0f);
             left = Math.max(translation, 0) - halfExtraWidth;
-            top = mClipTopAmount + mBackgroundTop;
+            top = mClipTopAmount;
             right = getWidth() + halfExtraWidth + Math.min(translation, 0);
             // If the top is rounded we want the bottom to be at most at the top roundness, in order
             // to avoid the shadow changing when scrolling up.
             bottom = Math.max(mMinimumHeightForClipping,
-                    Math.max(getActualHeight() - mClipBottomAmount, (int) (top + topRoundness)));
+                    Math.max(getActualHeight() - mClipBottomAmount, (int) (top + topRadius)));
         } else {
             left = mOutlineRect.left;
             top = mOutlineRect.top;
@@ -108,17 +111,17 @@ public abstract class ExpandableOutlineView extends ExpandableView {
         if (height == 0) {
             return EMPTY_PATH;
         }
-        float bottomRoundness = mAlwaysRoundBothCorners ? getMaxRadius() : getBottomCornerRadius();
-        if (topRoundness + bottomRoundness > height) {
-            float overShoot = topRoundness + bottomRoundness - height;
+        float bottomRadius = mAlwaysRoundBothCorners ? getMaxRadius() : getBottomCornerRadius();
+        if (topRadius + bottomRadius > height) {
+            float overShoot = topRadius + bottomRadius - height;
             float currentTopRoundness = getTopRoundness();
             float currentBottomRoundness = getBottomRoundness();
-            topRoundness -= overShoot * currentTopRoundness
+            topRadius -= overShoot * currentTopRoundness
                     / (currentTopRoundness + currentBottomRoundness);
-            bottomRoundness -= overShoot * currentBottomRoundness
+            bottomRadius -= overShoot * currentBottomRoundness
                     / (currentTopRoundness + currentBottomRoundness);
         }
-        getRoundedRectPath(left, top, right, bottom, topRoundness, bottomRoundness, mTmpPath);
+        getRoundedRectPath(left, top, right, bottom, topRadius, bottomRadius, mTmpPath);
         return mTmpPath;
     }
 
@@ -214,26 +217,23 @@ public abstract class ExpandableOutlineView extends ExpandableView {
         } else {
             maxRadius = res.getDimensionPixelSize(R.dimen.notification_corner_radius);
         }
-        mRoundableState = new RoundableState(this, this, maxRadius);
+        if (mRoundableState == null) {
+            mRoundableState = new RoundableState(this, this, maxRadius);
+        } else {
+            mRoundableState.setMaxRadius(maxRadius);
+        }
         setClipToOutline(mAlwaysRoundBothCorners);
     }
 
     @Override
-    public void applyRoundness() {
+    public void applyRoundnessAndInvalidate() {
         invalidateOutline();
-        super.applyRoundness();
-    }
-
-    protected void setBackgroundTop(int backgroundTop) {
-        if (mBackgroundTop != backgroundTop) {
-            mBackgroundTop = backgroundTop;
-            invalidateOutline();
-        }
+        super.applyRoundnessAndInvalidate();
     }
 
     public void onDensityOrFontScaleChanged() {
         initDimens();
-        applyRoundness();
+        applyRoundnessAndInvalidate();
     }
 
     @Override
@@ -241,7 +241,7 @@ public abstract class ExpandableOutlineView extends ExpandableView {
         int previousHeight = getActualHeight();
         super.setActualHeight(actualHeight, notifyListeners);
         if (previousHeight != actualHeight) {
-            applyRoundness();
+            applyRoundnessAndInvalidate();
         }
     }
 
@@ -250,7 +250,7 @@ public abstract class ExpandableOutlineView extends ExpandableView {
         int previousAmount = getClipTopAmount();
         super.setClipTopAmount(clipTopAmount);
         if (previousAmount != clipTopAmount) {
-            applyRoundness();
+            applyRoundnessAndInvalidate();
         }
     }
 
@@ -259,14 +259,14 @@ public abstract class ExpandableOutlineView extends ExpandableView {
         int previousAmount = getClipBottomAmount();
         super.setClipBottomAmount(clipBottomAmount);
         if (previousAmount != clipBottomAmount) {
-            applyRoundness();
+            applyRoundnessAndInvalidate();
         }
     }
 
     protected void setOutlineAlpha(float alpha) {
         if (alpha != mOutlineAlpha) {
             mOutlineAlpha = alpha;
-            applyRoundness();
+            applyRoundnessAndInvalidate();
         }
     }
 
@@ -280,7 +280,7 @@ public abstract class ExpandableOutlineView extends ExpandableView {
             setOutlineRect(rect.left, rect.top, rect.right, rect.bottom);
         } else {
             mCustomOutline = false;
-            applyRoundness();
+            applyRoundnessAndInvalidate();
         }
     }
 
@@ -340,10 +340,24 @@ public abstract class ExpandableOutlineView extends ExpandableView {
         // Outlines need to be at least 1 dp
         mOutlineRect.bottom = (int) Math.max(top, mOutlineRect.bottom);
         mOutlineRect.right = (int) Math.max(left, mOutlineRect.right);
-        applyRoundness();
+        applyRoundnessAndInvalidate();
     }
 
     public Path getCustomClipPath(View child) {
         return null;
+    }
+
+    @Override
+    public void dump(PrintWriter pwOriginal, String[] args) {
+        IndentingPrintWriter pw = DumpUtilsKt.asIndenting(pwOriginal);
+        super.dump(pw, args);
+        DumpUtilsKt.withIncreasedIndent(pw, () -> {
+            pw.println("Roundness: " + getRoundableState().debugString());
+            if (DUMP_VERBOSE) {
+                pw.println("mCustomOutline: " + mCustomOutline + " mOutlineRect: " + mOutlineRect);
+                pw.println("mOutlineAlpha: " + mOutlineAlpha);
+                pw.println("mAlwaysRoundBothCorners: " + mAlwaysRoundBothCorners);
+            }
+        });
     }
 }

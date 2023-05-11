@@ -33,7 +33,9 @@ android_library {
         "dagger2",
         "jsr330",
     ],
+    kotlincflags: ["-Xjvm-default=enable"],
     java_version: "1.8",
+    sdk_version: "current",
     min_sdk_version: "current",
     plugins: ["dagger2-compiler"],
 }

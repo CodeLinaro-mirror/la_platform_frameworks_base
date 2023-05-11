@@ -18,8 +18,13 @@ package com.android.settingslib.spa.framework.common
 
 import android.os.Bundle
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.navigation.NamedNavArgument
+import com.android.settingslib.spa.framework.util.genPageId
+import com.android.settingslib.spa.framework.util.normalizeArgList
 import com.android.settingslib.spa.widget.scaffold.RegularScaffold
+
+private const val NULL_PAGE_NAME = "NULL"
 
 /**
  * An SettingsPageProvider which is used to create Settings page instances.
@@ -30,22 +35,32 @@ interface SettingsPageProvider {
     val name: String
 
     /** The display name of this page provider, for better readability. */
-    val displayName: String?
-        get() = null
+    val displayName: String
+        get() = name
 
     /** The page parameters, default is no parameters. */
     val parameter: List<NamedNavArgument>
         get() = emptyList()
 
-    fun getTitle(arguments: Bundle?): String = displayName ?: name
+    /**
+     * The API to indicate whether the page is enabled or not.
+     * During SPA page migration, one can use it to enable certain pages in one release.
+     * When the page is disabled, all its related functionalities, such as browsing, search,
+     * slice provider, are disabled as well.
+     */
+    fun isEnabled(arguments: Bundle?): Boolean = true
+
+    fun getTitle(arguments: Bundle?): String = displayName
 
     fun buildEntry(arguments: Bundle?): List<SettingsEntry> = emptyList()
 
     /** The [Composable] used to render this page. */
     @Composable
     fun Page(arguments: Bundle?) {
-        RegularScaffold(title = getTitle(arguments)) {
-            for (entry in buildEntry(arguments)) {
+        val title = remember { getTitle(arguments) }
+        val entries = remember { buildEntry(arguments) }
+        RegularScaffold(title) {
+            for (entry in entries) {
                 entry.UiLayout()
             }
         }
@@ -53,10 +68,22 @@ interface SettingsPageProvider {
 }
 
 fun SettingsPageProvider.createSettingsPage(arguments: Bundle? = null): SettingsPage {
-    return SettingsPage.create(
-        name = name,
-        displayName = displayName,
+    return SettingsPage(
+        id = genPageId(name, parameter, arguments),
+        sppName = name,
+        displayName = displayName + parameter.normalizeArgList(arguments, eraseRuntimeValues = true)
+            .joinToString("") { arg -> "/$arg" },
         parameter = parameter,
-        arguments = arguments
+        arguments = arguments,
     )
+}
+
+object NullPageProvider : SettingsPageProvider {
+    override val name = NULL_PAGE_NAME
+}
+
+fun getPageProvider(sppName: String): SettingsPageProvider? {
+    if (!SpaEnvironmentFactory.isReady()) return null
+    val pageProviderRepository by SpaEnvironmentFactory.instance.pageProviderRepository
+    return pageProviderRepository.getProviderOrNull(sppName)
 }

@@ -16,12 +16,16 @@
 
 package com.android.server.wm;
 
+import static android.Manifest.permission.ADD_TRUSTED_DISPLAY;
 import static android.app.WindowConfiguration.ACTIVITY_TYPE_HOME;
 import static android.app.WindowConfiguration.ACTIVITY_TYPE_STANDARD;
 import static android.app.WindowConfiguration.WINDOWING_MODE_FREEFORM;
 import static android.app.WindowConfiguration.WINDOWING_MODE_FULLSCREEN;
+import static android.hardware.display.DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_FOCUS;
 import static android.hardware.display.DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC;
+import static android.hardware.display.DisplayManager.VIRTUAL_DISPLAY_FLAG_TRUSTED;
 import static android.view.Display.DEFAULT_DISPLAY;
+import static android.view.Display.FLAG_OWN_FOCUS;
 import static android.view.WindowManager.LayoutParams.INVALID_WINDOW_TYPE;
 import static android.view.WindowManager.LayoutParams.TYPE_APPLICATION;
 import static android.view.WindowManager.LayoutParams.TYPE_APPLICATION_ATTACHED_DIALOG;
@@ -45,12 +49,12 @@ import static com.google.common.truth.Truth.assertThat;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -81,10 +85,12 @@ import android.window.ScreenCapture;
 import android.window.WindowContainerToken;
 
 import androidx.test.filters.SmallTest;
+import androidx.test.platform.app.InstrumentationRegistry;
+
+import com.android.compatibility.common.util.AdoptShellPermissionsRule;
 
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 
 /**
@@ -97,7 +103,9 @@ import org.junit.runner.RunWith;
 public class WindowManagerServiceTests extends WindowTestsBase {
 
     @Rule
-    public ExpectedException mExpectedException = ExpectedException.none();
+    public AdoptShellPermissionsRule mAdoptShellPermissionsRule = new AdoptShellPermissionsRule(
+            InstrumentationRegistry.getInstrumentation().getUiAutomation(),
+            ADD_TRUSTED_DISPLAY);
 
     @Test
     public void testAddWindowToken() {
@@ -186,24 +194,39 @@ public class WindowManagerServiceTests extends WindowTestsBase {
     public void testRelayoutExitingWindow() {
         final WindowState win = createWindow(null, TYPE_BASE_APPLICATION, "appWin");
         final WindowSurfaceController surfaceController = mock(WindowSurfaceController.class);
-        doReturn(true).when(surfaceController).hasSurface();
-        spyOn(win);
-        doReturn(true).when(win).isExitAnimationRunningSelfOrParent();
         win.mWinAnimator.mSurfaceController = surfaceController;
+        win.mWinAnimator.mDrawState = WindowStateAnimator.HAS_DRAWN;
+        doReturn(true).when(surfaceController).hasSurface();
+        spyOn(win.mTransitionController);
+        doReturn(true).when(win.mTransitionController).isShellTransitionsEnabled();
+        doReturn(true).when(win.mTransitionController).inTransition(
+                eq(win.mActivityRecord));
         win.mViewVisibility = View.VISIBLE;
         win.mHasSurface = true;
         win.mActivityRecord.mAppStopped = true;
-        win.mActivityRecord.mVisibleRequested = false;
-        win.mActivityRecord.setVisible(false);
         mWm.mWindowMap.put(win.mClient.asBinder(), win);
+        spyOn(mWm.mWindowPlacerLocked);
+        // Skip unnecessary operations of relayout.
+        doNothing().when(mWm.mWindowPlacerLocked).performSurfacePlacement(anyBoolean());
         final int w = 100;
         final int h = 200;
         final ClientWindowFrames outFrames = new ClientWindowFrames();
         final MergedConfiguration outConfig = new MergedConfiguration();
         final SurfaceControl outSurfaceControl = new SurfaceControl();
         final InsetsState outInsetsState = new InsetsState();
-        final InsetsSourceControl[] outControls = new InsetsSourceControl[0];
+        final InsetsSourceControl.Array outControls = new InsetsSourceControl.Array();
         final Bundle outBundle = new Bundle();
+        mWm.relayoutWindow(win.mSession, win.mClient, win.mAttrs, w, h, View.GONE, 0, 0, 0,
+                outFrames, outConfig, outSurfaceControl, outInsetsState, outControls, outBundle);
+        // The window is in transition, so its destruction is deferred.
+        assertTrue(win.mAnimatingExit);
+        assertFalse(win.mDestroying);
+        assertTrue(win.mTransitionController.mAnimatingExitWindows.contains(win));
+
+        win.mAnimatingExit = false;
+        win.mViewVisibility = View.VISIBLE;
+        win.mActivityRecord.setVisibleRequested(false);
+        win.mActivityRecord.setVisible(false);
         mWm.relayoutWindow(win.mSession, win.mClient, win.mAttrs, w, h, View.GONE, 0, 0, 0,
                 outFrames, outConfig, outSurfaceControl, outInsetsState, outControls, outBundle);
         // Because the window is already invisible, it doesn't need to apply exiting animation
@@ -339,7 +362,7 @@ public class WindowManagerServiceTests extends WindowTestsBase {
 
         mWm.addWindow(session, new TestIWindow(), params, View.VISIBLE, DEFAULT_DISPLAY,
                 UserHandle.USER_SYSTEM, WindowInsets.Type.defaultVisible(), null, new InsetsState(),
-                new InsetsSourceControl[0], new Rect(), new float[1]);
+                new InsetsSourceControl.Array(), new Rect(), new float[1]);
 
         verify(mWm.mWindowContextListenerController, never()).registerWindowContainerListener(any(),
                 any(), anyInt(), anyInt(), any());
@@ -396,9 +419,15 @@ public class WindowManagerServiceTests extends WindowTestsBase {
     @Test
     public void testSetInTouchMode_multiDisplay_globalTouchModeUpdate() {
         // Create one extra display
-        final VirtualDisplay virtualDisplay = createVirtualDisplay();
+        final VirtualDisplay virtualDisplay = createVirtualDisplay(/* ownFocus= */ false);
+        final VirtualDisplay virtualDisplayOwnTouchMode =
+                createVirtualDisplay(/* ownFocus= */ true);
         final int numberOfDisplays = mWm.mRoot.mChildren.size();
-        assertThat(numberOfDisplays).isAtLeast(2);
+        assertThat(numberOfDisplays).isAtLeast(3);
+        final int numberOfGlobalTouchModeDisplays = (int) mWm.mRoot.mChildren.stream()
+                        .filter(d -> (d.getDisplay().getFlags() & FLAG_OWN_FOCUS) == 0)
+                        .count();
+        assertThat(numberOfGlobalTouchModeDisplays).isAtLeast(2);
 
         // Enable global touch mode (config_perDisplayFocusEnabled set to false)
         Resources mockResources = mock(Resources.class);
@@ -417,15 +446,15 @@ public class WindowManagerServiceTests extends WindowTestsBase {
 
         mWm.setInTouchMode(!currentTouchMode, DEFAULT_DISPLAY);
 
-        verify(mWm.mInputManager, times(numberOfDisplays)).setInTouchMode(
+        verify(mWm.mInputManager, times(numberOfGlobalTouchModeDisplays)).setInTouchMode(
                 eq(!currentTouchMode), eq(callingPid), eq(callingUid),
                 /* hasPermission= */ eq(true), /* displayId= */ anyInt());
     }
 
     @Test
-    public void testSetInTouchMode_multiDisplay_singleDisplayTouchModeUpdate() {
+    public void testSetInTouchMode_multiDisplay_perDisplayFocus_singleDisplayTouchModeUpdate() {
         // Create one extra display
-        final VirtualDisplay virtualDisplay = createVirtualDisplay();
+        final VirtualDisplay virtualDisplay = createVirtualDisplay(/* ownFocus= */ false);
         final int numberOfDisplays = mWm.mRoot.mChildren.size();
         assertThat(numberOfDisplays).isAtLeast(2);
 
@@ -452,14 +481,92 @@ public class WindowManagerServiceTests extends WindowTestsBase {
                 virtualDisplay.getDisplay().getDisplayId());
     }
 
-    private VirtualDisplay createVirtualDisplay() {
+    @Test
+    public void testSetInTouchMode_multiDisplay_ownTouchMode_singleDisplayTouchModeUpdate() {
+        // Create one extra display
+        final VirtualDisplay virtualDisplay = createVirtualDisplay(/* ownFocus= */ true);
+        final int numberOfDisplays = mWm.mRoot.mChildren.size();
+        assertThat(numberOfDisplays).isAtLeast(2);
+
+        // Enable global touch mode (config_perDisplayFocusEnabled set to false)
+        Resources mockResources = mock(Resources.class);
+        spyOn(mContext);
+        when(mContext.getResources()).thenReturn(mockResources);
+        doReturn(false).when(mockResources).getBoolean(
+                com.android.internal.R.bool.config_perDisplayFocusEnabled);
+
+        // Get current touch mode state and setup WMS to run setInTouchMode
+        boolean currentTouchMode = mWm.isInTouchMode(DEFAULT_DISPLAY);
+        int callingPid = Binder.getCallingPid();
+        int callingUid = Binder.getCallingUid();
+        doReturn(false).when(mWm).checkCallingPermission(anyString(), anyString(), anyBoolean());
+        when(mWm.mAtmService.instrumentationSourceHasPermission(callingPid,
+                android.Manifest.permission.MODIFY_TOUCH_MODE_STATE)).thenReturn(true);
+
+        mWm.setInTouchMode(!currentTouchMode, virtualDisplay.getDisplay().getDisplayId());
+
+        // Ensure that new display touch mode state has changed.
+        verify(mWm.mInputManager).setInTouchMode(
+                !currentTouchMode, callingPid, callingUid, /* hasPermission= */ true,
+                virtualDisplay.getDisplay().getDisplayId());
+    }
+
+    @Test
+    public void testSetInTouchModeOnAllDisplays_perDisplayFocusDisabled() {
+        testSetInTouchModeOnAllDisplays(/* perDisplayFocusEnabled= */ false);
+    }
+
+    @Test
+    public void testSetInTouchModeOnAllDisplays_perDisplayFocusEnabled() {
+        testSetInTouchModeOnAllDisplays(/* perDisplayFocusEnabled= */ true);
+    }
+
+    private void testSetInTouchModeOnAllDisplays(boolean perDisplayFocusEnabled) {
+        // Create a couple of extra displays.
+        // setInTouchModeOnAllDisplays should ignore the ownFocus setting.
+        final VirtualDisplay virtualDisplay = createVirtualDisplay(/* ownFocus= */ false);
+        final VirtualDisplay virtualDisplayOwnFocus = createVirtualDisplay(/* ownFocus= */ true);
+
+        // Enable or disable global touch mode (config_perDisplayFocusEnabled setting).
+        // setInTouchModeOnAllDisplays should ignore this value.
+        Resources mockResources = mock(Resources.class);
+        spyOn(mContext);
+        when(mContext.getResources()).thenReturn(mockResources);
+        doReturn(perDisplayFocusEnabled).when(mockResources).getBoolean(
+                com.android.internal.R.bool.config_perDisplayFocusEnabled);
+
+        int callingPid = Binder.getCallingPid();
+        int callingUid = Binder.getCallingUid();
+        doReturn(false).when(mWm).checkCallingPermission(anyString(), anyString(), anyBoolean());
+        when(mWm.mAtmService.instrumentationSourceHasPermission(callingPid,
+                android.Manifest.permission.MODIFY_TOUCH_MODE_STATE)).thenReturn(true);
+
+        for (boolean inTouchMode : new boolean[]{true, false}) {
+            mWm.setInTouchModeOnAllDisplays(inTouchMode);
+            for (int i = 0; i < mWm.mRoot.mChildren.size(); ++i) {
+                DisplayContent dc = mWm.mRoot.mChildren.get(i);
+                // All displays that are not already in the desired touch mode are requested to
+                // change their touch mode.
+                if (dc.isInTouchMode() != inTouchMode) {
+                    verify(mWm.mInputManager).setInTouchMode(
+                            true, callingPid, callingUid, /* hasPermission= */ true,
+                            dc.getDisplay().getDisplayId());
+                }
+            }
+        }
+    }
+
+    private VirtualDisplay createVirtualDisplay(boolean ownFocus) {
         // Create virtual display
         Point surfaceSize = new Point(
                 mDefaultDisplay.getDefaultTaskDisplayArea().getBounds().width(),
                 mDefaultDisplay.getDefaultTaskDisplayArea().getBounds().height());
+        int flags = VIRTUAL_DISPLAY_FLAG_PUBLIC;
+        if (ownFocus) {
+            flags |= VIRTUAL_DISPLAY_FLAG_OWN_FOCUS | VIRTUAL_DISPLAY_FLAG_TRUSTED;
+        }
         VirtualDisplay virtualDisplay = mWm.mDisplayManager.createVirtualDisplay("VirtualDisplay",
-                surfaceSize.x, surfaceSize.y,
-                DisplayMetrics.DENSITY_140, new Surface(), VIRTUAL_DISPLAY_FLAG_PUBLIC);
+                surfaceSize.x, surfaceSize.y, DisplayMetrics.DENSITY_140, new Surface(), flags);
         final int displayId = virtualDisplay.getDisplay().getDisplayId();
         mWm.mRoot.onDisplayAdded(displayId);
 

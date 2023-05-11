@@ -18,13 +18,16 @@ package com.android.server.wm.flicker.launch
 
 import android.platform.test.annotations.FlakyTest
 import android.platform.test.annotations.Presubmit
-import android.platform.test.annotations.RequiresDevice
-import com.android.server.wm.flicker.FlickerParametersRunnerFactory
-import com.android.server.wm.flicker.FlickerTestParameter
-import com.android.server.wm.flicker.FlickerTestParameterFactory
-import com.android.server.wm.flicker.dsl.FlickerBuilder
+import android.platform.test.rule.SettingOverrideRule
+import android.provider.Settings
+import android.tools.common.datatypes.component.ComponentNameMatcher
+import android.tools.device.flicker.junit.FlickerParametersRunnerFactory
+import android.tools.device.flicker.legacy.FlickerBuilder
+import android.tools.device.flicker.legacy.FlickerTest
+import android.tools.device.flicker.legacy.FlickerTestFactory
+import androidx.test.filters.RequiresDevice
 import com.android.server.wm.flicker.statusBarLayerPositionAtEnd
-import com.android.server.wm.traces.common.ComponentNameMatcher
+import org.junit.ClassRule
 import org.junit.FixMethodOrder
 import org.junit.Ignore
 import org.junit.Test
@@ -43,8 +46,7 @@ import org.junit.runners.Parameterized
 @RunWith(Parameterized::class)
 @Parameterized.UseParametersRunnerFactory(FlickerParametersRunnerFactory::class)
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
-class OpenAppFromLockNotificationWarm(testSpec: FlickerTestParameter) :
-    OpenAppFromNotificationWarm(testSpec) {
+class OpenAppFromLockNotificationWarm(flicker: FlickerTest) : OpenAppFromNotificationWarm(flicker) {
 
     override val openingNotificationsFromLockScreen = true
 
@@ -70,7 +72,7 @@ class OpenAppFromLockNotificationWarm(testSpec: FlickerTestParameter) :
     @Test
     @Presubmit
     fun appWindowBecomesFirstAndOnlyTopWindow() {
-        testSpec.assertWm {
+        flicker.assertWm {
             this.hasNoVisibleAppWindow()
                 .then()
                 .isAppWindowOnTop(ComponentNameMatcher.SNAPSHOT, isOptional = true)
@@ -85,7 +87,7 @@ class OpenAppFromLockNotificationWarm(testSpec: FlickerTestParameter) :
     @Test
     @Presubmit
     fun screenLockedStart() {
-        testSpec.assertWmStart { isKeyguardShowing() }
+        flicker.assertWmStart { isKeyguardShowing() }
     }
 
     /** {@inheritDoc} */
@@ -108,7 +110,12 @@ class OpenAppFromLockNotificationWarm(testSpec: FlickerTestParameter) :
      * Checks the position of the [ComponentNameMatcher.STATUS_BAR] at the start and end of the
      * transition
      */
-    @Presubmit @Test fun statusBarLayerPositionAtEnd() = testSpec.statusBarLayerPositionAtEnd()
+    @Presubmit @Test fun statusBarLayerPositionAtEnd() = flicker.statusBarLayerPositionAtEnd()
+
+    /** {@inheritDoc} */
+    @Test
+    @Ignore("Not applicable to this CUJ. Display starts locked and app is full screen at the end")
+    override fun navBarWindowIsVisibleAtStartAndEnd() = super.navBarWindowIsVisibleAtStartAndEnd()
 
     /** {@inheritDoc} */
     @Test
@@ -133,13 +140,24 @@ class OpenAppFromLockNotificationWarm(testSpec: FlickerTestParameter) :
         /**
          * Creates the test configurations.
          *
-         * See [FlickerTestParameterFactory.getConfigNonRotationTests] for configuring repetitions,
-         * screen orientation and navigation modes.
+         * See [FlickerTestFactory.nonRotationTests] for configuring screen orientation and
+         * navigation modes.
          */
         @Parameterized.Parameters(name = "{0}")
         @JvmStatic
-        fun getParams(): Collection<FlickerTestParameter> {
-            return FlickerTestParameterFactory.getInstance().getConfigNonRotationTests()
+        fun getParams(): Collection<FlickerTest> {
+            return FlickerTestFactory.nonRotationTests()
         }
+
+        /**
+         * Ensures that posted notifications will be visible on the lockscreen and not
+         * suppressed due to being marked as seen.
+         */
+        @ClassRule
+        @JvmField
+        val disableUnseenNotifFilterRule = SettingOverrideRule(
+            Settings.Secure.LOCK_SCREEN_SHOW_ONLY_UNSEEN_NOTIFICATIONS,
+            /* value= */ "0",
+        )
     }
 }

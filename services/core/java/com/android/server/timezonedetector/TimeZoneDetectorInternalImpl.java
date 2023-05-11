@@ -66,23 +66,24 @@ public final class TimeZoneDetectorInternalImpl implements TimeZoneDetectorInter
     }
 
     @Override
-    public boolean setManualTimeZoneForDpm(@NonNull ManualTimeZoneSuggestion timeZoneSuggestion) {
-        Objects.requireNonNull(timeZoneSuggestion);
+    public boolean setManualTimeZoneForDpm(@NonNull ManualTimeZoneSuggestion suggestion) {
+        Objects.requireNonNull(suggestion);
 
         int currentUserId = mCurrentUserIdentityInjector.getCurrentUserId();
         final boolean bypassUserPolicyChecks = true;
         return mTimeZoneDetectorStrategy.suggestManualTimeZone(
-                currentUserId, timeZoneSuggestion, bypassUserPolicyChecks);
+                currentUserId, suggestion, bypassUserPolicyChecks);
     }
 
     @Override
-    public void suggestGeolocationTimeZone(
-            @NonNull GeolocationTimeZoneSuggestion timeZoneSuggestion) {
-        Objects.requireNonNull(timeZoneSuggestion);
+    public void handleLocationAlgorithmEvent(
+            @NonNull LocationAlgorithmEvent locationAlgorithmEvent) {
+        Objects.requireNonNull(locationAlgorithmEvent);
 
         // This call can take place on the mHandler thread because there is no return value.
         mHandler.post(
-                () -> mTimeZoneDetectorStrategy.suggestGeolocationTimeZone(timeZoneSuggestion));
+                () -> mTimeZoneDetectorStrategy.handleLocationAlgorithmEvent(
+                        locationAlgorithmEvent));
     }
 
     @Override

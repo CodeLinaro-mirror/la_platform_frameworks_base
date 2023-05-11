@@ -100,8 +100,6 @@ public class SettingsBackupTest {
                     Settings.System.MIN_REFRESH_RATE, // depends on hardware capabilities
                     Settings.System.PEAK_REFRESH_RATE, // depends on hardware capabilities
                     Settings.System.SCREEN_BRIGHTNESS_FLOAT,
-                    Settings.System.SCREEN_BRIGHTNESS_FOR_VR,
-                    Settings.System.SCREEN_BRIGHTNESS_FOR_VR_FLOAT,
                     Settings.System.SCREEN_AUTO_BRIGHTNESS_ADJ,
                     Settings.System.MULTI_AUDIO_FOCUS_ENABLED // form-factor/OEM specific
                     );
@@ -133,6 +131,9 @@ public class SettingsBackupTest {
                     Settings.Global.ART_VERIFIER_VERIFY_DEBUGGABLE,
                     Settings.Global.ASSISTED_GPS_ENABLED,
                     Settings.Global.AUDIO_SAFE_VOLUME_STATE,
+                    Settings.Global.AUDIO_SAFE_CSD_CURRENT_VALUE,
+                    Settings.Global.AUDIO_SAFE_CSD_NEXT_WARNING,
+                    Settings.Global.AUDIO_SAFE_CSD_DOSE_RECORDS,
                     Settings.Global.AUTOFILL_LOGGING_LEVEL,
                     Settings.Global.AUTOFILL_MAX_PARTITIONS_SIZE,
                     Settings.Global.AUTOFILL_MAX_VISIBLE_DATASETS,
@@ -265,13 +266,12 @@ public class SettingsBackupTest {
                     Settings.Global.ENABLE_EPHEMERAL_FEATURE,
                     Settings.Global.ENABLE_RESTRICTED_BUCKET,
                     Settings.Global.ENABLE_TARE,
-                    Settings.Global.ENABLE_TARE_ALARM_MANAGER,
-                    Settings.Global.ENABLE_TARE_JOB_SCHEDULER,
                     Settings.Global.DYNAMIC_POWER_SAVINGS_ENABLED,
                     Settings.Global.DYNAMIC_POWER_SAVINGS_DISABLE_THRESHOLD,
                     Settings.Global.SMART_REPLIES_IN_NOTIFICATIONS_FLAGS,
                     Settings.Global.SMART_SUGGESTIONS_IN_NOTIFICATIONS_FLAGS,
                     Settings.Global.STYLUS_HANDWRITING_ENABLED,
+                    Settings.Global.STYLUS_EVER_USED,
                     Settings.Global.ENABLE_ADB_INCREMENTAL_INSTALL_DEFAULT,
                     Settings.Global.ENABLE_MULTI_SLOT_TIMEOUT_MILLIS,
                     Settings.Global.ENHANCED_4G_MODE_ENABLED,
@@ -286,7 +286,6 @@ public class SettingsBackupTest {
                     Settings.Global.FANCY_IME_ANIMATIONS,
                     Settings.Global.ONE_HANDED_KEYGUARD_SIDE,
                     Settings.Global.FORCE_ALLOW_ON_EXTERNAL,
-                    Settings.Global.FORCED_APP_STANDBY_ENABLED,
                     Settings.Global.FORCED_APP_STANDBY_FOR_SMALL_BATTERY_ENABLED,
                     Settings.Global.WIFI_ON_WHEN_PROXY_DISCONNECTED,
                     Settings.Global.FSTRIM_MANDATORY_INTERVAL,
@@ -323,6 +322,7 @@ public class SettingsBackupTest {
                     Settings.Global.LOW_BATTERY_SOUND,
                     Settings.Global.LOW_BATTERY_SOUND_TIMEOUT,
                     Settings.Global.LOW_POWER_MODE,
+                    Settings.Global.EXTRA_LOW_POWER_MODE,
                     Settings.Global.LOW_POWER_MODE_TRIGGER_LEVEL_MAX,
                     Settings.Global.LOW_POWER_MODE_STICKY,
                     Settings.Global.LOW_POWER_MODE_SUGGESTION_PARAMS,
@@ -426,6 +426,7 @@ public class SettingsBackupTest {
                     Settings.Global.RESTRICTED_NETWORKING_MODE,
                     Settings.Global.REQUIRE_PASSWORD_TO_DECRYPT,
                     Settings.Global.SAFE_BOOT_DISALLOWED,
+                    Settings.Global.SECURE_FRP_MODE,
                     Settings.Global.SELINUX_STATUS,
                     Settings.Global.SELINUX_UPDATE_CONTENT_URL,
                     Settings.Global.SELINUX_UPDATE_METADATA_URL,
@@ -645,6 +646,7 @@ public class SettingsBackupTest {
                     Settings.Global.Wearable.ENABLE_ALL_LANGUAGES,
                     Settings.Global.Wearable.SETUP_LOCALE,
                     Settings.Global.Wearable.OEM_SETUP_VERSION,
+                    Settings.Global.Wearable.OEM_SETUP_COMPLETED_STATUS,
                     Settings.Global.Wearable.MASTER_GESTURES_ENABLED,
                     Settings.Global.Wearable.UNGAZE_ENABLED,
                     Settings.Global.Wearable.BURN_IN_PROTECTION_ENABLED,
@@ -658,7 +660,13 @@ public class SettingsBackupTest {
                     Settings.Global.Wearable.SCREEN_UNLOCK_SOUND_ENABLED,
                     Settings.Global.Wearable.BEDTIME_MODE,
                     Settings.Global.Wearable.BEDTIME_HARD_MODE,
-                    Settings.Global.Wearable.EARLY_UPDATES_STATUS);
+                    Settings.Global.Wearable.EARLY_UPDATES_STATUS,
+                    Settings.Global.Wearable.RSB_WAKE_ENABLED,
+                    Settings.Global.Wearable.LOCK_SCREEN_STATE,
+                    Settings.Global.Wearable.ACCESSIBILITY_VIBRATION_WATCH_ENABLED,
+                    Settings.Global.Wearable.ACCESSIBILITY_VIBRATION_WATCH_TYPE,
+                    Settings.Global.Wearable.ACCESSIBILITY_VIBRATION_WATCH_SPEED,
+                    Settings.Global.Wearable.SCREENSHOT_ENABLED);
 
     private static final Set<String> BACKUP_DENY_LIST_SECURE_SETTINGS =
              newHashSet(
@@ -694,6 +702,7 @@ public class SettingsBackupTest {
                  Settings.Secure.BACKUP_AUTO_RESTORE,
                  Settings.Secure.BACKUP_ENABLED,
                  Settings.Secure.BACKUP_PROVISIONED,
+                 Settings.Secure.BACKUP_SCHEDULING_ENABLED,
                  Settings.Secure.BACKUP_TRANSPORT,
                  Settings.Secure.CALL_SCREENING_DEFAULT_COMPONENT,
                  Settings.Secure.CAMERA_LIFT_TRIGGER_ENABLED, // Candidate for backup?
@@ -770,6 +779,7 @@ public class SettingsBackupTest {
                  Settings.Secure.SLEEP_TIMEOUT,
                  Settings.Secure.SMS_DEFAULT_APPLICATION,
                  Settings.Secure.SPELL_CHECKER_ENABLED,  // Intentionally removed in Q
+                 Settings.Secure.STYLUS_BUTTONS_ENABLED,
                  Settings.Secure.TRUST_AGENTS_INITIALIZED,
                  Settings.Secure.KNOWN_TRUST_AGENTS_INITIALIZED,
                  Settings.Secure.TV_APP_USES_NON_SYSTEM_INPUTS,
@@ -791,7 +801,6 @@ public class SettingsBackupTest {
                  Settings.Secure.PARENTAL_CONTROL_REDIRECT_URL,
                  Settings.Secure.BLUETOOTH_ON_WHILE_DRIVING,
                  Settings.Secure.LOW_POWER_MANUAL_ACTIVATION_COUNT,
-                 Settings.Secure.LOW_POWER_WARNING_ACKNOWLEDGED,
                  Settings.Secure.SUPPRESS_AUTO_BATTERY_SAVER_SUGGESTION,
                  Settings.Secure.PACKAGES_TO_CLEAR_DATA_BEFORE_FULL_RESTORE,
                  Settings.Secure.FLASHLIGHT_AVAILABLE,
@@ -884,7 +893,7 @@ public class SettingsBackupTest {
                         Settings.Secure.SHOW_QR_CODE_SCANNER_SETTING,
                         Settings.Secure.SKIP_ACCESSIBILITY_SHORTCUT_DIALOG_TIMEOUT_RESTRICTION,
                         Settings.Secure.SPATIAL_AUDIO_ENABLED,
-                        Settings.Secure.TIMEOUT_TO_USER_ZERO,
+                        Settings.Secure.TIMEOUT_TO_DOCK_USER,
                         Settings.Secure.UI_NIGHT_MODE_LAST_COMPUTED,
                         Settings.Secure.UI_NIGHT_MODE_OVERRIDE_OFF,
                         Settings.Secure.UI_NIGHT_MODE_OVERRIDE_ON);

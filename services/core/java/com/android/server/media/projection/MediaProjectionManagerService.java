@@ -16,6 +16,9 @@
 
 package com.android.server.media.projection;
 
+import static android.app.ActivityManagerInternal.MEDIA_PROJECTION_TOKEN_EVENT_CREATED;
+import static android.app.ActivityManagerInternal.MEDIA_PROJECTION_TOKEN_EVENT_DESTROYED;
+
 import android.Manifest;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -64,7 +67,7 @@ import java.util.Map;
  * The {@link MediaProjectionManagerService} manages the creation and lifetime of MediaProjections,
  * as well as the capabilities they grant. Any service using MediaProjection tokens as permission
  * grants <b>must</b> validate the token before use by calling {@link
- * IMediaProjectionService#isValidMediaProjection}.
+ * IMediaProjectionService#isCurrentProjection}.
  */
 public final class MediaProjectionManagerService extends SystemService
         implements Watchdog.Monitor {
@@ -228,7 +231,7 @@ public final class MediaProjectionManagerService extends SystemService
         mCallbackDelegate.dispatchStop(projection);
     }
 
-    private boolean isValidMediaProjection(IBinder token) {
+    private boolean isCurrentProjection(IBinder token) {
         synchronized (mLock) {
             if (mProjectionToken != null) {
                 return mProjectionToken.equals(token);
@@ -287,19 +290,16 @@ public final class MediaProjectionManagerService extends SystemService
             if (packageName == null || packageName.isEmpty()) {
                 throw new IllegalArgumentException("package name must not be empty");
             }
-
-            final UserHandle callingUser = Binder.getCallingUserHandle();
-            final long callingToken = Binder.clearCallingIdentity();
+            final ApplicationInfo ai;
+            try {
+                ai = mPackageManager.getApplicationInfo(packageName, 0);
+            } catch (NameNotFoundException e) {
+                throw new IllegalArgumentException("No package matching :" + packageName);
+            }
 
             MediaProjection projection;
+            final long callingToken = Binder.clearCallingIdentity();
             try {
-                ApplicationInfo ai;
-                try {
-                    ai = mPackageManager.getApplicationInfoAsUser(packageName, 0, callingUser);
-                } catch (NameNotFoundException e) {
-                    throw new IllegalArgumentException("No package matching :" + packageName);
-                }
-
                 projection = new MediaProjection(type, uid, packageName, ai.targetSdkVersion,
                         ai.isPrivilegedApp());
                 if (isPermanentGrant) {
@@ -313,9 +313,9 @@ public final class MediaProjectionManagerService extends SystemService
         }
 
         @Override // Binder call
-        public boolean isValidMediaProjection(IMediaProjection projection) {
-            return MediaProjectionManagerService.this.isValidMediaProjection(
-                    projection.asBinder());
+        public boolean isCurrentProjection(IMediaProjection projection) {
+            return MediaProjectionManagerService.this.isCurrentProjection(
+                    projection == null ? null : projection.asBinder());
         }
 
         @Override // Binder call
@@ -348,7 +348,46 @@ public final class MediaProjectionManagerService extends SystemService
             } finally {
                 Binder.restoreCallingIdentity(token);
             }
+        }
 
+        @Override // Binder call
+        public void notifyActiveProjectionCapturedContentResized(int width, int height) {
+            if (mContext.checkCallingOrSelfPermission(Manifest.permission.MANAGE_MEDIA_PROJECTION)
+                    != PackageManager.PERMISSION_GRANTED) {
+                throw new SecurityException("Requires MANAGE_MEDIA_PROJECTION in order to notify "
+                        + "on captured content resize");
+            }
+            if (!isCurrentProjection(mProjectionGrant)) {
+                return;
+            }
+            final long token = Binder.clearCallingIdentity();
+            try {
+                if (mProjectionGrant != null && mCallbackDelegate != null) {
+                    mCallbackDelegate.dispatchResize(mProjectionGrant, width, height);
+                }
+            } finally {
+                Binder.restoreCallingIdentity(token);
+            }
+        }
+
+        @Override
+        public void notifyActiveProjectionCapturedContentVisibilityChanged(boolean isVisible) {
+            if (mContext.checkCallingOrSelfPermission(Manifest.permission.MANAGE_MEDIA_PROJECTION)
+                    != PackageManager.PERMISSION_GRANTED) {
+                throw new SecurityException("Requires MANAGE_MEDIA_PROJECTION in order to notify "
+                        + "on captured content resize");
+            }
+            if (!isCurrentProjection(mProjectionGrant)) {
+                return;
+            }
+            final long token = Binder.clearCallingIdentity();
+            try {
+                if (mProjectionGrant != null && mCallbackDelegate != null) {
+                    mCallbackDelegate.dispatchVisibilityChanged(mProjectionGrant, isVisible);
+                }
+            } finally {
+                Binder.restoreCallingIdentity(token);
+            }
         }
 
         @Override //Binder call
@@ -390,8 +429,9 @@ public final class MediaProjectionManagerService extends SystemService
             final long origId = Binder.clearCallingIdentity();
             try {
                 synchronized (mLock) {
-                    if (!isValidMediaProjection(projection)) {
-                        throw new SecurityException("Invalid media projection");
+                    if (!isCurrentProjection(projection)) {
+                        throw new SecurityException("Unable to set ContentRecordingSession on "
+                                + "non-current MediaProjection");
                     }
                     if (!LocalServices.getService(
                             WindowManagerInternal.class).setContentRecordingSession(
@@ -447,6 +487,9 @@ public final class MediaProjectionManagerService extends SystemService
             userHandle = new UserHandle(UserHandle.getUserId(uid));
             mTargetSdkVersion = targetSdkVersion;
             mIsPrivileged = isPrivileged;
+            // TODO(b/267740338): Add unit test.
+            mActivityManagerInternal.notifyMediaProjectionEvent(uid, asBinder(),
+                    MEDIA_PROJECTION_TOKEN_EVENT_CREATED);
         }
 
         @Override // Binder call
@@ -497,7 +540,7 @@ public final class MediaProjectionManagerService extends SystemService
                 throw new IllegalArgumentException("callback must not be null");
             }
             synchronized (mLock) {
-                if (isValidMediaProjection(asBinder())) {
+                if (isCurrentProjection(asBinder())) {
                     Slog.w(TAG, "UID " + Binder.getCallingUid()
                             + " attempted to start already started MediaProjection");
                     return;
@@ -564,7 +607,7 @@ public final class MediaProjectionManagerService extends SystemService
         @Override // Binder call
         public void stop() {
             synchronized (mLock) {
-                if (!isValidMediaProjection(asBinder())) {
+                if (!isCurrentProjection(asBinder())) {
                     Slog.w(TAG, "Attempted to stop inactive MediaProjection "
                             + "(uid=" + Binder.getCallingUid() + ", "
                             + "pid=" + Binder.getCallingPid() + ")");
@@ -593,6 +636,9 @@ public final class MediaProjectionManagerService extends SystemService
                 mToken = null;
                 unregisterCallback(mCallback);
                 mCallback = null;
+                // TODO(b/267740338): Add unit test.
+                mActivityManagerInternal.notifyMediaProjectionEvent(uid, asBinder(),
+                        MEDIA_PROJECTION_TOKEN_EVENT_DESTROYED);
             }
         }
 
@@ -659,9 +705,11 @@ public final class MediaProjectionManagerService extends SystemService
 
     private static class CallbackDelegate {
         private Map<IBinder, IMediaProjectionCallback> mClientCallbacks;
+        // Map from the IBinder token representing the callback, to the callback instance.
+        // Represents the callbacks registered on the client's MediaProjectionManager.
         private Map<IBinder, IMediaProjectionWatcherCallback> mWatcherCallbacks;
         private Handler mHandler;
-        private Object mLock = new Object();
+        private final Object mLock = new Object();
 
         public CallbackDelegate() {
             mHandler = new Handler(Looper.getMainLooper(), null, true /*async*/);
@@ -715,6 +763,8 @@ public final class MediaProjectionManagerService extends SystemService
             }
             synchronized (mLock) {
                 for (IMediaProjectionCallback callback : mClientCallbacks.values()) {
+                    // Notify every callback the client has registered for a particular
+                    // MediaProjection instance.
                     mHandler.post(new ClientStopCallback(callback));
                 }
 
@@ -722,6 +772,64 @@ public final class MediaProjectionManagerService extends SystemService
                     MediaProjectionInfo info = projection.getProjectionInfo();
                     mHandler.post(new WatcherStopCallback(info, callback));
                 }
+            }
+        }
+
+        public void dispatchResize(MediaProjection projection, int width, int height) {
+            if (projection == null) {
+                Slog.e(TAG,
+                        "Tried to dispatch resize notification for a null media projection. "
+                                + "Ignoring!");
+                return;
+            }
+            synchronized (mLock) {
+                // TODO(b/249827847) Currently the service assumes there is only one projection
+                //  at once - need to find the callback for the given projection, when there are
+                //  multiple sessions.
+                for (IMediaProjectionCallback callback : mClientCallbacks.values()) {
+                    mHandler.post(() -> {
+                        try {
+                            // Notify every callback the client has registered for a particular
+                            // MediaProjection instance.
+                            callback.onCapturedContentResize(width, height);
+                        } catch (RemoteException e) {
+                            Slog.w(TAG, "Failed to notify media projection has resized to " + width
+                                    + " x " + height, e);
+                        }
+                    });
+                }
+                // Do not need to notify watcher callback about resize, since watcher callback
+                // is for passing along if recording is still ongoing or not.
+            }
+        }
+
+        public void dispatchVisibilityChanged(MediaProjection projection, boolean isVisible) {
+            if (projection == null) {
+                Slog.e(TAG,
+                        "Tried to dispatch visibility changed notification for a null media "
+                                + "projection. Ignoring!");
+                return;
+            }
+            synchronized (mLock) {
+                // TODO(b/249827847) Currently the service assumes there is only one projection
+                //  at once - need to find the callback for the given projection, when there are
+                //  multiple sessions.
+                for (IMediaProjectionCallback callback : mClientCallbacks.values()) {
+                    mHandler.post(() -> {
+                        try {
+                            // Notify every callback the client has registered for a particular
+                            // MediaProjection instance.
+                            callback.onCapturedContentVisibilityChanged(isVisible);
+                        } catch (RemoteException e) {
+                            Slog.w(TAG,
+                                    "Failed to notify media projection has captured content "
+                                            + "visibility change to "
+                                            + isVisible, e);
+                        }
+                    });
+                }
+                // Do not need to notify watcher callback about visibility changes, since watcher
+                // callback is for passing along if recording is still ongoing or not.
             }
         }
     }

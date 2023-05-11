@@ -18,11 +18,16 @@ package com.android.server.inputmethod;
 
 import static android.view.InputDevice.SOURCE_STYLUS;
 
+import android.Manifest;
 import android.annotation.AnyThread;
+import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.annotation.RequiresPermission;
 import android.annotation.UiThread;
+import android.hardware.input.InputManager;
 import android.os.IBinder;
 import android.os.Looper;
+import android.text.TextUtils;
 import android.util.Slog;
 import android.view.BatchedInputEventReceiver;
 import android.view.Choreographer;
@@ -32,6 +37,8 @@ import android.view.InputEvent;
 import android.view.InputEventReceiver;
 import android.view.MotionEvent;
 import android.view.SurfaceControl;
+import android.view.View;
+import android.view.inputmethod.InputMethodManager;
 
 import com.android.server.LocalServices;
 import com.android.server.input.InputManagerInternal;
@@ -49,6 +56,9 @@ final class HandwritingModeController {
     // TODO(b/210039666): flip the flag.
     static final boolean DEBUG = true;
     private static final int EVENT_BUFFER_SIZE = 100;
+    // A longer event buffer used for handwriting delegation
+    // TODO(b/210039666): make this device touch sampling rate dependent.
+    private static final int LONG_EVENT_BUFFER = EVENT_BUFFER_SIZE * 20;
 
     // This must be the looper for the UiThread.
     private final Looper mLooper;
@@ -60,6 +70,9 @@ final class HandwritingModeController {
     private Runnable mInkWindowInitRunnable;
     private boolean mRecordingGesture;
     private int mCurrentDisplayId;
+    // when set, package names are used for handwriting delegation.
+    private @Nullable String mDelegatePackageName;
+    private @Nullable String mDelegatorPackageName;
 
     private HandwritingEventReceiverSurface mHandwritingSurface;
 
@@ -134,6 +147,41 @@ final class HandwritingModeController {
         return mRecordingGesture;
     }
 
+    boolean hasOngoingStylusHandwritingSession() {
+        return mHandwritingSurface != null && mHandwritingSurface.isIntercepting();
+    }
+
+    /**
+     * Prepare delegation of stylus handwriting to a different editor
+     * @see InputMethodManager#prepareStylusHandwritingDelegation(View, String)
+     */
+    void prepareStylusHandwritingDelegation(
+            @NonNull String delegatePackageName, @NonNull String delegatorPackageName) {
+        mDelegatePackageName = delegatePackageName;
+        mDelegatorPackageName = delegatorPackageName;
+        ((ArrayList) mHandwritingBuffer).ensureCapacity(LONG_EVENT_BUFFER);
+        // TODO(b/210039666): cancel delegation after a timeout or next input method client binding.
+    }
+
+    @Nullable String getDelegatePackageName() {
+        return mDelegatePackageName;
+    }
+
+    @Nullable String getDelegatorPackageName() {
+        return mDelegatorPackageName;
+    }
+
+    /**
+     * Clear any pending handwriting delegation info.
+     */
+    void clearPendingHandwritingDelegation() {
+        if (DEBUG) {
+            Slog.d(TAG, "clearPendingHandwritingDelegation");
+        }
+        mDelegatorPackageName = null;
+        mDelegatePackageName = null;
+    }
+
     /**
      * Starts a {@link HandwritingSession} to transfer to the IME.
      *
@@ -141,6 +189,7 @@ final class HandwritingModeController {
      * input events and disposing the input event receiver.
      * @return the handwriting session to send to the IME, or null if the request was invalid.
      */
+    @RequiresPermission(Manifest.permission.MONITOR_INPUT)
     @UiThread
     @Nullable
     HandwritingSession startHandwritingSession(
@@ -169,7 +218,7 @@ final class HandwritingModeController {
         }
         if (DEBUG) Slog.d(TAG, "Starting handwriting session in display: " + mCurrentDisplayId);
 
-        mInputManagerInternal.pilferPointers(mHandwritingSurface.getInputChannel().getToken());
+        InputManager.getInstance().pilferPointers(mHandwritingSurface.getInputChannel().getToken());
 
         // Stop processing more events.
         mHandwritingEventReceiver.dispose();
@@ -219,6 +268,7 @@ final class HandwritingModeController {
             }
         }
 
+        clearPendingHandwritingDelegation();
         mRecordingGesture = false;
     }
 
@@ -255,7 +305,10 @@ final class HandwritingModeController {
             mInkWindowInitRunnable = null;
         }
 
-        if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+        // If handwriting delegation is ongoing, don't clear the buffer so that multiple strokes
+        // can be buffered across windows.
+        if (TextUtils.isEmpty(mDelegatePackageName)
+                && (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL)) {
             mRecordingGesture = false;
             mHandwritingBuffer.clear();
             return;

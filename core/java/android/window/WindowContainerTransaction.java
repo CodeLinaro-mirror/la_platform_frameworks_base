@@ -16,6 +16,15 @@
 
 package android.window;
 
+import static android.window.TaskFragmentOperation.OP_TYPE_CLEAR_ADJACENT_TASK_FRAGMENTS;
+import static android.window.TaskFragmentOperation.OP_TYPE_CREATE_TASK_FRAGMENT;
+import static android.window.TaskFragmentOperation.OP_TYPE_DELETE_TASK_FRAGMENT;
+import static android.window.TaskFragmentOperation.OP_TYPE_REPARENT_ACTIVITY_TO_TASK_FRAGMENT;
+import static android.window.TaskFragmentOperation.OP_TYPE_REQUEST_FOCUS_ON_TASK_FRAGMENT;
+import static android.window.TaskFragmentOperation.OP_TYPE_SET_ADJACENT_TASK_FRAGMENTS;
+import static android.window.TaskFragmentOperation.OP_TYPE_SET_COMPANION_TASK_FRAGMENT;
+import static android.window.TaskFragmentOperation.OP_TYPE_START_ACTIVITY_IN_TASK_FRAGMENT;
+
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.TestApi;
@@ -297,6 +306,25 @@ public final class WindowContainerTransaction implements Parcelable {
     }
 
     /**
+     * Resizes a container by providing a bounds in its parent coordinate.
+     * This is only used by {@link TaskFragmentOrganizer}.
+     */
+    @NonNull
+    public WindowContainerTransaction setRelativeBounds(
+            @NonNull WindowContainerToken container, @NonNull Rect relBounds) {
+        Change chg = getOrCreateChange(container.asBinder());
+        if (chg.mRelativeBounds == null) {
+            chg.mRelativeBounds = new Rect();
+        }
+        chg.mRelativeBounds.set(relBounds);
+        chg.mChangeMask |= Change.CHANGE_RELATIVE_BOUNDS;
+        // Bounds will be overridden.
+        chg.mConfigSetMask |= ActivityInfo.CONFIG_WINDOW_CONFIGURATION;
+        chg.mWindowSetMask |= WindowConfiguration.WINDOW_CONFIG_BOUNDS;
+        return this;
+    }
+
+    /**
      * Reparents a container into another one. The effect of a {@code null} parent can vary. For
      * example, reparenting a stack to {@code null} will reparent it to its display.
      *
@@ -454,6 +482,23 @@ public final class WindowContainerTransaction implements Parcelable {
     }
 
     /**
+     * Sets whether a container is being drag-resized.
+     * When {@code true}, the client will reuse a single (larger) surface size to avoid
+     * continuous allocations on every size change.
+     *
+     * @param container WindowContainerToken of the task that changed its drag resizing state
+     * @hide
+     */
+    @NonNull
+    public WindowContainerTransaction setDragResizing(@NonNull WindowContainerToken container,
+            boolean dragResizing) {
+        final Change change = getOrCreateChange(container.asBinder());
+        change.mChangeMask |= Change.CHANGE_DRAG_RESIZING;
+        change.mDragResizing = dragResizing;
+        return this;
+    }
+
+    /**
      * Sends a pending intent in sync.
      * @param sender The PendingIntent sender.
      * @param intent The fillIn intent to patch over the sender's base intent.
@@ -488,32 +533,29 @@ public final class WindowContainerTransaction implements Parcelable {
 
     /**
      * Creates a new TaskFragment with the given options.
-     * @param taskFragmentOptions the options used to create the TaskFragment.
+     * @param taskFragmentCreationParams the options used to create the TaskFragment.
      */
     @NonNull
     public WindowContainerTransaction createTaskFragment(
-            @NonNull TaskFragmentCreationParams taskFragmentOptions) {
-        final HierarchyOp hierarchyOp =
-                new HierarchyOp.Builder(HierarchyOp.HIERARCHY_OP_TYPE_CREATE_TASK_FRAGMENT)
-                        .setTaskFragmentCreationOptions(taskFragmentOptions)
-                        .build();
-        mHierarchyOps.add(hierarchyOp);
-        return this;
+            @NonNull TaskFragmentCreationParams taskFragmentCreationParams) {
+        final TaskFragmentOperation operation = new TaskFragmentOperation.Builder(
+                OP_TYPE_CREATE_TASK_FRAGMENT)
+                .setTaskFragmentCreationParams(taskFragmentCreationParams)
+                .build();
+        return addTaskFragmentOperation(taskFragmentCreationParams.getFragmentToken(), operation);
     }
 
     /**
      * Deletes an existing TaskFragment. Any remaining activities below it will be destroyed.
-     * @param taskFragment  the TaskFragment to be removed.
+     * @param fragmentToken client assigned unique token to create TaskFragment with specified in
+     *                      {@link TaskFragmentCreationParams#getFragmentToken()}.
      */
     @NonNull
-    public WindowContainerTransaction deleteTaskFragment(
-            @NonNull WindowContainerToken taskFragment) {
-        final HierarchyOp hierarchyOp =
-                new HierarchyOp.Builder(HierarchyOp.HIERARCHY_OP_TYPE_DELETE_TASK_FRAGMENT)
-                        .setContainer(taskFragment.asBinder())
-                        .build();
-        mHierarchyOps.add(hierarchyOp);
-        return this;
+    public WindowContainerTransaction deleteTaskFragment(@NonNull IBinder fragmentToken) {
+        final TaskFragmentOperation operation = new TaskFragmentOperation.Builder(
+                OP_TYPE_DELETE_TASK_FRAGMENT)
+                .build();
+        return addTaskFragmentOperation(fragmentToken, operation);
     }
 
     /**
@@ -529,16 +571,13 @@ public final class WindowContainerTransaction implements Parcelable {
     public WindowContainerTransaction startActivityInTaskFragment(
             @NonNull IBinder fragmentToken, @NonNull IBinder callerToken,
             @NonNull Intent activityIntent, @Nullable Bundle activityOptions) {
-        final HierarchyOp hierarchyOp =
-                new HierarchyOp.Builder(
-                        HierarchyOp.HIERARCHY_OP_TYPE_START_ACTIVITY_IN_TASK_FRAGMENT)
-                        .setContainer(fragmentToken)
-                        .setReparentContainer(callerToken)
-                        .setActivityIntent(activityIntent)
-                        .setLaunchOptions(activityOptions)
-                        .build();
-        mHierarchyOps.add(hierarchyOp);
-        return this;
+        final TaskFragmentOperation operation = new TaskFragmentOperation.Builder(
+                OP_TYPE_START_ACTIVITY_IN_TASK_FRAGMENT)
+                .setActivityToken(callerToken)
+                .setActivityIntent(activityIntent)
+                .setBundle(activityOptions)
+                .build();
+        return addTaskFragmentOperation(fragmentToken, operation);
     }
 
     /**
@@ -550,33 +589,11 @@ public final class WindowContainerTransaction implements Parcelable {
     @NonNull
     public WindowContainerTransaction reparentActivityToTaskFragment(
             @NonNull IBinder fragmentToken, @NonNull IBinder activityToken) {
-        final HierarchyOp hierarchyOp =
-                new HierarchyOp.Builder(
-                        HierarchyOp.HIERARCHY_OP_TYPE_REPARENT_ACTIVITY_TO_TASK_FRAGMENT)
-                        .setReparentContainer(fragmentToken)
-                        .setContainer(activityToken)
-                        .build();
-        mHierarchyOps.add(hierarchyOp);
-        return this;
-    }
-
-    /**
-     * Reparents all children of one TaskFragment to another.
-     * @param oldParent children of this TaskFragment will be reparented.
-     * @param newParent the new parent TaskFragment to move the children to. If {@code null}, the
-     *                  children will be moved to the leaf Task.
-     */
-    @NonNull
-    public WindowContainerTransaction reparentChildren(
-            @NonNull WindowContainerToken oldParent,
-            @Nullable WindowContainerToken newParent) {
-        final HierarchyOp hierarchyOp =
-                new HierarchyOp.Builder(HierarchyOp.HIERARCHY_OP_TYPE_REPARENT_CHILDREN)
-                        .setContainer(oldParent.asBinder())
-                        .setReparentContainer(newParent != null ? newParent.asBinder() : null)
-                        .build();
-        mHierarchyOps.add(hierarchyOp);
-        return this;
+        final TaskFragmentOperation operation = new TaskFragmentOperation.Builder(
+                OP_TYPE_REPARENT_ACTIVITY_TO_TASK_FRAGMENT)
+                .setActivityToken(activityToken)
+                .build();
+        return addTaskFragmentOperation(fragmentToken, operation);
     }
 
     /**
@@ -585,25 +602,36 @@ public final class WindowContainerTransaction implements Parcelable {
      * {@link #setAdjacentRoots(WindowContainerToken, WindowContainerToken)}, but can be used with
      * fragmentTokens when that TaskFragments haven't been created (but will be created in the same
      * {@link WindowContainerTransaction}).
-     * To reset it, pass {@code null} for {@code fragmentToken2}.
      * @param fragmentToken1    client assigned unique token to create TaskFragment with specified
      *                          in {@link TaskFragmentCreationParams#getFragmentToken()}.
      * @param fragmentToken2    client assigned unique token to create TaskFragment with specified
-     *                          in {@link TaskFragmentCreationParams#getFragmentToken()}. If it is
-     *                          {@code null}, the transaction will reset the adjacent TaskFragment.
+     *                          in {@link TaskFragmentCreationParams#getFragmentToken()}.
      */
     @NonNull
     public WindowContainerTransaction setAdjacentTaskFragments(
-            @NonNull IBinder fragmentToken1, @Nullable IBinder fragmentToken2,
+            @NonNull IBinder fragmentToken1, @NonNull IBinder fragmentToken2,
             @Nullable TaskFragmentAdjacentParams params) {
-        final HierarchyOp hierarchyOp =
-                new HierarchyOp.Builder(HierarchyOp.HIERARCHY_OP_TYPE_SET_ADJACENT_TASK_FRAGMENTS)
-                        .setContainer(fragmentToken1)
-                        .setReparentContainer(fragmentToken2)
-                        .setLaunchOptions(params != null ? params.toBundle() : null)
-                        .build();
-        mHierarchyOps.add(hierarchyOp);
-        return this;
+        final TaskFragmentOperation operation = new TaskFragmentOperation.Builder(
+                OP_TYPE_SET_ADJACENT_TASK_FRAGMENTS)
+                .setSecondaryFragmentToken(fragmentToken2)
+                .setBundle(params != null ? params.toBundle() : null)
+                .build();
+        return addTaskFragmentOperation(fragmentToken1, operation);
+    }
+
+    /**
+     * Clears the adjacent TaskFragments relationship that is previously set through
+     * {@link #setAdjacentTaskFragments}. Clear operation on one TaskFragment will also clear its
+     * current adjacent TaskFragment's.
+     * @param fragmentToken     client assigned unique token to create TaskFragment with specified
+     *                          in {@link TaskFragmentCreationParams#getFragmentToken()}.
+     */
+    @NonNull
+    public WindowContainerTransaction clearAdjacentTaskFragments(@NonNull IBinder fragmentToken) {
+        final TaskFragmentOperation operation = new TaskFragmentOperation.Builder(
+                OP_TYPE_CLEAR_ADJACENT_TASK_FRAGMENTS)
+                .build();
+        return addTaskFragmentOperation(fragmentToken, operation);
     }
 
     /**
@@ -683,14 +711,10 @@ public final class WindowContainerTransaction implements Parcelable {
      */
     @NonNull
     public WindowContainerTransaction requestFocusOnTaskFragment(@NonNull IBinder fragmentToken) {
-        final HierarchyOp hierarchyOp =
-                new HierarchyOp.Builder(
-                        HierarchyOp.HIERARCHY_OP_TYPE_REQUEST_FOCUS_ON_TASK_FRAGMENT)
-                        .setContainer(fragmentToken)
-                        .build();
-        mHierarchyOps.add(hierarchyOp);
-        return this;
-
+        final TaskFragmentOperation operation = new TaskFragmentOperation.Builder(
+                OP_TYPE_REQUEST_FOCUS_ON_TASK_FRAGMENT)
+                .build();
+        return addTaskFragmentOperation(fragmentToken, operation);
     }
 
     /**
@@ -705,6 +729,55 @@ public final class WindowContainerTransaction implements Parcelable {
                 new HierarchyOp.Builder(
                         HierarchyOp.HIERARCHY_OP_TYPE_FINISH_ACTIVITY)
                         .setContainer(activityToken)
+                        .build();
+        mHierarchyOps.add(hierarchyOp);
+        return this;
+    }
+
+    /**
+     * Sets the TaskFragment {@code fragmentToken} to have a companion TaskFragment
+     * {@code companionFragmentToken}.
+     * This indicates that the organizer will remove the TaskFragment when the companion
+     * TaskFragment is removed.
+     *
+     * @param fragmentToken client assigned unique token to create TaskFragment with specified
+     *                      in {@link TaskFragmentCreationParams#getFragmentToken()}.
+     * @param companionFragmentToken client assigned unique token to create TaskFragment with
+     *                               specified in
+     *                               {@link TaskFragmentCreationParams#getFragmentToken()}.
+     *                               If it is {@code null}, the transaction will reset the companion
+     *                               TaskFragment.
+     * @hide
+     */
+    @NonNull
+    public WindowContainerTransaction setCompanionTaskFragment(@NonNull IBinder fragmentToken,
+            @Nullable IBinder companionFragmentToken) {
+        final TaskFragmentOperation operation = new TaskFragmentOperation.Builder(
+                OP_TYPE_SET_COMPANION_TASK_FRAGMENT)
+                .setSecondaryFragmentToken(companionFragmentToken)
+                .build();
+        return addTaskFragmentOperation(fragmentToken, operation);
+    }
+
+    /**
+     * Adds a {@link TaskFragmentOperation} to apply to the given TaskFragment.
+     *
+     * @param fragmentToken client assigned unique token to create TaskFragment with specified in
+     *                      {@link TaskFragmentCreationParams#getFragmentToken()}.
+     * @param taskFragmentOperation the {@link TaskFragmentOperation} to apply to the given
+     *                              TaskFramgent.
+     * @hide
+     */
+    @NonNull
+    public WindowContainerTransaction addTaskFragmentOperation(@NonNull IBinder fragmentToken,
+            @NonNull TaskFragmentOperation taskFragmentOperation) {
+        Objects.requireNonNull(fragmentToken);
+        Objects.requireNonNull(taskFragmentOperation);
+        final HierarchyOp hierarchyOp =
+                new HierarchyOp.Builder(
+                        HierarchyOp.HIERARCHY_OP_TYPE_ADD_TASK_FRAGMENT_OPERATION)
+                        .setContainer(fragmentToken)
+                        .setTaskFragmentOperation(taskFragmentOperation)
                         .build();
         mHierarchyOps.add(hierarchyOp);
         return this;
@@ -771,6 +844,38 @@ public final class WindowContainerTransaction implements Parcelable {
     public WindowContainerTransaction setTaskFragmentOrganizer(
             @NonNull ITaskFragmentOrganizer organizer) {
         mTaskFragmentOrganizer = organizer;
+        return this;
+    }
+
+    /**
+     * Clears container adjacent.
+     * @param root the root container to clear the adjacent roots for.
+     * @hide
+     */
+    @NonNull
+    public WindowContainerTransaction clearAdjacentRoots(
+            @NonNull WindowContainerToken root) {
+        mHierarchyOps.add(HierarchyOp.createForClearAdjacentRoots(root.asBinder()));
+        return this;
+    }
+
+    /**
+     * Sets/removes the reparent leaf task flag for this {@code windowContainer}.
+     * When this is set, the server side will try to reparent the leaf task to task display area
+     * if there is an existing activity in history during the activity launch. This operation only
+     * support on the organized root task.
+     * @hide
+     */
+    @NonNull
+    public WindowContainerTransaction setReparentLeafTaskIfRelaunch(
+            @NonNull WindowContainerToken windowContainer, boolean reparentLeafTaskIfRelaunch) {
+        final HierarchyOp hierarchyOp =
+                new HierarchyOp.Builder(
+                        HierarchyOp.HIERARCHY_OP_TYPE_SET_REPARENT_LEAF_TASK_IF_RELAUNCH)
+                        .setContainer(windowContainer.asBinder())
+                        .setReparentLeafTaskIfRelaunch(reparentLeafTaskIfRelaunch)
+                        .build();
+        mHierarchyOps.add(hierarchyOp);
         return this;
     }
 
@@ -853,7 +958,6 @@ public final class WindowContainerTransaction implements Parcelable {
     }
 
     @Override
-    /** @hide */
     public void writeToParcel(@NonNull Parcel dest, int flags) {
         dest.writeMap(mChanges);
         dest.writeTypedList(mHierarchyOps);
@@ -862,7 +966,6 @@ public final class WindowContainerTransaction implements Parcelable {
     }
 
     @Override
-    /** @hide */
     public int describeContents() {
         return 0;
     }
@@ -894,12 +997,15 @@ public final class WindowContainerTransaction implements Parcelable {
         public static final int CHANGE_IGNORE_ORIENTATION_REQUEST = 1 << 5;
         public static final int CHANGE_FORCE_NO_PIP = 1 << 6;
         public static final int CHANGE_FORCE_TRANSLUCENT = 1 << 7;
+        public static final int CHANGE_DRAG_RESIZING = 1 << 8;
+        public static final int CHANGE_RELATIVE_BOUNDS = 1 << 9;
 
         private final Configuration mConfiguration = new Configuration();
         private boolean mFocusable = true;
         private boolean mHidden = false;
         private boolean mIgnoreOrientationRequest = false;
         private boolean mForceTranslucent = false;
+        private boolean mDragResizing = false;
 
         private int mChangeMask = 0;
         private @ActivityInfo.Config int mConfigSetMask = 0;
@@ -908,6 +1014,8 @@ public final class WindowContainerTransaction implements Parcelable {
         private Rect mPinnedBounds = null;
         private SurfaceControl.Transaction mBoundsChangeTransaction = null;
         private Rect mBoundsChangeSurfaceBounds = null;
+        @Nullable
+        private Rect mRelativeBounds = null;
 
         private int mActivityWindowingMode = -1;
         private int mWindowingMode = -1;
@@ -920,6 +1028,7 @@ public final class WindowContainerTransaction implements Parcelable {
             mHidden = in.readBoolean();
             mIgnoreOrientationRequest = in.readBoolean();
             mForceTranslucent = in.readBoolean();
+            mDragResizing = in.readBoolean();
             mChangeMask = in.readInt();
             mConfigSetMask = in.readInt();
             mWindowSetMask = in.readInt();
@@ -934,6 +1043,10 @@ public final class WindowContainerTransaction implements Parcelable {
             if ((mChangeMask & Change.CHANGE_BOUNDS_TRANSACTION_RECT) != 0) {
                 mBoundsChangeSurfaceBounds = new Rect();
                 mBoundsChangeSurfaceBounds.readFromParcel(in);
+            }
+            if ((mChangeMask & Change.CHANGE_RELATIVE_BOUNDS) != 0) {
+                mRelativeBounds = new Rect();
+                mRelativeBounds.readFromParcel(in);
             }
 
             mWindowingMode = in.readInt();
@@ -968,6 +1081,9 @@ public final class WindowContainerTransaction implements Parcelable {
             if ((other.mChangeMask & CHANGE_FORCE_TRANSLUCENT) != 0) {
                 mForceTranslucent = other.mForceTranslucent;
             }
+            if ((other.mChangeMask & CHANGE_DRAG_RESIZING) != 0) {
+                mDragResizing = other.mDragResizing;
+            }
             mChangeMask |= other.mChangeMask;
             if (other.mActivityWindowingMode >= 0) {
                 mActivityWindowingMode = other.mActivityWindowingMode;
@@ -978,6 +1094,11 @@ public final class WindowContainerTransaction implements Parcelable {
             if (other.mBoundsChangeSurfaceBounds != null) {
                 mBoundsChangeSurfaceBounds = transfer ? other.mBoundsChangeSurfaceBounds
                         : new Rect(other.mBoundsChangeSurfaceBounds);
+            }
+            if (other.mRelativeBounds != null) {
+                mRelativeBounds = transfer
+                        ? other.mRelativeBounds
+                        : new Rect(other.mRelativeBounds);
             }
         }
 
@@ -1027,6 +1148,15 @@ public final class WindowContainerTransaction implements Parcelable {
             return mForceTranslucent;
         }
 
+        /** Gets the requested drag resizing state. */
+        public boolean getDragResizing() {
+            if ((mChangeMask & CHANGE_DRAG_RESIZING) == 0) {
+                throw new RuntimeException("Drag resizing not set. "
+                        + "Check CHANGE_DRAG_RESIZING first");
+            }
+            return mDragResizing;
+        }
+
         public int getChangeMask() {
             return mChangeMask;
         }
@@ -1055,6 +1185,11 @@ public final class WindowContainerTransaction implements Parcelable {
 
         public Rect getBoundsChangeSurfaceBounds() {
             return mBoundsChangeSurfaceBounds;
+        }
+
+        @Nullable
+        public Rect getRelativeBounds() {
+            return mRelativeBounds;
         }
 
         @Override
@@ -1088,11 +1223,17 @@ public final class WindowContainerTransaction implements Parcelable {
             if ((mChangeMask & CHANGE_FOCUSABLE) != 0) {
                 sb.append("focusable:" + mFocusable + ",");
             }
+            if ((mChangeMask & CHANGE_DRAG_RESIZING) != 0) {
+                sb.append("dragResizing:" + mDragResizing + ",");
+            }
             if (mBoundsChangeTransaction != null) {
                 sb.append("hasBoundsTransaction,");
             }
             if ((mChangeMask & CHANGE_IGNORE_ORIENTATION_REQUEST) != 0) {
                 sb.append("ignoreOrientationRequest:" + mIgnoreOrientationRequest + ",");
+            }
+            if ((mChangeMask & CHANGE_RELATIVE_BOUNDS) != 0) {
+                sb.append("relativeBounds:").append(mRelativeBounds).append(",");
             }
             sb.append("}");
             return sb.toString();
@@ -1105,6 +1246,7 @@ public final class WindowContainerTransaction implements Parcelable {
             dest.writeBoolean(mHidden);
             dest.writeBoolean(mIgnoreOrientationRequest);
             dest.writeBoolean(mForceTranslucent);
+            dest.writeBoolean(mDragResizing);
             dest.writeInt(mChangeMask);
             dest.writeInt(mConfigSetMask);
             dest.writeInt(mWindowSetMask);
@@ -1117,6 +1259,9 @@ public final class WindowContainerTransaction implements Parcelable {
             }
             if (mBoundsChangeSurfaceBounds != null) {
                 mBoundsChangeSurfaceBounds.writeToParcel(dest, flags);
+            }
+            if (mRelativeBounds != null) {
+                mRelativeBounds.writeToParcel(dest, flags);
             }
 
             dest.writeInt(mWindowingMode);
@@ -1154,21 +1299,17 @@ public final class WindowContainerTransaction implements Parcelable {
         public static final int HIERARCHY_OP_TYPE_SET_ADJACENT_ROOTS = 4;
         public static final int HIERARCHY_OP_TYPE_LAUNCH_TASK = 5;
         public static final int HIERARCHY_OP_TYPE_SET_LAUNCH_ADJACENT_FLAG_ROOT = 6;
-        public static final int HIERARCHY_OP_TYPE_CREATE_TASK_FRAGMENT = 7;
-        public static final int HIERARCHY_OP_TYPE_DELETE_TASK_FRAGMENT = 8;
-        public static final int HIERARCHY_OP_TYPE_START_ACTIVITY_IN_TASK_FRAGMENT = 9;
-        public static final int HIERARCHY_OP_TYPE_REPARENT_ACTIVITY_TO_TASK_FRAGMENT = 10;
-        public static final int HIERARCHY_OP_TYPE_REPARENT_CHILDREN = 11;
-        public static final int HIERARCHY_OP_TYPE_PENDING_INTENT = 12;
-        public static final int HIERARCHY_OP_TYPE_SET_ADJACENT_TASK_FRAGMENTS = 13;
-        public static final int HIERARCHY_OP_TYPE_START_SHORTCUT = 14;
-        public static final int HIERARCHY_OP_TYPE_RESTORE_TRANSIENT_ORDER = 15;
-        public static final int HIERARCHY_OP_TYPE_ADD_RECT_INSETS_PROVIDER = 16;
-        public static final int HIERARCHY_OP_TYPE_REMOVE_INSETS_PROVIDER = 17;
-        public static final int HIERARCHY_OP_TYPE_REQUEST_FOCUS_ON_TASK_FRAGMENT = 18;
-        public static final int HIERARCHY_OP_TYPE_SET_ALWAYS_ON_TOP = 19;
-        public static final int HIERARCHY_OP_TYPE_REMOVE_TASK = 20;
-        public static final int HIERARCHY_OP_TYPE_FINISH_ACTIVITY = 21;
+        public static final int HIERARCHY_OP_TYPE_PENDING_INTENT = 7;
+        public static final int HIERARCHY_OP_TYPE_START_SHORTCUT = 8;
+        public static final int HIERARCHY_OP_TYPE_RESTORE_TRANSIENT_ORDER = 9;
+        public static final int HIERARCHY_OP_TYPE_ADD_RECT_INSETS_PROVIDER = 10;
+        public static final int HIERARCHY_OP_TYPE_REMOVE_INSETS_PROVIDER = 11;
+        public static final int HIERARCHY_OP_TYPE_SET_ALWAYS_ON_TOP = 12;
+        public static final int HIERARCHY_OP_TYPE_REMOVE_TASK = 13;
+        public static final int HIERARCHY_OP_TYPE_FINISH_ACTIVITY = 14;
+        public static final int HIERARCHY_OP_TYPE_CLEAR_ADJACENT_ROOTS = 15;
+        public static final int HIERARCHY_OP_TYPE_SET_REPARENT_LEAF_TASK_IF_RELAUNCH = 16;
+        public static final int HIERARCHY_OP_TYPE_ADD_TASK_FRAGMENT_OPERATION = 17;
 
         // The following key(s) are for use with mLaunchOptions:
         // When launching a task (eg. from recents), this is the taskId to be launched.
@@ -1209,9 +1350,9 @@ public final class WindowContainerTransaction implements Parcelable {
         @Nullable
         private Intent mActivityIntent;
 
-        // Used as options for WindowContainerTransaction#createTaskFragment().
+        /** Used as options for {@link #addTaskFragmentOperation}. */
         @Nullable
-        private TaskFragmentCreationParams mTaskFragmentCreationOptions;
+        private TaskFragmentOperation mTaskFragmentOperation;
 
         @Nullable
         private PendingIntent mPendingIntent;
@@ -1220,6 +1361,8 @@ public final class WindowContainerTransaction implements Parcelable {
         private ShortcutInfo mShortcutInfo;
 
         private boolean mAlwaysOnTop;
+
+        private boolean mReparentLeafTaskIfRelaunch;
 
         public static HierarchyOp createForReparent(
                 @NonNull IBinder container, @Nullable IBinder reparent, boolean toTop) {
@@ -1305,6 +1448,13 @@ public final class WindowContainerTransaction implements Parcelable {
                     .build();
         }
 
+        /** Create a hierarchy op for clearing adjacent root tasks. */
+        public static HierarchyOp createForClearAdjacentRoots(@NonNull IBinder root) {
+            return new HierarchyOp.Builder(HIERARCHY_OP_TYPE_CLEAR_ADJACENT_ROOTS)
+                    .setContainer(root)
+                    .build();
+        }
+
         /** Only creates through {@link Builder}. */
         private HierarchyOp(int type) {
             mType = type;
@@ -1322,10 +1472,11 @@ public final class WindowContainerTransaction implements Parcelable {
             mActivityTypes = copy.mActivityTypes;
             mLaunchOptions = copy.mLaunchOptions;
             mActivityIntent = copy.mActivityIntent;
-            mTaskFragmentCreationOptions = copy.mTaskFragmentCreationOptions;
+            mTaskFragmentOperation = copy.mTaskFragmentOperation;
             mPendingIntent = copy.mPendingIntent;
             mShortcutInfo = copy.mShortcutInfo;
             mAlwaysOnTop = copy.mAlwaysOnTop;
+            mReparentLeafTaskIfRelaunch = copy.mReparentLeafTaskIfRelaunch;
         }
 
         protected HierarchyOp(Parcel in) {
@@ -1344,10 +1495,11 @@ public final class WindowContainerTransaction implements Parcelable {
             mActivityTypes = in.createIntArray();
             mLaunchOptions = in.readBundle();
             mActivityIntent = in.readTypedObject(Intent.CREATOR);
-            mTaskFragmentCreationOptions = in.readTypedObject(TaskFragmentCreationParams.CREATOR);
+            mTaskFragmentOperation = in.readTypedObject(TaskFragmentOperation.CREATOR);
             mPendingIntent = in.readTypedObject(PendingIntent.CREATOR);
             mShortcutInfo = in.readTypedObject(ShortcutInfo.CREATOR);
             mAlwaysOnTop = in.readBoolean();
+            mReparentLeafTaskIfRelaunch = in.readBoolean();
         }
 
         public int getType() {
@@ -1382,11 +1534,6 @@ public final class WindowContainerTransaction implements Parcelable {
             return mReparent;
         }
 
-        @NonNull
-        public IBinder getCallingActivity() {
-            return mReparent;
-        }
-
         public boolean getToTop() {
             return mToTop;
         }
@@ -1417,9 +1564,13 @@ public final class WindowContainerTransaction implements Parcelable {
             return mAlwaysOnTop;
         }
 
+        public boolean isReparentLeafTaskIfRelaunch() {
+            return mReparentLeafTaskIfRelaunch;
+        }
+
         @Nullable
-        public TaskFragmentCreationParams getTaskFragmentCreationOptions() {
-            return mTaskFragmentCreationOptions;
+        public TaskFragmentOperation getTaskFragmentOperation() {
+            return mTaskFragmentOperation;
         }
 
         @Nullable
@@ -1457,22 +1608,6 @@ public final class WindowContainerTransaction implements Parcelable {
                 case HIERARCHY_OP_TYPE_SET_LAUNCH_ADJACENT_FLAG_ROOT:
                     return "{SetAdjacentFlagRoot: container=" + mContainer + " clearRoot=" + mToTop
                             + "}";
-                case HIERARCHY_OP_TYPE_CREATE_TASK_FRAGMENT:
-                    return "{CreateTaskFragment: options=" + mTaskFragmentCreationOptions + "}";
-                case HIERARCHY_OP_TYPE_DELETE_TASK_FRAGMENT:
-                    return "{DeleteTaskFragment: taskFragment=" + mContainer + "}";
-                case HIERARCHY_OP_TYPE_START_ACTIVITY_IN_TASK_FRAGMENT:
-                    return "{StartActivityInTaskFragment: fragmentToken=" + mContainer + " intent="
-                            + mActivityIntent + " options=" + mLaunchOptions + "}";
-                case HIERARCHY_OP_TYPE_REPARENT_ACTIVITY_TO_TASK_FRAGMENT:
-                    return "{ReparentActivityToTaskFragment: fragmentToken=" + mReparent
-                            + " activity=" + mContainer + "}";
-                case HIERARCHY_OP_TYPE_REPARENT_CHILDREN:
-                    return "{ReparentChildren: oldParent=" + mContainer + " newParent=" + mReparent
-                            + "}";
-                case HIERARCHY_OP_TYPE_SET_ADJACENT_TASK_FRAGMENTS:
-                    return "{SetAdjacentTaskFragments: container=" + mContainer
-                            + " adjacentContainer=" + mReparent + "}";
                 case HIERARCHY_OP_TYPE_START_SHORTCUT:
                     return "{StartShortcut: options=" + mLaunchOptions + " info=" + mShortcutInfo
                             + "}";
@@ -1483,8 +1618,6 @@ public final class WindowContainerTransaction implements Parcelable {
                 case HIERARCHY_OP_TYPE_REMOVE_INSETS_PROVIDER:
                     return "{removeLocalInsetsProvider: container=" + mContainer
                             + " insetsType=" + Arrays.toString(mInsetsTypes) + "}";
-                case HIERARCHY_OP_TYPE_REQUEST_FOCUS_ON_TASK_FRAGMENT:
-                    return "{requestFocusOnTaskFragment: container=" + mContainer + "}";
                 case HIERARCHY_OP_TYPE_SET_ALWAYS_ON_TOP:
                     return "{setAlwaysOnTop: container=" + mContainer
                             + " alwaysOnTop=" + mAlwaysOnTop + "}";
@@ -1492,6 +1625,14 @@ public final class WindowContainerTransaction implements Parcelable {
                     return "{RemoveTask: task=" + mContainer + "}";
                 case HIERARCHY_OP_TYPE_FINISH_ACTIVITY:
                     return "{finishActivity: activity=" + mContainer + "}";
+                case HIERARCHY_OP_TYPE_CLEAR_ADJACENT_ROOTS:
+                    return "{ClearAdjacentRoot: container=" + mContainer + "}";
+                case HIERARCHY_OP_TYPE_SET_REPARENT_LEAF_TASK_IF_RELAUNCH:
+                    return "{setReparentLeafTaskIfRelaunch: container= " + mContainer
+                            + " reparentLeafTaskIfRelaunch= " + mReparentLeafTaskIfRelaunch + "}";
+                case HIERARCHY_OP_TYPE_ADD_TASK_FRAGMENT_OPERATION:
+                    return "{addTaskFragmentOperation: fragmentToken= " + mContainer
+                            + " operation= " + mTaskFragmentOperation + "}";
                 default:
                     return "{mType=" + mType + " container=" + mContainer + " reparent=" + mReparent
                             + " mToTop=" + mToTop
@@ -1518,10 +1659,11 @@ public final class WindowContainerTransaction implements Parcelable {
             dest.writeIntArray(mActivityTypes);
             dest.writeBundle(mLaunchOptions);
             dest.writeTypedObject(mActivityIntent, flags);
-            dest.writeTypedObject(mTaskFragmentCreationOptions, flags);
+            dest.writeTypedObject(mTaskFragmentOperation, flags);
             dest.writeTypedObject(mPendingIntent, flags);
             dest.writeTypedObject(mShortcutInfo, flags);
             dest.writeBoolean(mAlwaysOnTop);
+            dest.writeBoolean(mReparentLeafTaskIfRelaunch);
         }
 
         @Override
@@ -1572,7 +1714,7 @@ public final class WindowContainerTransaction implements Parcelable {
             private Intent mActivityIntent;
 
             @Nullable
-            private TaskFragmentCreationParams mTaskFragmentCreationOptions;
+            private TaskFragmentOperation mTaskFragmentOperation;
 
             @Nullable
             private PendingIntent mPendingIntent;
@@ -1581,6 +1723,8 @@ public final class WindowContainerTransaction implements Parcelable {
             private ShortcutInfo mShortcutInfo;
 
             private boolean mAlwaysOnTop;
+
+            private boolean mReparentLeafTaskIfRelaunch;
 
             Builder(int type) {
                 mType = type;
@@ -1646,9 +1790,14 @@ public final class WindowContainerTransaction implements Parcelable {
                 return this;
             }
 
-            Builder setTaskFragmentCreationOptions(
-                    @Nullable TaskFragmentCreationParams taskFragmentCreationOptions) {
-                mTaskFragmentCreationOptions = taskFragmentCreationOptions;
+            Builder setTaskFragmentOperation(
+                    @Nullable TaskFragmentOperation taskFragmentOperation) {
+                mTaskFragmentOperation = taskFragmentOperation;
+                return this;
+            }
+
+            Builder setReparentLeafTaskIfRelaunch(boolean reparentLeafTaskIfRelaunch) {
+                mReparentLeafTaskIfRelaunch = reparentLeafTaskIfRelaunch;
                 return this;
             }
 
@@ -1675,8 +1824,9 @@ public final class WindowContainerTransaction implements Parcelable {
                 hierarchyOp.mActivityIntent = mActivityIntent;
                 hierarchyOp.mPendingIntent = mPendingIntent;
                 hierarchyOp.mAlwaysOnTop = mAlwaysOnTop;
-                hierarchyOp.mTaskFragmentCreationOptions = mTaskFragmentCreationOptions;
+                hierarchyOp.mTaskFragmentOperation = mTaskFragmentOperation;
                 hierarchyOp.mShortcutInfo = mShortcutInfo;
+                hierarchyOp.mReparentLeafTaskIfRelaunch = mReparentLeafTaskIfRelaunch;
 
                 return hierarchyOp;
             }

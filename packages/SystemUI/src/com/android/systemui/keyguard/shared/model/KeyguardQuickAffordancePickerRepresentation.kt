@@ -17,6 +17,7 @@
 
 package com.android.systemui.keyguard.shared.model
 
+import android.content.Intent
 import androidx.annotation.DrawableRes
 
 /**
@@ -27,4 +28,25 @@ data class KeyguardQuickAffordancePickerRepresentation(
     val id: String,
     val name: String,
     @DrawableRes val iconResourceId: Int,
+
+    /** Whether this quick affordance is enabled. */
+    val isEnabled: Boolean = true,
+
+    /** If not enabled, the list of user-visible steps to re-enable it. */
+    val instructions: List<String>? = null,
+
+    /**
+     * If not enabled, an optional label for a button that takes the user to a destination where
+     * they can re-enable it.
+     */
+    val actionText: String? = null,
+
+    /**
+     * If not enabled, an optional component name (package and action) for a button that takes the
+     * user to a destination where they can re-enable it.
+     */
+    val actionComponentName: String? = null,
+
+    /** Optional [Intent] to use to start an activity to configure this affordance. */
+    val configureIntent: Intent? = null,
 )

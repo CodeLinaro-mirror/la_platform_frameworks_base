@@ -28,12 +28,15 @@ import com.android.systemui.keyguard.KeyguardSliceProvider;
 import com.android.systemui.media.muteawait.MediaMuteAwaitConnectionCli;
 import com.android.systemui.media.nearby.NearbyMediaDevicesManager;
 import com.android.systemui.people.PeopleProvider;
+import com.android.systemui.statusbar.NotificationInsetsModule;
 import com.android.systemui.statusbar.QsFrameTranslateModule;
 import com.android.systemui.statusbar.policy.ConfigurationController;
 import com.android.systemui.unfold.FoldStateLogger;
 import com.android.systemui.unfold.FoldStateLoggingProvider;
 import com.android.systemui.unfold.SysUIUnfoldComponent;
 import com.android.systemui.unfold.UnfoldLatencyTracker;
+import com.android.systemui.unfold.UnfoldTransitionProgressProvider;
+import com.android.systemui.unfold.progress.UnfoldTransitionProgressForwarder;
 import com.android.systemui.unfold.util.NaturalRotationUnfoldProgressProvider;
 import com.android.wm.shell.TaskViewFactory;
 import com.android.wm.shell.back.BackAnimation;
@@ -65,6 +68,7 @@ import dagger.Subcomponent;
 @Subcomponent(modules = {
         DefaultComponentBinder.class,
         DependencyProvider.class,
+        NotificationInsetsModule.class,
         QsFrameTranslateModule.class,
         SystemUIBinder.class,
         SystemUIModule.class,
@@ -123,10 +127,10 @@ public interface SysUIComponent {
     default void init() {
         // Initialize components that have no direct tie to the dagger dependency graph,
         // but are critical to this component's operation
-        // TODO(b/205034537): I think this is a good idea?
         getSysUIUnfoldComponent().ifPresent(c -> {
             c.getUnfoldLightRevealOverlayAnimation().init();
             c.getUnfoldTransitionWallpaperController().init();
+            c.getUnfoldHapticsPlayer();
         });
         getNaturalRotationUnfoldProgressProvider().ifPresent(o -> o.init());
         // No init method needed, just needs to be gotten so that it's created.
@@ -135,6 +139,10 @@ public interface SysUIComponent {
         getUnfoldLatencyTracker().init();
         getFoldStateLoggingProvider().ifPresent(FoldStateLoggingProvider::init);
         getFoldStateLogger().ifPresent(FoldStateLogger::init);
+        getUnfoldTransitionProgressProvider().ifPresent((progressProvider) ->
+                getUnfoldTransitionProgressForwarder().ifPresent((forwarder) ->
+                        progressProvider.addCallback(forwarder)
+                ));
     }
 
     /**
@@ -160,6 +168,18 @@ public interface SysUIComponent {
      */
     @SysUISingleton
     UnfoldLatencyTracker getUnfoldLatencyTracker();
+
+    /**
+     * Creates a UnfoldTransitionProgressProvider.
+     */
+    @SysUISingleton
+    Optional<UnfoldTransitionProgressProvider> getUnfoldTransitionProgressProvider();
+
+    /**
+     * Creates a UnfoldTransitionProgressForwarder.
+     */
+    @SysUISingleton
+    Optional<UnfoldTransitionProgressForwarder> getUnfoldTransitionProgressForwarder();
 
     /**
      * Creates a FoldStateLoggingProvider.

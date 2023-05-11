@@ -18,6 +18,7 @@ package android.companion.virtual;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.content.Context;
 import android.os.Parcel;
 import android.os.Parcelable;
 
@@ -38,9 +39,9 @@ public final class VirtualDevice implements Parcelable {
      * @hide
      */
     public VirtualDevice(int id, @Nullable String name) {
-        if (id <= VirtualDeviceManager.DEFAULT_DEVICE_ID) {
+        if (id <= Context.DEVICE_ID_DEFAULT) {
             throw new IllegalArgumentException("VirtualDevice ID mist be greater than "
-                    + VirtualDeviceManager.DEFAULT_DEVICE_ID);
+                    + Context.DEVICE_ID_DEFAULT);
         }
         mId = id;
         mName = name;

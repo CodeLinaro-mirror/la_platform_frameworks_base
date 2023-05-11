@@ -17,10 +17,13 @@
 package android.provider;
 
 import android.Manifest;
+import android.annotation.CallbackExecutor;
 import android.annotation.IntDef;
 import android.annotation.IntRange;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.annotation.PermissionMethod;
+import android.annotation.PermissionName;
 import android.annotation.RequiresPermission;
 import android.annotation.SdkConstant;
 import android.annotation.SdkConstant.SdkConstantType;
@@ -50,6 +53,7 @@ import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.content.res.Configuration;
 import android.content.res.Resources;
+import android.database.ContentObserver;
 import android.database.Cursor;
 import android.database.SQLException;
 import android.location.ILocationManager;
@@ -85,6 +89,7 @@ import android.util.ArrayMap;
 import android.util.ArraySet;
 import android.util.Log;
 import android.util.MemoryIntArray;
+import android.util.Slog;
 import android.view.Display;
 import android.view.MotionEvent;
 import android.view.ViewConfiguration;
@@ -94,7 +99,6 @@ import android.widget.Editor;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.util.Preconditions;
-import com.android.internal.widget.ILockSettings;
 
 import java.io.IOException;
 import java.lang.annotation.ElementType;
@@ -110,6 +114,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.Executor;
+import java.util.function.Consumer;
+
 /**
  * The Settings provider contains global system-level device preferences.
  */
@@ -192,6 +199,21 @@ public final class Settings {
             "android.settings.LOCATION_SCANNING_SETTINGS";
 
     /**
+     * Activity Action: Show settings to manage creation/deletion of cloned apps.
+     * <p>
+     * In some cases, a matching Activity may not exist, so ensure you
+     * safeguard against this.
+     * <p>
+     * Input: Nothing.
+     * <p>
+     * Output: Nothing.
+     * @hide
+     */
+    @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
+    public static final String ACTION_MANAGE_CLONED_APPS_SETTINGS =
+            "android.settings.MANAGE_CLONED_APPS_SETTINGS";
+
+    /**
      * Activity Action: Show settings to allow configuration of users.
      * <p>
      * In some cases, a matching Activity may not exist, so ensure you
@@ -203,6 +225,7 @@ public final class Settings {
      * @hide
      */
     @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
+    @SystemApi
     public static final String ACTION_USER_SETTINGS =
             "android.settings.USER_SETTINGS";
 
@@ -570,6 +593,24 @@ public final class Settings {
             "android.settings.REQUEST_MANAGE_MEDIA";
 
     /**
+     * Activity Action: Show settings to allow configuration of
+     * {@link Manifest.permission#RUN_USER_INITIATED_JOBS} permission
+     *
+     * Input: Optionally, the Intent's data URI can specify the application package name to
+     * directly invoke the management GUI specific to the package name. For example
+     * "package:com.my.app".
+     * <p>
+     * Output: When a package data uri is passed as input, the activity result is set to
+     * {@link android.app.Activity#RESULT_OK} if the permission was granted to the app. Otherwise,
+     * the result is set to {@link android.app.Activity#RESULT_CANCELED}.
+     *
+     * @hide
+     */
+    @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
+    public static final String ACTION_MANAGE_APP_LONG_RUNNING_JOBS =
+            "android.settings.MANAGE_APP_LONG_RUNNING_JOBS";
+
+    /**
      * Activity Action: Show settings to allow configuration of cross-profile access for apps
      *
      * Input: Optionally, the Intent's data URI can specify the application package name to
@@ -673,6 +714,22 @@ public final class Settings {
     @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
     public static final String ACTION_WIFI_SETTINGS =
             "android.settings.WIFI_SETTINGS";
+
+    /**
+     * Activity Action: Show settings to allow configuration of Advanced memory protection.
+     * <p>
+     * Memory Tagging Extension (MTE) is a CPU extension that allows to protect against certain
+     * classes of security problems at a small runtime performance cost overhead.
+     * <p>
+     * In some cases, a matching Activity may not exist, so ensure you safeguard against this.
+     * <p>
+     * Input: Nothing.
+     * <p>
+     * Output: Nothing.
+     */
+    @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
+    public static final String ACTION_ADVANCED_MEMORY_PROTECTION_SETTINGS =
+            "android.settings.ADVANCED_MEMORY_PROTECTION_SETTINGS";
 
     /**
      * Activity Action: Show settings to allow configuration of a static IP
@@ -1003,13 +1060,30 @@ public final class Settings {
      * In some cases, a matching Activity may not exist, so ensure you
      * safeguard against this.
      * <p>
-     * Input: Nothing.
-     * <p>
+     * Input: The optional {@code #EXTRA_EXPLICIT_LOCALES} with language tags that contains locales
+     * to limit available locales. This is only supported when device is under demo mode.
+     * If intent does not contain this extra, it will show system supported locale list.
+     * <br/>
+     * If {@code #EXTRA_EXPLICIT_LOCALES} contain a unsupported locale, it will still show this
+     * locale on list, but may not be supported by the devcie.
+     *
      * Output: Nothing.
      */
     @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
     public static final String ACTION_LOCALE_SETTINGS =
             "android.settings.LOCALE_SETTINGS";
+
+    /**
+     * Activity Extra: Show explicit locales in launched locale picker activity.
+     *
+     * This can be passed as an extra field in an Activity Intent with one or more language tags
+     * as a {@link LocaleList}. This must be passed as an extra field to the
+     * {@link #ACTION_LOCALE_SETTINGS}.
+     *
+     * @hide
+     */
+    public static final String EXTRA_EXPLICIT_LOCALES =
+            "android.provider.extra.EXPLICIT_LOCALES";
 
     /**
      * Activity Action: Show settings to allow configuration of per application locale.
@@ -1023,6 +1097,17 @@ public final class Settings {
     @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
     public static final String ACTION_APP_LOCALE_SETTINGS =
             "android.settings.APP_LOCALE_SETTINGS";
+
+    /**
+     * Activity Action: Show settings to allow configuration of regional preferences
+     * <p>
+     * Input: Nothing
+     * <p>
+     * Output: Nothing.
+     */
+    @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
+    public static final String ACTION_REGIONAL_PREFERENCES_SETTINGS =
+            "android.settings.REGIONAL_PREFERENCES_SETTINGS";
 
     /**
      * Activity Action: Show settings to allow configuration of lockscreen.
@@ -1626,7 +1711,6 @@ public final class Settings {
      * Input: Nothing.
      * <p>
      * Output: Nothing
-     * @see android.nfc.NfcAdapter#isNdefPushEnabled()
      */
     @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
     public static final String ACTION_NFCSHARING_SETTINGS =
@@ -2447,6 +2531,7 @@ public final class Settings {
      *
      * @hide
      */
+    @SystemApi
     @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
     public static final String ACTION_SHOW_RESTRICTED_SETTING_DIALOG =
             "android.settings.SHOW_RESTRICTED_SETTING_DIALOG";
@@ -2670,6 +2755,10 @@ public final class Settings {
     public static final String CALL_METHOD_REGISTER_MONITOR_CALLBACK_CONFIG =
             "REGISTER_MONITOR_CALLBACK_config";
 
+    /** @hide - Private call() method to unregister monitor callback for 'configuration' table */
+    public static final String CALL_METHOD_UNREGISTER_MONITOR_CALLBACK_CONFIG =
+            "UNREGISTER_MONITOR_CALLBACK_config";
+
     /** @hide - String argument extra to the config monitor callback */
     public static final String EXTRA_MONITOR_CALLBACK_TYPE = "monitor_callback_type";
 
@@ -2770,6 +2859,7 @@ public final class Settings {
      */
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     @TestApi
+    @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
     public static final int RESET_MODE_PACKAGE_DEFAULTS = 1;
 
     /**
@@ -2779,6 +2869,7 @@ public final class Settings {
      * the setting will be deleted. This mode is only available to the system.
      * @hide
      */
+    @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
     public static final int RESET_MODE_UNTRUSTED_DEFAULTS = 2;
 
     /**
@@ -2789,6 +2880,7 @@ public final class Settings {
      * This mode is only available to the system.
      * @hide
      */
+    @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
     public static final int RESET_MODE_UNTRUSTED_CHANGES = 3;
 
     /**
@@ -2800,6 +2892,7 @@ public final class Settings {
      * to the system.
      * @hide
      */
+    @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
     public static final int RESET_MODE_TRUSTED_DEFAULTS = 4;
 
     /** @hide */
@@ -2885,19 +2978,22 @@ public final class Settings {
     }
 
     private static final class GenerationTracker {
-        private final MemoryIntArray mArray;
-        private final Runnable mErrorHandler;
+        @NonNull private final String mName;
+        @NonNull private final MemoryIntArray mArray;
+        @NonNull private final Consumer<String> mErrorHandler;
         private final int mIndex;
         private int mCurrentGeneration;
 
-        public GenerationTracker(@NonNull MemoryIntArray array, int index,
-                int generation, Runnable errorHandler) {
+        GenerationTracker(@NonNull String name, @NonNull MemoryIntArray array, int index,
+                int generation, Consumer<String> errorHandler) {
+            mName = name;
             mArray = array;
             mIndex = index;
             mErrorHandler = errorHandler;
             mCurrentGeneration = generation;
         }
 
+        // This method also updates the obsolete generation code stored locally
         public boolean isGenerationChanged() {
             final int currentGeneration = readCurrentGeneration();
             if (currentGeneration >= 0) {
@@ -2918,21 +3014,20 @@ public final class Settings {
                 return mArray.get(mIndex);
             } catch (IOException e) {
                 Log.e(TAG, "Error getting current generation", e);
-                if (mErrorHandler != null) {
-                    mErrorHandler.run();
-                }
+                mErrorHandler.accept(mName);
             }
             return -1;
         }
 
         public void destroy() {
             try {
-                mArray.close();
+                // If this process is the system server process, mArray is the same object as
+                // the memory int array kept inside SetingsProvider, so skipping the close()
+                if (!Settings.isInSystemServer()) {
+                    mArray.close();
+                }
             } catch (IOException e) {
                 Log.e(TAG, "Error closing backing array", e);
-                if (mErrorHandler != null) {
-                    mErrorHandler.run();
-                }
             }
         }
     }
@@ -2995,8 +3090,21 @@ public final class Settings {
         private final ArraySet<String> mAllFields;
         private final ArrayMap<String, Integer> mReadableFieldsWithMaxTargetSdk;
 
+        // Mapping from the name of a setting (or the prefix of a namespace) to a generation tracker
         @GuardedBy("this")
-        private GenerationTracker mGenerationTracker;
+        private ArrayMap<String, GenerationTracker> mGenerationTrackers = new ArrayMap<>();
+
+        private Consumer<String> mGenerationTrackerErrorHandler = (String name) -> {
+            synchronized (NameValueCache.this) {
+                Log.e(TAG, "Error accessing generation tracker - removing");
+                final GenerationTracker tracker = mGenerationTrackers.get(name);
+                if (tracker != null) {
+                    tracker.destroy();
+                    mGenerationTrackers.remove(name);
+                }
+                mValues.remove(name);
+            }
+        };
 
         <T extends NameValueTable> NameValueCache(Uri uri, String getCommand,
                 String setCommand, String deleteCommand, ContentProviderHolder providerHolder,
@@ -3085,6 +3193,45 @@ public final class Settings {
 
         @UnsupportedAppUsage
         public String getStringForUser(ContentResolver cr, String name, final int userHandle) {
+            final boolean isSelf = (userHandle == UserHandle.myUserId());
+            boolean needsGenerationTracker = false;
+            if (isSelf) {
+                synchronized (NameValueCache.this) {
+                    final GenerationTracker generationTracker = mGenerationTrackers.get(name);
+                    if (generationTracker != null) {
+                        if (generationTracker.isGenerationChanged()) {
+                            if (DEBUG) {
+                                Log.i(TAG, "Generation changed for setting:" + name
+                                        + " type:" + mUri.getPath()
+                                        + " in package:" + cr.getPackageName()
+                                        + " and user:" + userHandle);
+                            }
+                            // When a generation number changes, remove cached value, remove the old
+                            // generation tracker and request a new one
+                            mValues.remove(name);
+                            generationTracker.destroy();
+                            mGenerationTrackers.remove(name);
+                        } else if (mValues.containsKey(name)) {
+                            if (DEBUG) {
+                                Log.i(TAG, "Cache hit for setting:" + name);
+                            }
+                            return mValues.get(name);
+                        }
+                    }
+                }
+                if (DEBUG) {
+                    Log.i(TAG, "Cache miss for setting:" + name + " for user:"
+                            + userHandle);
+                }
+                // Generation tracker doesn't exist or the value isn't cached
+                needsGenerationTracker = true;
+            } else {
+                if (DEBUG || LOCAL_LOGV) {
+                    Log.v(TAG, "get setting for user " + userHandle
+                            + " by user " + UserHandle.myUserId() + " so skipping cache");
+                }
+            }
+
             // Check if the target settings key is readable. Reject if the caller is not system and
             // is trying to access a settings key defined in the Settings.Secure, Settings.System or
             // Settings.Global and is not annotated as @Readable.
@@ -3118,31 +3265,6 @@ public final class Settings {
                 }
             }
 
-            final boolean isSelf = (userHandle == UserHandle.myUserId());
-            int currentGeneration = -1;
-            if (isSelf) {
-                synchronized (NameValueCache.this) {
-                    if (mGenerationTracker != null) {
-                        if (mGenerationTracker.isGenerationChanged()) {
-                            if (DEBUG) {
-                                Log.i(TAG, "Generation changed for type:"
-                                        + mUri.getPath() + " in package:"
-                                        + cr.getPackageName() +" and user:" + userHandle);
-                            }
-                            mValues.clear();
-                        } else if (mValues.containsKey(name)) {
-                            return mValues.get(name);
-                        }
-                        if (mGenerationTracker != null) {
-                            currentGeneration = mGenerationTracker.getCurrentGeneration();
-                        }
-                    }
-                }
-            } else {
-                if (LOCAL_LOGV) Log.v(TAG, "get setting for user " + userHandle
-                        + " by user " + UserHandle.myUserId() + " so skipping cache");
-            }
-
             IContentProvider cp = mProviderHolder.getProvider(cr);
 
             // Try the fast path first, not using query().  If this
@@ -3151,24 +3273,17 @@ public final class Settings {
             // interface.
             if (mCallGetCommand != null) {
                 try {
-                    Bundle args = null;
+                    Bundle args = new Bundle();
                     if (!isSelf) {
-                        args = new Bundle();
                         args.putInt(CALL_METHOD_USER_KEY, userHandle);
                     }
-                    boolean needsGenerationTracker = false;
-                    synchronized (NameValueCache.this) {
-                        if (isSelf && mGenerationTracker == null) {
-                            needsGenerationTracker = true;
-                            if (args == null) {
-                                args = new Bundle();
-                            }
-                            args.putString(CALL_METHOD_TRACK_GENERATION_KEY, null);
-                            if (DEBUG) {
-                                Log.i(TAG, "Requested generation tracker for type: "+ mUri.getPath()
-                                        + " in package:" + cr.getPackageName() +" and user:"
-                                        + userHandle);
-                            }
+                    if (needsGenerationTracker) {
+                        args.putString(CALL_METHOD_TRACK_GENERATION_KEY, null);
+                        if (DEBUG) {
+                            Log.i(TAG, "Requested generation tracker for setting:" + name
+                                    + " type:" + mUri.getPath()
+                                    + " in package:" + cr.getPackageName()
+                                    + " and user:" + userHandle);
                         }
                     }
                     Bundle b;
@@ -3205,33 +3320,23 @@ public final class Settings {
                                         final int generation = b.getInt(
                                                 CALL_METHOD_GENERATION_KEY, 0);
                                         if (DEBUG) {
-                                            Log.i(TAG, "Received generation tracker for type:"
-                                                    + mUri.getPath() + " in package:"
-                                                    + cr.getPackageName() + " and user:"
-                                                    + userHandle + " with index:" + index);
+                                            Log.i(TAG, "Received generation tracker for setting:"
+                                                    + name
+                                                    + " type:" + mUri.getPath()
+                                                    + " in package:" + cr.getPackageName()
+                                                    + " and user:" + userHandle
+                                                    + " with index:" + index);
                                         }
-                                        if (mGenerationTracker != null) {
-                                            mGenerationTracker.destroy();
-                                        }
-                                        mGenerationTracker = new GenerationTracker(array, index,
-                                                generation, () -> {
-                                            synchronized (NameValueCache.this) {
-                                                Log.e(TAG, "Error accessing generation"
-                                                        + " tracker - removing");
-                                                if (mGenerationTracker != null) {
-                                                    GenerationTracker generationTracker =
-                                                            mGenerationTracker;
-                                                    mGenerationTracker = null;
-                                                    generationTracker.destroy();
-                                                    mValues.clear();
-                                                }
-                                            }
-                                        });
-                                        currentGeneration = generation;
+                                        mGenerationTrackers.put(name, new GenerationTracker(name,
+                                                array, index, generation,
+                                                mGenerationTrackerErrorHandler));
                                     }
                                 }
-                                if (mGenerationTracker != null && currentGeneration ==
-                                        mGenerationTracker.getCurrentGeneration()) {
+                                if (mGenerationTrackers.get(name) != null
+                                        && !mGenerationTrackers.get(name).isGenerationChanged()) {
+                                    if (DEBUG) {
+                                        Log.i(TAG, "Updating cache for setting:" + name);
+                                    }
                                     mValues.put(name, value);
                                 }
                             }
@@ -3274,14 +3379,13 @@ public final class Settings {
 
                 String value = c.moveToNext() ? c.getString(0) : null;
                 synchronized (NameValueCache.this) {
-                    if (mGenerationTracker != null
-                            && currentGeneration == mGenerationTracker.getCurrentGeneration()) {
+                    if (mGenerationTrackers.get(name) != null
+                            && !mGenerationTrackers.get(name).isGenerationChanged()) {
+                        if (DEBUG) {
+                            Log.i(TAG, "Updating cache for setting:" + name + " using query");
+                        }
                         mValues.put(name, value);
                     }
-                }
-                if (LOCAL_LOGV) {
-                    Log.v(TAG, "cache miss [" + mUri.getLastPathSegment() + "]: " +
-                            name + " = " + (value == null ? "(null)" : value));
                 }
                 return value;
             } catch (RemoteException e) {
@@ -3313,21 +3417,32 @@ public final class Settings {
         public ArrayMap<String, String> getStringsForPrefix(ContentResolver cr, String prefix,
                 List<String> names) {
             String namespace = prefix.substring(0, prefix.length() - 1);
-            DeviceConfig.enforceReadPermission(ActivityThread.currentApplication(), namespace);
+            Config.enforceReadPermission(namespace);
             ArrayMap<String, String> keyValues = new ArrayMap<>();
             int currentGeneration = -1;
+            boolean needsGenerationTracker = false;
 
             synchronized (NameValueCache.this) {
-                if (mGenerationTracker != null) {
-                    if (mGenerationTracker.isGenerationChanged()) {
+                final GenerationTracker generationTracker = mGenerationTrackers.get(prefix);
+                if (generationTracker != null) {
+                    if (generationTracker.isGenerationChanged()) {
                         if (DEBUG) {
-                            Log.i(TAG, "Generation changed for type:" + mUri.getPath()
+                            Log.i(TAG, "Generation changed for prefix:" + prefix
+                                    + " type:" + mUri.getPath()
                                     + " in package:" + cr.getPackageName());
                         }
-                        mValues.clear();
+                        for (int i = 0; i < mValues.size(); ++i) {
+                            String key = mValues.keyAt(i);
+                            if (key.startsWith(prefix)) {
+                                mValues.remove(key);
+                            }
+                        }
                     } else {
                         boolean prefixCached = mValues.containsKey(prefix);
                         if (prefixCached) {
+                            if (DEBUG) {
+                                Log.i(TAG, "Cache hit for prefix:" + prefix);
+                            }
                             if (!names.isEmpty()) {
                                 for (String name : names) {
                                     if (mValues.containsKey(name)) {
@@ -3347,9 +3462,9 @@ public final class Settings {
                             return keyValues;
                         }
                     }
-                    if (mGenerationTracker != null) {
-                        currentGeneration = mGenerationTracker.getCurrentGeneration();
-                    }
+                    currentGeneration = generationTracker.getCurrentGeneration();
+                } else {
+                    needsGenerationTracker = true;
                 }
             }
 
@@ -3357,20 +3472,20 @@ public final class Settings {
                 // No list command specified, return empty map
                 return keyValues;
             }
+            if (DEBUG) {
+                Log.i(TAG, "Cache miss for prefix:" + prefix);
+            }
             IContentProvider cp = mProviderHolder.getProvider(cr);
 
             try {
                 Bundle args = new Bundle();
                 args.putString(Settings.CALL_METHOD_PREFIX_KEY, prefix);
-                boolean needsGenerationTracker = false;
-                synchronized (NameValueCache.this) {
-                    if (mGenerationTracker == null) {
-                        needsGenerationTracker = true;
-                        args.putString(CALL_METHOD_TRACK_GENERATION_KEY, null);
-                        if (DEBUG) {
-                            Log.i(TAG, "Requested generation tracker for type: "
-                                    + mUri.getPath() + " in package:" + cr.getPackageName());
-                        }
+                if (needsGenerationTracker) {
+                    args.putString(CALL_METHOD_TRACK_GENERATION_KEY, null);
+                    if (DEBUG) {
+                        Log.i(TAG, "Requested generation tracker for prefix:" + prefix
+                                + " type: " + mUri.getPath()
+                                + " in package:" + cr.getPackageName());
                     }
                 }
 
@@ -3423,32 +3538,22 @@ public final class Settings {
                             final int generation = b.getInt(
                                     CALL_METHOD_GENERATION_KEY, 0);
                             if (DEBUG) {
-                                Log.i(TAG, "Received generation tracker for type:"
-                                        + mUri.getPath() + " in package:"
-                                        + cr.getPackageName() + " with index:" + index);
+                                Log.i(TAG, "Received generation tracker for prefix:" + prefix
+                                        + " type:" + mUri.getPath()
+                                        + " in package:" + cr.getPackageName()
+                                        + " with index:" + index);
                             }
-                            if (mGenerationTracker != null) {
-                                mGenerationTracker.destroy();
-                            }
-                            mGenerationTracker = new GenerationTracker(array, index,
-                                    generation, () -> {
-                                synchronized (NameValueCache.this) {
-                                    Log.e(TAG, "Error accessing generation tracker"
-                                            + " - removing");
-                                    if (mGenerationTracker != null) {
-                                        GenerationTracker generationTracker =
-                                                mGenerationTracker;
-                                        mGenerationTracker = null;
-                                        generationTracker.destroy();
-                                        mValues.clear();
-                                    }
-                                }
-                            });
+                            mGenerationTrackers.put(prefix,
+                                    new GenerationTracker(prefix, array, index, generation,
+                                            mGenerationTrackerErrorHandler));
                             currentGeneration = generation;
                         }
                     }
-                    if (mGenerationTracker != null && currentGeneration
-                            == mGenerationTracker.getCurrentGeneration()) {
+                    if (mGenerationTrackers.get(prefix) != null && currentGeneration
+                            == mGenerationTrackers.get(prefix).getCurrentGeneration()) {
+                        if (DEBUG) {
+                            Log.i(TAG, "Updating cache for prefix:" + prefix);
+                        }
                         // cache the complete list of flags for the namespace
                         mValues.putAll(flagsToValues);
                         // Adding the prefix as a signal that the prefix is cached.
@@ -3464,11 +3569,11 @@ public final class Settings {
 
         public void clearGenerationTrackerForTest() {
             synchronized (NameValueCache.this) {
-                if (mGenerationTracker != null) {
-                    mGenerationTracker.destroy();
+                for (int i = 0; i < mGenerationTrackers.size(); i++) {
+                    mGenerationTrackers.valueAt(i).destroy();
                 }
+                mGenerationTrackers.clear();
                 mValues.clear();
-                mGenerationTracker = null;
             }
         }
     }
@@ -4585,21 +4690,6 @@ public final class Settings {
         public static final String SCREEN_BRIGHTNESS = "screen_brightness";
 
         /**
-         * The screen backlight brightness between 0 and 255.
-         * @hide
-         */
-        @Readable
-        public static final String SCREEN_BRIGHTNESS_FOR_VR = "screen_brightness_for_vr";
-
-        /**
-         * The screen backlight brightness between 0.0f and 1.0f.
-         * @hide
-         */
-        @Readable
-        public static final String SCREEN_BRIGHTNESS_FOR_VR_FLOAT =
-                "screen_brightness_for_vr_float";
-
-        /**
          * The screen backlight brightness between 0.0f and 1.0f.
          * @hide
          */
@@ -5498,6 +5588,44 @@ public final class Settings {
         public static final String POINTER_SPEED = "pointer_speed";
 
         /**
+         * Touchpad pointer speed setting.
+         * This is an integer value in a range between -7 and +7, so there are 15 possible values.
+         *   -7 = slowest
+         *    0 = default speed
+         *   +7 = fastest
+         * @hide
+         */
+        public static final String TOUCHPAD_POINTER_SPEED = "touchpad_pointer_speed";
+
+        /**
+         * Whether to invert the touchpad scrolling direction.
+         *
+         * If set to 1 (the default), moving two fingers downwards on the touchpad will scroll
+         * upwards, consistent with normal touchscreen scrolling. If set to 0, moving two fingers
+         * downwards will scroll downwards.
+         *
+         * @hide
+         */
+        public static final String TOUCHPAD_NATURAL_SCROLLING = "touchpad_natural_scrolling";
+
+        /**
+         * Whether to enable tap-to-click on touchpads.
+         *
+         * @hide
+         */
+        public static final String TOUCHPAD_TAP_TO_CLICK = "touchpad_tap_to_click";
+
+        /**
+         * Whether to enable a right-click zone on touchpads.
+         *
+         * When set to 1, pressing to click in a section on the right-hand side of the touchpad will
+         * result in a context click (a.k.a. right click).
+         *
+         * @hide
+         */
+        public static final String TOUCHPAD_RIGHT_CLICK_ZONE = "touchpad_right_click_zone";
+
+        /**
          * Whether lock-to-app will be triggered by long-press on recents.
          * @hide
          */
@@ -5542,6 +5670,49 @@ public final class Settings {
         public static final String DESKTOP_MODE = "desktop_mode";
 
         /**
+         * The information of locale preference. This records user's preference to avoid
+         * unsynchronized and existing locale preference in
+         * {@link Locale#getDefault(Locale.Category)}.
+         *
+         * <p><b>Note:</b> The format follow the
+         * <a href="https://www.rfc-editor.org/rfc/bcp/bcp47.txt">IETF BCP47 expression</a>
+         *
+         * E.g. : und-u-ca-gregorian-hc-h23
+         * @hide
+         */
+        public static final String LOCALE_PREFERENCES = "locale_preferences";
+
+        /**
+         * Setting to enable camera flash notification feature.
+         * <ul>
+         *     <li> 0 = Off
+         *     <li> 1 = On
+         * </ul>
+         * @hide
+         */
+        public static final String CAMERA_FLASH_NOTIFICATION = "camera_flash_notification";
+
+        /**
+         * Setting to enable screen flash notification feature.
+         * <ul>
+         *     <li> 0 = Off
+         *     <li> 1 = On
+         * </ul>
+         *  @hide
+         */
+        public static final String SCREEN_FLASH_NOTIFICATION = "screen_flash_notification";
+
+        /**
+         * Integer property that specifes the color for screen flash notification as a
+         * packed 32-bit color.
+         *
+         * @see android.graphics.Color#argb
+         * @hide
+         */
+        public static final String SCREEN_FLASH_NOTIFICATION_COLOR =
+                "screen_flash_notification_color_global";
+
+        /**
          * IMPORTANT: If you add a new public settings you also have to add it to
          * PUBLIC_SETTINGS below. If the new setting is hidden you have to add
          * it to PRIVATE_SETTINGS below. Also add a validator that can validate
@@ -5584,8 +5755,6 @@ public final class Settings {
             PUBLIC_SETTINGS.add(SCREEN_OFF_TIMEOUT);
             PUBLIC_SETTINGS.add(SCREEN_BRIGHTNESS);
             PUBLIC_SETTINGS.add(SCREEN_BRIGHTNESS_FLOAT);
-            PUBLIC_SETTINGS.add(SCREEN_BRIGHTNESS_FOR_VR);
-            PUBLIC_SETTINGS.add(SCREEN_BRIGHTNESS_FOR_VR_FLOAT);
             PUBLIC_SETTINGS.add(SCREEN_BRIGHTNESS_MODE);
             PUBLIC_SETTINGS.add(MODE_RINGER_STREAMS_AFFECTED);
             PUBLIC_SETTINGS.add(MUTE_STREAMS_AFFECTED);
@@ -5671,6 +5840,14 @@ public final class Settings {
             PRIVATE_SETTINGS.add(DISPLAY_COLOR_MODE);
             PRIVATE_SETTINGS.add(DISPLAY_COLOR_MODE_VENDOR_HINT);
             PRIVATE_SETTINGS.add(DESKTOP_MODE);
+            PRIVATE_SETTINGS.add(LOCALE_PREFERENCES);
+            PRIVATE_SETTINGS.add(TOUCHPAD_POINTER_SPEED);
+            PRIVATE_SETTINGS.add(TOUCHPAD_NATURAL_SCROLLING);
+            PRIVATE_SETTINGS.add(TOUCHPAD_TAP_TO_CLICK);
+            PRIVATE_SETTINGS.add(TOUCHPAD_RIGHT_CLICK_ZONE);
+            PRIVATE_SETTINGS.add(CAMERA_FLASH_NOTIFICATION);
+            PRIVATE_SETTINGS.add(SCREEN_FLASH_NOTIFICATION);
+            PRIVATE_SETTINGS.add(SCREEN_FLASH_NOTIFICATION_COLOR);
         }
 
         /**
@@ -6052,9 +6229,6 @@ public final class Settings {
                 sProviderHolder,
                 Secure.class);
 
-        private static ILockSettings sLockSettings = null;
-
-        private static boolean sIsSystemProcess;
         @UnsupportedAppUsage
         private static final HashSet<String> MOVED_TO_LOCK_SETTINGS;
         @UnsupportedAppUsage
@@ -6069,7 +6243,6 @@ public final class Settings {
             MOVED_TO_GLOBAL.add(Settings.Global.ADB_ENABLED);
             MOVED_TO_GLOBAL.add(Settings.Global.ASSISTED_GPS_ENABLED);
             MOVED_TO_GLOBAL.add(Settings.Global.BLUETOOTH_ON);
-            MOVED_TO_GLOBAL.add(Settings.Global.BUGREPORT_IN_POWER_MENU);
             MOVED_TO_GLOBAL.add(Settings.Global.CDMA_CELL_BROADCAST_SMS);
             MOVED_TO_GLOBAL.add(Settings.Global.CDMA_ROAMING_MODE);
             MOVED_TO_GLOBAL.add(Settings.Global.CDMA_SUBSCRIPTION_MODE);
@@ -6174,6 +6347,7 @@ public final class Settings {
             MOVED_TO_GLOBAL.add(Settings.Global.DEFAULT_DNS_SERVER);
             MOVED_TO_GLOBAL.add(Settings.Global.PREFERRED_NETWORK_MODE);
             MOVED_TO_GLOBAL.add(Settings.Global.WEBVIEW_DATA_REDUCTION_PROXY_KEY);
+            MOVED_TO_GLOBAL.add(Settings.Global.SECURE_FRP_MODE);
         }
 
         /** @hide */
@@ -6218,35 +6392,25 @@ public final class Settings {
                 return Global.getStringForUser(resolver, name, userHandle);
             }
 
-            if (MOVED_TO_LOCK_SETTINGS.contains(name)) {
-                synchronized (Secure.class) {
-                    if (sLockSettings == null) {
-                        sLockSettings = ILockSettings.Stub.asInterface(
-                                (IBinder) ServiceManager.getService("lock_settings"));
-                        sIsSystemProcess = Process.myUid() == Process.SYSTEM_UID;
-                    }
-                }
-                if (sLockSettings != null && !sIsSystemProcess) {
-                    // No context; use the ActivityThread's context as an approximation for
-                    // determining the target API level.
-                    Application application = ActivityThread.currentApplication();
+            if (MOVED_TO_LOCK_SETTINGS.contains(name) && Process.myUid() != Process.SYSTEM_UID) {
+                // No context; use the ActivityThread's context as an approximation for
+                // determining the target API level.
+                Application application = ActivityThread.currentApplication();
 
-                    boolean isPreMnc = application != null
-                            && application.getApplicationInfo() != null
-                            && application.getApplicationInfo().targetSdkVersion
-                            <= VERSION_CODES.LOLLIPOP_MR1;
-                    if (isPreMnc) {
-                        try {
-                            return sLockSettings.getString(name, "0", userHandle);
-                        } catch (RemoteException re) {
-                            // Fall through
-                        }
-                    } else {
-                        throw new SecurityException("Settings.Secure." + name
-                                + " is deprecated and no longer accessible."
-                                + " See API documentation for potential replacements.");
-                    }
+                boolean isPreMnc = application != null
+                    && application.getApplicationInfo() != null
+                    && application.getApplicationInfo().targetSdkVersion
+                    <= VERSION_CODES.LOLLIPOP_MR1;
+                if (isPreMnc) {
+                    // Old apps used to get the three deprecated LOCK_PATTERN_* settings from
+                    // ILockSettings.getString().  For security reasons, we now just return a
+                    // stubbed-out value.  Note: the only one of these three settings actually known
+                    // to have been used was LOCK_PATTERN_ENABLED, and ILockSettings.getString()
+                    // already always returned "0" for that starting in Android 11.
+                    return "0";
                 }
+                throw new SecurityException("Settings.Secure." + name + " is deprecated and no" +
+                        " longer accessible. See API documentation for potential replacements.");
             }
 
             return sNameValueCache.getStringForUser(resolver, name, userHandle);
@@ -6689,12 +6853,24 @@ public final class Settings {
         /**
          * When the user has enable the option to have a "bug report" command
          * in the power menu.
-         * @deprecated Use {@link android.provider.Settings.Global#BUGREPORT_IN_POWER_MENU} instead
          * @hide
          */
-        @Deprecated
         @Readable
         public static final String BUGREPORT_IN_POWER_MENU = "bugreport_in_power_menu";
+
+        /**
+         * The package name for the custom bugreport handler app. This app must be bugreport
+         * allow-listed. This is currently used only by Power Menu short press.
+         * @hide
+         */
+        public static final String CUSTOM_BUGREPORT_HANDLER_APP = "custom_bugreport_handler_app";
+
+        /**
+         * The user id for the custom bugreport handler app. This is currently used only by Power
+         * Menu short press.
+         * @hide
+         */
+        public static final String CUSTOM_BUGREPORT_HANDLER_USER = "custom_bugreport_handler_user";
 
         /**
          * @deprecated Use {@link android.provider.Settings.Global#ADB_ENABLED} instead
@@ -6760,6 +6936,58 @@ public final class Settings {
          */
         public static final String BLUETOOTH_LE_BROADCAST_APP_SOURCE_NAME =
                 "bluetooth_le_broadcast_app_source_name";
+
+        /**
+         * Ringtone routing value for hearing aid. It routes ringtone to hearing aid or device
+         * speaker.
+         * <ul>
+         *     <li> 0 = Default
+         *     <li> 1 = Route to hearing aid
+         *     <li> 2 = Route to device speaker
+         * </ul>
+         * @hide
+         */
+        public static final String HEARING_AID_RINGTONE_ROUTING =
+                "hearing_aid_ringtone_routing";
+
+        /**
+         * Phone call routing value for hearing aid. It routes phone call to hearing aid or
+         * device speaker.
+         * <ul>
+         *     <li> 0 = Default
+         *     <li> 1 = Route to hearing aid
+         *     <li> 2 = Route to device speaker
+         * </ul>
+         * @hide
+         */
+        public static final String HEARING_AID_CALL_ROUTING =
+                "hearing_aid_call_routing";
+
+        /**
+         * Media routing value for hearing aid. It routes media to hearing aid or device
+         * speaker.
+         * <ul>
+         *     <li> 0 = Default
+         *     <li> 1 = Route to hearing aid
+         *     <li> 2 = Route to device speaker
+         * </ul>
+         * @hide
+         */
+        public static final String HEARING_AID_MEDIA_ROUTING =
+                "hearing_aid_media_routing";
+
+        /**
+         * System sounds routing value for hearing aid. It routes system sounds to hearing aid
+         * or device speaker.
+         * <ul>
+         *     <li> 0 = Default
+         *     <li> 1 = Route to hearing aid
+         *     <li> 2 = Route to device speaker
+         * </ul>
+         * @hide
+         */
+        public static final String HEARING_AID_SYSTEM_SOUNDS_ROUTING =
+                "hearing_aid_system_sounds_routing";
 
         /**
          * Setting to indicate that on device captions are enabled.
@@ -7036,7 +7264,10 @@ public final class Settings {
          * device is removed from this mode.
          * <p>
          * Type: int (0 for false, 1 for true)
+         *
+         * @deprecated Use Global.SECURE_FRP_MODE
          */
+        @Deprecated
         @Readable
         public static final String SECURE_FRP_MODE = "secure_frp_mode";
 
@@ -7151,6 +7382,9 @@ public final class Settings {
          *
          * Format like "ime0;subtype0;subtype1;subtype2:ime1:ime2;subtype0"
          * where imeId is ComponentName and subtype is int32.
+         *
+         * <p>Note: This setting is not readable to the app targeting API level 34 or higher. use
+         * {@link android.view.inputmethod.InputMethodManager#getEnabledInputMethodList()} instead.
          */
         @Readable(maxTargetSdk = Build.VERSION_CODES.TIRAMISU)
         public static final String ENABLED_INPUT_METHODS = "enabled_input_methods";
@@ -7173,6 +7407,15 @@ public final class Settings {
         @Readable
         @SuppressLint("NoSettingsProvider")
         public static final String SHOW_IME_WITH_HARD_KEYBOARD = "show_ime_with_hard_keyboard";
+
+        /**
+         * Whether stylus button presses are disabled. This is a boolean that
+         * determines if stylus buttons are ignored.
+         *
+         * @hide
+         */
+        @SuppressLint("NoSettingsProvider")
+        public static final String STYLUS_BUTTONS_ENABLED = "stylus_buttons_enabled";
 
         /**
          * Host name and port for global http proxy. Uses ':' seperator for
@@ -7849,6 +8092,13 @@ public final class Settings {
                 "high_text_contrast_enabled";
 
         /**
+         * The color contrast, float in [-1, 1], 1 being the highest contrast.
+         *
+         * @hide
+         */
+        public static final String CONTRAST_LEVEL = "contrast_level";
+
+        /**
          * Setting that specifies whether the display magnification is enabled via a system-wide
          * triple tap gesture. Display magnifications allows the user to zoom in the display content
          * and is targeted to low vision users. The current magnification scale is controlled by
@@ -8075,6 +8325,15 @@ public final class Settings {
         @Readable
         public static final String ACCESSIBILITY_DISPLAY_INVERSION_ENABLED =
                 "accessibility_display_inversion_enabled";
+
+        /**
+         * Flag that specifies whether font size has been changed. The flag will
+         * be set when users change the scaled value of font size for the first time.
+         * @hide
+         */
+        @Readable
+        public static final String ACCESSIBILITY_FONT_SCALING_HAS_BEEN_CHANGED =
+                "accessibility_font_scaling_has_been_changed";
 
         /**
          * Setting that specifies whether display color space adjustment is
@@ -8565,6 +8824,12 @@ public final class Settings {
         @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         @Readable
         public static final String BACKUP_AUTO_RESTORE = "backup_auto_restore";
+
+        /**
+         * Controls whether framework backup scheduling is enabled.
+         * @hide
+         */
+        public static final String BACKUP_SCHEDULING_ENABLED = "backup_scheduling_enabled";
 
         /**
          * Indicates whether settings backup has been fully provisioned.
@@ -9301,6 +9566,22 @@ public final class Settings {
         public static final int DOCK_SETUP_PAUSED = 2;
 
         /**
+         * Indicates that the user has been prompted to start dock setup.
+         * One of the possible states for {@link #DOCK_SETUP_STATE}.
+         *
+         * @hide
+         */
+        public static final int DOCK_SETUP_PROMPTED = 3;
+
+        /**
+         * Indicates that the user has started dock setup but never finished it.
+         * One of the possible states for {@link #DOCK_SETUP_STATE}.
+         *
+         * @hide
+         */
+        public static final int DOCK_SETUP_INCOMPLETE = 4;
+
+        /**
          * Indicates that the user has completed dock setup.
          * One of the possible states for {@link #DOCK_SETUP_STATE}.
          *
@@ -9308,13 +9589,24 @@ public final class Settings {
          */
         public static final int DOCK_SETUP_COMPLETED = 10;
 
+        /**
+         * Indicates that dock setup timed out before the user could complete it.
+         * One of the possible states for {@link #DOCK_SETUP_STATE}.
+         *
+         * @hide
+         */
+        public static final int DOCK_SETUP_TIMED_OUT = 11;
+
         /** @hide */
         @Retention(RetentionPolicy.SOURCE)
         @IntDef({
                 DOCK_SETUP_NOT_STARTED,
                 DOCK_SETUP_STARTED,
                 DOCK_SETUP_PAUSED,
-                DOCK_SETUP_COMPLETED
+                DOCK_SETUP_PROMPTED,
+                DOCK_SETUP_INCOMPLETE,
+                DOCK_SETUP_COMPLETED,
+                DOCK_SETUP_TIMED_OUT
         })
         public @interface DockSetupState {
         }
@@ -9579,6 +9871,16 @@ public final class Settings {
         @Readable
         public static final String LOCK_SCREEN_SHOW_SILENT_NOTIFICATIONS =
                 "lock_screen_show_silent_notifications";
+
+        /**
+         * Indicates whether "seen" notifications should be suppressed from the lockscreen.
+         * <p>
+         * Type: int (0 for unset, 1 for true, 2 for false)
+         *
+         * @hide
+         */
+        public static final String LOCK_SCREEN_SHOW_ONLY_UNSEEN_NOTIFICATIONS =
+                "lock_screen_show_only_unseen_notifications";
 
         /**
          * Indicates whether snooze options should be shown on notifications
@@ -9876,11 +10178,12 @@ public final class Settings {
                 "fingerprint_side_fps_auth_downtime";
 
         /**
-         * Whether or not a SFPS device is required to be interactive for auth to unlock the device.
+         * Whether or not a SFPS device is enabling the performant auth setting.
+         * The "_V2" suffix was added to re-introduce the default behavior for
+         * users. See b/265264294 fore more details.
          * @hide
          */
-        public static final String SFPS_REQUIRE_SCREEN_ON_TO_AUTH_ENABLED =
-                "sfps_require_screen_on_to_auth_enabled";
+        public static final String SFPS_PERFORMANT_AUTH_ENABLED = "sfps_performant_auth_enabled_v2";
 
         /**
          * Whether or not debugging is enabled.
@@ -9965,6 +10268,28 @@ public final class Settings {
          */
         public static final String ACTIVE_UNLOCK_ON_UNLOCK_INTENT_WHEN_BIOMETRIC_ENROLLED =
                 "active_unlock_on_unlock_intent_when_biometric_enrolled";
+
+        /**
+         * If active unlock triggers on unlock intents, then also request active unlock on
+         * these wake-up reasons. See {@link PowerManager.WakeReason} for value mappings.
+         * WakeReasons should be separated by a pipe. For example: "0|3" or "0". If this
+         * setting should be disabled, then this should be set to an empty string. A null value
+         * will use the system default value (WAKE_REASON_UNFOLD_DEVICE).
+         * @hide
+         */
+        public static final String ACTIVE_UNLOCK_WAKEUPS_CONSIDERED_UNLOCK_INTENTS =
+                "active_unlock_wakeups_considered_unlock_intents";
+
+        /**
+         * If active unlock triggers and succeeds on these wakeups, force dismiss keyguard on
+         * these wake reasons. See {@link PowerManager#WakeReason} for value mappings.
+         * WakeReasons should be separated by a pipe. For example: "0|3" or "0". If this
+         * setting should be disabled, then this should be set to an empty string. A null value
+         * will use the system default value (WAKE_REASON_UNFOLD_DEVICE).
+         * @hide
+         */
+        public static final String ACTIVE_UNLOCK_WAKEUPS_TO_FORCE_DISMISS_KEYGUARD =
+                "active_unlock_wakeups_to_force_dismiss_keyguard";
 
         /**
          * Whether the assist gesture should be enabled.
@@ -10400,11 +10725,11 @@ public final class Settings {
         public static final String QS_AUTO_ADDED_TILES = "qs_auto_tiles";
 
         /**
-         * The duration of timeout, in milliseconds, to switch from a non-primary user to the
-         * primary user when the device is docked.
+         * The duration of timeout, in milliseconds, to switch from a non-Dock User to the
+         * Dock User when the device is docked.
          * @hide
          */
-        public static final String TIMEOUT_TO_USER_ZERO = "timeout_to_user_zero";
+        public static final String TIMEOUT_TO_DOCK_USER = "timeout_to_dock_user";
 
         /**
          * Backup manager behavioral parameters.
@@ -10498,6 +10823,15 @@ public final class Settings {
         @Readable
         public static final String LOW_POWER_WARNING_ACKNOWLEDGED =
                 "low_power_warning_acknowledged";
+
+        /**
+         * Whether the "first time extra battery saver warning" dialog needs to be shown
+         * (0: default) or not (1).
+         *
+         * @hide
+         */
+        public static final String EXTRA_LOW_POWER_WARNING_ACKNOWLEDGED =
+                "extra_low_power_warning_acknowledged";
 
         /**
          * 0 (default) Auto battery saver suggestion has not been suppressed. 1) it has been
@@ -10658,6 +10992,49 @@ public final class Settings {
                 "back_gesture_inset_scale_right";
 
         /**
+         * Indicates whether the trackpad back gesture is enabled.
+         * <p>Type: int (0 for false, 1 for true)
+         *
+         * @hide
+         */
+        public static final String TRACKPAD_GESTURE_BACK_ENABLED = "trackpad_gesture_back_enabled";
+
+        /**
+         * Indicates whether the trackpad home gesture is enabled.
+         * <p>Type: int (0 for false, 1 for true)
+         *
+         * @hide
+         */
+        public static final String TRACKPAD_GESTURE_HOME_ENABLED = "trackpad_gesture_home_enabled";
+
+        /**
+         * Indicates whether the trackpad overview gesture is enabled.
+         * <p>Type: int (0 for false, 1 for true)
+         *
+         * @hide
+         */
+        public static final String TRACKPAD_GESTURE_OVERVIEW_ENABLED =
+                "trackpad_gesture_overview_enabled";
+
+        /**
+         * Indicates whether the trackpad notification gesture is enabled.
+         * <p>Type: int (0 for false, 1 for true)
+         *
+         * @hide
+         */
+        public static final String TRACKPAD_GESTURE_NOTIFICATION_ENABLED =
+                "trackpad_gesture_notification_enabled";
+
+        /**
+         * Indicates whether the trackpad quick switch gesture is enabled.
+         * <p>Type: int (0 for false, 1 for true)
+         *
+         * @hide
+         */
+        public static final String TRACKPAD_GESTURE_QUICK_SWITCH_ENABLED =
+                "trackpad_gesture_quick_switch_enabled";
+
+        /**
          * Current provider of proximity-based sharing services.
          * Default value in @string/config_defaultNearbySharingComponent.
          * No VALIDATOR as this setting will not be backed up.
@@ -10803,11 +11180,27 @@ public final class Settings {
         public static final int ACCESSIBILITY_MAGNIFICATION_MODE_ALL = 0x3;
 
         /**
+         * Whether the magnification always on feature is enabled. If true, the magnifier will not
+         * deactivate on Activity transitions; it will only zoom out to 100%.
+         *
+         * @hide
+         */
+        public static final String ACCESSIBILITY_MAGNIFICATION_ALWAYS_ON_ENABLED =
+                "accessibility_magnification_always_on_enabled";
+
+        /**
          * Whether the following typing focus feature for magnification is enabled.
          * @hide
          */
         public static final String ACCESSIBILITY_MAGNIFICATION_FOLLOW_TYPING_ENABLED =
                 "accessibility_magnification_follow_typing_enabled";
+
+        /**
+         * Whether the magnification joystick controller feature is enabled.
+         * @hide
+         */
+        public static final String ACCESSIBILITY_MAGNIFICATION_JOYSTICK_ENABLED =
+                "accessibility_magnification_joystick_enabled";
 
         /**
          * Controls magnification capability. Accessibility magnification is capable of at least one
@@ -11108,6 +11501,13 @@ public final class Settings {
          */
         public static final String EXTRA_AUTOMATIC_POWER_SAVE_MODE =
                 "extra_automatic_power_save_mode";
+
+        /**
+         * Whether lockscreen weather is enabled.
+         *
+         * @hide
+         */
+        public static final String LOCK_SCREEN_WEATHER_ENABLED = "lockscreen_weather_enabled";
 
         /**
          * These entries are considered common between the personal and the managed profile,
@@ -11541,26 +11941,32 @@ public final class Settings {
         /**
          * When the user has enable the option to have a "bug report" command
          * in the power menu.
+         * @deprecated Use {@link android.provider.Settings.Secure#BUGREPORT_IN_POWER_MENU} instead
          * @hide
          */
+        @Deprecated
         @Readable
         public static final String BUGREPORT_IN_POWER_MENU = "bugreport_in_power_menu";
 
         /**
          * The package name for the custom bugreport handler app. This app must be whitelisted.
          * This is currently used only by Power Menu short press.
-         *
+         * @deprecated Use {@link android.provider.Settings.Secure#CUSTOM_BUGREPORT_HANDLER_APP}
+         * instead
          * @hide
          */
+        @Deprecated
         @Readable
         public static final String CUSTOM_BUGREPORT_HANDLER_APP = "custom_bugreport_handler_app";
 
         /**
          * The user id for the custom bugreport handler app. This is currently used only by Power
          * Menu short press.
-         *
+         * @deprecated Use {@link android.provider.Settings.Secure#CUSTOM_BUGREPORT_HANDLER_USER}
+         * instead
          * @hide
          */
+        @Deprecated
         @Readable
         public static final String CUSTOM_BUGREPORT_HANDLER_USER = "custom_bugreport_handler_user";
 
@@ -11836,7 +12242,19 @@ public final class Settings {
         public static final String DEVICE_PROVISIONED = "device_provisioned";
 
         /**
-         * Whether bypassing the device policy management role holder qualifcation is allowed,
+         * Indicates whether the device is under restricted secure FRP mode.
+         * Secure FRP mode is enabled when the device is under FRP. On solving of FRP challenge,
+         * device is removed from this mode.
+         * <p>
+         * Type: int (0 for false, 1 for true)
+         *
+         */
+        @Readable
+        @SuppressLint("NoSettingsProvider")
+        public static final String SECURE_FRP_MODE = "secure_frp_mode";
+
+        /**
+         * Whether bypassing the device policy management role holder qualification is allowed,
          * (0 = false, 1 = true).
          *
          * @hide
@@ -14341,15 +14759,6 @@ public final class Settings {
                 "app_auto_restriction_enabled";
 
         /**
-         * Feature flag to enable or disable the Forced App Standby feature.
-         * Type: int (0 for false, 1 for true)
-         * Default: 1
-         * @hide
-         */
-        @Readable
-        public static final String FORCED_APP_STANDBY_ENABLED = "forced_app_standby_enabled";
-
-        /**
          * Whether or not to enable Forced App Standby on small battery devices.
          * Type: int (0 for false, 1 for true)
          * Default: 0
@@ -14360,34 +14769,13 @@ public final class Settings {
                 = "forced_app_standby_for_small_battery_enabled";
 
         /**
-         * Whether to enable the TARE subsystem as a whole or not.
-         * 1 means enable, 0 means disable.
+         * Whether to enable the TARE subsystem or not.
+         * Valid values are
+         * {@link android.app.tare.EconomyManager#ENABLE_TARE_ON EconomyManager.ENABLE_TARE_*}.
          *
          * @hide
          */
         public static final String ENABLE_TARE = "enable_tare";
-
-        /**
-         * Default value for {@link #ENABLE_TARE}.
-         *
-         * @hide
-         */
-        public static final int DEFAULT_ENABLE_TARE = 1;
-
-        /**
-         * Whether to enable the TARE AlarmManager economic policy or not.
-         * 1 means enable, 0 means disable.
-         *
-         * @hide
-         */
-        public static final String ENABLE_TARE_ALARM_MANAGER = "enable_tare_alarm_manager";
-
-        /**
-         * Default value for {@link #ENABLE_TARE_ALARM_MANAGER}.
-         *
-         * @hide
-         */
-        public static final int DEFAULT_ENABLE_TARE_ALARM_MANAGER = 0;
 
         /**
          * Settings for AlarmManager's TARE EconomicPolicy (list of its economic factors).
@@ -14397,21 +14785,6 @@ public final class Settings {
          * @hide
          */
         public static final String TARE_ALARM_MANAGER_CONSTANTS = "tare_alarm_manager_constants";
-
-        /**
-         * Whether to enable the TARE JobScheduler economic policy or not.
-         * 1 means enable, 0 means disable.
-         *
-         * @hide
-         */
-        public static final String ENABLE_TARE_JOB_SCHEDULER = "enable_tare_job_scheduler";
-
-        /**
-         * Default value for {@link #ENABLE_TARE_JOB_SCHEDULER}.
-         *
-         * @hide
-         */
-        public static final int DEFAULT_ENABLE_TARE_JOB_SCHEDULER = 0;
 
         /**
          * Settings for JobScheduler's TARE EconomicPolicy (list of its economic factors).
@@ -14876,6 +15249,12 @@ public final class Settings {
         public static final String LOW_POWER_MODE = "low_power";
 
         /**
+         * If 1 extra low power mode is enabled.
+         * @hide
+         */
+        public static final String EXTRA_LOW_POWER_MODE = "extra_low_power";
+
+        /**
          * If 1, battery saver ({@link #LOW_POWER_MODE}) will be re-activated after the device
          * is unplugged from a charger or rebooted.
          * @hide
@@ -15021,6 +15400,15 @@ public final class Settings {
                 "low_power_mode_suggestion_params";
 
         /**
+         * Whether low power mode reminder is enabled. If this value is 0, the device will not
+         * receive low power notification.
+         *
+         * @hide
+         */
+        public static final String LOW_POWER_MODE_REMINDER_ENABLED =
+                "low_power_mode_reminder_enabled";
+
+        /**
          * If not 0, the activity manager will aggressively finish activities and
          * processes as soon as they are no longer needed.  If 0, the normal
          * extended lifetime is used.
@@ -15132,6 +15520,25 @@ public final class Settings {
          */
         @Readable
         public static final String AUDIO_SAFE_VOLUME_STATE = "audio_safe_volume_state";
+
+        /**
+         * Persisted safe hearding current CSD value. Values are stored as float percentages where
+         * 1.f represents 100% sound dose has been reached.
+         * @hide
+         */
+        public static final String AUDIO_SAFE_CSD_CURRENT_VALUE = "audio_safe_csd_current_value";
+
+        /**
+         * Persisted safe hearding next CSD warning value. Values are stored as float percentages.
+         * @hide
+         */
+        public static final String AUDIO_SAFE_CSD_NEXT_WARNING = "audio_safe_csd_next_warning";
+
+        /**
+         * Persisted safe hearding dose records (see {@link android.media.SoundDoseRecord})
+         * @hide
+         */
+        public static final String AUDIO_SAFE_CSD_DOSE_RECORDS = "audio_safe_csd_dose_records";
 
         /**
          * URL for tzinfo (time zone) updates
@@ -15515,6 +15922,36 @@ public final class Settings {
                 "user_preferred_resolution_width";
 
         /**
+         * The HDR output mode chosen by the user. This is one of:
+         * {@link android.hardware.display.HdrConversionMode#HDR_CONVERSION_PASSTHROUGH},
+         * {@link android.hardware.display.HdrConversionMode#HDR_CONVERSION_SYSTEM},
+         * {@link android.hardware.display.HdrConversionMode#HDR_CONVERSION_FORCE}.
+         *
+         * @hide
+         */
+        @TestApi
+        @Readable
+        public static final String HDR_CONVERSION_MODE = "hdr_conversion_mode";
+
+        /**
+         * The output HDR type chosen by the user in case when {@link #HDR_CONVERSION_MODE} is
+         * {@link #HDR_CONVERSION_FORCE}. This is one of:
+         * {@link android.view.Display.HdrCapabilities#HDR_TYPE_INVALID},
+         * {@link android.view.Display.HdrCapabilities#HDR_TYPE_DOLBY_VISION},
+         * {@link android.view.Display.HdrCapabilities#HDR_TYPE_HDR10},
+         * {@link android.view.Display.HdrCapabilities#HDR_TYPE_HLG},
+         * {@link android.view.Display.HdrCapabilities#HDR_TYPE_HDR10_PLUS}
+         * <p>
+         * The value is {@link android.view.Display.HdrCapabilities#HDR_TYPE_INVALID} when user
+         * chooses SDR output type. </p>
+         *
+         * @hide
+         */
+        @TestApi
+        @Readable
+        public static final String HDR_FORCE_CONVERSION_TYPE = "hdr_force_conversion_type";
+
+        /**
          * The name of the device
          */
         @Readable
@@ -15530,8 +15967,13 @@ public final class Settings {
         public static final String NETWORK_SCORING_PROVISIONED = "network_scoring_provisioned";
 
         /**
-         * Indicates whether the user wants to be prompted for password to decrypt the device on
-         * boot. This only matters if the storage is encrypted.
+         * On devices that use full-disk encryption, indicates whether the primary user's lockscreen
+         * credential is required to decrypt the device on boot.
+         * <p>
+         * This setting does not do anything on devices that use file-based encryption.  With
+         * file-based encryption, the device boots without a credential being needed, but the
+         * lockscreen credential is required to unlock credential-encrypted storage.  All devices
+         * that launched with Android 10 or higher use file-based encryption.
          * <p>
          * Type: int (0 for false, 1 for true)
          *
@@ -15950,6 +16392,15 @@ public final class Settings {
         public static final String STYLUS_HANDWRITING_ENABLED = "stylus_handwriting_enabled";
 
         /**
+         * Indicates whether a stylus has ever been used on the device.
+         *
+         * @hide
+         */
+        @Readable
+        @SuppressLint("NoSettingsProvider")
+        public static final String STYLUS_EVER_USED = "stylus_ever_used";
+
+        /**
          * Exemptions to the hidden API blacklist.
          *
          * @hide
@@ -16149,6 +16600,9 @@ public final class Settings {
             MOVED_TO_SECURE.add(Global.CHARGING_SOUNDS_ENABLED);
             MOVED_TO_SECURE.add(Global.CHARGING_VIBRATION_ENABLED);
             MOVED_TO_SECURE.add(Global.NOTIFICATION_BUBBLES);
+            MOVED_TO_SECURE.add(Global.BUGREPORT_IN_POWER_MENU);
+            MOVED_TO_SECURE.add(Global.CUSTOM_BUGREPORT_HANDLER_APP);
+            MOVED_TO_SECURE.add(Global.CUSTOM_BUGREPORT_HANDLER_USER);
         }
 
         // Certain settings have been moved from global to the per-user system namespace
@@ -17639,6 +18093,12 @@ public final class Settings {
                     "gesture_touch_and_hold_watchface_enabled";
 
             /**
+             * Whether screenshot is enabled.
+             * @hide
+             */
+            public static final String SCREENSHOT_ENABLED = "screenshot_enabled";
+
+            /**
              * Whether bedtime mode is enabled.
              * @hide
              */
@@ -17749,6 +18209,28 @@ public final class Settings {
             public static final String OEM_SETUP_VERSION = "oem_setup_version";
 
             /**
+             * The key to indicate to Setup Wizard if OEM setup is completed in Wear Services.
+             * @hide
+             */
+            public static final String OEM_SETUP_COMPLETED_STATUS = "oem_setup_completed_status";
+
+             /**
+              * Constant provided to Setup Wizard to inform about failure of OEM setup in Wear
+              * Services. The value should be provided with setting name {@link
+              * #OEM_SETUP_COMPLETED_STATUS}.
+              * @hide
+              */
+            public static final int OEM_SETUP_COMPLETED_FAILURE = 0;
+
+            /**
+             * Constant provided to Setup Wizard to inform about successful completion of OEM setup
+             * in Wear Services. The value should be provided with setting name {@link
+             * #OEM_SETUP_COMPLETED_STATUS}.
+             * @hide
+             */
+            public static final int OEM_SETUP_COMPLETED_SUCCESS = 1;
+
+            /**
              * Controls the gestures feature.
              * @hide
              */
@@ -17834,6 +18316,37 @@ public final class Settings {
             public static final String WRIST_ORIENTATION_MODE = "wear_wrist_orientation_mode";
 
             /**
+             * Current lock screen state of the device
+             * (null = default value of this setting (lockscreen is never set),
+             * 0 = {@link #LOCK_SCREEN_STATE_NONE},
+             * 1 = {@link #LOCK_SCREEN_STATE_PIN},
+             * 2 = {@link #LOCK_SCREEN_STATE_PATTERN})
+             * @hide
+             */
+            public static final String LOCK_SCREEN_STATE = "lock_screen_state";
+
+            /**
+             * No lock screen set
+             * One of the possible states for {@link #LOCK_SCREEN_STATE}.
+             * @hide
+             */
+            public static final int LOCK_SCREEN_STATE_NONE = 0;
+
+            /**
+             * Lock screen set as a pin
+             * One of the possible states for {@link #LOCK_SCREEN_STATE}.
+             * @hide
+             */
+            public static final int LOCK_SCREEN_STATE_PIN = 1;
+
+            /**
+             * Lock screen set as a pattern
+             * One of the possible states for {@link #LOCK_SCREEN_STATE}.
+             * @hide
+             */
+            public static final int LOCK_SCREEN_STATE_PATTERN = 2;
+
+            /**
              * Setting indicating the name of the Wear OS app package containing the device's sysui.
              *
              * @hide
@@ -17868,6 +18381,12 @@ public final class Settings {
              * @hide
              */
             public static final String WET_MODE_ON = "wet_mode_on";
+
+            /*
+             * Whether the RSB wake feature is enabled.
+             * @hide
+             */
+            public static final String RSB_WAKE_ENABLED = "rsb_wake_enabled";
 
             /*
              * Whether the screen-unlock (keyguard) sound is enabled.
@@ -17911,6 +18430,133 @@ public final class Settings {
              * @hide
              */
             public static final int EARLY_UPDATES_STATUS_ABORTED = 4;
+
+            /**
+             * Whether dynamic color theming (e.g. Material You) is enabled for apps which support
+             * it.
+             *
+             * @hide
+             */
+            public static final String DYNAMIC_COLOR_THEME_ENABLED = "dynamic_color_theme_enabled";
+
+            /**
+             * Current state of accessibility vibration watch feature
+             * (0 = false, 1 = true)
+             *
+             * @hide
+             */
+            public static final String ACCESSIBILITY_VIBRATION_WATCH_ENABLED =
+                    "a11y_vibration_watch_enabled";
+
+            /**
+             * Stores current type of accessibility vibration
+             * (0 = {@link #ACCESSIBILITY_VIBRATION_WATCH_TYPE_DIGIT},
+             * 1 = {@link #ACCESSIBILITY_VIBRATION_WATCH_TYPE_TERSE)
+             *
+             * @hide
+             */
+            public static final String ACCESSIBILITY_VIBRATION_WATCH_TYPE =
+                    "a11y_vibration_watch_type";
+
+            /**
+             * Vibration watch type digit
+             * One of the possible states for {@link #ACCESSIBILITY_VIBRATION_WATCH_TYPE}.
+             *
+             * @hide
+             */
+            public static final int ACCESSIBILITY_VIBRATION_WATCH_TYPE_DIGIT = 0;
+
+            /**
+             * Vibration watch type terse
+             * One of the possible states for {@link #ACCESSIBILITY_VIBRATION_WATCH_TYPE}.
+             *
+             * @hide
+             */
+            public static final int ACCESSIBILITY_VIBRATION_WATCH_TYPE_TERSE = 1;
+
+            /**
+             * Stores current accessibility vibration watch speed
+             * (0 = {@link #ACCESSIBILITY_VIBRATION_WATCH_SPEED_VERY_SLOW},
+             * 1 = {@link #ACCESSIBILITY_VIBRATION_WATCH_SPEED_SLOW},
+             * 2 = {@link #ACCESSIBILITY_VIBRATION_WATCH_SPEED_MEDIUM},
+             * 3 = {@link #ACCESSIBILITY_VIBRATION_WATCH_SPEED_FAST},
+             * 4 = {@link #ACCESSIBILITY_VIBRATION_WATCH_SPEED_VERY_FAST})
+             */
+            public static final String ACCESSIBILITY_VIBRATION_WATCH_SPEED = "vibration_speed";
+
+            /**
+             * Vibration watch speed type very slow
+             * One of the possible states for {@link #ACCESSIBILITY_VIBRATION_WATCH_SPEED}.
+             *
+             * @hide
+             */
+            public static final int ACCESSIBILITY_VIBRATION_WATCH_SPEED_VERY_SLOW = 0;
+
+            /**
+             * Vibration watch speed type slow
+             * One of the possible states for {@link #ACCESSIBILITY_VIBRATION_WATCH_SPEED}.
+             *
+             * @hide
+             */
+            public static final int ACCESSIBILITY_VIBRATION_WATCH_SPEED_SLOW = 1;
+
+            /**
+             * Vibration watch speed type medium
+             * One of the possible states for {@link #ACCESSIBILITY_VIBRATION_WATCH_SPEED}.
+             *
+             * @hide
+             */
+            public static final int ACCESSIBILITY_VIBRATION_WATCH_SPEED_MEDIUM = 2;
+
+            /**
+             * Vibration watch speed type fast
+             * One of the possible states for {@link #ACCESSIBILITY_VIBRATION_WATCH_SPEED}.
+             *
+             * @hide
+             */
+            public static final int ACCESSIBILITY_VIBRATION_WATCH_SPEED_FAST = 3;
+
+            /**
+             * Vibration watch speed type very fast
+             * One of the possible states for {@link #ACCESSIBILITY_VIBRATION_WATCH_SPEED}.
+             *
+             * @hide
+             */
+            public static final int ACCESSIBILITY_VIBRATION_WATCH_SPEED_VERY_FAST = 4;
+
+            /**
+             * The key to indicate the data migration status on device upgrade in Wear Services.
+             * @hide
+             */
+            public static final String UPGRADE_DATA_MIGRATION_STATUS =
+                    "upgrade_data_migration_status";
+
+            /**
+             * Constant indicating that the data migration is not needed.
+             *
+             * The value should be provided with setting name {@link
+             * #UPGRADE_DATA_MIGRATION_STATUS}.
+             * @hide
+             */
+            public static final int UPGRADE_DATA_MIGRATION_NOT_NEEDED = 0;
+
+            /**
+             * Constant indicating that the data migration is not yet finished.
+             *
+             * The value should be provided with setting name {@link
+             * #UPGRADE_DATA_MIGRATION_STATUS}.
+             * @hide
+             */
+            public static final int UPGRADE_DATA_MIGRATION_PENDING = 1;
+
+            /**
+             * Constant indicating that the data migration is finished.
+             *
+             * The value should be provided with setting name {@link
+             * #UPGRADE_DATA_MIGRATION_STATUS}.
+             * @hide
+             */
+            public static final int UPGRADE_DATA_MIGRATION_DONE = 2;
         }
     }
 
@@ -17921,6 +18567,7 @@ public final class Settings {
      *
      * @hide
      */
+    @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
     public static final class Config extends NameValueTable {
 
         /**
@@ -17955,12 +18602,19 @@ public final class Settings {
          */
         public static final int SYNC_DISABLED_MODE_UNTIL_REBOOT = 2;
 
+        /**
+         * The content:// style URL for the config table.
+         *
+         * @hide
+         */
+        public static final Uri CONTENT_URI = Uri.parse("content://" + AUTHORITY + "/config");
+
         private static final ContentProviderHolder sProviderHolder =
-                new ContentProviderHolder(DeviceConfig.CONTENT_URI);
+                new ContentProviderHolder(CONTENT_URI);
 
         // Populated lazily, guarded by class object:
         private static final NameValueCache sNameValueCache = new NameValueCache(
-                DeviceConfig.CONTENT_URI,
+                CONTENT_URI,
                 CALL_METHOD_GET_CONFIG,
                 CALL_METHOD_PUT_CONFIG,
                 CALL_METHOD_DELETE_CONFIG,
@@ -17969,17 +18623,41 @@ public final class Settings {
                 sProviderHolder,
                 Config.class);
 
+        // Should never be invoked
+        private Config() {
+        }
+
         /**
          * Look up a name in the database.
-         * @param resolver to access the database with
          * @param name to look up in the table
          * @return the corresponding value, or null if not present
          *
          * @hide
          */
+        @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
+        @Nullable
         @RequiresPermission(Manifest.permission.READ_DEVICE_CONFIG)
-        static String getString(ContentResolver resolver, String name) {
+        public static String getString(@NonNull String name) {
+            ContentResolver resolver = getContentResolver();
             return sNameValueCache.getStringForUser(resolver, name, resolver.getUserId());
+        }
+
+        /**
+         * Look up a list of names in the database, within the specified namespace.
+         *
+         * @param namespace to which the names belong
+         * @param names to look up in the table
+         * @return a non null, but possibly empty, map from name to value for any of the names that
+         *         were found during lookup.
+         *
+         * @hide
+         */
+        @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
+        @NonNull
+        @RequiresPermission(Manifest.permission.READ_DEVICE_CONFIG)
+        public static Map<String, String> getStrings(@NonNull String namespace,
+                @NonNull List<String> names) {
+            return getStrings(getContentResolver(), namespace, names);
         }
 
         /**
@@ -18022,7 +18700,6 @@ public final class Settings {
          * <strong>not</strong> be set as the default.
          * </p>
          *
-         * @param resolver to access the database with.
          * @param namespace to store the name/value pair in.
          * @param name to store.
          * @param value to associate with the name.
@@ -18033,12 +18710,32 @@ public final class Settings {
          *
          * @hide
          */
+        @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
         @RequiresPermission(Manifest.permission.WRITE_DEVICE_CONFIG)
-        static boolean putString(@NonNull ContentResolver resolver, @NonNull String namespace,
+        public static boolean putString(@NonNull String namespace,
                 @NonNull String name, @Nullable String value, boolean makeDefault) {
+            ContentResolver resolver = getContentResolver();
             return sNameValueCache.putStringForUser(resolver, createCompositeName(namespace, name),
                     value, null, makeDefault, resolver.getUserId(),
                     DEFAULT_OVERRIDEABLE_BY_RESTORE);
+        }
+
+        /**
+         * Clear all name/value pairs for the provided namespace and save new name/value pairs in
+         * their place.
+         *
+         * @param namespace to which the names should be set.
+         * @param keyValues map of key names (without the prefix) to values.
+         * @return true if the name/value pairs were set, false if setting was blocked
+         *
+         * @hide
+         */
+        @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
+        @RequiresPermission(Manifest.permission.WRITE_DEVICE_CONFIG)
+        public static boolean setStrings(@NonNull String namespace,
+                @NonNull Map<String, String> keyValues)
+                throws DeviceConfig.BadConfigException {
+            return setStrings(getContentResolver(), namespace, keyValues);
         }
 
         /**
@@ -18075,7 +18772,6 @@ public final class Settings {
         /**
          * Delete a name/value pair from the database for the specified namespace.
          *
-         * @param resolver to access the database with.
          * @param namespace to delete the name/value pair from.
          * @param name to delete.
          * @return true if the value was deleted, false on database errors. If the name/value pair
@@ -18085,9 +18781,11 @@ public final class Settings {
          *
          * @hide
          */
+        @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
         @RequiresPermission(Manifest.permission.WRITE_DEVICE_CONFIG)
-        static boolean deleteString(@NonNull ContentResolver resolver, @NonNull String namespace,
+        public static boolean deleteString(@NonNull String namespace,
                 @NonNull String name) {
+            ContentResolver resolver = getContentResolver();
             return sNameValueCache.deleteStringForUser(resolver,
                     createCompositeName(namespace, name), resolver.getUserId());
         }
@@ -18098,7 +18796,6 @@ public final class Settings {
          * The method accepts an optional prefix parameter. If provided, only pairs with a name that
          * starts with the exact prefix will be reset. Otherwise all will be reset.
          *
-         * @param resolver Handle to the content resolver.
          * @param resetMode The reset mode to use.
          * @param namespace Optionally, to limit which which namespace is reset.
          *
@@ -18106,10 +18803,12 @@ public final class Settings {
          *
          * @hide
          */
+        @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
         @RequiresPermission(Manifest.permission.WRITE_DEVICE_CONFIG)
-        static void resetToDefaults(@NonNull ContentResolver resolver, @ResetMode int resetMode,
+        public static void resetToDefaults(@ResetMode int resetMode,
                 @Nullable String namespace) {
             try {
+                ContentResolver resolver = getContentResolver();
                 Bundle arg = new Bundle();
                 arg.putInt(CALL_METHOD_USER_KEY, resolver.getUserId());
                 arg.putInt(CALL_METHOD_RESET_MODE_KEY, resetMode);
@@ -18120,7 +18819,7 @@ public final class Settings {
                 cp.call(resolver.getAttributionSource(),
                         sProviderHolder.mUri.getAuthority(), CALL_METHOD_RESET_CONFIG, null, arg);
             } catch (RemoteException e) {
-                Log.w(TAG, "Can't reset to defaults for " + DeviceConfig.CONTENT_URI, e);
+                Log.w(TAG, "Can't reset to defaults for " + CONTENT_URI, e);
             }
         }
 
@@ -18130,18 +18829,19 @@ public final class Settings {
          *
          * @hide
          */
+        @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
         @SuppressLint("AndroidFrameworkRequiresPermission")
         @RequiresPermission(Manifest.permission.WRITE_DEVICE_CONFIG)
-        static void setSyncDisabledMode(
-                @NonNull ContentResolver resolver, @SyncDisabledMode int disableSyncMode) {
+        public static void setSyncDisabledMode(@SyncDisabledMode int disableSyncMode) {
             try {
+                ContentResolver resolver = getContentResolver();
                 Bundle args = new Bundle();
                 args.putInt(CALL_METHOD_SYNC_DISABLED_MODE_KEY, disableSyncMode);
                 IContentProvider cp = sProviderHolder.getProvider(resolver);
                 cp.call(resolver.getAttributionSource(), sProviderHolder.mUri.getAuthority(),
                         CALL_METHOD_SET_SYNC_DISABLED_MODE_CONFIG, null, args);
             } catch (RemoteException e) {
-                Log.w(TAG, "Can't set sync disabled mode " + DeviceConfig.CONTENT_URI, e);
+                Log.w(TAG, "Can't set sync disabled mode " + CONTENT_URI, e);
             }
         }
 
@@ -18151,10 +18851,12 @@ public final class Settings {
          *
          * @hide
          */
+        @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
         @SuppressLint("AndroidFrameworkRequiresPermission")
         @RequiresPermission(Manifest.permission.WRITE_DEVICE_CONFIG)
-        static int getSyncDisabledMode(@NonNull ContentResolver resolver) {
+        public static int getSyncDisabledMode() {
             try {
+                ContentResolver resolver = getContentResolver();
                 Bundle args = Bundle.EMPTY;
                 IContentProvider cp = sProviderHolder.getProvider(resolver);
                 Bundle bundle = cp.call(resolver.getAttributionSource(),
@@ -18163,38 +18865,132 @@ public final class Settings {
                         null, args);
                 return bundle.getInt(KEY_CONFIG_GET_SYNC_DISABLED_MODE_RETURN);
             } catch (RemoteException e) {
-                Log.w(TAG, "Can't query sync disabled mode " + DeviceConfig.CONTENT_URI, e);
+                Log.w(TAG, "Can't query sync disabled mode " + CONTENT_URI, e);
             }
             return -1;
         }
 
         /**
-         * Register callback for monitoring Config table.
+         * Setter callback for monitoring Config table.
          *
-         * @param resolver Handle to the content resolver.
-         * @param callback callback to register
+         * @param executor the {@link Executor} on which to invoke the callback
+         * @param callback callback to set
          *
          * @hide
          */
+        @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
         @RequiresPermission(Manifest.permission.MONITOR_DEVICE_CONFIG_ACCESS)
-        public static void registerMonitorCallback(@NonNull ContentResolver resolver,
-                @NonNull RemoteCallback callback) {
-            registerMonitorCallbackAsUser(resolver, resolver.getUserId(), callback);
+        public static void setMonitorCallback(
+                @NonNull ContentResolver resolver,
+                @NonNull @CallbackExecutor Executor executor,
+                @NonNull DeviceConfig.MonitorCallback callback) {
+            setMonitorCallbackAsUser(executor, resolver, resolver.getUserId(), callback);
         }
 
-        private static void registerMonitorCallbackAsUser(
+        /**
+         * Clear callback for monitoring Config table.
+         * this may only be used to clear callback function registered by
+         * {@link Config#setMonitorCallback}
+         * @hide
+         */
+        @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
+        @RequiresPermission(Manifest.permission.MONITOR_DEVICE_CONFIG_ACCESS)
+        public static void clearMonitorCallback(@NonNull ContentResolver resolver) {
+            try {
+                Bundle arg = new Bundle();
+                arg.putInt(CALL_METHOD_USER_KEY, resolver.getUserId());
+                IContentProvider cp = sProviderHolder.getProvider(resolver);
+                cp.call(resolver.getAttributionSource(),
+                        sProviderHolder.mUri.getAuthority(),
+                        CALL_METHOD_UNREGISTER_MONITOR_CALLBACK_CONFIG, null, arg);
+            } catch (RemoteException e) {
+                Log.w(TAG, "Can't clear config monitor callback", e);
+            }
+        }
+
+
+        /**
+         * Register a content observer.
+         *
+         * @hide
+         */
+        @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
+        public static void registerContentObserver(@Nullable String namespace,
+                boolean notifyForDescendants, @NonNull ContentObserver observer) {
+            ActivityThread.currentApplication().getContentResolver()
+                    .registerContentObserver(createNamespaceUri(namespace),
+                         notifyForDescendants, observer);
+        }
+
+        /**
+         * Unregister a content observer.
+         * this may only be used with content observers registered through
+         * {@link Config#registerContentObserver}
+         *
+         * @hide
+         */
+        @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
+        public static void unregisterContentObserver(@NonNull ContentObserver observer) {
+            ActivityThread.currentApplication().getContentResolver()
+              .unregisterContentObserver(observer);
+        }
+
+        /**
+         * Determine whether the calling process of an IPC <em>or you</em> have been
+         * granted a particular permission.  This is the same as
+         * {@link #checkCallingPermission}, except it grants your own permissions
+         * if you are not currently processing an IPC.  Use with care!
+         *
+         * @param permission The name of the permission being checked.
+         *
+         * @return {@link PackageManager#PERMISSION_GRANTED} if the calling
+         * pid/uid is allowed that permission, or
+         * {@link PackageManager#PERMISSION_DENIED} if it is not.
+         *
+         * @see PackageManager#checkPermission(String, String)
+         * @see #checkPermission
+         * @see #checkCallingPermission
+         * @hide
+         */
+        @PermissionMethod(orSelf = true)
+        @PackageManager.PermissionResult
+        public static int checkCallingOrSelfPermission(@NonNull @PermissionName String permission) {
+            return ActivityThread.currentApplication()
+               .getApplicationContext().checkCallingOrSelfPermission(permission);
+        }
+
+        /**
+         * Enforces READ_DEVICE_CONFIG permission if namespace is not one of public namespaces.
+         * @hide
+         */
+        public static void enforceReadPermission(String namespace) {
+            if (ActivityThread.currentApplication().getApplicationContext()
+                    .checkCallingOrSelfPermission(Manifest.permission.READ_DEVICE_CONFIG)
+                    != PackageManager.PERMISSION_GRANTED) {
+                if (!DeviceConfig.getPublicNamespaces().contains(namespace)) {
+                    throw new SecurityException("Permission denial: reading from settings requires:"
+                        + Manifest.permission.READ_DEVICE_CONFIG);
+                }
+            }
+        }
+
+        private static void setMonitorCallbackAsUser(
+                @NonNull @CallbackExecutor Executor executor,
                 @NonNull ContentResolver resolver, @UserIdInt int userHandle,
-                @NonNull RemoteCallback callback) {
+                @NonNull DeviceConfig.MonitorCallback callback) {
             try {
                 Bundle arg = new Bundle();
                 arg.putInt(CALL_METHOD_USER_KEY, userHandle);
-                arg.putParcelable(CALL_METHOD_MONITOR_CALLBACK_KEY, callback);
+                arg.putParcelable(CALL_METHOD_MONITOR_CALLBACK_KEY,
+                        new RemoteCallback(result -> {
+                            handleMonitorCallback(result, executor, callback);
+                        }));
                 IContentProvider cp = sProviderHolder.getProvider(resolver);
                 cp.call(resolver.getAttributionSource(),
                         sProviderHolder.mUri.getAuthority(),
                         CALL_METHOD_REGISTER_MONITOR_CALLBACK_CONFIG, null, arg);
             } catch (RemoteException e) {
-                Log.w(TAG, "Can't register config monitor callback", e);
+                Log.w(TAG, "Can't set config monitor callback", e);
             }
         }
 
@@ -18202,6 +18998,32 @@ public final class Settings {
         public static void clearProviderForTest() {
             sProviderHolder.clearProviderForTest();
             sNameValueCache.clearGenerationTrackerForTest();
+        }
+
+        private static void handleMonitorCallback(
+                Bundle result,
+                @NonNull @CallbackExecutor Executor executor,
+                DeviceConfig.MonitorCallback monitorCallback) {
+            String callbackType = result.getString(EXTRA_MONITOR_CALLBACK_TYPE, "");
+            switch (callbackType) {
+                case EXTRA_NAMESPACE_UPDATED_CALLBACK:
+                    String updatedNamespace = result.getString(EXTRA_NAMESPACE);
+                    if (updatedNamespace != null) {
+                        executor.execute(() -> monitorCallback.onNamespaceUpdate(updatedNamespace));
+                    }
+                    break;
+                case EXTRA_ACCESS_CALLBACK:
+                    String callingPackage = result.getString(EXTRA_CALLING_PACKAGE, null);
+                    String namespace = result.getString(EXTRA_NAMESPACE, null);
+                    if (namespace != null && callingPackage != null) {
+                        executor.execute(() ->
+                                monitorCallback.onDeviceConfigAccess(callingPackage, namespace));
+                    }
+                    break;
+                default:
+                    Slog.w(TAG, "Unrecognized DeviceConfig callback");
+                    break;
+            }
         }
 
         private static String createCompositeName(@NonNull String namespace, @NonNull String name) {
@@ -18213,6 +19035,15 @@ public final class Settings {
         private static String createPrefix(@NonNull String namespace) {
             Preconditions.checkNotNull(namespace);
             return namespace + "/";
+        }
+
+        private static Uri createNamespaceUri(@NonNull String namespace) {
+            Preconditions.checkNotNull(namespace);
+            return CONTENT_URI.buildUpon().appendPath(namespace).build();
+        }
+
+        private static ContentResolver getContentResolver() {
+            return ActivityThread.currentApplication().getContentResolver();
         }
     }
 
@@ -18641,8 +19472,23 @@ public final class Settings {
             "android.settings.MANAGE_APP_ALL_FILES_ACCESS_PERMISSION";
 
     /**
+     * Activity Action: Show screen for controlling whether an app can send full screen intents.
+     * <p>
+     *     Input: the intent's data URI must specify the application package name for which you want
+     *     to manage full screen intents.
+     * <p>
+     * Output: Nothing.
+     */
+    @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
+    public static final String ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT =
+            "android.settings.MANAGE_APP_USE_FULL_SCREEN_INTENT";
+
+    /**
      * Activity Action: For system or preinstalled apps to show their {@link Activity} embedded
      * in Settings app on large screen devices.
+     *
+     * Developers should resolve the Intent action before using it.
+     *
      * <p>
      *     Input: {@link #EXTRA_SETTINGS_EMBEDDED_DEEP_LINK_INTENT_URI} must be included to
      * specify the intent for the activity which will be embedded in Settings app.

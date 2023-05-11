@@ -26,6 +26,7 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -64,12 +65,15 @@ import com.android.server.wm.WindowManagerInternal;
 
 import org.junit.After;
 import org.junit.Before;
+import org.junit.BeforeClass;
 import org.mockito.Mock;
 import org.mockito.MockitoSession;
 import org.mockito.quality.Strictness;
 
 /** Base class for testing {@link InputMethodManagerService}. */
 public class InputMethodManagerServiceTestBase {
+    private static final int NO_VERIFY_SHOW_FLAGS = -1;
+
     protected static final String TEST_SELECTED_IME_ID = "test.ime";
     protected static final String TEST_EDITOR_PKG_NAME = "test.editor";
     protected static final String TEST_FOCUSED_WINDOW_NAME = "test.editor/activity";
@@ -118,13 +122,21 @@ public class InputMethodManagerServiceTestBase {
     protected InputMethodManagerService mInputMethodManagerService;
     protected ServiceThread mServiceThread;
 
+    @BeforeClass
+    public static void setupClass() {
+        // Make sure DeviceConfig's lazy-initialized ContentProvider gets
+        // a real instance before we stub out all system services below.
+        // TODO(b/272229177): remove dependency on real ContentProvider
+        new InputMethodDeviceConfigs().destroy();
+    }
+
     @Before
     public void setUp() throws RemoteException {
         mMockingSession =
                 mockitoSession()
                         .initMocks(this)
                         .strictness(Strictness.LENIENT)
-                        .mockStatic(LocalServices.class)
+                        .spyStatic(LocalServices.class)
                         .mockStatic(ServiceManager.class)
                         .mockStatic(SystemServerInitThreadPool.class)
                         .startMocking();
@@ -200,9 +212,8 @@ public class InputMethodManagerServiceTestBase {
                         "TestServiceThread",
                         Process.THREAD_PRIORITY_FOREGROUND, /* allowIo */
                         false);
-        mInputMethodManagerService =
-                new InputMethodManagerService(
-                        mContext, mServiceThread, mMockInputMethodBindingController);
+        mInputMethodManagerService = new InputMethodManagerService(mContext, mServiceThread,
+                mMockInputMethodBindingController);
 
         // Start a InputMethodManagerService.Lifecycle to publish and manage the lifecycle of
         // InputMethodManagerService, which is closer to the real situation.
@@ -210,6 +221,7 @@ public class InputMethodManagerServiceTestBase {
                 new InputMethodManagerService.Lifecycle(mContext, mInputMethodManagerService);
 
         // Public local InputMethodManagerService.
+        LocalServices.removeServiceForTest(InputMethodManagerInternal.class);
         lifecycle.onStart();
         try {
             // After this boot phase, services can broadcast Intents.
@@ -228,6 +240,10 @@ public class InputMethodManagerServiceTestBase {
 
     @After
     public void tearDown() {
+        if (mInputMethodManagerService != null) {
+            mInputMethodManagerService.mInputMethodDeviceConfigs.destroy();
+        }
+
         if (mServiceThread != null) {
             mServiceThread.quitSafely();
         }
@@ -235,16 +251,23 @@ public class InputMethodManagerServiceTestBase {
         if (mMockingSession != null) {
             mMockingSession.finishMocking();
         }
+        LocalServices.removeServiceForTest(InputMethodManagerInternal.class);
     }
 
     protected void verifyShowSoftInput(boolean setVisible, boolean showSoftInput)
+            throws RemoteException {
+        verifyShowSoftInput(setVisible, showSoftInput, NO_VERIFY_SHOW_FLAGS);
+    }
+
+    protected void verifyShowSoftInput(boolean setVisible, boolean showSoftInput, int showFlags)
             throws RemoteException {
         synchronized (ImfLock.class) {
             verify(mMockInputMethodBindingController, times(setVisible ? 1 : 0))
                     .setCurrentMethodVisible();
         }
         verify(mMockInputMethod, times(showSoftInput ? 1 : 0))
-                .showSoftInput(any(), anyInt(), any());
+                .showSoftInput(any(), any(),
+                        showFlags != NO_VERIFY_SHOW_FLAGS ? eq(showFlags) : anyInt(), any());
     }
 
     protected void verifyHideSoftInput(boolean setNotVisible, boolean hideSoftInput)
@@ -254,6 +277,6 @@ public class InputMethodManagerServiceTestBase {
                     .setCurrentMethodNotVisible();
         }
         verify(mMockInputMethod, times(hideSoftInput ? 1 : 0))
-                .hideSoftInput(any(), anyInt(), any());
+                .hideSoftInput(any(), any(), anyInt(), any());
     }
 }

@@ -16,6 +16,7 @@
 
 #include "format/binary/TableFlattener.h"
 
+#include <limits>
 #include <sstream>
 #include <type_traits>
 #include <variant>
@@ -31,6 +32,7 @@
 #include "format/binary/ChunkWriter.h"
 #include "format/binary/ResEntryWriter.h"
 #include "format/binary/ResourceTypeExtensions.h"
+#include "optimize/Obfuscator.h"
 #include "trace/TraceBuffer.h"
 
 using namespace android;
@@ -67,7 +69,9 @@ class PackageFlattener {
  public:
   PackageFlattener(IAaptContext* context, const ResourceTablePackageView& package,
                    const std::map<size_t, std::string>* shared_libs,
-                   SparseEntriesMode sparse_entries, bool collapse_key_stringpool,
+                   SparseEntriesMode sparse_entries,
+                   bool compact_entries,
+                   bool collapse_key_stringpool,
                    const std::set<ResourceName>& name_collapse_exemptions,
                    bool deduplicate_entry_values)
       : context_(context),
@@ -75,6 +79,7 @@ class PackageFlattener {
         package_(package),
         shared_libs_(shared_libs),
         sparse_entries_(sparse_entries),
+        compact_entries_(compact_entries),
         collapse_key_stringpool_(collapse_key_stringpool),
         name_collapse_exemptions_(name_collapse_exemptions),
         deduplicate_entry_values_(deduplicate_entry_values) {
@@ -135,6 +140,33 @@ class PackageFlattener {
  private:
   DISALLOW_COPY_AND_ASSIGN(PackageFlattener);
 
+  // Use compact entries only if
+  // 1) it is enabled, and that
+  // 2) the entries will be accessed on platforms U+, and
+  // 3) all entry keys can be encoded in 16 bits
+  bool UseCompactEntries(const ConfigDescription& config, std::vector<FlatEntry>* entries) const {
+    return compact_entries_ &&
+        (context_->GetMinSdkVersion() > SDK_TIRAMISU || config.sdkVersion > SDK_TIRAMISU) &&
+        std::none_of(entries->cbegin(), entries->cend(),
+          [](const auto& e) { return e.entry_key >= std::numeric_limits<uint16_t>::max(); });
+  }
+
+  std::unique_ptr<ResEntryWriter> GetResEntryWriter(bool dedup, bool compact, BigBuffer* buffer) {
+    if (dedup) {
+      if (compact) {
+        return std::make_unique<DeduplicateItemsResEntryWriter<true>>(buffer);
+      } else {
+        return std::make_unique<DeduplicateItemsResEntryWriter<false>>(buffer);
+      }
+    } else {
+      if (compact) {
+        return std::make_unique<SequentialResEntryWriter<true>>(buffer);
+      } else {
+        return std::make_unique<SequentialResEntryWriter<false>>(buffer);
+      }
+    }
+  }
+
   bool FlattenConfig(const ResourceTableTypeView& type, const ConfigDescription& config,
                      const size_t num_total_entries, std::vector<FlatEntry>* entries,
                      BigBuffer* buffer) {
@@ -150,20 +182,19 @@ class PackageFlattener {
     std::vector<uint32_t> offsets;
     offsets.resize(num_total_entries, 0xffffffffu);
 
+    bool compact_entry = UseCompactEntries(config, entries);
+
     android::BigBuffer values_buffer(512);
-    std::variant<std::monostate, DeduplicateItemsResEntryWriter, SequentialResEntryWriter>
-        writer_variant;
-    ResEntryWriter* res_entry_writer;
-    if (deduplicate_entry_values_) {
-      res_entry_writer = &writer_variant.emplace<DeduplicateItemsResEntryWriter>(&values_buffer);
-    } else {
-      res_entry_writer = &writer_variant.emplace<SequentialResEntryWriter>(&values_buffer);
-    }
+    auto res_entry_writer = GetResEntryWriter(deduplicate_entry_values_,
+                                              compact_entry, &values_buffer);
 
     for (FlatEntry& flat_entry : *entries) {
       CHECK(static_cast<size_t>(flat_entry.entry->id.value()) < num_total_entries);
       offsets[flat_entry.entry->id.value()] = res_entry_writer->Write(&flat_entry);
     }
+
+    // whether the offsets can be represented in 2 bytes
+    bool short_offsets = (values_buffer.size() / 4u) < std::numeric_limits<uint16_t>::max();
 
     bool sparse_encode = sparse_entries_ == SparseEntriesMode::Enabled ||
                          sparse_entries_ == SparseEntriesMode::Forced;
@@ -177,8 +208,7 @@ class PackageFlattener {
     }
 
     // Only sparse encode if the offsets are representable in 2 bytes.
-    sparse_encode =
-        sparse_encode && (values_buffer.size() / 4u) <= std::numeric_limits<uint16_t>::max();
+    sparse_encode = sparse_encode && short_offsets;
 
     // Only sparse encode if the ratio of populated entries to total entries is below some
     // threshold.
@@ -200,12 +230,22 @@ class PackageFlattener {
       }
     } else {
       type_header->entryCount = android::util::HostToDevice32(num_total_entries);
-      uint32_t* indices = type_writer.NextBlock<uint32_t>(num_total_entries);
-      for (size_t i = 0; i < num_total_entries; i++) {
-        indices[i] = android::util::HostToDevice32(offsets[i]);
+      if (compact_entry && short_offsets) {
+        // use 16-bit offset only when compact_entry is true
+        type_header->flags |= ResTable_type::FLAG_OFFSET16;
+        uint16_t* indices = type_writer.NextBlock<uint16_t>(num_total_entries);
+        for (size_t i = 0; i < num_total_entries; i++) {
+          indices[i] = android::util::HostToDevice16(offsets[i] / 4u);
+        }
+      } else {
+        uint32_t* indices = type_writer.NextBlock<uint32_t>(num_total_entries);
+        for (size_t i = 0; i < num_total_entries; i++) {
+          indices[i] = android::util::HostToDevice32(offsets[i]);
+        }
       }
     }
 
+    type_writer.buffer()->Align4();
     type_header->entriesStart = android::util::HostToDevice32(type_writer.size());
     type_writer.buffer()->AppendBuffer(std::move(values_buffer));
     type_writer.Finish();
@@ -427,9 +467,6 @@ class PackageFlattener {
       // table.
       std::map<ConfigDescription, std::vector<FlatEntry>> config_to_entry_list_map;
 
-      // hardcoded string uses characters which make it an invalid resource name
-      const std::string obfuscated_resource_name = "0_resource_name_obfuscated";
-
       for (const ResourceTableEntryView& entry : type.entries) {
         if (entry.staged_id) {
           aliases_.insert(std::make_pair(
@@ -438,30 +475,31 @@ class PackageFlattener {
         }
 
         uint32_t local_key_index;
-        ResourceName resource_name({}, type.named_type, entry.name);
-        if (!collapse_key_stringpool_ ||
-            name_collapse_exemptions_.find(resource_name) != name_collapse_exemptions_.end()) {
-          local_key_index = (uint32_t)key_pool_.MakeRef(entry.name).index();
-        } else {
-          // resource isn't exempt from collapse, add it as obfuscated value
-          if (entry.overlayable_item) {
+        auto onObfuscate = [this, &local_key_index, &entry](Obfuscator::Result obfuscatedResult,
+                                                            const ResourceName& resource_name) {
+          if (obfuscatedResult == Obfuscator::Result::Keep_ExemptionList) {
+            local_key_index = (uint32_t)key_pool_.MakeRef(entry.name).index();
+          } else if (obfuscatedResult == Obfuscator::Result::Keep_Overlayable) {
             // if the resource name of the specific entry is obfuscated and this
             // entry is in the overlayable list, the overlay can't work on this
             // overlayable at runtime because the name has been obfuscated in
             // resources.arsc during flatten operation.
             const OverlayableItem& item = entry.overlayable_item.value();
             context_->GetDiagnostics()->Warn(android::DiagMessage(item.overlayable->source)
-                                             << "The resource name of overlayable entry "
-                                             << resource_name.to_string() << "'"
-                                             << " shouldn't be obfuscated in resources.arsc");
+                                             << "The resource name of overlayable entry '"
+                                             << resource_name.to_string()
+                                             << "' shouldn't be obfuscated in resources.arsc");
 
             local_key_index = (uint32_t)key_pool_.MakeRef(entry.name).index();
           } else {
-            // TODO(b/228192695): output the entry.name and Resource id to make
-            //  de-obfuscated possible.
-            local_key_index = (uint32_t)key_pool_.MakeRef(obfuscated_resource_name).index();
+            local_key_index =
+                (uint32_t)key_pool_.MakeRef(Obfuscator::kObfuscatedResourceName).index();
           }
-        }
+        };
+
+        Obfuscator::ObfuscateResourceName(collapse_key_stringpool_, name_collapse_exemptions_,
+                                          type.named_type, entry, onObfuscate);
+
         // Group values by configuration.
         for (auto& config_value : entry.values) {
           config_to_entry_list_map[config_value->config].push_back(
@@ -512,6 +550,7 @@ class PackageFlattener {
   const ResourceTablePackageView package_;
   const std::map<size_t, std::string>* shared_libs_;
   SparseEntriesMode sparse_entries_;
+  bool compact_entries_;
   android::StringPool type_pool_;
   android::StringPool key_pool_;
   bool collapse_key_stringpool_;
@@ -568,7 +607,9 @@ bool TableFlattener::Consume(IAaptContext* context, ResourceTable* table) {
     }
 
     PackageFlattener flattener(context, package, &table->included_packages_,
-                               options_.sparse_entries, options_.collapse_key_stringpool,
+                               options_.sparse_entries,
+                               options_.use_compact_entries,
+                               options_.collapse_key_stringpool,
                                options_.name_collapse_exemptions,
                                options_.deduplicate_entry_values);
     if (!flattener.FlattenPackage(&package_buffer)) {

@@ -29,6 +29,8 @@ import static com.android.internal.util.FrameworkStatsLog.BROADCAST_DELIVERY_EVE
 import static com.android.internal.util.FrameworkStatsLog.BROADCAST_DELIVERY_EVENT_REPORTED__PROC_START_TYPE__PROCESS_START_TYPE_WARM;
 import static com.android.internal.util.FrameworkStatsLog.BROADCAST_DELIVERY_EVENT_REPORTED__RECEIVER_TYPE__MANIFEST;
 import static com.android.internal.util.FrameworkStatsLog.BROADCAST_DELIVERY_EVENT_REPORTED__RECEIVER_TYPE__RUNTIME;
+import static com.android.internal.util.FrameworkStatsLog.SERVICE_REQUEST_EVENT_REPORTED__PACKAGE_STOPPED_STATE__PACKAGE_STATE_NORMAL;
+import static com.android.internal.util.FrameworkStatsLog.SERVICE_REQUEST_EVENT_REPORTED__PACKAGE_STOPPED_STATE__PACKAGE_STATE_STOPPED;
 import static com.android.server.am.ActivityManagerDebugConfig.DEBUG_BROADCAST;
 import static com.android.server.am.ActivityManagerDebugConfig.DEBUG_BROADCAST_DEFERRAL;
 import static com.android.server.am.ActivityManagerDebugConfig.DEBUG_BROADCAST_LIGHT;
@@ -42,9 +44,9 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.Activity;
 import android.app.ActivityManager;
+import android.app.ApplicationExitInfo;
 import android.app.BroadcastOptions;
 import android.app.IApplicationThread;
-import android.app.RemoteServiceException.CannotDeliverBroadcastException;
 import android.app.usage.UsageEvents.Event;
 import android.content.ComponentName;
 import android.content.ContentResolver;
@@ -265,7 +267,8 @@ public class BroadcastQueueImpl extends BroadcastQueue {
                         performReceiveLocked(oldRecord.resultToApp, oldRecord.resultTo,
                                 oldRecord.intent,
                                 Activity.RESULT_CANCELED, null, null,
-                                false, false, oldRecord.userId, oldRecord.callingUid, r.callingUid,
+                                false, false, oldRecord.shareIdentity, oldRecord.userId,
+                                oldRecord.callingUid, r.callingUid, r.callerPackage,
                                 SystemClock.uptimeMillis() - oldRecord.enqueueTime, 0);
                     } catch (RemoteException e) {
                         Slog.w(TAG, "Failure ["
@@ -389,10 +392,14 @@ public class BroadcastQueueImpl extends BroadcastQueue {
                     + ": " + r);
             mService.notifyPackageUse(r.intent.getComponent().getPackageName(),
                                       PackageManager.NOTIFY_PACKAGE_USE_BROADCAST_RECEIVER);
-            thread.scheduleReceiver(prepareReceiverIntent(r.intent, r.curFilteredExtras),
+            final boolean assumeDelivered = false;
+            thread.scheduleReceiver(
+                    prepareReceiverIntent(r.intent, r.curFilteredExtras),
                     r.curReceiver, null /* compatInfo (unused but need to keep method signature) */,
-                    r.resultCode, r.resultData, r.resultExtras, r.ordered, r.userId,
-                    app.mState.getReportedProcState());
+                    r.resultCode, r.resultData, r.resultExtras, r.ordered, assumeDelivered,
+                    r.userId, r.shareIdentity ? r.callingUid : Process.INVALID_UID,
+                    app.mState.getReportedProcState(),
+                    r.shareIdentity ? r.callerPackage : null);
             if (DEBUG_BROADCAST)  Slog.v(TAG_BROADCAST,
                     "Process cur broadcast " + r + " DELIVERED for app " + app);
             started = true;
@@ -551,7 +558,7 @@ public class BroadcastQueueImpl extends BroadcastQueue {
         // ...then schedule the removal of the token after the extended timeout
         mHandler.postAtTime(() -> {
             synchronized (mService) {
-                app.removeAllowBackgroundActivityStartsToken(r);
+                app.removeBackgroundStartPrivileges(r);
             }
         }, msgToken, (r.receiverTime + mConstants.ALLOW_BG_ACTIVITY_START_TIMEOUT));
     }
@@ -575,6 +582,11 @@ public class BroadcastQueueImpl extends BroadcastQueue {
         final long elapsed = finishTime - r.receiverTime;
         r.state = BroadcastRecord.IDLE;
         final int curIndex = r.nextReceiver - 1;
+
+        final int packageState = r.mWasReceiverAppStopped
+                ? SERVICE_REQUEST_EVENT_REPORTED__PACKAGE_STOPPED_STATE__PACKAGE_STATE_STOPPED
+                : SERVICE_REQUEST_EVENT_REPORTED__PACKAGE_STOPPED_STATE__PACKAGE_STATE_NORMAL;
+
         if (curIndex >= 0 && curIndex < r.receivers.size() && r.curApp != null) {
             final Object curReceiver = r.receivers.get(curIndex);
             FrameworkStatsLog.write(BROADCAST_DELIVERY_EVENT_REPORTED, r.curApp.uid,
@@ -588,16 +600,17 @@ public class BroadcastQueueImpl extends BroadcastQueue {
                     : BROADCAST_DELIVERY_EVENT_REPORTED__PROC_START_TYPE__PROCESS_START_TYPE_COLD,
                     r.dispatchTime - r.enqueueTime,
                     r.receiverTime - r.dispatchTime,
-                    finishTime - r.receiverTime);
+                    finishTime - r.receiverTime,
+                    packageState);
         }
         if (state == BroadcastRecord.IDLE) {
             Slog.w(TAG_BROADCAST, "finishReceiver [" + mQueueName + "] called but state is IDLE");
         }
-        if (r.allowBackgroundActivityStarts && r.curApp != null) {
+        if (r.mBackgroundStartPrivileges.allowsAny() && r.curApp != null) {
             if (elapsed > mConstants.ALLOW_BG_ACTIVITY_START_TIMEOUT) {
                 // if the receiver has run for more than allowed bg activity start timeout,
                 // just remove the token for this process now and we're done
-                r.curApp.removeAllowBackgroundActivityStartsToken(r);
+                r.curApp.removeBackgroundStartPrivileges(r);
             } else {
                 // It gets more time; post the removal to happen at the appropriate moment
                 postActivityStartTokenRemoval(r.curApp, r);
@@ -651,6 +664,7 @@ public class BroadcastQueueImpl extends BroadcastQueue {
         r.curReceiver = null;
         r.curApp = null;
         r.curFilteredExtras = null;
+        r.mWasReceiverAppStopped = false;
         mPendingBroadcast = null;
 
         r.resultCode = resultCode;
@@ -716,9 +730,15 @@ public class BroadcastQueueImpl extends BroadcastQueue {
 
     public void performReceiveLocked(ProcessRecord app, IIntentReceiver receiver,
             Intent intent, int resultCode, String data, Bundle extras,
-            boolean ordered, boolean sticky, int sendingUser,
-            int receiverUid, int callingUid, long dispatchDelay,
-            long receiveDelay) throws RemoteException {
+            boolean ordered, boolean sticky, boolean shareIdentity, int sendingUser,
+            int receiverUid, int callingUid, String callingPackage,
+            long dispatchDelay, long receiveDelay) throws RemoteException {
+        // If the broadcaster opted-in to sharing their identity, then expose package visibility for
+        // the receiver.
+        if (shareIdentity) {
+            mService.mPackageManagerInt.grantImplicitAccess(sendingUser, intent,
+                    UserHandle.getAppId(receiverUid), callingUid, true);
+        }
         // Send the intent to the receiver asynchronously using one-way binder calls.
         if (app != null) {
             final IApplicationThread thread = app.getThread();
@@ -726,22 +746,21 @@ public class BroadcastQueueImpl extends BroadcastQueue {
                 // If we have an app thread, do the call through that so it is
                 // correctly ordered with other one-way calls.
                 try {
-                    thread.scheduleRegisteredReceiver(receiver, intent, resultCode,
-                            data, extras, ordered, sticky, sendingUser,
-                            app.mState.getReportedProcState());
-                // TODO: Uncomment this when (b/28322359) is fixed and we aren't getting
-                // DeadObjectException when the process isn't actually dead.
-                //} catch (DeadObjectException ex) {
-                // Failed to call into the process.  It's dying so just let it die and move on.
-                //    throw ex;
+                    final boolean assumeDelivered = !ordered;
+                    thread.scheduleRegisteredReceiver(
+                            receiver, intent, resultCode,
+                            data, extras, ordered, sticky, assumeDelivered, sendingUser,
+                            app.mState.getReportedProcState(),
+                            shareIdentity ? callingUid : Process.INVALID_UID,
+                            shareIdentity ? callingPackage : null);
                 } catch (RemoteException ex) {
                     // Failed to call into the process. It's either dying or wedged. Kill it gently.
                     synchronized (mService) {
                         final String msg = "Failed to schedule " + intent + " to " + receiver
                                 + " via " + app + ": " + ex;
                         Slog.w(TAG, msg);
-                        app.scheduleCrashLocked(msg,
-                                CannotDeliverBroadcastException.TYPE_ID, /* extras=*/ null);
+                        app.killLocked("Can't deliver broadcast", ApplicationExitInfo.REASON_OTHER,
+                                ApplicationExitInfo.SUBREASON_UNDELIVERED_BROADCAST, true);
                     }
                     throw ex;
                 }
@@ -760,7 +779,8 @@ public class BroadcastQueueImpl extends BroadcastQueue {
                     intent.getAction(),
                     BROADCAST_DELIVERY_EVENT_REPORTED__RECEIVER_TYPE__RUNTIME,
                     BROADCAST_DELIVERY_EVENT_REPORTED__PROC_START_TYPE__PROCESS_START_TYPE_WARM,
-                    dispatchDelay, receiveDelay, 0 /* finish_delay */);
+                    dispatchDelay, receiveDelay, 0 /* finish_delay */,
+                    SERVICE_REQUEST_EVENT_REPORTED__PACKAGE_STOPPED_STATE__PACKAGE_STATE_NORMAL);
         }
     }
 
@@ -833,19 +853,20 @@ public class BroadcastQueueImpl extends BroadcastQueue {
             } else {
                 r.receiverTime = SystemClock.uptimeMillis();
                 r.scheduledTime[index] = r.receiverTime;
-                maybeAddAllowBackgroundActivityStartsToken(filter.receiverList.app, r);
+                maybeAddBackgroundStartPrivileges(filter.receiverList.app, r);
                 maybeScheduleTempAllowlistLocked(filter.owningUid, r, r.options);
                 maybeReportBroadcastDispatchedEventLocked(r, filter.owningUid);
                 performReceiveLocked(filter.receiverList.app, filter.receiverList.receiver,
                         prepareReceiverIntent(r.intent, filteredExtras), r.resultCode, r.resultData,
-                        r.resultExtras, r.ordered, r.initialSticky, r.userId,
-                        filter.receiverList.uid, r.callingUid,
+                        r.resultExtras, r.ordered, r.initialSticky, r.shareIdentity, r.userId,
+                        filter.receiverList.uid, r.callingUid, r.callerPackage,
                         r.dispatchTime - r.enqueueTime,
                         r.receiverTime - r.dispatchTime);
                 // parallel broadcasts are fire-and-forget, not bookended by a call to
                 // finishReceiverLocked(), so we manage their activity-start token here
                 if (filter.receiverList.app != null
-                        && r.allowBackgroundActivityStarts && !r.ordered) {
+                        && r.mBackgroundStartPrivileges.allowsAny()
+                        && !r.ordered) {
                     postActivityStartTokenRemoval(filter.receiverList.app, r);
                 }
             }
@@ -856,7 +877,7 @@ public class BroadcastQueueImpl extends BroadcastQueue {
             Slog.w(TAG, "Failure sending broadcast " + r.intent, e);
             // Clean up ProcessRecord state related to this broadcast attempt
             if (filter.receiverList.app != null) {
-                filter.receiverList.app.removeAllowBackgroundActivityStartsToken(r);
+                filter.receiverList.app.removeBackgroundStartPrivileges(r);
                 if (ordered) {
                     filter.receiverList.app.mReceivers.removeCurReceiver(r);
                     // Something wrong, its oom adj could be downgraded, but not in a hurry.
@@ -1122,8 +1143,8 @@ public class BroadcastQueueImpl extends BroadcastQueue {
                             r.mIsReceiverAppRunning = true;
                             performReceiveLocked(r.resultToApp, r.resultTo,
                                     new Intent(r.intent), r.resultCode,
-                                    r.resultData, r.resultExtras, false, false, r.userId,
-                                    r.callingUid, r.callingUid,
+                                    r.resultData, r.resultExtras, false, false, r.shareIdentity,
+                                    r.userId, r.callingUid, r.callingUid, r.callerPackage,
                                     r.dispatchTime - r.enqueueTime,
                                     now - r.dispatchTime);
                             logBootCompletedBroadcastCompletionLatencyIfPossible(r);
@@ -1296,7 +1317,7 @@ public class BroadcastQueueImpl extends BroadcastQueue {
                 scheduleBroadcastsLocked();
             } else {
                 if (filter.receiverList != null) {
-                    maybeAddAllowBackgroundActivityStartsToken(filter.receiverList.app, r);
+                    maybeAddBackgroundStartPrivileges(filter.receiverList.app, r);
                     // r is guaranteed ordered at this point, so we know finishReceiverLocked()
                     // will get a callback and handle the activity start token lifecycle.
                 }
@@ -1386,7 +1407,7 @@ public class BroadcastQueueImpl extends BroadcastQueue {
             try {
                 app.addPackage(info.activityInfo.packageName,
                         info.activityInfo.applicationInfo.longVersionCode, mService.mProcessStats);
-                maybeAddAllowBackgroundActivityStartsToken(app, r);
+                maybeAddBackgroundStartPrivileges(app, r);
                 r.mIsReceiverAppRunning = true;
                 processCurBroadcastLocked(r, app);
                 return;
@@ -1394,8 +1415,8 @@ public class BroadcastQueueImpl extends BroadcastQueue {
                 final String msg = "Failed to schedule " + r.intent + " to " + info
                         + " via " + app + ": " + e;
                 Slog.w(TAG, msg);
-                app.scheduleCrashLocked(msg,
-                        CannotDeliverBroadcastException.TYPE_ID, /* extras=*/ null);
+                app.killLocked("Can't deliver broadcast", ApplicationExitInfo.REASON_OTHER,
+                        ApplicationExitInfo.SUBREASON_UNDELIVERED_BROADCAST, true);
             } catch (RuntimeException e) {
                 Slog.wtf(TAG, "Failed sending broadcast to "
                         + r.curComponent + " with " + r.intent, e);
@@ -1417,6 +1438,9 @@ public class BroadcastQueueImpl extends BroadcastQueue {
             // restart the application.
         }
 
+        // Registered whether we're bringing this package out of a stopped state
+        r.mWasReceiverAppStopped =
+                (info.activityInfo.applicationInfo.flags & ApplicationInfo.FLAG_STOPPED) != 0;
         // Not running -- get it started, to be executed when the app comes up.
         if (DEBUG_BROADCAST)  Slog.v(TAG_BROADCAST,
                 "Need to start app ["
@@ -1443,7 +1467,7 @@ public class BroadcastQueueImpl extends BroadcastQueue {
             return;
         }
 
-        maybeAddAllowBackgroundActivityStartsToken(r.curApp, r);
+        maybeAddBackgroundStartPrivileges(r.curApp, r);
         mPendingBroadcast = r;
         mPendingBroadcastRecvIndex = recIdx;
     }
@@ -1530,8 +1554,8 @@ public class BroadcastQueueImpl extends BroadcastQueue {
                 mService.getUidStateLocked(targetUid));
     }
 
-    private void maybeAddAllowBackgroundActivityStartsToken(ProcessRecord proc, BroadcastRecord r) {
-        if (r == null || proc == null || !r.allowBackgroundActivityStarts) {
+    private void maybeAddBackgroundStartPrivileges(ProcessRecord proc, BroadcastRecord r) {
+        if (r == null || proc == null || !r.mBackgroundStartPrivileges.allowsAny()) {
             return;
         }
         String msgToken = (proc.toShortString() + r.toString()).intern();
@@ -1539,7 +1563,7 @@ public class BroadcastQueueImpl extends BroadcastQueue {
         // that request - we don't want the token to be swept from under our feet...
         mHandler.removeCallbacksAndMessages(msgToken);
         // ...then add the token
-        proc.addOrUpdateAllowBackgroundActivityStartsToken(r, r.mBackgroundActivityStartsToken);
+        proc.addOrUpdateBackgroundStartPrivileges(r, r.mBackgroundStartPrivileges);
     }
 
     final void setBroadcastTimeoutLocked(long timeoutTime) {
@@ -1639,9 +1663,8 @@ public class BroadcastQueueImpl extends BroadcastQueue {
             }
             Slog.w(TAG, "Receiver during timeout of " + r + " : " + curReceiver);
             logBroadcastReceiverDiscardLocked(r);
-            String anrMessage =
-                    "Broadcast of " + r.intent.toString() + ", waited " + timeoutDurationMs + "ms";
-            TimeoutRecord timeoutRecord = TimeoutRecord.forBroadcastReceiver(anrMessage);
+            TimeoutRecord timeoutRecord = TimeoutRecord.forBroadcastReceiver(r.intent,
+                    timeoutDurationMs);
             if (curReceiver != null && curReceiver instanceof BroadcastFilter) {
                 BroadcastFilter bf = (BroadcastFilter) curReceiver;
                 if (bf.receiverList.pid != 0

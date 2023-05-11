@@ -16,191 +16,514 @@
 
 package com.android.credentialmanager.getflow
 
-import androidx.compose.foundation.Image
+import android.text.TextUtils
+import androidx.activity.compose.ManagedActivityResultLauncher
+import androidx.activity.result.ActivityResult
+import androidx.activity.result.IntentSenderRequest
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.material3.Card
+import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.QrCodeScanner
 import androidx.compose.material3.Divider
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.SuggestionChip
-import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
+import com.android.compose.rememberSystemUiController
+import com.android.credentialmanager.CredentialSelectorViewModel
 import com.android.credentialmanager.R
-import com.android.credentialmanager.common.material.ModalBottomSheetLayout
-import com.android.credentialmanager.common.material.ModalBottomSheetValue
-import com.android.credentialmanager.common.material.rememberModalBottomSheetState
-import com.android.credentialmanager.createflow.CancelButton
+import com.android.credentialmanager.common.BaseEntry
+import com.android.credentialmanager.common.CredentialType
+import com.android.credentialmanager.common.ProviderActivityState
+import com.android.credentialmanager.common.ui.ActionButton
+import com.android.credentialmanager.common.ui.ActionEntry
+import com.android.credentialmanager.common.ui.ConfirmButton
+import com.android.credentialmanager.common.ui.CredentialContainerCard
+import com.android.credentialmanager.common.ui.CtaButtonRow
+import com.android.credentialmanager.common.ui.Entry
+import com.android.credentialmanager.common.ui.ModalBottomSheet
+import com.android.credentialmanager.common.ui.MoreOptionTopAppBar
+import com.android.credentialmanager.common.ui.SheetContainerCard
+import com.android.credentialmanager.common.ui.SnackbarActionText
+import com.android.credentialmanager.common.ui.HeadlineText
+import com.android.credentialmanager.common.ui.CredentialListSectionHeader
+import com.android.credentialmanager.common.ui.Snackbar
+import com.android.credentialmanager.common.ui.setTransparentSystemBarsColor
+import com.android.credentialmanager.common.ui.setBottomSheetSystemBarsColor
+import com.android.credentialmanager.logging.GetCredentialEvent
+import com.android.internal.logging.UiEventLogger.UiEventEnum
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GetCredentialScreen(
-  viewModel: GetCredentialViewModel,
+    viewModel: CredentialSelectorViewModel,
+    getCredentialUiState: GetCredentialUiState,
+    providerActivityLauncher: ManagedActivityResultLauncher<IntentSenderRequest, ActivityResult>
 ) {
-  val state = rememberModalBottomSheetState(
-    initialValue = ModalBottomSheetValue.Expanded,
-    skipHalfExpanded = true
-  )
-  ModalBottomSheetLayout(
-    sheetState = state,
-    sheetContent = {
-      val uiState = viewModel.uiState
-      when (uiState.currentScreenState) {
-        GetScreenState.CREDENTIAL_SELECTION -> CredentialSelectionCard(
-          requestDisplayInfo = uiState.requestDisplayInfo,
-          providerInfo = uiState.selectedProvider!!,
-          onCancel = viewModel::onCancel,
-          onOptionSelected = viewModel::onCredentailSelected,
-          multiProvider = uiState.providers.size > 1,
-          onMoreOptionSelected = viewModel::onMoreOptionSelected,
+    val sysUiController = rememberSystemUiController()
+    if (getCredentialUiState.currentScreenState == GetScreenState.REMOTE_ONLY) {
+        setTransparentSystemBarsColor(sysUiController)
+        RemoteCredentialSnackBarScreen(
+            onClick = viewModel::getFlowOnMoreOptionOnSnackBarSelected,
+            onCancel = viewModel::onUserCancel,
+            onLog = { viewModel.logUiEvent(it) },
         )
-      }
-    },
-    scrimColor = Color.Transparent,
-    sheetShape = MaterialTheme.shapes.medium,
-  ) {}
-  LaunchedEffect(state.currentValue) {
-    if (state.currentValue == ModalBottomSheetValue.Hidden) {
-      viewModel.onCancel()
+        viewModel.uiMetrics.log(GetCredentialEvent.CREDMAN_GET_CRED_SCREEN_REMOTE_ONLY)
+    } else if (getCredentialUiState.currentScreenState
+        == GetScreenState.UNLOCKED_AUTH_ENTRIES_ONLY) {
+        setTransparentSystemBarsColor(sysUiController)
+        EmptyAuthEntrySnackBarScreen(
+            authenticationEntryList =
+            getCredentialUiState.providerDisplayInfo.authenticationEntryList,
+            onCancel = viewModel::silentlyFinishActivity,
+            onLastLockedAuthEntryNotFound = viewModel::onLastLockedAuthEntryNotFoundError,
+            onLog = { viewModel.logUiEvent(it) },
+        )
+        viewModel.uiMetrics.log(GetCredentialEvent
+                .CREDMAN_GET_CRED_SCREEN_UNLOCKED_AUTH_ENTRIES_ONLY)
+    } else {
+        setBottomSheetSystemBarsColor(sysUiController)
+        ModalBottomSheet(
+            sheetContent = {
+                // Hide the sheet content as opposed to the whole bottom sheet to maintain the scrim
+                // background color even when the content should be hidden while waiting for
+                // results from the provider app.
+                when (viewModel.uiState.providerActivityState) {
+                    ProviderActivityState.NOT_APPLICABLE -> {
+                        if (getCredentialUiState.currentScreenState
+                            == GetScreenState.PRIMARY_SELECTION) {
+                            PrimarySelectionCard(
+                                requestDisplayInfo = getCredentialUiState.requestDisplayInfo,
+                                providerDisplayInfo = getCredentialUiState.providerDisplayInfo,
+                                providerInfoList = getCredentialUiState.providerInfoList,
+                                activeEntry = getCredentialUiState.activeEntry,
+                                onEntrySelected = viewModel::getFlowOnEntrySelected,
+                                onConfirm = viewModel::getFlowOnConfirmEntrySelected,
+                                onMoreOptionSelected = viewModel::getFlowOnMoreOptionSelected,
+                                onLog = { viewModel.logUiEvent(it) },
+                            )
+                            viewModel.uiMetrics.log(GetCredentialEvent
+                                    .CREDMAN_GET_CRED_SCREEN_PRIMARY_SELECTION)
+                        } else {
+                            AllSignInOptionCard(
+                                providerInfoList = getCredentialUiState.providerInfoList,
+                                providerDisplayInfo = getCredentialUiState.providerDisplayInfo,
+                                onEntrySelected = viewModel::getFlowOnEntrySelected,
+                                onBackButtonClicked =
+                                viewModel::getFlowOnBackToPrimarySelectionScreen,
+                                onCancel = viewModel::onUserCancel,
+                                isNoAccount = getCredentialUiState.isNoAccount,
+                                onLog = { viewModel.logUiEvent(it) },
+                            )
+                            viewModel.uiMetrics.log(GetCredentialEvent
+                                    .CREDMAN_GET_CRED_SCREEN_ALL_SIGN_IN_OPTIONS)
+                        }
+                    }
+                    ProviderActivityState.READY_TO_LAUNCH -> {
+                        // Launch only once per providerActivityState change so that the provider
+                        // UI will not be accidentally launched twice.
+                        LaunchedEffect(viewModel.uiState.providerActivityState) {
+                            viewModel.launchProviderUi(providerActivityLauncher)
+                        }
+                        viewModel.uiMetrics.log(GetCredentialEvent
+                                .CREDMAN_GET_CRED_PROVIDER_ACTIVITY_READY_TO_LAUNCH)
+                    }
+                    ProviderActivityState.PENDING -> {
+                        // Hide our content when the provider activity is active.
+                        viewModel.uiMetrics.log(GetCredentialEvent
+                                .CREDMAN_GET_CRED_PROVIDER_ACTIVITY_PENDING)
+                    }
+                }
+            },
+            onDismiss = viewModel::onUserCancel,
+        )
     }
-  }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+/** Draws the primary credential selection page. */
 @Composable
-fun CredentialSelectionCard(
-  requestDisplayInfo: RequestDisplayInfo,
-  providerInfo: ProviderInfo,
-  onOptionSelected: (String, String) -> Unit,
-  onCancel: () -> Unit,
-  multiProvider: Boolean,
-  onMoreOptionSelected: () -> Unit,
+fun PrimarySelectionCard(
+    requestDisplayInfo: RequestDisplayInfo,
+    providerDisplayInfo: ProviderDisplayInfo,
+    providerInfoList: List<ProviderInfo>,
+    activeEntry: BaseEntry?,
+    onEntrySelected: (BaseEntry) -> Unit,
+    onConfirm: () -> Unit,
+    onMoreOptionSelected: () -> Unit,
+    onLog: @Composable (UiEventEnum) -> Unit,
 ) {
-  Card() {
-    Column() {
-      Icon(
-        bitmap = providerInfo.credentialTypeIcon.toBitmap().asImageBitmap(),
-        contentDescription = null,
-        tint = Color.Unspecified,
-        modifier = Modifier.align(alignment = Alignment.CenterHorizontally).padding(top = 24.dp)
-      )
-      Text(
-        text = stringResource(R.string.choose_sign_in_title),
-        style = MaterialTheme.typography.titleMedium,
-        modifier = Modifier
-          .padding(all = 24.dp)
-          .align(alignment = Alignment.CenterHorizontally)
-      )
-      Text(
-        text = requestDisplayInfo.appDomainName,
-        style = MaterialTheme.typography.bodyMedium,
-        modifier = Modifier.padding(horizontal = 28.dp)
-      )
-      Divider(
-        thickness = 24.dp,
-        color = Color.Transparent
-      )
-      Card(
-        shape = MaterialTheme.shapes.medium,
-        modifier = Modifier
-          .padding(horizontal = 24.dp)
-          .align(alignment = Alignment.CenterHorizontally)
-      ) {
-        LazyColumn(
-          verticalArrangement = Arrangement.spacedBy(2.dp)
-        ) {
-          providerInfo.credentialOptions.forEach {
-            item {
-              CredentialOptionRow(credentialOptionInfo = it, onOptionSelected = onOptionSelected)
-            }
-          }
-          if (multiProvider) {
-            item {
-              MoreOptionRow(onSelect = onMoreOptionSelected)
-            }
-          }
+    val sortedUserNameToCredentialEntryList =
+        providerDisplayInfo.sortedUserNameToCredentialEntryList
+    val authenticationEntryList = providerDisplayInfo.authenticationEntryList
+    SheetContainerCard {
+        item {
+            HeadlineText(
+                text = stringResource(
+                    if (sortedUserNameToCredentialEntryList
+                            .size == 1 && authenticationEntryList.isEmpty()
+                    ) {
+                        if (sortedUserNameToCredentialEntryList.first()
+                                .sortedCredentialEntryList.first().credentialType
+                            == CredentialType.PASSKEY
+                        ) R.string.get_dialog_title_use_passkey_for
+                        else R.string.get_dialog_title_use_sign_in_for
+                    } else if (
+                        sortedUserNameToCredentialEntryList
+                            .isEmpty() && authenticationEntryList.size == 1
+                    ) {
+                        R.string.get_dialog_title_use_sign_in_for
+                    } else R.string.get_dialog_title_choose_sign_in_for,
+                    requestDisplayInfo.appName
+                ),
+            )
         }
-      }
-      Divider(
-        thickness = 24.dp,
-        color = Color.Transparent
-      )
-      Row(
-        horizontalArrangement = Arrangement.Start,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp)
-      ) {
-        CancelButton(stringResource(R.string.string_no_thanks), onCancel)
-      }
-      Divider(
-        thickness = 18.dp,
-        color = Color.Transparent,
-        modifier = Modifier.padding(bottom = 16.dp)
-      )
+        item { Divider(thickness = 24.dp, color = Color.Transparent) }
+        item {
+            CredentialContainerCard {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    val usernameForCredentialSize = sortedUserNameToCredentialEntryList.size
+                    val authenticationEntrySize = authenticationEntryList.size
+                    // Show max 4 entries in this primary page
+                    if (usernameForCredentialSize + authenticationEntrySize <= 4) {
+                        sortedUserNameToCredentialEntryList.forEach {
+                            CredentialEntryRow(
+                                credentialEntryInfo = it.sortedCredentialEntryList.first(),
+                                onEntrySelected = onEntrySelected,
+                                enforceOneLine = true,
+                            )
+                        }
+                        authenticationEntryList.forEach {
+                            AuthenticationEntryRow(
+                                authenticationEntryInfo = it,
+                                onEntrySelected = onEntrySelected,
+                                enforceOneLine = true,
+                            )
+                        }
+                    } else if (usernameForCredentialSize < 4) {
+                        sortedUserNameToCredentialEntryList.forEach {
+                            CredentialEntryRow(
+                                credentialEntryInfo = it.sortedCredentialEntryList.first(),
+                                onEntrySelected = onEntrySelected,
+                                enforceOneLine = true,
+                            )
+                        }
+                        authenticationEntryList.take(4 - usernameForCredentialSize).forEach {
+                            AuthenticationEntryRow(
+                                authenticationEntryInfo = it,
+                                onEntrySelected = onEntrySelected,
+                                enforceOneLine = true,
+                            )
+                        }
+                    } else {
+                        sortedUserNameToCredentialEntryList.take(4).forEach {
+                            CredentialEntryRow(
+                                credentialEntryInfo = it.sortedCredentialEntryList.first(),
+                                onEntrySelected = onEntrySelected,
+                                enforceOneLine = true,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        item { Divider(thickness = 24.dp, color = Color.Transparent) }
+        var totalEntriesCount = sortedUserNameToCredentialEntryList
+            .flatMap { it.sortedCredentialEntryList }.size + authenticationEntryList
+            .size + providerInfoList.flatMap { it.actionEntryList }.size
+        if (providerDisplayInfo.remoteEntry != null) totalEntriesCount += 1
+        // Row horizontalArrangement differs on only one actionButton(should place on most
+        // left)/only one confirmButton(should place on most right)/two buttons exist the same
+        // time(should be one on the left, one on the right)
+        item {
+            CtaButtonRow(
+                leftButton = if (totalEntriesCount > 1) {
+                    {
+                        ActionButton(
+                            stringResource(R.string.get_dialog_use_saved_passkey_for),
+                            onMoreOptionSelected
+                        )
+                    }
+                } else null,
+                rightButton = if (activeEntry != null) { // Only one sign-in options exist
+                    {
+                        ConfirmButton(
+                            stringResource(R.string.string_continue),
+                            onClick = onConfirm
+                        )
+                    }
+                } else null,
+            )
+        }
     }
-  }
+    onLog(GetCredentialEvent.CREDMAN_GET_CRED_PRIMARY_SELECTION_CARD)
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+/** Draws the secondary credential selection page, where all sign-in options are listed. */
 @Composable
-fun CredentialOptionRow(
-    credentialOptionInfo: CredentialOptionInfo,
-    onOptionSelected: (String, String) -> Unit,
+fun AllSignInOptionCard(
+    providerInfoList: List<ProviderInfo>,
+    providerDisplayInfo: ProviderDisplayInfo,
+    onEntrySelected: (BaseEntry) -> Unit,
+    onBackButtonClicked: () -> Unit,
+    onCancel: () -> Unit,
+    isNoAccount: Boolean,
+    onLog: @Composable (UiEventEnum) -> Unit,
 ) {
-  SuggestionChip(
-    modifier = Modifier.fillMaxWidth(),
-    onClick = {onOptionSelected(credentialOptionInfo.entryKey, credentialOptionInfo.entrySubkey)},
-    icon = {
-      Image(modifier = Modifier.size(24.dp, 24.dp).padding(start = 10.dp),
-            bitmap = credentialOptionInfo.icon.toBitmap().asImageBitmap(),
-        // TODO: add description.
-            contentDescription = "")
-    },
-    shape = MaterialTheme.shapes.large,
-    label = {
-      Column() {
-        // TODO: fix the text values.
-        Text(
-          text = credentialOptionInfo.entryKey,
-          style = MaterialTheme.typography.titleLarge,
-          modifier = Modifier.padding(top = 16.dp)
+    val sortedUserNameToCredentialEntryList =
+        providerDisplayInfo.sortedUserNameToCredentialEntryList
+    val authenticationEntryList = providerDisplayInfo.authenticationEntryList
+    SheetContainerCard(topAppBar = {
+        MoreOptionTopAppBar(
+            text = stringResource(R.string.get_dialog_title_sign_in_options),
+            onNavigationIconClicked = if (isNoAccount) onCancel else onBackButtonClicked,
+            bottomPadding = 0.dp,
         )
-        Text(
-          text = credentialOptionInfo.entrySubkey,
-          style = MaterialTheme.typography.bodyMedium,
-          modifier = Modifier.padding(bottom = 16.dp)
-        )
-      }
+    }) {
+        // For username
+        items(sortedUserNameToCredentialEntryList) { item ->
+            PerUserNameCredentials(
+                perUserNameCredentialEntryList = item,
+                onEntrySelected = onEntrySelected,
+            )
+        }
+        // Locked password manager
+        if (authenticationEntryList.isNotEmpty()) {
+            item {
+                LockedCredentials(
+                    authenticationEntryList = authenticationEntryList,
+                    onEntrySelected = onEntrySelected,
+                )
+            }
+        }
+        // From another device
+        val remoteEntry = providerDisplayInfo.remoteEntry
+        if (remoteEntry != null) {
+            item {
+                RemoteEntryCard(
+                    remoteEntry = remoteEntry,
+                    onEntrySelected = onEntrySelected,
+                )
+            }
+        }
+        // Manage sign-ins (action chips)
+        item {
+            ActionChips(
+                providerInfoList = providerInfoList,
+                onEntrySelected = onEntrySelected
+            )
+        }
     }
-  )
+    onLog(GetCredentialEvent.CREDMAN_GET_CRED_ALL_SIGN_IN_OPTION_CARD)
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+// TODO: create separate rows for primary and secondary pages.
+// TODO: reuse rows and columns across types.
+
 @Composable
-fun MoreOptionRow(onSelect: () -> Unit) {
-  SuggestionChip(
-    modifier = Modifier.fillMaxWidth().height(52.dp),
-    onClick = onSelect,
-    shape = MaterialTheme.shapes.large,
-    label = {
-      Text(
-        text = stringResource(R.string.string_more_options),
-        style = MaterialTheme.typography.titleLarge,
-      )
+fun ActionChips(
+    providerInfoList: List<ProviderInfo>,
+    onEntrySelected: (BaseEntry) -> Unit,
+) {
+    val actionChips = providerInfoList.flatMap { it.actionEntryList }
+    if (actionChips.isEmpty()) {
+        return
     }
-  )
+
+    CredentialListSectionHeader(
+        text = stringResource(R.string.get_dialog_heading_manage_sign_ins)
+    )
+    CredentialContainerCard {
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            actionChips.forEach {
+                ActionEntryRow(it, onEntrySelected)
+            }
+        }
+    }
+}
+
+@Composable
+fun RemoteEntryCard(
+    remoteEntry: RemoteEntryInfo,
+    onEntrySelected: (BaseEntry) -> Unit,
+) {
+    CredentialListSectionHeader(
+        text = stringResource(R.string.get_dialog_heading_from_another_device)
+    )
+    CredentialContainerCard {
+        Column(
+            modifier = Modifier.fillMaxWidth().wrapContentHeight(),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Entry(
+                onClick = { onEntrySelected(remoteEntry) },
+                iconImageVector = Icons.Outlined.QrCodeScanner,
+                entryHeadlineText = stringResource(
+                    R.string.get_dialog_option_headline_use_a_different_device
+                ),
+            )
+        }
+    }
+}
+
+@Composable
+fun LockedCredentials(
+    authenticationEntryList: List<AuthenticationEntryInfo>,
+    onEntrySelected: (BaseEntry) -> Unit,
+) {
+    CredentialListSectionHeader(
+        text = stringResource(R.string.get_dialog_heading_locked_password_managers)
+    )
+    CredentialContainerCard {
+        Column(
+            modifier = Modifier.fillMaxWidth().wrapContentHeight(),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            authenticationEntryList.forEach {
+                AuthenticationEntryRow(it, onEntrySelected)
+            }
+        }
+    }
+}
+
+@Composable
+fun PerUserNameCredentials(
+    perUserNameCredentialEntryList: PerUserNameCredentialEntryList,
+    onEntrySelected: (BaseEntry) -> Unit,
+) {
+    CredentialListSectionHeader(
+        text = stringResource(
+            R.string.get_dialog_heading_for_username, perUserNameCredentialEntryList.userName
+        )
+    )
+    CredentialContainerCard {
+        Column(
+            modifier = Modifier.fillMaxWidth().wrapContentHeight(),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            perUserNameCredentialEntryList.sortedCredentialEntryList.forEach {
+                CredentialEntryRow(it, onEntrySelected)
+            }
+        }
+    }
+}
+
+@Composable
+fun CredentialEntryRow(
+    credentialEntryInfo: CredentialEntryInfo,
+    onEntrySelected: (BaseEntry) -> Unit,
+    enforceOneLine: Boolean = false,
+) {
+    Entry(
+        onClick = { onEntrySelected(credentialEntryInfo) },
+        iconImageBitmap = credentialEntryInfo.icon?.toBitmap()?.asImageBitmap(),
+        shouldApplyIconImageBitmapTint = credentialEntryInfo.shouldTintIcon,
+        // Fall back to iconPainter if iconImageBitmap isn't available
+        iconPainter =
+        if (credentialEntryInfo.icon == null) painterResource(R.drawable.ic_other_sign_in_24)
+        else null,
+        entryHeadlineText = credentialEntryInfo.userName,
+        entrySecondLineText = if (
+            credentialEntryInfo.credentialType == CredentialType.PASSWORD) {
+            "••••••••••••"
+        } else {
+            val itemsToDisplay = listOf(
+                credentialEntryInfo.displayName,
+                credentialEntryInfo.credentialTypeDisplayName,
+                credentialEntryInfo.providerDisplayName
+            ).filterNot(TextUtils::isEmpty)
+            if (itemsToDisplay.isEmpty()) null
+            else itemsToDisplay.joinToString(
+                separator = stringResource(R.string.get_dialog_sign_in_type_username_separator)
+            )
+        },
+        enforceOneLine = enforceOneLine,
+    )
+}
+
+@Composable
+fun AuthenticationEntryRow(
+    authenticationEntryInfo: AuthenticationEntryInfo,
+    onEntrySelected: (BaseEntry) -> Unit,
+    enforceOneLine: Boolean = false,
+) {
+    Entry(
+        onClick = { onEntrySelected(authenticationEntryInfo) },
+        iconImageBitmap = authenticationEntryInfo.icon.toBitmap().asImageBitmap(),
+        entryHeadlineText = authenticationEntryInfo.title,
+        entrySecondLineText = stringResource(
+            if (authenticationEntryInfo.isUnlockedAndEmpty)
+                R.string.locked_credential_entry_label_subtext_no_sign_in
+            else R.string.locked_credential_entry_label_subtext_tap_to_unlock
+        ),
+        isLockedAuthEntry = !authenticationEntryInfo.isUnlockedAndEmpty,
+        enforceOneLine = enforceOneLine,
+    )
+}
+
+@Composable
+fun ActionEntryRow(
+    actionEntryInfo: ActionEntryInfo,
+    onEntrySelected: (BaseEntry) -> Unit,
+) {
+    ActionEntry(
+        iconImageBitmap = actionEntryInfo.icon.toBitmap().asImageBitmap(),
+        entryHeadlineText = actionEntryInfo.title,
+        entrySecondLineText = actionEntryInfo.subTitle,
+        onClick = { onEntrySelected(actionEntryInfo) },
+    )
+}
+
+@Composable
+fun RemoteCredentialSnackBarScreen(
+    onClick: (Boolean) -> Unit,
+    onCancel: () -> Unit,
+    onLog: @Composable (UiEventEnum) -> Unit,
+) {
+    Snackbar(
+        action = {
+            TextButton(
+                modifier = Modifier.padding(top = 4.dp, bottom = 4.dp, start = 16.dp)
+                    .heightIn(min = 32.dp),
+                onClick = { onClick(true) },
+                contentPadding =
+                PaddingValues(start = 0.dp, top = 6.dp, end = 0.dp, bottom = 6.dp),
+            ) {
+                SnackbarActionText(text = stringResource(R.string.snackbar_action))
+            }
+        },
+        onDismiss = onCancel,
+        contentText = stringResource(R.string.get_dialog_use_saved_passkey_for),
+    )
+    onLog(GetCredentialEvent.CREDMAN_GET_CRED_REMOTE_CRED_SNACKBAR_SCREEN)
+}
+
+@Composable
+fun EmptyAuthEntrySnackBarScreen(
+    authenticationEntryList: List<AuthenticationEntryInfo>,
+    onCancel: () -> Unit,
+    onLastLockedAuthEntryNotFound: () -> Unit,
+    onLog: @Composable (UiEventEnum) -> Unit,
+) {
+    val lastLocked = authenticationEntryList.firstOrNull({ it.isLastUnlocked })
+    if (lastLocked == null) {
+        onLastLockedAuthEntryNotFound()
+        return
+    }
+
+    Snackbar(
+        onDismiss = onCancel,
+        contentText = stringResource(R.string.no_sign_in_info_in, lastLocked.providerDisplayName),
+    )
+    onLog(GetCredentialEvent.CREDMAN_GET_CRED_SCREEN_EMPTY_AUTH_SNACKBAR_SCREEN)
 }

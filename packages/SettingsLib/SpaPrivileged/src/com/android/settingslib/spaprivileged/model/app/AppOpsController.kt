@@ -16,43 +16,65 @@
 
 package com.android.settingslib.spaprivileged.model.app
 
-import android.app.AppOpsManager
+import android.app.AppOpsManager;
 import android.app.AppOpsManager.MODE_ALLOWED
 import android.app.AppOpsManager.MODE_ERRORED
 import android.app.AppOpsManager.Mode
 import android.content.Context
 import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
+import android.os.UserHandle
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.map
+import com.android.settingslib.spaprivileged.framework.common.appOpsManager
+
+interface IAppOpsController {
+    val mode: LiveData<Int>
+    val isAllowed: LiveData<Boolean>
+        get() = mode.map { it == MODE_ALLOWED }
+
+    fun setAllowed(allowed: Boolean)
+
+    @Mode fun getMode(): Int
+}
 
 class AppOpsController(
     context: Context,
     private val app: ApplicationInfo,
     private val op: Int,
-) {
-    private val appOpsManager = checkNotNull(context.getSystemService(AppOpsManager::class.java))
+    private val modeForNotAllowed: Int = MODE_ERRORED,
+    private val setModeByUid: Boolean = false,
+) : IAppOpsController {
+    private val appOpsManager = context.appOpsManager
+    private val packageManager = context.packageManager
 
-    val mode: LiveData<Int>
+    override val mode: LiveData<Int>
         get() = _mode
-    val isAllowed: LiveData<Boolean>
-        get() = _mode.map { it == MODE_ALLOWED }
 
-    fun setAllowed(allowed: Boolean) {
-        val mode = if (allowed) MODE_ALLOWED else MODE_ERRORED
-        appOpsManager.setMode(op, app.uid, app.packageName, mode)
+    override fun setAllowed(allowed: Boolean) {
+        val mode = if (allowed) MODE_ALLOWED else modeForNotAllowed
+
+        if (setModeByUid) {
+            appOpsManager.setUidMode(op, app.uid, mode)
+        } else {
+            appOpsManager.setMode(op, app.uid, app.packageName, mode)
+        }
+
+        val permission = AppOpsManager.opToPermission(op)
+        packageManager.updatePermissionFlags(permission, app.packageName,
+                PackageManager.FLAG_PERMISSION_USER_SET, PackageManager.FLAG_PERMISSION_USER_SET,
+                UserHandle.getUserHandleForUid(app.uid))
+
         _mode.postValue(mode)
     }
 
-    @Mode
-    fun getMode(): Int = appOpsManager.checkOpNoThrow(op, app.uid, app.packageName)
+    @Mode override fun getMode(): Int = appOpsManager.checkOpNoThrow(op, app.uid, app.packageName)
 
-    private val _mode = object : MutableLiveData<Int>() {
-        override fun onActive() {
-            postValue(getMode())
+    private val _mode =
+        object : MutableLiveData<Int>() {
+            override fun onActive() {
+                postValue(getMode())
+            }
         }
-
-        override fun onInactive() {
-        }
-    }
 }

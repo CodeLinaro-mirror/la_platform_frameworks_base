@@ -18,6 +18,7 @@
 
 #include "ValueVisitor.h"
 #include "androidfw/BigBuffer.h"
+#include "optimize/Obfuscator.h"
 
 using android::ConfigDescription;
 
@@ -274,6 +275,10 @@ void SerializeConfig(const ConfigDescription& config, pb::Configuration* out_pb_
   }
 
   out_pb_config->set_sdk_version(config.sdkVersion);
+
+  // The constant values are the same across the structs.
+  out_pb_config->set_grammatical_gender(
+      static_cast<pb::Configuration_GrammaticalGender>(config.grammaticalInflection));
 }
 
 static void SerializeOverlayableItemToPb(const OverlayableItem& overlayable_item,
@@ -345,7 +350,11 @@ void SerializeTableToPb(const ResourceTable& table, pb::ResourceTable* out_table
   pb::ToolFingerprint* pb_fingerprint = out_table->add_tool_fingerprint();
   pb_fingerprint->set_tool(util::GetToolName());
   pb_fingerprint->set_version(util::GetToolFingerprint());
-
+  for (auto it = table.included_packages_.begin(); it != table.included_packages_.end(); ++it) {
+    pb::DynamicRefTable* pb_dynamic_ref = out_table->add_dynamic_ref_table();
+    pb_dynamic_ref->mutable_package_id()->set_id(it->first);
+    pb_dynamic_ref->set_package_name(it->second);
+  }
   std::vector<Overlayable*> overlayables;
   auto table_view = table.GetPartitionedView();
   for (const auto& package : table_view.packages) {
@@ -362,21 +371,21 @@ void SerializeTableToPb(const ResourceTable& table, pb::ResourceTable* out_table
       }
       pb_type->set_name(type.named_type.to_string());
 
-      // hardcoded string uses characters which make it an invalid resource name
-      static const char* obfuscated_resource_name = "0_resource_name_obfuscated";
       for (const auto& entry : type.entries) {
         pb::Entry* pb_entry = pb_type->add_entry();
         if (entry.id) {
           pb_entry->mutable_entry_id()->set_id(entry.id.value());
         }
-        ResourceName resource_name({}, type.named_type, entry.name);
-        if (options.collapse_key_stringpool &&
-            options.name_collapse_exemptions.find(resource_name) ==
-            options.name_collapse_exemptions.end()) {
-          pb_entry->set_name(obfuscated_resource_name);
-        } else {
-          pb_entry->set_name(entry.name);
-        }
+        auto onObfuscate = [pb_entry, &entry](Obfuscator::Result obfuscatedResult,
+                                              const ResourceName& resource_name) {
+          pb_entry->set_name(obfuscatedResult == Obfuscator::Result::Obfuscated
+                                 ? Obfuscator::kObfuscatedResourceName
+                                 : entry.name);
+        };
+
+        Obfuscator::ObfuscateResourceName(options.collapse_key_stringpool,
+                                          options.name_collapse_exemptions, type.named_type, entry,
+                                          onObfuscate);
 
         // Write the Visibility struct.
         pb::Visibility* pb_visibility = pb_entry->mutable_visibility();

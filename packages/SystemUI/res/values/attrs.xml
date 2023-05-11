@@ -209,5 +209,12 @@
         <attr name="permissionGrantButtonTopStyle" format="reference"/>
         <attr name="permissionGrantButtonBottomStyle" format="reference"/>
     </declare-styleable>
+
+    <declare-styleable name="SeekBarWithIconButtonsView_Layout">
+        <attr name="max" format="integer" />
+        <attr name="progress" format="integer" />
+        <attr name="iconStartContentDescription" format="reference" />
+        <attr name="iconEndContentDescription" format="reference" />
+    </declare-styleable>
 </resources>
 

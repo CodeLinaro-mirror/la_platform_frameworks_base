@@ -20,6 +20,8 @@ import static android.app.PendingIntent.FLAG_CANCEL_CURRENT;
 import static android.app.PendingIntent.FLAG_IMMUTABLE;
 import static android.app.PendingIntent.FLAG_ONE_SHOT;
 import static android.companion.CompanionDeviceManager.COMPANION_DEVICE_DISCOVERY_PACKAGE_NAME;
+import static android.companion.CompanionDeviceManager.REASON_INTERNAL_ERROR;
+import static android.companion.CompanionDeviceManager.RESULT_INTERNAL_ERROR;
 import static android.content.ComponentName.createRelative;
 
 import static com.android.server.companion.CompanionDeviceManagerService.DEBUG;
@@ -40,7 +42,6 @@ import android.app.PendingIntent;
 import android.companion.AssociatedDevice;
 import android.companion.AssociationInfo;
 import android.companion.AssociationRequest;
-import android.companion.CompanionDeviceManager;
 import android.companion.IAssociationRequestCallback;
 import android.content.ComponentName;
 import android.content.Context;
@@ -267,9 +268,9 @@ class AssociationRequestsProcessor {
             @NonNull ResultReceiver resultReceiver) {
         final long callingIdentity = Binder.clearCallingIdentity();
         try {
-            createAssociation(userId, packageName, macAddress,
-                    request.getDisplayName(), request.getDeviceProfile(),
-                    request.getAssociatedDevice(), request.isSelfManaged(),
+            createAssociation(userId, packageName, macAddress, request.getDisplayName(),
+                    request.getDeviceProfile(), request.getAssociatedDevice(),
+                    request.isSelfManaged(),
                     callback, resultReceiver);
         } finally {
             Binder.restoreCallingIdentity(callingIdentity);
@@ -286,7 +287,8 @@ class AssociationRequestsProcessor {
 
         final AssociationInfo association = new AssociationInfo(id, userId, packageName,
                 macAddress, displayName, deviceProfile, associatedDevice, selfManaged,
-                /* notifyOnDeviceNearby */ false, /* revoked */ false, timestamp, Long.MAX_VALUE);
+                /* notifyOnDeviceNearby */ false, /* revoked */ false, timestamp, Long.MAX_VALUE,
+                /* systemDataSyncFlags */ ~0);
 
         if (deviceProfile != null) {
             // If the "Device Profile" is specified, make the companion application a holder of the
@@ -312,6 +314,20 @@ class AssociationRequestsProcessor {
         // Don't need to update the mRevokedAssociationsPendingRoleHolderRemoval since
         // maybeRemoveRoleHolderForAssociation in PackageInactivityListener will handle the case
         // that there are other devices with the same profile, so the role holder won't be removed.
+    }
+
+    public void enableSystemDataSync(int associationId, int flags) {
+        AssociationInfo association = mAssociationStore.getAssociationById(associationId);
+        AssociationInfo updated = AssociationInfo.builder(association)
+                .setSystemDataSyncFlags(association.getSystemDataSyncFlags() | flags).build();
+        mAssociationStore.updateAssociation(updated);
+    }
+
+    public void disableSystemDataSync(int associationId, int flags) {
+        AssociationInfo association = mAssociationStore.getAssociationById(associationId);
+        AssociationInfo updated = AssociationInfo.builder(association)
+                .setSystemDataSyncFlags(association.getSystemDataSyncFlags() & (~flags)).build();
+        mAssociationStore.updateAssociation(updated);
     }
 
     private void addAssociationToStore(@NonNull AssociationInfo association,
@@ -348,8 +364,7 @@ class AssociationRequestsProcessor {
             // Send the association back via the app's callback
             if (callback != null) {
                 try {
-                    // TODO: update to INTERNAL_ERROR once it's added.
-                    callback.onFailure(CompanionDeviceManager.REASON_CANCELED);
+                    callback.onFailure(REASON_INTERNAL_ERROR);
                 } catch (RemoteException ignore) {
                 }
             }
@@ -358,7 +373,7 @@ class AssociationRequestsProcessor {
             // back to the app via Activity.setResult().
             if (resultReceiver != null) {
                 final Bundle data = new Bundle();
-                resultReceiver.send(CompanionDeviceManager.RESULT_INTERNAL_ERROR, data);
+                resultReceiver.send(RESULT_INTERNAL_ERROR, data);
             }
         }
     }

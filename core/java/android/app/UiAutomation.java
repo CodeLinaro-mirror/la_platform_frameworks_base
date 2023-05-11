@@ -17,6 +17,7 @@
 package android.app;
 
 import android.accessibilityservice.AccessibilityGestureEvent;
+import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.AccessibilityService.Callbacks;
 import android.accessibilityservice.AccessibilityService.IAccessibilityServiceClientWrapper;
 import android.accessibilityservice.AccessibilityServiceInfo;
@@ -58,6 +59,7 @@ import android.view.ViewRootImpl;
 import android.view.Window;
 import android.view.WindowAnimationFrameStats;
 import android.view.WindowContentFrameStats;
+import android.view.accessibility.AccessibilityCache;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityInteractionClient;
 import android.view.accessibility.AccessibilityNodeInfo;
@@ -76,7 +78,6 @@ import java.io.IOException;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeoutException;
@@ -466,6 +467,48 @@ public final class UiAutomation {
     }
 
     /**
+     * Clears the accessibility cache.
+     *
+     * @return {@code true} if the cache was cleared
+     * @see AccessibilityService#clearCache()
+     */
+    public boolean clearCache() {
+        final int connectionId;
+        synchronized (mLock) {
+            throwIfNotConnectedLocked();
+            connectionId = mConnectionId;
+        }
+        final AccessibilityCache cache = AccessibilityInteractionClient.getCache(connectionId);
+        if (cache == null) {
+            return false;
+        }
+        cache.clear();
+        return true;
+    }
+
+    /**
+     * Checks if {@code node} is in the accessibility cache.
+     *
+     * @param node the node to check.
+     * @return {@code true} if {@code node} is in the cache.
+     * @hide
+     * @see AccessibilityService#isNodeInCache(AccessibilityNodeInfo)
+     */
+    @TestApi
+    public boolean isNodeInCache(@NonNull AccessibilityNodeInfo node) {
+        final int connectionId;
+        synchronized (mLock) {
+            throwIfNotConnectedLocked();
+            connectionId = mConnectionId;
+        }
+        final AccessibilityCache cache = AccessibilityInteractionClient.getCache(connectionId);
+        if (cache == null) {
+            return false;
+        }
+        return cache.isNodeInCache(node);
+    }
+
+    /**
      * Adopt the permission identity of the shell UID for all permissions. This allows
      * you to call APIs protected permissions which normal apps cannot hold but are
      * granted to the shell UID. If you already adopted all shell permissions by calling
@@ -484,7 +527,7 @@ public final class UiAutomation {
             // Calling out without a lock held.
             mUiAutomationConnection.adoptShellPermissionIdentity(Process.myUid(), null);
         } catch (RemoteException re) {
-            Log.e(LOG_TAG, "Error executing adopting shell permission identity!", re);
+            throw re.rethrowFromSystemServer();
         }
     }
 
@@ -509,7 +552,7 @@ public final class UiAutomation {
             // Calling out without a lock held.
             mUiAutomationConnection.adoptShellPermissionIdentity(Process.myUid(), permissions);
         } catch (RemoteException re) {
-            Log.e(LOG_TAG, "Error executing adopting shell permission identity!", re);
+            throw re.rethrowFromSystemServer();
         }
     }
 
@@ -525,7 +568,7 @@ public final class UiAutomation {
             // Calling out without a lock held.
             mUiAutomationConnection.dropShellPermissionIdentity();
         } catch (RemoteException re) {
-            Log.e(LOG_TAG, "Error executing dropping shell permission identity!", re);
+            throw re.rethrowFromSystemServer();
         }
     }
 
@@ -543,8 +586,7 @@ public final class UiAutomation {
             final List<String> permissions = mUiAutomationConnection.getAdoptedShellPermissions();
             return permissions == null ? ALL_PERMISSIONS : new ArraySet<>(permissions);
         } catch (RemoteException re) {
-            Log.e(LOG_TAG, "Error getting adopted shell permissions", re);
-            return Collections.emptySet();
+            throw re.rethrowFromSystemServer();
         }
     }
 
@@ -790,6 +832,24 @@ public final class UiAutomation {
             Log.e(LOG_TAG, "Error while injecting input event!", re);
         }
         return false;
+    }
+
+    /**
+     * Injects an arbitrary {@link InputEvent} to the accessibility input filter, for use in testing
+     * the accessibility input filter.
+     *
+     * Events injected to the input subsystem using the standard {@link #injectInputEvent} method
+     * skip the accessibility input filter to avoid feedback loops.
+     *
+     * @hide
+     */
+    @TestApi
+    public void injectInputEventToInputFilter(@NonNull InputEvent event) {
+        try {
+            mUiAutomationConnection.injectInputEventToInputFilter(event);
+        } catch (RemoteException re) {
+            Log.e(LOG_TAG, "Error while injecting input event to input filter", re);
+        }
     }
 
     /**
@@ -1431,10 +1491,7 @@ public final class UiAutomation {
      *
      * @param command The command to execute.
      * @return File descriptors (out, in, err) to the standard output/input/error streams.
-     *
-     * @hide
      */
-    @TestApi
     @SuppressLint("ArrayReturn") // For consistency with other APIs
     public @NonNull ParcelFileDescriptor[] executeShellCommandRwe(@NonNull String command) {
         return executeShellCommandInternal(command, true /* includeStderr */);
@@ -1610,7 +1667,9 @@ public final class UiAutomation {
                         if (isGenerationChangedLocked()) {
                             return;
                         }
-                        mLastEventTimeMillis = event.getEventTime();
+                        // It is not guaranteed that the accessibility framework sends events by the
+                        // order of event timestamp.
+                        mLastEventTimeMillis = Math.max(mLastEventTimeMillis, event.getEventTime());
                         if (mWaitingForEventDelivery) {
                             mEventQueue.add(AccessibilityEvent.obtain(event));
                         }

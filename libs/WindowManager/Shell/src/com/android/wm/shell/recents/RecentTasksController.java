@@ -280,12 +280,19 @@ public class RecentTasksController implements TaskStackListenerCallback,
         }
     }
 
-    private void registerRecentTasksListener(IRecentTasksListener listener) {
+    @VisibleForTesting
+    void registerRecentTasksListener(IRecentTasksListener listener) {
         mListener = listener;
     }
 
-    private void unregisterRecentTasksListener() {
+    @VisibleForTesting
+    void unregisterRecentTasksListener() {
         mListener = null;
+    }
+
+    @VisibleForTesting
+    boolean hasRecentTasksListener() {
+        return mListener != null;
     }
 
     @VisibleForTesting
@@ -301,7 +308,6 @@ public class RecentTasksController implements TaskStackListenerCallback,
             rawMapping.put(taskInfo.taskId, taskInfo);
         }
 
-        boolean desktopModeActive = DesktopModeStatus.isActive(mContext);
         ArrayList<ActivityManager.RecentTaskInfo> freeformTasks = new ArrayList<>();
 
         // Pull out the pairs as we iterate back in the list
@@ -313,7 +319,7 @@ public class RecentTasksController implements TaskStackListenerCallback,
                 continue;
             }
 
-            if (desktopModeActive && mDesktopModeTaskRepository.isPresent()
+            if (DesktopModeStatus.isProto2Enabled() && mDesktopModeTaskRepository.isPresent()
                     && mDesktopModeTaskRepository.get().isActiveTask(taskInfo.taskId)) {
                 // Freeform tasks will be added as a separate entry
                 freeformTasks.add(taskInfo);
@@ -321,7 +327,7 @@ public class RecentTasksController implements TaskStackListenerCallback,
             }
 
             final int pairedTaskId = mSplitTasks.get(taskInfo.taskId);
-            if (!desktopModeActive && pairedTaskId != INVALID_TASK_ID && rawMapping.contains(
+            if (pairedTaskId != INVALID_TASK_ID && rawMapping.contains(
                     pairedTaskId)) {
                 final ActivityManager.RecentTaskInfo pairedTaskInfo = rawMapping.get(pairedTaskId);
                 rawMapping.remove(pairedTaskId);
@@ -339,6 +345,16 @@ public class RecentTasksController implements TaskStackListenerCallback,
         }
 
         return recentTasks;
+    }
+
+    /**
+     * Returns the top running leaf task.
+     */
+    @Nullable
+    public ActivityManager.RunningTaskInfo getTopRunningTask() {
+        List<ActivityManager.RunningTaskInfo> tasks = mActivityTaskManager.getTasks(1,
+                false /* filterOnlyVisibleRecents */);
+        return tasks.isEmpty() ? null : tasks.get(0);
     }
 
     /**
@@ -367,6 +383,8 @@ public class RecentTasksController implements TaskStackListenerCallback,
     public void dump(@NonNull PrintWriter pw, String prefix) {
         final String innerPrefix = prefix + "  ";
         pw.println(prefix + TAG);
+        pw.println(prefix + " mListener=" + mListener);
+        pw.println(prefix + "Tasks:");
         ArrayList<GroupedRecentTaskInfo> recentTasks = getRecentTasks(Integer.MAX_VALUE,
                 ActivityManager.RECENT_IGNORE_UNAVAILABLE, ActivityManager.getCurrentUser());
         for (int i = 0; i < recentTasks.size(); i++) {
@@ -430,6 +448,8 @@ public class RecentTasksController implements TaskStackListenerCallback,
         @Override
         public void invalidate() {
             mController = null;
+            // Unregister the listener to ensure any registered binder death recipients are unlinked
+            mListener.unregister();
         }
 
         @Override

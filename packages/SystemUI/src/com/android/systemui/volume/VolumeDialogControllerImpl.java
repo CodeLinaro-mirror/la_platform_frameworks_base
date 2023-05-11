@@ -47,7 +47,6 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
 import android.os.RemoteException;
-import android.os.UserHandle;
 import android.os.VibrationEffect;
 import android.provider.Settings;
 import android.service.notification.Condition;
@@ -70,6 +69,7 @@ import com.android.systemui.dump.DumpManager;
 import com.android.systemui.keyguard.WakefulnessLifecycle;
 import com.android.systemui.plugins.VolumeDialogController;
 import com.android.systemui.qs.tiles.DndTile;
+import com.android.systemui.settings.UserTracker;
 import com.android.systemui.statusbar.VibratorHelper;
 import com.android.systemui.util.RingerModeLiveData;
 import com.android.systemui.util.RingerModeTracker;
@@ -134,6 +134,7 @@ public class VolumeDialogControllerImpl implements VolumeDialogController, Dumpa
     private final CaptioningManager mCaptioningManager;
     private final KeyguardManager mKeyguardManager;
     private final ActivityManager mActivityManager;
+    private final UserTracker mUserTracker;
     protected C mCallbacks = new C();
     private final State mState = new State();
     protected final MediaSessionsCallbacks mMediaSessionsCallbacksW;
@@ -181,6 +182,7 @@ public class VolumeDialogControllerImpl implements VolumeDialogController, Dumpa
             CaptioningManager captioningManager,
             KeyguardManager keyguardManager,
             ActivityManager activityManager,
+            UserTracker userTracker,
             DumpManager dumpManager
     ) {
         mContext = context.getApplicationContext();
@@ -210,6 +212,7 @@ public class VolumeDialogControllerImpl implements VolumeDialogController, Dumpa
         mCaptioningManager = captioningManager;
         mKeyguardManager = keyguardManager;
         mActivityManager = activityManager;
+        mUserTracker = userTracker;
         dumpManager.registerDumpable("VolumeDialogControllerImpl", this);
 
         boolean accessibilityVolumeStreamActive = accessibilityManager
@@ -372,7 +375,7 @@ public class VolumeDialogControllerImpl implements VolumeDialogController, Dumpa
         if (System.currentTimeMillis() - mLastToggledRingerOn < TOUCH_FEEDBACK_TIMEOUT_MS) {
             try {
                 mAudioService.playSoundEffect(AudioManager.FX_KEYPRESS_STANDARD,
-                        UserHandle.USER_CURRENT);
+                        mUserTracker.getUserId());
             } catch (RemoteException e) {
                 // ignore
             }
@@ -410,6 +413,10 @@ public class VolumeDialogControllerImpl implements VolumeDialogController, Dumpa
         }
     }
 
+    private void onShowCsdWarningW(@AudioManager.CsdWarning int csdWarning, int durationMs) {
+            mCallbacks.onShowCsdWarning(csdWarning, durationMs);
+    }
+
     private void onGetCaptionsComponentStateW(boolean fromTooltip) {
         mCallbacks.onCaptionComponentStateChanged(
                 mCaptioningManager.isSystemAudioCaptioningUiEnabled(), fromTooltip);
@@ -431,6 +438,11 @@ public class VolumeDialogControllerImpl implements VolumeDialogController, Dumpa
                             AudioManager.DEVICE_OUT_BLUETOOTH_A2DP_HEADPHONES |
                             AudioManager.DEVICE_OUT_BLUETOOTH_A2DP_SPEAKER |
                             AudioManager.DEVICE_OUT_BLE_HEADSET)) != 0;
+            changed |= updateStreamRoutedToBluetoothW(stream, routedToBluetooth);
+        } else if (stream == AudioManager.STREAM_VOICE_CALL) {
+            final boolean routedToBluetooth =
+                    (mAudio.getDevicesForStream(AudioManager.STREAM_VOICE_CALL)
+                            & AudioManager.DEVICE_OUT_BLE_HEADSET) != 0;
             changed |= updateStreamRoutedToBluetoothW(stream, routedToBluetooth);
         }
         return changed;
@@ -702,6 +714,27 @@ public class VolumeDialogControllerImpl implements VolumeDialogController, Dumpa
             mWorker.obtainMessage(W.SHOW_SAFETY_WARNING, flags, 0).sendToTarget();
         }
 
+        /**
+         * Display a sound-dose related warning.
+         * This method will never be called if the CSD (Computed Sound Dose) feature is
+         * not enabled. See com.android.android.server.audio.SoundDoseHelper for the state of
+         * the feature.
+         * @param warning the type of warning to display, values are one of
+         *        {@link android.media.AudioManager#CSD_WARNING_DOSE_REACHED_1X},
+         *        {@link android.media.AudioManager#CSD_WARNING_DOSE_REPEATED_5X},
+         *        {@link android.media.AudioManager#CSD_WARNING_MOMENTARY_EXPOSURE},
+         *        {@link android.media.AudioManager#CSD_WARNING_ACCUMULATION_START}.
+         * @param displayDurationMs the time expressed in milliseconds after which the dialog will be
+         *        automatically dismissed, or -1 if there is no automatic timeout.
+         */
+        @Override
+        public void displayCsdWarning(int csdWarning, int displayDurationMs) throws RemoteException
+        {
+            if (D.BUG) Log.d(TAG, "displayCsdWarning durMs=" + displayDurationMs);
+            mWorker.obtainMessage(W.SHOW_CSD_WARNING, csdWarning, displayDurationMs)
+                    .sendToTarget();
+        }
+
         @Override
         public void volumeChanged(int streamType, int flags) throws RemoteException {
             if (D.BUG) Log.d(TAG, "volumeChanged " + AudioSystem.streamToString(streamType)
@@ -764,6 +797,7 @@ public class VolumeDialogControllerImpl implements VolumeDialogController, Dumpa
         private static final int SHOW_SAFETY_WARNING = 14;
         private static final int ACCESSIBILITY_MODE_CHANGED = 15;
         private static final int GET_CAPTIONS_COMPONENT_STATE = 16;
+        private static final int SHOW_CSD_WARNING = 17;
 
         W(Looper looper) {
             super(looper);
@@ -789,6 +823,8 @@ public class VolumeDialogControllerImpl implements VolumeDialogController, Dumpa
                 case GET_CAPTIONS_COMPONENT_STATE:
                     onGetCaptionsComponentStateW((Boolean) msg.obj); break;
                 case ACCESSIBILITY_MODE_CHANGED: onAccessibilityModeChanged((Boolean) msg.obj);
+                    break;
+                case SHOW_CSD_WARNING: onShowCsdWarningW(msg.arg1, msg.arg2); break;
             }
         }
     }
@@ -914,6 +950,21 @@ public class VolumeDialogControllerImpl implements VolumeDialogController, Dumpa
                     @Override
                     public void run() {
                         entry.getKey().onShowSafetyWarning(flags);
+                    }
+                });
+            }
+        }
+
+        @Override
+        public void onShowCsdWarning(int csdWarning, int durationMs) {
+            if (Callbacks.VERSION < 2) {
+                return;
+            }
+            for (final Map.Entry<Callbacks, Handler> entry : mCallbackMap.entrySet()) {
+                entry.getValue().post(new Runnable() {
+                    @Override
+                    public void run() {
+                        entry.getKey().onShowCsdWarning(csdWarning, durationMs);
                     }
                 });
             }

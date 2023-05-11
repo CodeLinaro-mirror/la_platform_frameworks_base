@@ -20,6 +20,7 @@ import android.app.usage.StorageStats
 import android.app.usage.StorageStatsManager
 import android.content.Context
 import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager.NameNotFoundException
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -28,7 +29,6 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.android.settingslib.spa.framework.compose.stateOf
 import com.android.settingslib.spaprivileged.framework.common.storageStatsManager
 import com.android.settingslib.spaprivileged.model.app.userHandle
-import com.google.common.truth.Truth.assertThat
 import java.util.UUID
 import org.junit.Before
 import org.junit.Rule
@@ -42,15 +42,14 @@ import org.mockito.Mockito.`when` as whenever
 
 @RunWith(AndroidJUnit4::class)
 class AppStorageSizeTest {
-    @JvmField
-    @Rule
+    @get:Rule
     val mockito: MockitoRule = MockitoJUnit.rule()
 
     @get:Rule
     val composeTestRule = createComposeRule()
 
     @Spy
-    private var context: Context = ApplicationProvider.getApplicationContext()
+    private val context: Context = ApplicationProvider.getApplicationContext()
 
     @Mock
     private lateinit var storageStatsManager: StorageStatsManager
@@ -62,9 +61,11 @@ class AppStorageSizeTest {
     @Before
     fun setUp() {
         whenever(context.storageStatsManager).thenReturn(storageStatsManager)
-        whenever(storageStatsManager.queryStatsForPackage(
-            app.storageUuid, app.packageName, app.userHandle
-        )).thenReturn(STATS)
+        whenever(
+            storageStatsManager.queryStatsForPackage(
+                app.storageUuid, app.packageName, app.userHandle
+            )
+        ).thenReturn(STATS)
     }
 
     @Test
@@ -77,7 +78,25 @@ class AppStorageSizeTest {
             }
         }
 
-        assertThat(storageSize.value).isEqualTo("123 B")
+        composeTestRule.waitUntil { storageSize.value == "120 B" }
+    }
+
+    @Test
+    fun getStorageSize_throwException() {
+        var storageSize = stateOf("Computing")
+        whenever(
+            storageStatsManager.queryStatsForPackage(
+                app.storageUuid, app.packageName, app.userHandle
+            )
+        ).thenThrow(NameNotFoundException())
+
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalContext provides context) {
+                storageSize = app.getStorageSize()
+            }
+        }
+
+        composeTestRule.waitUntil { storageSize.value == "" }
     }
 
     companion object {

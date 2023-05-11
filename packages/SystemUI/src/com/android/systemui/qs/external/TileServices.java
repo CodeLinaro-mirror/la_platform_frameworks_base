@@ -15,6 +15,7 @@
  */
 package com.android.systemui.qs.external;
 
+import android.app.PendingIntent;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.pm.PackageInfo;
@@ -32,12 +33,13 @@ import android.util.Log;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.annotation.VisibleForTesting;
 
 import com.android.internal.statusbar.StatusBarIcon;
 import com.android.systemui.broadcast.BroadcastDispatcher;
 import com.android.systemui.dagger.SysUISingleton;
 import com.android.systemui.dagger.qualifiers.Main;
-import com.android.systemui.qs.QSTileHost;
+import com.android.systemui.qs.QSHost;
 import com.android.systemui.settings.UserTracker;
 import com.android.systemui.statusbar.CommandQueue;
 import com.android.systemui.statusbar.phone.StatusBarIconController;
@@ -66,22 +68,24 @@ public class TileServices extends IQSService.Stub {
     private final Context mContext;
     private final Handler mMainHandler;
     private final Provider<Handler> mHandlerProvider;
-    private final QSTileHost mHost;
+    private final QSHost mHost;
     private final KeyguardStateController mKeyguardStateController;
     private final BroadcastDispatcher mBroadcastDispatcher;
     private final CommandQueue mCommandQueue;
     private final UserTracker mUserTracker;
+    private final StatusBarIconController mStatusBarIconController;
 
     private int mMaxBound = DEFAULT_MAX_BOUND;
 
     @Inject
     public TileServices(
-            QSTileHost host,
+            QSHost host,
             @Main Provider<Handler> handlerProvider,
             BroadcastDispatcher broadcastDispatcher,
             UserTracker userTracker,
             KeyguardStateController keyguardStateController,
-            CommandQueue commandQueue) {
+            CommandQueue commandQueue,
+            StatusBarIconController statusBarIconController) {
         mHost = host;
         mKeyguardStateController = keyguardStateController;
         mContext = mHost.getContext();
@@ -90,6 +94,7 @@ public class TileServices extends IQSService.Stub {
         mMainHandler = mHandlerProvider.get();
         mUserTracker = userTracker;
         mCommandQueue = commandQueue;
+        mStatusBarIconController = statusBarIconController;
         mCommandQueue.addCallback(mRequestListeningCallback);
     }
 
@@ -97,7 +102,7 @@ public class TileServices extends IQSService.Stub {
         return mContext;
     }
 
-    public QSTileHost getHost() {
+    public QSHost getHost() {
         return mHost;
     }
 
@@ -129,8 +134,7 @@ public class TileServices extends IQSService.Stub {
             mTiles.remove(tile.getComponent());
             final String slot = tile.getComponent().getClassName();
             // TileServices doesn't know how to add more than 1 icon per slot, so remove all
-            mMainHandler.post(() -> mHost.getIconController()
-                    .removeAllIconsForSlot(slot));
+            mMainHandler.post(() -> mStatusBarIconController.removeAllIconsForSlot(slot));
         }
     }
 
@@ -276,6 +280,19 @@ public class TileServices extends IQSService.Stub {
     }
 
     @Override
+    public void startActivity(IBinder token, PendingIntent pendingIntent) {
+        startActivity(getTileForToken(token), pendingIntent);
+    }
+
+    @VisibleForTesting
+    protected void startActivity(CustomTile customTile, PendingIntent pendingIntent) {
+        if (customTile != null) {
+            verifyCaller(customTile);
+            customTile.startActivityAndCollapse(pendingIntent);
+        }
+    }
+
+    @Override
     public void updateStatusIcon(IBinder token, Icon icon, String contentDescription) {
         CustomTile customTile = getTileForToken(token);
         if (customTile != null) {
@@ -294,7 +311,7 @@ public class TileServices extends IQSService.Stub {
                     mMainHandler.post(new Runnable() {
                         @Override
                         public void run() {
-                            StatusBarIconController iconController = mHost.getIconController();
+                            StatusBarIconController iconController = mStatusBarIconController;
                             iconController.setIcon(componentName.getClassName(), statusIcon);
                             iconController.setExternalIcon(componentName.getClassName());
                         }
@@ -336,7 +353,7 @@ public class TileServices extends IQSService.Stub {
     }
 
     @Nullable
-    private CustomTile getTileForToken(IBinder token) {
+    public CustomTile getTileForToken(IBinder token) {
         synchronized (mServices) {
             return mTokenMap.get(token);
         }

@@ -18,16 +18,19 @@
 
 package com.android.server.wm.flicker
 
-import com.android.server.wm.flicker.helpers.WindowUtils
-import com.android.server.wm.flicker.traces.region.RegionSubject
-import com.android.server.wm.traces.common.ComponentNameMatcher
-import com.android.server.wm.traces.common.IComponentNameMatcher
+import android.tools.common.PlatformConsts
+import android.tools.common.datatypes.component.ComponentNameMatcher
+import android.tools.common.datatypes.component.IComponentNameMatcher
+import android.tools.common.flicker.subject.region.RegionSubject
+import android.tools.common.traces.wm.WindowManagerTrace
+import android.tools.device.flicker.legacy.FlickerTest
+import android.tools.device.helpers.WindowUtils
 
 /**
  * Checks that [ComponentNameMatcher.STATUS_BAR] window is visible and above the app windows in all
  * WM trace entries
  */
-fun FlickerTestParameter.statusBarWindowIsAlwaysVisible() {
+fun FlickerTest.statusBarWindowIsAlwaysVisible() {
     assertWm { this.isAboveAppWindowVisible(ComponentNameMatcher.STATUS_BAR) }
 }
 
@@ -35,7 +38,7 @@ fun FlickerTestParameter.statusBarWindowIsAlwaysVisible() {
  * Checks that [ComponentNameMatcher.NAV_BAR] window is visible and above the app windows in all WM
  * trace entries
  */
-fun FlickerTestParameter.navBarWindowIsAlwaysVisible() {
+fun FlickerTest.navBarWindowIsAlwaysVisible() {
     assertWm { this.isAboveAppWindowVisible(ComponentNameMatcher.NAV_BAR) }
 }
 
@@ -43,7 +46,7 @@ fun FlickerTestParameter.navBarWindowIsAlwaysVisible() {
  * Checks that [ComponentNameMatcher.NAV_BAR] window is visible and above the app windows at the
  * start and end of the WM trace
  */
-fun FlickerTestParameter.navBarWindowIsVisibleAtStartAndEnd() {
+fun FlickerTest.navBarWindowIsVisibleAtStartAndEnd() {
     this.navBarWindowIsVisibleAtStart()
     this.navBarWindowIsVisibleAtEnd()
 }
@@ -52,7 +55,7 @@ fun FlickerTestParameter.navBarWindowIsVisibleAtStartAndEnd() {
  * Checks that [ComponentNameMatcher.NAV_BAR] window is visible and above the app windows at the
  * start of the WM trace
  */
-fun FlickerTestParameter.navBarWindowIsVisibleAtStart() {
+fun FlickerTest.navBarWindowIsVisibleAtStart() {
     assertWmStart { this.isAboveAppWindowVisible(ComponentNameMatcher.NAV_BAR) }
 }
 
@@ -60,7 +63,7 @@ fun FlickerTestParameter.navBarWindowIsVisibleAtStart() {
  * Checks that [ComponentNameMatcher.NAV_BAR] window is visible and above the app windows at the end
  * of the WM trace
  */
-fun FlickerTestParameter.navBarWindowIsVisibleAtEnd() {
+fun FlickerTest.navBarWindowIsVisibleAtEnd() {
     assertWmEnd { this.isAboveAppWindowVisible(ComponentNameMatcher.NAV_BAR) }
 }
 
@@ -68,7 +71,7 @@ fun FlickerTestParameter.navBarWindowIsVisibleAtEnd() {
  * Checks that [ComponentNameMatcher.TASK_BAR] window is visible and above the app windows in all WM
  * trace entries
  */
-fun FlickerTestParameter.taskBarWindowIsAlwaysVisible() {
+fun FlickerTest.taskBarWindowIsAlwaysVisible() {
     assertWm { this.isAboveAppWindowVisible(ComponentNameMatcher.TASK_BAR) }
 }
 
@@ -76,7 +79,7 @@ fun FlickerTestParameter.taskBarWindowIsAlwaysVisible() {
  * Checks that [ComponentNameMatcher.TASK_BAR] window is visible and above the app windows in all WM
  * trace entries
  */
-fun FlickerTestParameter.taskBarWindowIsVisibleAtEnd() {
+fun FlickerTest.taskBarWindowIsVisibleAtEnd() {
     assertWmEnd { this.isAboveAppWindowVisible(ComponentNameMatcher.TASK_BAR) }
 }
 
@@ -90,7 +93,7 @@ fun FlickerTestParameter.taskBarWindowIsVisibleAtEnd() {
  * @param allStates if all states should be checked, othersie, just initial and final
  */
 @JvmOverloads
-fun FlickerTestParameter.entireScreenCovered(allStates: Boolean = true) {
+fun FlickerTest.entireScreenCovered(allStates: Boolean = true) {
     if (allStates) {
         assertLayers {
             this.invoke("entireScreenCovered") { entry ->
@@ -114,19 +117,19 @@ fun FlickerTestParameter.entireScreenCovered(allStates: Boolean = true) {
 }
 
 /** Checks that [ComponentNameMatcher.NAV_BAR] layer is visible at the start of the SF trace */
-fun FlickerTestParameter.navBarLayerIsVisibleAtStart() {
+fun FlickerTest.navBarLayerIsVisibleAtStart() {
     assertLayersStart { this.isVisible(ComponentNameMatcher.NAV_BAR) }
 }
 
 /** Checks that [ComponentNameMatcher.NAV_BAR] layer is visible at the end of the SF trace */
-fun FlickerTestParameter.navBarLayerIsVisibleAtEnd() {
+fun FlickerTest.navBarLayerIsVisibleAtEnd() {
     assertLayersEnd { this.isVisible(ComponentNameMatcher.NAV_BAR) }
 }
 
 /**
  * Checks that [ComponentNameMatcher.NAV_BAR] layer is visible at the start and end of the SF trace
  */
-fun FlickerTestParameter.navBarLayerIsVisibleAtStartAndEnd() {
+fun FlickerTest.navBarLayerIsVisibleAtStartAndEnd() {
     this.navBarLayerIsVisibleAtStart()
     this.navBarLayerIsVisibleAtEnd()
 }
@@ -134,18 +137,18 @@ fun FlickerTestParameter.navBarLayerIsVisibleAtStartAndEnd() {
 /**
  * Checks that [ComponentNameMatcher.TASK_BAR] layer is visible at the start and end of the SF trace
  */
-fun FlickerTestParameter.taskBarLayerIsVisibleAtStartAndEnd() {
+fun FlickerTest.taskBarLayerIsVisibleAtStartAndEnd() {
     this.taskBarLayerIsVisibleAtStart()
     this.taskBarLayerIsVisibleAtEnd()
 }
 
 /** Checks that [ComponentNameMatcher.TASK_BAR] layer is visible at the start of the SF trace */
-fun FlickerTestParameter.taskBarLayerIsVisibleAtStart() {
+fun FlickerTest.taskBarLayerIsVisibleAtStart() {
     assertLayersStart { this.isVisible(ComponentNameMatcher.TASK_BAR) }
 }
 
 /** Checks that [ComponentNameMatcher.TASK_BAR] layer is visible at the end of the SF trace */
-fun FlickerTestParameter.taskBarLayerIsVisibleAtEnd() {
+fun FlickerTest.taskBarLayerIsVisibleAtEnd() {
     assertLayersEnd { this.isVisible(ComponentNameMatcher.TASK_BAR) }
 }
 
@@ -153,7 +156,7 @@ fun FlickerTestParameter.taskBarLayerIsVisibleAtEnd() {
  * Checks that [ComponentNameMatcher.STATUS_BAR] layer is visible at the start and end of the SF
  * trace
  */
-fun FlickerTestParameter.statusBarLayerIsVisibleAtStartAndEnd() {
+fun FlickerTest.statusBarLayerIsVisibleAtStartAndEnd() {
     assertLayersStart { this.isVisible(ComponentNameMatcher.STATUS_BAR) }
     assertLayersEnd { this.isVisible(ComponentNameMatcher.STATUS_BAR) }
 }
@@ -162,12 +165,14 @@ fun FlickerTestParameter.statusBarLayerIsVisibleAtStartAndEnd() {
  * Asserts that the [ComponentNameMatcher.NAV_BAR] layer is at the correct position at the start of
  * the SF trace
  */
-fun FlickerTestParameter.navBarLayerPositionAtStart() {
+fun FlickerTest.navBarLayerPositionAtStart() {
     assertLayersStart {
         val display =
             this.entry.displays.firstOrNull { !it.isVirtual } ?: error("There is no display!")
         this.visibleRegion(ComponentNameMatcher.NAV_BAR)
-            .coversExactly(WindowUtils.getNavigationBarPosition(display, isGesturalNavigation))
+            .coversExactly(
+                WindowUtils.getNavigationBarPosition(display, scenario.isGesturalNavigation)
+            )
     }
 }
 
@@ -175,13 +180,15 @@ fun FlickerTestParameter.navBarLayerPositionAtStart() {
  * Asserts that the [ComponentNameMatcher.NAV_BAR] layer is at the correct position at the end of
  * the SF trace
  */
-fun FlickerTestParameter.navBarLayerPositionAtEnd() {
+fun FlickerTest.navBarLayerPositionAtEnd() {
     assertLayersEnd {
         val display =
             this.entry.displays.minByOrNull { it.id }
                 ?: throw RuntimeException("There is no display!")
         this.visibleRegion(ComponentNameMatcher.NAV_BAR)
-            .coversExactly(WindowUtils.getNavigationBarPosition(display, isGesturalNavigation))
+            .coversExactly(
+                WindowUtils.getNavigationBarPosition(display, scenario.isGesturalNavigation)
+            )
     }
 }
 
@@ -189,7 +196,7 @@ fun FlickerTestParameter.navBarLayerPositionAtEnd() {
  * Asserts that the [ComponentNameMatcher.NAV_BAR] layer is at the correct position at the start and
  * end of the SF trace
  */
-fun FlickerTestParameter.navBarLayerPositionAtStartAndEnd() {
+fun FlickerTest.navBarLayerPositionAtStartAndEnd() {
     navBarLayerPositionAtStart()
     navBarLayerPositionAtEnd()
 }
@@ -198,13 +205,15 @@ fun FlickerTestParameter.navBarLayerPositionAtStartAndEnd() {
  * Asserts that the [ComponentNameMatcher.STATUS_BAR] layer is at the correct position at the start
  * of the SF trace
  */
-fun FlickerTestParameter.statusBarLayerPositionAtStart() {
+fun FlickerTest.statusBarLayerPositionAtStart(
+    wmTrace: WindowManagerTrace? = this.reader.readWmTrace()
+) {
+    // collect navbar position for the equivalent WM state
+    val state = wmTrace?.entries?.firstOrNull() ?: error("WM state missing in $this")
+    val display = state.getDisplay(PlatformConsts.DEFAULT_DISPLAY) ?: error("Display not found")
+    val navBarPosition = WindowUtils.getExpectedStatusBarPosition(display)
     assertLayersStart {
-        val display =
-            this.entry.displays.minByOrNull { it.id }
-                ?: throw RuntimeException("There is no display!")
-        this.visibleRegion(ComponentNameMatcher.STATUS_BAR)
-            .coversExactly(WindowUtils.getStatusBarPosition(display))
+        this.visibleRegion(ComponentNameMatcher.STATUS_BAR).coversExactly(navBarPosition)
     }
 }
 
@@ -212,13 +221,15 @@ fun FlickerTestParameter.statusBarLayerPositionAtStart() {
  * Asserts that the [ComponentNameMatcher.STATUS_BAR] layer is at the correct position at the end of
  * the SF trace
  */
-fun FlickerTestParameter.statusBarLayerPositionAtEnd() {
+fun FlickerTest.statusBarLayerPositionAtEnd(
+    wmTrace: WindowManagerTrace? = this.reader.readWmTrace()
+) {
+    // collect navbar position for the equivalent WM state
+    val state = wmTrace?.entries?.lastOrNull() ?: error("WM state missing in $this")
+    val display = state.getDisplay(PlatformConsts.DEFAULT_DISPLAY) ?: error("Display not found")
+    val navBarPosition = WindowUtils.getExpectedStatusBarPosition(display)
     assertLayersEnd {
-        val display =
-            this.entry.displays.minByOrNull { it.id }
-                ?: throw RuntimeException("There is no display!")
-        this.visibleRegion(ComponentNameMatcher.STATUS_BAR)
-            .coversExactly(WindowUtils.getStatusBarPosition(display))
+        this.visibleRegion(ComponentNameMatcher.STATUS_BAR).coversExactly(navBarPosition)
     }
 }
 
@@ -226,7 +237,7 @@ fun FlickerTestParameter.statusBarLayerPositionAtEnd() {
  * Asserts that the [ComponentNameMatcher.STATUS_BAR] layer is at the correct position at the start
  * and end of the SF trace
  */
-fun FlickerTestParameter.statusBarLayerPositionAtStartAndEnd() {
+fun FlickerTest.statusBarLayerPositionAtStartAndEnd() {
     statusBarLayerPositionAtStart()
     statusBarLayerPositionAtEnd()
 }
@@ -235,9 +246,7 @@ fun FlickerTestParameter.statusBarLayerPositionAtStartAndEnd() {
  * Asserts that the visibleRegion of the [ComponentNameMatcher.SNAPSHOT] layer can cover the
  * visibleRegion of the given app component exactly
  */
-fun FlickerTestParameter.snapshotStartingWindowLayerCoversExactlyOnApp(
-    component: IComponentNameMatcher
-) {
+fun FlickerTest.snapshotStartingWindowLayerCoversExactlyOnApp(component: IComponentNameMatcher) {
     assertLayers {
         invoke("snapshotStartingWindowLayerCoversExactlyOnApp") {
             val snapshotLayers =
@@ -249,9 +258,9 @@ fun FlickerTestParameter.snapshotStartingWindowLayerCoversExactlyOnApp(
             if (snapshotLayers.isNotEmpty()) {
                 val visibleAreas =
                     snapshotLayers
-                        .mapNotNull { snapshotLayer -> snapshotLayer.layer?.visibleRegion }
+                        .mapNotNull { snapshotLayer -> snapshotLayer.layer.visibleRegion }
                         .toTypedArray()
-                val snapshotRegion = RegionSubject.assertThat(visibleAreas, this, timestamp)
+                val snapshotRegion = RegionSubject(visibleAreas, this, timestamp)
                 val appVisibleRegion = it.visibleRegion(component)
                 if (snapshotRegion.region.isNotEmpty) {
                     snapshotRegion.coversExactly(appVisibleRegion.region)
@@ -291,7 +300,7 @@ fun FlickerTestParameter.snapshotStartingWindowLayerCoversExactlyOnApp(
  *      otherwise we won't and the layer must appear immediately.
  * ```
  */
-fun FlickerTestParameter.replacesLayer(
+fun FlickerTest.replacesLayer(
     originalLayer: IComponentNameMatcher,
     newLayer: IComponentNameMatcher,
     ignoreEntriesWithRotationLayer: Boolean = false,
@@ -308,7 +317,8 @@ fun FlickerTestParameter.replacesLayer(
             assertion.then().isVisible(ComponentNameMatcher.SNAPSHOT, isOptional = true)
         }
         if (ignoreSplashscreen) {
-            assertion.then().isSplashScreenVisibleFor(newLayer, isOptional = true)
+            assertion.then().isSplashScreenVisibleFor(
+                    ComponentNameMatcher(newLayer.packageName, className = ""), isOptional = true)
         }
 
         assertion.then().isVisible(newLayer)

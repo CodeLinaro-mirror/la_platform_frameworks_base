@@ -66,10 +66,13 @@ interface KeyguardTransitionRepository {
     }
 
     /**
-     * Begin a transition from one state to another. Will not start if another transition is in
-     * progress.
+     * Begin a transition from one state to another. Transitions are interruptible, and will issue a
+     * [TransitionStep] with state = [TransitionState.CANCELED] before beginning the next one.
+     *
+     * When canceled, there are two options: to continue from the current position of the prior
+     * transition, or to reset the position. When [resetIfCanceled] == true, it will do the latter.
      */
-    fun startTransition(info: TransitionInfo): UUID?
+    fun startTransition(info: TransitionInfo, resetIfCanceled: Boolean = false): UUID?
 
     /**
      * Allows manual control of a transition. When calling [startTransition], the consumer must pass
@@ -94,11 +97,13 @@ class KeyguardTransitionRepositoryImpl @Inject constructor() : KeyguardTransitio
      */
     private val _transitions =
         MutableSharedFlow<TransitionStep>(
+            replay = 2,
             extraBufferCapacity = 10,
-            onBufferOverflow = BufferOverflow.DROP_OLDEST
+            onBufferOverflow = BufferOverflow.DROP_OLDEST,
         )
     override val transitions = _transitions.asSharedFlow().distinctUntilChanged()
     private var lastStep: TransitionStep = TransitionStep()
+    private var lastAnimator: ValueAnimator? = null
 
     /*
      * When manual control of the transition is requested, a unique [UUID] is used as the handle
@@ -106,19 +111,55 @@ class KeyguardTransitionRepositoryImpl @Inject constructor() : KeyguardTransitio
      */
     private var updateTransitionId: UUID? = null
 
-    override fun startTransition(info: TransitionInfo): UUID? {
-        if (lastStep.transitionState != TransitionState.FINISHED) {
-            // Open questions:
-            // * Queue of transitions? buffer of 1?
-            // * Are transitions cancellable if a new one is triggered?
-            // * What validation does this need to do?
-            Log.wtf(TAG, "Transition still active: $lastStep")
+    init {
+        // Seed with transitions signaling a boot into lockscreen state
+        emitTransition(
+            TransitionStep(
+                KeyguardState.OFF,
+                KeyguardState.LOCKSCREEN,
+                0f,
+                TransitionState.STARTED,
+                KeyguardTransitionRepositoryImpl::class.simpleName!!,
+            )
+        )
+        emitTransition(
+            TransitionStep(
+                KeyguardState.OFF,
+                KeyguardState.LOCKSCREEN,
+                1f,
+                TransitionState.FINISHED,
+                KeyguardTransitionRepositoryImpl::class.simpleName!!,
+            )
+        )
+    }
+
+    override fun startTransition(
+        info: TransitionInfo,
+        resetIfCanceled: Boolean,
+    ): UUID? {
+        if (lastStep.from == info.from && lastStep.to == info.to) {
+            Log.i(TAG, "Duplicate call to start the transition, rejecting: $info")
             return null
         }
+        val startingValue =
+            if (lastStep.transitionState != TransitionState.FINISHED) {
+                Log.i(TAG, "Transition still active: $lastStep, canceling")
+                if (resetIfCanceled) {
+                    0f
+                } else {
+                    lastStep.value
+                }
+            } else {
+                0f
+            }
+
+        lastAnimator?.cancel()
+        lastAnimator = info.animator
 
         info.animator?.let { animator ->
             // An animator was provided, so use it to run the transition
-            animator.setFloatValues(0f, 1f)
+            animator.setFloatValues(startingValue, 1f)
+            animator.duration = ((1f - startingValue) * animator.duration).toLong()
             val updateListener =
                 object : AnimatorUpdateListener {
                     override fun onAnimationUpdate(animation: ValueAnimator) {
@@ -134,15 +175,24 @@ class KeyguardTransitionRepositoryImpl @Inject constructor() : KeyguardTransitio
             val adapter =
                 object : AnimatorListenerAdapter() {
                     override fun onAnimationStart(animation: Animator) {
-                        emitTransition(TransitionStep(info, 0f, TransitionState.STARTED))
+                        emitTransition(TransitionStep(info, startingValue, TransitionState.STARTED))
                     }
                     override fun onAnimationCancel(animation: Animator) {
-                        Log.i(TAG, "Cancelling transition: $info")
+                        endAnimation(animation, lastStep.value, TransitionState.CANCELED)
                     }
                     override fun onAnimationEnd(animation: Animator) {
-                        emitTransition(TransitionStep(info, 1f, TransitionState.FINISHED))
+                        endAnimation(animation, 1f, TransitionState.FINISHED)
+                    }
+
+                    private fun endAnimation(
+                        animation: Animator,
+                        value: Float,
+                        state: TransitionState
+                    ) {
+                        emitTransition(TransitionStep(info, value, state))
                         animator.removeListener(this)
                         animator.removeUpdateListener(updateListener)
+                        lastAnimator = null
                     }
                 }
             animator.addListener(adapter)
@@ -169,7 +219,7 @@ class KeyguardTransitionRepositoryImpl @Inject constructor() : KeyguardTransitio
             return
         }
 
-        if (state == TransitionState.FINISHED) {
+        if (state == TransitionState.FINISHED || state == TransitionState.CANCELED) {
             updateTransitionId = null
         }
 
@@ -187,10 +237,7 @@ class KeyguardTransitionRepositoryImpl @Inject constructor() : KeyguardTransitio
     }
 
     private fun trace(step: TransitionStep, isManual: Boolean) {
-        if (
-            step.transitionState != TransitionState.STARTED &&
-                step.transitionState != TransitionState.FINISHED
-        ) {
+        if (step.transitionState == TransitionState.RUNNING) {
             return
         }
         val traceName =
@@ -203,7 +250,10 @@ class KeyguardTransitionRepositoryImpl @Inject constructor() : KeyguardTransitio
         val traceCookie = traceName.hashCode()
         if (step.transitionState == TransitionState.STARTED) {
             Trace.beginAsyncSection(traceName, traceCookie)
-        } else if (step.transitionState == TransitionState.FINISHED) {
+        } else if (
+            step.transitionState == TransitionState.FINISHED ||
+                step.transitionState == TransitionState.CANCELED
+        ) {
             Trace.endAsyncSection(traceName, traceCookie)
         }
     }

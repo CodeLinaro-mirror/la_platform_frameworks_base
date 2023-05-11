@@ -32,6 +32,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.android.settingslib.spa.framework.compose.rememberDrawablePainter
@@ -43,21 +44,22 @@ import com.android.settingslib.spaprivileged.model.app.rememberAppRepository
 
 class AppInfoProvider(private val packageInfo: PackageInfo) {
     @Composable
-    fun AppInfo(displayVersion: Boolean = false) {
+    fun AppInfo(displayVersion: Boolean = false, isClonedAppPage: Boolean = false) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(
                     horizontal = SettingsDimension.itemPaddingStart,
                     vertical = SettingsDimension.itemPaddingVertical,
-                ),
+                )
+                .semantics(mergeDescendants = true) {},
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             val app = packageInfo.applicationInfo
             Box(modifier = Modifier.padding(SettingsDimension.itemPaddingAround)) {
                 AppIcon(app = app, size = SettingsDimension.appIconInfoSize)
             }
-            AppLabel(app)
+            AppLabel(app, isClonedAppPage)
             InstallType(app)
             if (displayVersion) AppVersion()
         }
@@ -93,13 +95,13 @@ internal fun AppIcon(app: ApplicationInfo, size: Dp) {
     val appRepository = rememberAppRepository()
     Image(
         painter = rememberDrawablePainter(appRepository.produceIcon(app).value),
-        contentDescription = null,
-        modifier = Modifier.size(size)
+        contentDescription = appRepository.produceIconContentDescription(app).value,
+        modifier = Modifier.size(size),
     )
 }
 
 @Composable
-internal fun AppLabel(app: ApplicationInfo) {
+internal fun AppLabel(app: ApplicationInfo, isClonedAppPage: Boolean = false) {
     val appRepository = rememberAppRepository()
-    SettingsTitle(appRepository.produceLabel(app))
+    SettingsTitle(title = appRepository.produceLabel(app, isClonedAppPage), useMediumWeight = true)
 }

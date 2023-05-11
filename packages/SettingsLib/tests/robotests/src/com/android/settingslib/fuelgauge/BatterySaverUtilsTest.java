@@ -16,6 +16,9 @@
 
 package com.android.settingslib.fuelgauge;
 
+import static com.android.settingslib.fuelgauge.BatterySaverUtils.KEY_NO_SCHEDULE;
+import static com.android.settingslib.fuelgauge.BatterySaverUtils.KEY_PERCENTAGE;
+
 import static com.google.common.truth.Truth.assertThat;
 
 import static org.junit.Assert.assertEquals;
@@ -66,6 +69,7 @@ public class BatterySaverUtilsTest {
     @Test
     public void testSetPowerSaveMode_enable_firstCall_needWarning() {
         Secure.putString(mMockResolver, Secure.LOW_POWER_WARNING_ACKNOWLEDGED, "null");
+        Secure.putString(mMockResolver, Secure.EXTRA_LOW_POWER_WARNING_ACKNOWLEDGED, "null");
         Secure.putString(mMockResolver, Secure.LOW_POWER_MANUAL_ACTIVATION_COUNT, "null");
 
         assertThat(BatterySaverUtils.setPowerSaveMode(mMockContext, true, true)).isFalse();
@@ -74,15 +78,18 @@ public class BatterySaverUtilsTest {
         verify(mMockPowerManager, times(0)).setPowerSaveModeEnabled(anyBoolean());
 
         // They shouldn't have changed.
+        assertEquals(-1, Secure.getInt(mMockResolver, Secure.LOW_POWER_WARNING_ACKNOWLEDGED, -1));
         assertEquals(-1,
-                Secure.getInt(mMockResolver, Secure.LOW_POWER_WARNING_ACKNOWLEDGED, -1));
+                Secure.getInt(mMockResolver, Secure.EXTRA_LOW_POWER_WARNING_ACKNOWLEDGED, -1));
         assertEquals(-2,
                 Secure.getInt(mMockResolver, Secure.LOW_POWER_MANUAL_ACTIVATION_COUNT, -2));
     }
 
     @Test
     public void testSetPowerSaveMode_enable_secondCall_needWarning() {
-        Secure.putInt(mMockResolver, Secure.LOW_POWER_WARNING_ACKNOWLEDGED, 1); // Already acked.
+        // Already acked.
+        Secure.putInt(mMockResolver, Secure.LOW_POWER_WARNING_ACKNOWLEDGED, 1);
+        Secure.putInt(mMockResolver, Secure.EXTRA_LOW_POWER_WARNING_ACKNOWLEDGED, 1);
         Secure.putString(mMockResolver, Secure.LOW_POWER_MANUAL_ACTIVATION_COUNT, "null");
 
         assertThat(BatterySaverUtils.setPowerSaveMode(mMockContext, true, true)).isTrue();
@@ -91,12 +98,17 @@ public class BatterySaverUtilsTest {
         verify(mMockPowerManager, times(1)).setPowerSaveModeEnabled(eq(true));
 
         assertEquals(1, Secure.getInt(mMockResolver, Secure.LOW_POWER_WARNING_ACKNOWLEDGED, -1));
-        assertEquals(1, Secure.getInt(mMockResolver, Secure.LOW_POWER_MANUAL_ACTIVATION_COUNT, -2));
+        assertEquals(1,
+                Secure.getInt(mMockResolver, Secure.EXTRA_LOW_POWER_WARNING_ACKNOWLEDGED, -1));
+        assertEquals(1,
+                Secure.getInt(mMockResolver, Secure.LOW_POWER_MANUAL_ACTIVATION_COUNT, -2));
     }
 
     @Test
     public void testSetPowerSaveMode_enable_thridCall_needWarning() {
-        Secure.putInt(mMockResolver, Secure.LOW_POWER_WARNING_ACKNOWLEDGED, 1); // Already acked.
+        // Already acked.
+        Secure.putInt(mMockResolver, Secure.LOW_POWER_WARNING_ACKNOWLEDGED, 1);
+        Secure.putInt(mMockResolver, Secure.EXTRA_LOW_POWER_WARNING_ACKNOWLEDGED, 1);
         Secure.putInt(mMockResolver, Secure.LOW_POWER_MANUAL_ACTIVATION_COUNT, 1);
 
         assertThat(BatterySaverUtils.setPowerSaveMode(mMockContext, true, true)).isTrue();
@@ -105,12 +117,16 @@ public class BatterySaverUtilsTest {
         verify(mMockPowerManager, times(1)).setPowerSaveModeEnabled(eq(true));
 
         assertEquals(1, Secure.getInt(mMockResolver, Secure.LOW_POWER_WARNING_ACKNOWLEDGED, -1));
-        assertEquals(2, Secure.getInt(mMockResolver, Secure.LOW_POWER_MANUAL_ACTIVATION_COUNT, -2));
+        assertEquals(1,
+                Secure.getInt(mMockResolver, Secure.EXTRA_LOW_POWER_WARNING_ACKNOWLEDGED, -1));
+        assertEquals(2,
+                Secure.getInt(mMockResolver, Secure.LOW_POWER_MANUAL_ACTIVATION_COUNT, -2));
     }
 
     @Test
     public void testSetPowerSaveMode_enable_firstCall_noWarning() {
         Secure.putString(mMockResolver, Secure.LOW_POWER_WARNING_ACKNOWLEDGED, "null");
+        Secure.putString(mMockResolver, Secure.EXTRA_LOW_POWER_WARNING_ACKNOWLEDGED, "null");
         Secure.putString(mMockResolver, Secure.LOW_POWER_MANUAL_ACTIVATION_COUNT, "null");
 
         assertThat(BatterySaverUtils.setPowerSaveMode(mMockContext, true, false)).isTrue();
@@ -119,12 +135,15 @@ public class BatterySaverUtilsTest {
         verify(mMockPowerManager, times(1)).setPowerSaveModeEnabled(eq(true));
 
         assertEquals(1, Secure.getInt(mMockResolver, Secure.LOW_POWER_WARNING_ACKNOWLEDGED, -1));
+        assertEquals(1,
+                Secure.getInt(mMockResolver, Secure.EXTRA_LOW_POWER_WARNING_ACKNOWLEDGED, -1));
         assertEquals(1, Secure.getInt(mMockResolver, Secure.LOW_POWER_MANUAL_ACTIVATION_COUNT, -2));
     }
 
     @Test
     public void testSetPowerSaveMode_disable_firstCall_noWarning() {
         Secure.putString(mMockResolver, Secure.LOW_POWER_WARNING_ACKNOWLEDGED, "null");
+        Secure.putString(mMockResolver, Secure.EXTRA_LOW_POWER_WARNING_ACKNOWLEDGED, "null");
         Secure.putString(mMockResolver, Secure.LOW_POWER_MANUAL_ACTIVATION_COUNT, "null");
 
         // When disabling, needFirstTimeWarning doesn't matter.
@@ -134,6 +153,8 @@ public class BatterySaverUtilsTest {
         verify(mMockPowerManager, times(1)).setPowerSaveModeEnabled(eq(false));
 
         assertEquals(-1, Secure.getInt(mMockResolver, Secure.LOW_POWER_WARNING_ACKNOWLEDGED, -1));
+        assertEquals(-1,
+                Secure.getInt(mMockResolver, Secure.EXTRA_LOW_POWER_WARNING_ACKNOWLEDGED, -1));
         assertEquals(-2,
                 Secure.getInt(mMockResolver, Secure.LOW_POWER_MANUAL_ACTIVATION_COUNT, -2));
     }
@@ -141,6 +162,7 @@ public class BatterySaverUtilsTest {
     @Test
     public void testSetPowerSaveMode_disable_firstCall_needWarning() {
         Secure.putString(mMockResolver, Secure.LOW_POWER_WARNING_ACKNOWLEDGED, "null");
+        Secure.putString(mMockResolver, Secure.EXTRA_LOW_POWER_WARNING_ACKNOWLEDGED, "null");
         Secure.putString(mMockResolver, Secure.LOW_POWER_MANUAL_ACTIVATION_COUNT, "null");
 
         // When disabling, needFirstTimeWarning doesn't matter.
@@ -150,6 +172,8 @@ public class BatterySaverUtilsTest {
         verify(mMockPowerManager, times(1)).setPowerSaveModeEnabled(eq(false));
 
         assertEquals(-1, Secure.getInt(mMockResolver, Secure.LOW_POWER_WARNING_ACKNOWLEDGED, -1));
+        assertEquals(-1,
+                Secure.getInt(mMockResolver, Secure.EXTRA_LOW_POWER_WARNING_ACKNOWLEDGED, -1));
         assertEquals(-2,
                 Secure.getInt(mMockResolver, Secure.LOW_POWER_MANUAL_ACTIVATION_COUNT, -2));
     }
@@ -185,5 +209,47 @@ public class BatterySaverUtilsTest {
                 .isEqualTo(BATTERY_SAVER_THRESHOLD_1);
         assertThat(Secure.getInt(mMockResolver, Secure.SUPPRESS_AUTO_BATTERY_SAVER_SUGGESTION, -1))
                 .isEqualTo(1);
+    }
+
+    @Test
+    public void testGetBatterySaverScheduleKey_returnExpectedKey() {
+        Global.putInt(mMockResolver, Global.LOW_POWER_MODE_TRIGGER_LEVEL, 0);
+        Global.putInt(mMockResolver, Global.AUTOMATIC_POWER_SAVE_MODE,
+                PowerManager.POWER_SAVE_MODE_TRIGGER_PERCENTAGE);
+
+        assertThat(BatterySaverUtils.getBatterySaverScheduleKey(mMockContext)).isEqualTo(
+                KEY_NO_SCHEDULE);
+
+        Global.putInt(mMockResolver, Global.LOW_POWER_MODE_TRIGGER_LEVEL, 20);
+        Global.putInt(mMockResolver, Global.AUTOMATIC_POWER_SAVE_MODE,
+                PowerManager.POWER_SAVE_MODE_TRIGGER_PERCENTAGE);
+
+        assertThat(BatterySaverUtils.getBatterySaverScheduleKey(mMockContext)).isEqualTo(
+                KEY_PERCENTAGE);
+
+        Global.putInt(mMockResolver, Global.LOW_POWER_MODE_TRIGGER_LEVEL, 20);
+        Global.putInt(mMockResolver, Global.AUTOMATIC_POWER_SAVE_MODE,
+                PowerManager.POWER_SAVE_MODE_TRIGGER_DYNAMIC);
+
+        assertThat(BatterySaverUtils.getBatterySaverScheduleKey(mMockContext)).isEqualTo(
+                KEY_NO_SCHEDULE);
+    }
+
+    @Test
+    public void testSetBatterySaverScheduleMode_setSchedule() {
+        BatterySaverUtils.setBatterySaverScheduleMode(mMockContext, KEY_NO_SCHEDULE, -1);
+
+        assertThat(Global.getInt(mMockResolver, Global.AUTOMATIC_POWER_SAVE_MODE, -1))
+                .isEqualTo(PowerManager.POWER_SAVE_MODE_TRIGGER_PERCENTAGE);
+        assertThat(Global.getInt(mMockResolver, Global.LOW_POWER_MODE_TRIGGER_LEVEL, -1))
+                .isEqualTo(0);
+
+        BatterySaverUtils.setBatterySaverScheduleMode(mMockContext, KEY_PERCENTAGE, 20);
+
+        assertThat(Global.getInt(mMockResolver, Global.AUTOMATIC_POWER_SAVE_MODE, -1))
+                .isEqualTo(PowerManager.POWER_SAVE_MODE_TRIGGER_PERCENTAGE);
+        assertThat(Global.getInt(mMockResolver, Global.LOW_POWER_MODE_TRIGGER_LEVEL, -1))
+                .isEqualTo(20);
+
     }
 }

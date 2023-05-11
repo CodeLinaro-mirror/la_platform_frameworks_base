@@ -17,20 +17,22 @@
 package com.android.systemui.recents;
 
 import static android.content.pm.PackageManager.MATCH_SYSTEM_ONLY;
-import static android.view.Display.DEFAULT_DISPLAY;
 import static android.view.MotionEvent.ACTION_CANCEL;
 import static android.view.MotionEvent.ACTION_DOWN;
 import static android.view.MotionEvent.ACTION_UP;
-import static android.view.WindowManager.ScreenshotSource.SCREENSHOT_OVERVIEW;
 import static android.view.WindowManagerPolicyConstants.NAV_BAR_MODE_3BUTTON;
 
 import static com.android.internal.accessibility.common.ShortcutConstants.CHOOSER_PACKAGE_NAME;
 import static com.android.systemui.shared.system.QuickStepContract.KEY_EXTRA_SUPPORTS_WINDOW_CORNERS;
 import static com.android.systemui.shared.system.QuickStepContract.KEY_EXTRA_SYSUI_PROXY;
+import static com.android.systemui.shared.system.QuickStepContract.KEY_EXTRA_UNFOLD_ANIMATION_FORWARDER;
 import static com.android.systemui.shared.system.QuickStepContract.KEY_EXTRA_UNLOCK_ANIMATION_CONTROLLER;
 import static com.android.systemui.shared.system.QuickStepContract.KEY_EXTRA_WINDOW_CORNER_RADIUS;
 import static com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_BOUNCER_SHOWING;
 import static com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_DEVICE_DOZING;
+import static com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_DEVICE_DREAMING;
+import static com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_SCREEN_ON;
+import static com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_SCREEN_TRANSITION;
 import static com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_STATUS_BAR_KEYGUARD_SHOWING;
 import static com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_STATUS_BAR_KEYGUARD_SHOWING_OCCLUDED;
 import static com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_TRACING_ENABLED;
@@ -44,8 +46,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.ServiceConnection;
-import android.graphics.Insets;
-import android.graphics.Rect;
 import android.graphics.Region;
 import android.hardware.input.InputManager;
 import android.os.Binder;
@@ -77,9 +77,10 @@ import com.android.internal.app.IVoiceInteractionSessionListener;
 import com.android.internal.logging.UiEventLogger;
 import com.android.internal.policy.ScreenDecorationsUtils;
 import com.android.internal.util.ScreenshotHelper;
+import com.android.internal.util.ScreenshotRequest;
 import com.android.systemui.Dumpable;
-import com.android.systemui.broadcast.BroadcastDispatcher;
 import com.android.systemui.dagger.SysUISingleton;
+import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.dump.DumpManager;
 import com.android.systemui.keyguard.KeyguardUnlockAnimationController;
 import com.android.systemui.keyguard.ScreenLifecycle;
@@ -90,40 +91,40 @@ import com.android.systemui.navigationbar.NavigationBarView;
 import com.android.systemui.navigationbar.NavigationModeController;
 import com.android.systemui.navigationbar.buttons.KeyButtonView;
 import com.android.systemui.recents.OverviewProxyService.OverviewProxyListener;
-import com.android.systemui.settings.CurrentUserTracker;
+import com.android.systemui.settings.DisplayTracker;
+import com.android.systemui.settings.UserTracker;
 import com.android.systemui.shade.NotificationPanelViewController;
 import com.android.systemui.shared.recents.IOverviewProxy;
 import com.android.systemui.shared.recents.ISystemUiProxy;
-import com.android.systemui.shared.recents.model.Task;
-import com.android.systemui.shared.system.ActivityManagerWrapper;
 import com.android.systemui.shared.system.QuickStepContract;
 import com.android.systemui.statusbar.CommandQueue;
 import com.android.systemui.statusbar.NotificationShadeWindowController;
 import com.android.systemui.statusbar.phone.CentralSurfaces;
 import com.android.systemui.statusbar.phone.StatusBarWindowCallback;
 import com.android.systemui.statusbar.policy.CallbackController;
+import com.android.systemui.unfold.progress.UnfoldTransitionProgressForwarder;
 import com.android.wm.shell.sysui.ShellInterface;
 
 import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.Executor;
 import java.util.function.Supplier;
 
 import javax.inject.Inject;
 
 import dagger.Lazy;
 
-
 /**
  * Class to send information from overview to launcher with a binder.
  */
 @SysUISingleton
-public class OverviewProxyService extends CurrentUserTracker implements
-        CallbackController<OverviewProxyListener>, NavigationModeController.ModeChangedListener,
-        Dumpable {
+public class OverviewProxyService implements CallbackController<OverviewProxyListener>,
+        NavigationModeController.ModeChangedListener, Dumpable {
 
-    private static final String ACTION_QUICKSTEP = "android.intent.action.QUICKSTEP_SERVICE";
+    @VisibleForTesting
+    static final String ACTION_QUICKSTEP = "android.intent.action.QUICKSTEP_SERVICE";
 
     public static final String TAG_OPS = "OverviewProxyService";
     private static final long BACKOFF_MILLIS = 1000;
@@ -133,6 +134,7 @@ public class OverviewProxyService extends CurrentUserTracker implements
     private static final long MAX_BACKOFF_MILLIS = 10 * 60 * 1000;
 
     private final Context mContext;
+    private final Executor mMainExecutor;
     private final ShellInterface mShellInterface;
     private final Lazy<Optional<CentralSurfaces>> mCentralSurfacesOptionalLazy;
     private SysUiState mSysUiState;
@@ -145,8 +147,11 @@ public class OverviewProxyService extends CurrentUserTracker implements
     private final Intent mQuickStepIntent;
     private final ScreenshotHelper mScreenshotHelper;
     private final CommandQueue mCommandQueue;
+    private final UserTracker mUserTracker;
     private final KeyguardUnlockAnimationController mSysuiUnlockAnimationController;
+    private final Optional<UnfoldTransitionProgressForwarder> mUnfoldTransitionProgressForwarder;
     private final UiEventLogger mUiEventLogger;
+    private final DisplayTracker mDisplayTracker;
 
     private Region mActiveNavBarRegion;
     private SurfaceControl mNavigationBarSurface;
@@ -228,11 +233,11 @@ public class OverviewProxyService extends CurrentUserTracker implements
 
         @Override
         public void onImeSwitcherPressed() {
-            // TODO(b/204901476) We're intentionally using DEFAULT_DISPLAY for now since
+            // TODO(b/204901476) We're intentionally using the default display for now since
             // Launcher/Taskbar isn't display aware.
             mContext.getSystemService(InputMethodManager.class)
                     .showInputMethodPickerFromSystem(true /* showAuxiliarySubtypes */,
-                            DEFAULT_DISPLAY);
+                            mDisplayTracker.getDefaultDisplayId());
             mUiEventLogger.log(KeyButtonView.NavBarButtonEvent.NAVBAR_IME_SWITCHER_BUTTON_TAP);
         }
 
@@ -311,7 +316,7 @@ public class OverviewProxyService extends CurrentUserTracker implements
                         intent.setClassName(CHOOSER_PACKAGE_NAME, chooserClassName);
                         intent.addFlags(
                                 Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
-                        mContext.startActivityAsUser(intent, UserHandle.CURRENT);
+                        mContext.startActivityAsUser(intent, mUserTracker.getUserHandle());
                     });
         }
 
@@ -322,18 +327,8 @@ public class OverviewProxyService extends CurrentUserTracker implements
         }
 
         @Override
-        public void handleImageBundleAsScreenshot(Bundle screenImageBundle, Rect locationInScreen,
-                Insets visibleInsets, Task.TaskKey task) {
-            mScreenshotHelper.provideScreenshot(
-                    screenImageBundle,
-                    locationInScreen,
-                    visibleInsets,
-                    task.id,
-                    task.userId,
-                    task.sourceComponent,
-                    SCREENSHOT_OVERVIEW,
-                    mHandler,
-                    null);
+        public void takeScreenshot(ScreenshotRequest request) {
+            mScreenshotHelper.takeScreenshot(request, mHandler, null);
         }
 
         @Override
@@ -417,7 +412,7 @@ public class OverviewProxyService extends CurrentUserTracker implements
                 return;
             }
 
-            mCurrentBoundedUserId = getCurrentUserId();
+            mCurrentBoundedUserId = mUserTracker.getUserId();
             mOverviewProxy = IOverviewProxy.Stub.asInterface(service);
 
             Bundle params = new Bundle();
@@ -426,6 +421,10 @@ public class OverviewProxyService extends CurrentUserTracker implements
             params.putBoolean(KEY_EXTRA_SUPPORTS_WINDOW_CORNERS, mSupportsRoundedCornersOnWindows);
             params.putBinder(KEY_EXTRA_UNLOCK_ANIMATION_CONTROLLER,
                     mSysuiUnlockAnimationController.asBinder());
+            mUnfoldTransitionProgressForwarder.ifPresent(
+                    unfoldProgressForwarder -> params.putBinder(
+                            KEY_EXTRA_UNFOLD_ANIMATION_FORWARDER,
+                            unfoldProgressForwarder.asBinder()));
             // Add all the interfaces exposed by the shell
             mShellInterface.createExternalInterfaces(params);
 
@@ -498,34 +497,47 @@ public class OverviewProxyService extends CurrentUserTracker implements
         }
     };
 
+    private final UserTracker.Callback mUserChangedCallback =
+            new UserTracker.Callback() {
+                @Override
+                public void onUserChanged(int newUser, @NonNull Context userContext) {
+                    mConnectionBackoffAttempts = 0;
+                    internalConnectToCurrentUser();
+                }
+            };
+
     @SuppressWarnings("OptionalUsedAsFieldOrParameterType")
     @Inject
     public OverviewProxyService(Context context,
+            @Main Executor mainExecutor,
             CommandQueue commandQueue,
             ShellInterface shellInterface,
             Lazy<NavigationBarController> navBarControllerLazy,
             Lazy<Optional<CentralSurfaces>> centralSurfacesOptionalLazy,
             NavigationModeController navModeController,
             NotificationShadeWindowController statusBarWinController, SysUiState sysUiState,
-            BroadcastDispatcher broadcastDispatcher,
+            UserTracker userTracker,
             ScreenLifecycle screenLifecycle,
             UiEventLogger uiEventLogger,
+            DisplayTracker displayTracker,
             KeyguardUnlockAnimationController sysuiUnlockAnimationController,
             AssistUtils assistUtils,
-            DumpManager dumpManager) {
-        super(broadcastDispatcher);
-
+            DumpManager dumpManager,
+            Optional<UnfoldTransitionProgressForwarder> unfoldTransitionProgressForwarder
+    ) {
         // b/241601880: This component shouldn't be running for a non-primary user
         if (!Process.myUserHandle().equals(UserHandle.SYSTEM)) {
             Log.e(TAG_OPS, "Unexpected initialization for non-primary user", new Throwable());
         }
 
         mContext = context;
+        mMainExecutor = mainExecutor;
         mShellInterface = shellInterface;
         mCentralSurfacesOptionalLazy = centralSurfacesOptionalLazy;
         mHandler = new Handler();
         mNavBarControllerLazy = navBarControllerLazy;
         mStatusBarWinController = statusBarWinController;
+        mUserTracker = userTracker;
         mConnectionBackoffAttempts = 0;
         mRecentsComponentName = ComponentName.unflattenFromString(context.getString(
                 com.android.internal.R.string.config_recentsComponentName));
@@ -537,6 +549,9 @@ public class OverviewProxyService extends CurrentUserTracker implements
         mSysUiState = sysUiState;
         mSysUiState.addCallback(this::notifySystemUiStateFlags);
         mUiEventLogger = uiEventLogger;
+        mDisplayTracker = displayTracker;
+        mUnfoldTransitionProgressForwarder = unfoldTransitionProgressForwarder;
+        mSysuiUnlockAnimationController = sysuiUnlockAnimationController;
 
         dumpManager.registerDumpable(getClass().getSimpleName(), this);
 
@@ -555,34 +570,39 @@ public class OverviewProxyService extends CurrentUserTracker implements
         statusBarWinController.registerCallback(mStatusBarWindowCallback);
         mScreenshotHelper = new ScreenshotHelper(context);
 
-        // Listen for tracing state changes
         commandQueue.addCallback(new CommandQueue.Callbacks() {
+
+            // Listen for tracing state changes
             @Override
             public void onTracingStateChanged(boolean enabled) {
                 mSysUiState.setFlag(SYSUI_STATE_TRACING_ENABLED, enabled)
                         .commitUpdate(mContext.getDisplayId());
             }
+
+            @Override
+            public void enterStageSplitFromRunningApp(boolean leftOrTop) {
+                if (mOverviewProxy != null) {
+                    try {
+                        mOverviewProxy.enterStageSplitFromRunningApp(leftOrTop);
+                    } catch (RemoteException e) {
+                        Log.w(TAG_OPS, "Unable to enter stage split from the current running app");
+                    }
+                }
+            }
         });
         mCommandQueue = commandQueue;
 
         // Listen for user setup
-        startTracking();
+        mUserTracker.addCallback(mUserChangedCallback, mMainExecutor);
 
         screenLifecycle.addObserver(mLifecycleObserver);
 
         // Connect to the service
         updateEnabledState();
         startConnectionToCurrentUser();
-        mSysuiUnlockAnimationController = sysuiUnlockAnimationController;
 
         // Listen for assistant changes
         assistUtils.registerVoiceInteractionSessionListener(mVoiceInteractionSessionListener);
-    }
-
-    @Override
-    public void onUserSwitched(int newUserId) {
-        mConnectionBackoffAttempts = 0;
-        internalConnectToCurrentUser();
     }
 
     public void onVoiceSessionWindowVisibilityChanged(boolean visible) {
@@ -614,7 +634,9 @@ public class OverviewProxyService extends CurrentUserTracker implements
         final NavigationBarView navBarView =
                 mNavBarControllerLazy.get().getNavigationBarView(mContext.getDisplayId());
         final NotificationPanelViewController panelController =
-                mCentralSurfacesOptionalLazy.get().get().getNotificationPanelViewController();
+                mCentralSurfacesOptionalLazy.get()
+                        .map(CentralSurfaces::getNotificationPanelViewController)
+                        .orElse(null);
         if (SysUiState.DEBUG) {
             Log.d(TAG_OPS, "Updating sysui state flags: navBarFragment=" + navBarFragment
                     + " navBarView=" + navBarView + " panelController=" + panelController);
@@ -649,13 +671,14 @@ public class OverviewProxyService extends CurrentUserTracker implements
     }
 
     private void onStatusBarStateChanged(boolean keyguardShowing, boolean keyguardOccluded,
-            boolean bouncerShowing, boolean isDozing, boolean panelExpanded) {
+            boolean bouncerShowing, boolean isDozing, boolean panelExpanded, boolean isDreaming) {
         mSysUiState.setFlag(SYSUI_STATE_STATUS_BAR_KEYGUARD_SHOWING,
                         keyguardShowing && !keyguardOccluded)
                 .setFlag(SYSUI_STATE_STATUS_BAR_KEYGUARD_SHOWING_OCCLUDED,
                         keyguardShowing && keyguardOccluded)
                 .setFlag(SYSUI_STATE_BOUNCER_SHOWING, bouncerShowing)
                 .setFlag(SYSUI_STATE_DEVICE_DOZING, isDozing)
+                .setFlag(SYSUI_STATE_DEVICE_DREAMING, isDreaming)
                 .commitUpdate(mContext.getDisplayId());
     }
 
@@ -706,13 +729,11 @@ public class OverviewProxyService extends CurrentUserTracker implements
             return;
         }
         mHandler.removeCallbacks(mConnectionRunnable);
-        Intent launcherServiceIntent = new Intent(ACTION_QUICKSTEP)
-                .setPackage(mRecentsComponentName.getPackageName());
         try {
-            mBound = mContext.bindServiceAsUser(launcherServiceIntent,
+            mBound = mContext.bindServiceAsUser(mQuickStepIntent,
                     mOverviewServiceConnection,
                     Context.BIND_AUTO_CREATE | Context.BIND_FOREGROUND_SERVICE_WHILE_AWAKE,
-                    UserHandle.of(getCurrentUserId()));
+                    UserHandle.of(mUserTracker.getUserId()));
         } catch (SecurityException e) {
             Log.e(TAG_OPS, "Unable to bind because of security error", e);
         }
@@ -842,6 +863,11 @@ public class OverviewProxyService extends CurrentUserTracker implements
          */
         @Override
         public void onScreenTurnedOn() {
+            mSysUiState
+                .setFlag(SYSUI_STATE_SCREEN_ON, true)
+                .setFlag(SYSUI_STATE_SCREEN_TRANSITION, false)
+                .commitUpdate(mContext.getDisplayId());
+
             try {
                 if (mOverviewProxy != null) {
                     mOverviewProxy.onScreenTurnedOn();
@@ -854,10 +880,26 @@ public class OverviewProxyService extends CurrentUserTracker implements
         }
 
         /**
+         * Notifies the Launcher that screen turned off.
+         */
+        @Override
+        public void onScreenTurnedOff() {
+            mSysUiState
+                .setFlag(SYSUI_STATE_SCREEN_ON, false)
+                .setFlag(SYSUI_STATE_SCREEN_TRANSITION, false)
+                .commitUpdate(mContext.getDisplayId());
+        }
+
+        /**
          * Notifies the Launcher that screen is starting to turn on.
          */
         @Override
         public void onScreenTurningOff() {
+            mSysUiState
+                .setFlag(SYSUI_STATE_SCREEN_ON, false)
+                .setFlag(SYSUI_STATE_SCREEN_TRANSITION, true)
+                .commitUpdate(mContext.getDisplayId());
+
             try {
                 if (mOverviewProxy != null) {
                     mOverviewProxy.onScreenTurningOff();
@@ -873,7 +915,12 @@ public class OverviewProxyService extends CurrentUserTracker implements
          * Notifies the Launcher that screen is starting to turn on.
          */
         @Override
-        public void onScreenTurningOn(@NonNull Runnable ignored) {
+        public void onScreenTurningOn() {
+            mSysUiState
+                .setFlag(SYSUI_STATE_SCREEN_ON, true)
+                .setFlag(SYSUI_STATE_SCREEN_TRANSITION, true)
+                .commitUpdate(mContext.getDisplayId());
+
             try {
                 if (mOverviewProxy != null) {
                     mOverviewProxy.onScreenTurningOn();
@@ -941,7 +988,7 @@ public class OverviewProxyService extends CurrentUserTracker implements
     }
 
     private void updateEnabledState() {
-        final int currentUser = ActivityManagerWrapper.getInstance().getCurrentUserId();
+        final int currentUser = mUserTracker.getUserId();
         mIsEnabled = mContext.getPackageManager().resolveServiceAsUser(mQuickStepIntent,
                 MATCH_SYSTEM_ONLY, currentUser) != null;
     }
@@ -984,5 +1031,22 @@ public class OverviewProxyService extends CurrentUserTracker implements
         default void onAssistantProgress(@FloatRange(from = 0.0, to = 1.0) float progress) {}
         default void onAssistantGestureCompletion(float velocity) {}
         default void startAssistant(Bundle bundle) {}
+    }
+
+    /**
+     * Shuts down this service at the end of a testcase.
+     * <p>
+     * The in-production service is never shuts down, and it was not designed with testing in mind.
+     * This unregisters the mechanisms by which the service will be revived after a testcase.
+     * <p>
+     * NOTE: This is a stop-gap introduced when first added some tests to this class. It should
+     * probably be replaced by proper lifecycle management on this class.
+     */
+    @VisibleForTesting()
+    void shutdownForTest() {
+        mContext.unregisterReceiver(mLauncherStateChangedReceiver);
+        mIsEnabled = false;
+        mHandler.removeCallbacks(mConnectionRunnable);
+        disconnectFromLauncherService();
     }
 }

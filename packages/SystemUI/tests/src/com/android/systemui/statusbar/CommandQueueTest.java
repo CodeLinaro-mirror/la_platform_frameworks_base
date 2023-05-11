@@ -18,8 +18,6 @@ import static android.hardware.biometrics.BiometricAuthenticator.TYPE_FACE;
 import static android.inputmethodservice.InputMethodService.BACK_DISPOSITION_DEFAULT;
 import static android.inputmethodservice.InputMethodService.IME_INVISIBLE;
 import static android.view.Display.DEFAULT_DISPLAY;
-import static android.view.InsetsState.ITYPE_NAVIGATION_BAR;
-import static android.view.InsetsState.ITYPE_STATUS_BAR;
 import static android.view.WindowInsetsController.BEHAVIOR_DEFAULT;
 
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -46,6 +44,7 @@ import com.android.internal.statusbar.LetterboxDetails;
 import com.android.internal.statusbar.StatusBarIcon;
 import com.android.internal.view.AppearanceRegion;
 import com.android.systemui.SysuiTestCase;
+import com.android.systemui.settings.FakeDisplayTracker;
 import com.android.systemui.statusbar.CommandQueue.Callbacks;
 
 import org.junit.After;
@@ -63,12 +62,13 @@ public class CommandQueueTest extends SysuiTestCase {
     };
 
     private CommandQueue mCommandQueue;
+    private FakeDisplayTracker mDisplayTracker = new FakeDisplayTracker(mContext);
     private Callbacks mCallbacks;
     private static final int SECONDARY_DISPLAY = 1;
 
     @Before
     public void setup() {
-        mCommandQueue = new CommandQueue(mContext);
+        mCommandQueue = new CommandQueue(mContext, mDisplayTracker);
         mCallbacks = mock(Callbacks.class);
         mCommandQueue.addCallback(mCallbacks);
         verify(mCallbacks).disable(anyInt(), eq(0), eq(0), eq(false));
@@ -118,13 +118,6 @@ public class CommandQueueTest extends SysuiTestCase {
     }
 
     @Test
-    public void testCollapsePanels() {
-        mCommandQueue.animateCollapsePanels();
-        waitForIdleSync();
-        verify(mCallbacks).animateCollapsePanels(eq(0), eq(false));
-    }
-
-    @Test
     public void testExpandSettings() {
         String panel = "some_panel";
         mCommandQueue.animateExpandSettingsPanel(panel);
@@ -163,7 +156,7 @@ public class CommandQueueTest extends SysuiTestCase {
 
     @Test
     public void testShowTransient() {
-        int[] types = new int[]{ITYPE_STATUS_BAR, ITYPE_NAVIGATION_BAR};
+        int types = WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars();
         mCommandQueue.showTransient(DEFAULT_DISPLAY, types, true /* isGestureOnSystemBar */);
         waitForIdleSync();
         verify(mCallbacks).showTransient(eq(DEFAULT_DISPLAY), eq(types), eq(true));
@@ -171,7 +164,7 @@ public class CommandQueueTest extends SysuiTestCase {
 
     @Test
     public void testShowTransientForSecondaryDisplay() {
-        int[] types = new int[]{ITYPE_STATUS_BAR, ITYPE_NAVIGATION_BAR};
+        int types = WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars();
         mCommandQueue.showTransient(SECONDARY_DISPLAY, types, true /* isGestureOnSystemBar */);
         waitForIdleSync();
         verify(mCallbacks).showTransient(eq(SECONDARY_DISPLAY), eq(types), eq(true));
@@ -179,7 +172,7 @@ public class CommandQueueTest extends SysuiTestCase {
 
     @Test
     public void testAbortTransient() {
-        int[] types = new int[]{ITYPE_STATUS_BAR, ITYPE_NAVIGATION_BAR};
+        int types = WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars();
         mCommandQueue.abortTransient(DEFAULT_DISPLAY, types);
         waitForIdleSync();
         verify(mCallbacks).abortTransient(eq(DEFAULT_DISPLAY), eq(types));
@@ -187,7 +180,7 @@ public class CommandQueueTest extends SysuiTestCase {
 
     @Test
     public void testAbortTransientForSecondaryDisplay() {
-        int[] types = new int[]{ITYPE_STATUS_BAR, ITYPE_NAVIGATION_BAR};
+        int types = WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars();
         mCommandQueue.abortTransient(SECONDARY_DISPLAY, types);
         waitForIdleSync();
         verify(mCallbacks).abortTransient(eq(SECONDARY_DISPLAY), eq(types));
@@ -425,7 +418,7 @@ public class CommandQueueTest extends SysuiTestCase {
 
     @Test
     public void testOnDisplayRemoved() {
-        mCommandQueue.onDisplayRemoved(SECONDARY_DISPLAY);
+        mDisplayTracker.triggerOnDisplayRemoved(SECONDARY_DISPLAY);
         waitForIdleSync();
         verify(mCallbacks).onDisplayRemoved(eq(SECONDARY_DISPLAY));
     }
@@ -522,5 +515,13 @@ public class CommandQueueTest extends SysuiTestCase {
         mCommandQueue.setNavigationBarLumaSamplingEnabled(1, true);
         waitForIdleSync();
         verify(mCallbacks).setNavigationBarLumaSamplingEnabled(eq(1), eq(true));
+    }
+
+    @Test
+    public void testShowRearDisplayDialog() {
+        final int currentBaseState = 1;
+        mCommandQueue.showRearDisplayDialog(currentBaseState);
+        waitForIdleSync();
+        verify(mCallbacks).showRearDisplayDialog(eq(currentBaseState));
     }
 }

@@ -22,6 +22,7 @@ import static android.app.AppOpsManager.MODE_IGNORED;
 import static android.app.AppOpsManager.OP_CAMERA;
 import static android.app.AppOpsManager.OP_COARSE_LOCATION;
 import static android.app.AppOpsManager.OP_FINE_LOCATION;
+import static android.app.AppOpsManager.OP_RECEIVE_EXPLICIT_USER_INTERACTION_AUDIO;
 import static android.app.AppOpsManager.OP_RECORD_AUDIO;
 import static android.app.AppOpsManager.OP_WIFI_SCAN;
 import static android.app.AppOpsManager.UID_STATE_BACKGROUND;
@@ -34,6 +35,8 @@ import static android.app.AppOpsManager.UID_STATE_TOP;
 import static com.android.server.appop.AppOpsUidStateTracker.processStateToUidState;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
@@ -127,6 +130,8 @@ public class AppOpsUidStateTrackerTest {
         assertEquals(MODE_IGNORED, mIntf.evalMode(UID, OP_CAMERA, MODE_FOREGROUND));
         assertEquals(MODE_IGNORED, mIntf.evalMode(UID, OP_COARSE_LOCATION, MODE_FOREGROUND));
         assertEquals(MODE_IGNORED, mIntf.evalMode(UID, OP_FINE_LOCATION, MODE_FOREGROUND));
+        assertEquals(MODE_IGNORED,
+                mIntf.evalMode(UID, OP_RECEIVE_EXPLICIT_USER_INTERACTION_AUDIO, MODE_FOREGROUND));
     }
 
     @Test
@@ -137,6 +142,8 @@ public class AppOpsUidStateTrackerTest {
                 .update();
 
         assertEquals(MODE_ALLOWED, mIntf.evalMode(UID, OP_RECORD_AUDIO, MODE_FOREGROUND));
+        assertEquals(MODE_ALLOWED,
+                mIntf.evalMode(UID, OP_RECEIVE_EXPLICIT_USER_INTERACTION_AUDIO, MODE_FOREGROUND));
 
         assertEquals(MODE_IGNORED, mIntf.evalMode(UID, OP_CAMERA, MODE_FOREGROUND));
         assertEquals(MODE_IGNORED, mIntf.evalMode(UID, OP_COARSE_LOCATION, MODE_FOREGROUND));
@@ -151,6 +158,8 @@ public class AppOpsUidStateTrackerTest {
                 .update();
 
         assertEquals(MODE_ALLOWED, mIntf.evalMode(UID, OP_RECORD_AUDIO, MODE_FOREGROUND));
+        assertEquals(MODE_ALLOWED,
+                mIntf.evalMode(UID, OP_RECEIVE_EXPLICIT_USER_INTERACTION_AUDIO, MODE_FOREGROUND));
 
         assertEquals(MODE_IGNORED, mIntf.evalMode(UID, OP_CAMERA, MODE_FOREGROUND));
         assertEquals(MODE_IGNORED, mIntf.evalMode(UID, OP_COARSE_LOCATION, MODE_FOREGROUND));
@@ -169,6 +178,8 @@ public class AppOpsUidStateTrackerTest {
         assertEquals(MODE_IGNORED, mIntf.evalMode(UID, OP_RECORD_AUDIO, MODE_FOREGROUND));
         assertEquals(MODE_IGNORED, mIntf.evalMode(UID, OP_COARSE_LOCATION, MODE_FOREGROUND));
         assertEquals(MODE_IGNORED, mIntf.evalMode(UID, OP_FINE_LOCATION, MODE_FOREGROUND));
+        assertEquals(MODE_IGNORED,
+                mIntf.evalMode(UID, OP_RECEIVE_EXPLICIT_USER_INTERACTION_AUDIO, MODE_FOREGROUND));
     }
 
     @Test
@@ -183,6 +194,8 @@ public class AppOpsUidStateTrackerTest {
         assertEquals(MODE_IGNORED, mIntf.evalMode(UID, OP_RECORD_AUDIO, MODE_FOREGROUND));
         assertEquals(MODE_IGNORED, mIntf.evalMode(UID, OP_COARSE_LOCATION, MODE_FOREGROUND));
         assertEquals(MODE_IGNORED, mIntf.evalMode(UID, OP_FINE_LOCATION, MODE_FOREGROUND));
+        assertEquals(MODE_IGNORED,
+                mIntf.evalMode(UID, OP_RECEIVE_EXPLICIT_USER_INTERACTION_AUDIO, MODE_FOREGROUND));
     }
 
     @Test
@@ -197,6 +210,8 @@ public class AppOpsUidStateTrackerTest {
 
         assertEquals(MODE_IGNORED, mIntf.evalMode(UID, OP_RECORD_AUDIO, MODE_FOREGROUND));
         assertEquals(MODE_IGNORED, mIntf.evalMode(UID, OP_CAMERA, MODE_FOREGROUND));
+        assertEquals(MODE_IGNORED,
+                mIntf.evalMode(UID, OP_RECEIVE_EXPLICIT_USER_INTERACTION_AUDIO, MODE_FOREGROUND));
     }
 
     @Test
@@ -211,6 +226,8 @@ public class AppOpsUidStateTrackerTest {
 
         assertEquals(MODE_IGNORED, mIntf.evalMode(UID, OP_RECORD_AUDIO, MODE_FOREGROUND));
         assertEquals(MODE_IGNORED, mIntf.evalMode(UID, OP_CAMERA, MODE_FOREGROUND));
+        assertEquals(MODE_IGNORED,
+                mIntf.evalMode(UID, OP_RECEIVE_EXPLICIT_USER_INTERACTION_AUDIO, MODE_FOREGROUND));
     }
 
     @Test
@@ -314,6 +331,8 @@ public class AppOpsUidStateTrackerTest {
                 .update();
 
         assertEquals(MODE_ALLOWED, mIntf.evalMode(UID, OP_RECORD_AUDIO, MODE_FOREGROUND));
+        assertEquals(MODE_ALLOWED,
+                mIntf.evalMode(UID, OP_RECEIVE_EXPLICIT_USER_INTERACTION_AUDIO, MODE_FOREGROUND));
     }
 
     @Test
@@ -328,6 +347,8 @@ public class AppOpsUidStateTrackerTest {
                 .update();
 
         assertEquals(MODE_IGNORED, mIntf.evalMode(UID, OP_RECORD_AUDIO, MODE_FOREGROUND));
+        assertEquals(MODE_IGNORED,
+                mIntf.evalMode(UID, OP_RECEIVE_EXPLICIT_USER_INTERACTION_AUDIO, MODE_FOREGROUND));
     }
 
     @Test
@@ -403,6 +424,8 @@ public class AppOpsUidStateTrackerTest {
         assertEquals(MODE_ALLOWED, mIntf.evalMode(UID, OP_CAMERA, MODE_FOREGROUND));
         assertEquals(MODE_ALLOWED, mIntf.evalMode(UID, OP_COARSE_LOCATION, MODE_FOREGROUND));
         assertEquals(MODE_ALLOWED, mIntf.evalMode(UID, OP_FINE_LOCATION, MODE_FOREGROUND));
+        assertEquals(MODE_ALLOWED,
+                mIntf.evalMode(UID, OP_RECEIVE_EXPLICIT_USER_INTERACTION_AUDIO, MODE_FOREGROUND));
     }
 
     @Test
@@ -418,6 +441,8 @@ public class AppOpsUidStateTrackerTest {
         assertEquals(MODE_ALLOWED, mIntf.evalMode(UID, OP_CAMERA, MODE_FOREGROUND));
         assertEquals(MODE_ALLOWED, mIntf.evalMode(UID, OP_COARSE_LOCATION, MODE_FOREGROUND));
         assertEquals(MODE_ALLOWED, mIntf.evalMode(UID, OP_FINE_LOCATION, MODE_FOREGROUND));
+        assertEquals(MODE_ALLOWED,
+                mIntf.evalMode(UID, OP_RECEIVE_EXPLICIT_USER_INTERACTION_AUDIO, MODE_FOREGROUND));
     }
 
     @Test
@@ -433,6 +458,8 @@ public class AppOpsUidStateTrackerTest {
         assertEquals(MODE_ALLOWED, mIntf.evalMode(UID, OP_CAMERA, MODE_FOREGROUND));
         assertEquals(MODE_ALLOWED, mIntf.evalMode(UID, OP_COARSE_LOCATION, MODE_FOREGROUND));
         assertEquals(MODE_ALLOWED, mIntf.evalMode(UID, OP_FINE_LOCATION, MODE_FOREGROUND));
+        assertEquals(MODE_ALLOWED,
+                mIntf.evalMode(UID, OP_RECEIVE_EXPLICIT_USER_INTERACTION_AUDIO, MODE_FOREGROUND));
     }
 
     @Test
@@ -729,6 +756,60 @@ public class AppOpsUidStateTrackerTest {
         verify(cb, never()).onUidStateChanged(anyInt(), anyInt(), anyBoolean());
     }
 
+    @Test
+    public void testIsUidInForegroundForBackgroundState() {
+        procStateBuilder(UID)
+                .backgroundState()
+                .update();
+        assertFalse(mIntf.isUidInForeground(UID));
+
+        procStateBuilder(UID)
+                .nonExistentState()
+                .update();
+        assertFalse(mIntf.isUidInForeground(UID));
+    }
+
+    @Test
+    public void testIsUidInForegroundForForegroundState() {
+        procStateBuilder(UID)
+                .topState()
+                .update();
+        assertTrue(mIntf.isUidInForeground(UID));
+
+        procStateBuilder(UID)
+                .foregroundServiceState()
+                .update();
+        assertTrue(mIntf.isUidInForeground(UID));
+    }
+
+    @Test
+    public void testAppWidgetVisibleDoesntChangeUidState() {
+        procStateBuilder(UID)
+                .topState()
+                .update();
+
+        SparseArray<String> updatedAppWidgetVisibilities = new SparseArray<>();
+        updatedAppWidgetVisibilities.put(UID, "");
+
+        mIntf.updateAppWidgetVisibility(updatedAppWidgetVisibilities, true);
+
+        assertEquals(UID_STATE_TOP, mIntf.getUidState(UID));
+    }
+
+    @Test
+    public void testAppWidgetNotVisibleDoesntChangeUidState() {
+        SparseArray<String> updatedAppWidgetVisibilities = new SparseArray<>();
+        updatedAppWidgetVisibilities.put(UID, "");
+        mIntf.updateAppWidgetVisibility(updatedAppWidgetVisibilities, true);
+        procStateBuilder(UID)
+                .topState()
+                .update();
+
+        mIntf.updateAppWidgetVisibility(updatedAppWidgetVisibilities, false);
+
+        assertEquals(UID_STATE_TOP, mIntf.getUidState(UID));
+    }
+
     public void testUidStateChangedCallback(int initialState, int finalState) {
         int initialUidState = processStateToUidState(initialState);
         int finalUidState = processStateToUidState(finalState);
@@ -781,7 +862,7 @@ public class AppOpsUidStateTrackerTest {
         private AppOpsUidStateTracker mIntf;
         private int mUid;
         private int mProcState = ActivityManager.PROCESS_STATE_NONEXISTENT;
-        private int mCapability = 0;
+        private int mCapability = ActivityManager.PROCESS_CAPABILITY_NONE;
 
         private UidProcStateUpdateBuilder(AppOpsUidStateTracker intf, int uid) {
             mUid = uid;

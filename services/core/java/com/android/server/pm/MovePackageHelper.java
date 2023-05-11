@@ -28,6 +28,7 @@ import static android.content.pm.PackageManager.MOVE_FAILED_SYSTEM_PACKAGE;
 import static com.android.server.pm.PackageManagerService.DEBUG_INSTALL;
 import static com.android.server.pm.PackageManagerService.TAG;
 
+import android.app.ApplicationExitInfo;
 import android.content.Intent;
 import android.content.pm.IPackageInstallObserver2;
 import android.content.pm.IPackageMoveObserver;
@@ -86,7 +87,7 @@ public final class MovePackageHelper {
             throw new PackageManagerException(MOVE_FAILED_DOESNT_EXIST, "Missing package");
         }
         final AndroidPackage pkg = packageState.getPkg();
-        if (pkg.isSystem()) {
+        if (packageState.isSystem()) {
             throw new PackageManagerException(MOVE_FAILED_SYSTEM_PACKAGE,
                     "Cannot move system application");
         }
@@ -129,7 +130,7 @@ public final class MovePackageHelper {
         final InstallSource installSource = packageState.getInstallSource();
         final String packageAbiOverride = packageState.getCpuAbiOverride();
         final int appId = UserHandle.getAppId(pkg.getUid());
-        final String seinfo = AndroidPackageUtils.getSeInfo(pkg, packageState);
+        final String seinfo = packageState.getSeInfo();
         final String label = String.valueOf(pm.getApplicationLabel(
                 AndroidPackageUtils.generateAppInfoWithoutState(pkg)));
         final int targetSdkVersion = pkg.getTargetSdkVersion();
@@ -145,7 +146,8 @@ public final class MovePackageHelper {
 
         final PackageFreezer freezer;
         synchronized (mPm.mLock) {
-            freezer = mPm.freezePackage(packageName, "movePackageInternal");
+            freezer = mPm.freezePackage(packageName, UserHandle.USER_ALL,
+                    "movePackageInternal", ApplicationExitInfo.REASON_USER_REQUESTED);
         }
 
         final Bundle extras = new Bundle();

@@ -31,11 +31,11 @@ import static com.android.server.wm.ScreenRotationAnimationProto.STARTED;
 import static com.android.server.wm.SurfaceAnimator.ANIMATION_TYPE_SCREEN_ROTATION;
 import static com.android.server.wm.WindowManagerDebugConfig.TAG_WITH_CLASS_NAME;
 import static com.android.server.wm.WindowManagerDebugConfig.TAG_WM;
+import static com.android.server.wm.utils.CoordinateTransforms.computeRotationMatrix;
 
 import android.animation.ArgbEvaluator;
 import android.content.Context;
 import android.graphics.Color;
-import android.graphics.GraphicBuffer;
 import android.graphics.Matrix;
 import android.graphics.Point;
 import android.graphics.Rect;
@@ -60,7 +60,6 @@ import com.android.internal.protolog.common.ProtoLog;
 import com.android.server.display.DisplayControl;
 import com.android.server.wm.SurfaceAnimator.AnimationType;
 import com.android.server.wm.SurfaceAnimator.OnAnimationFinishedCallback;
-import com.android.server.wm.utils.RotationAnimationUtils;
 
 import java.io.PrintWriter;
 
@@ -251,9 +250,6 @@ class ScreenRotationAnimation {
                     screenshotBuffer.getColorSpace());
             Trace.traceEnd(TRACE_TAG_WINDOW_MANAGER);
 
-            GraphicBuffer buffer = GraphicBuffer.createFromHardwareBuffer(
-                    screenshotBuffer.getHardwareBuffer());
-
             t.setLayer(mScreenshotLayer, SCREEN_FREEZE_LAYER_BASE);
             t.reparent(mBackColorSurface, displayContent.getSurfaceControl());
             // If hdr layers are on-screen, e.g. picture-in-picture mode, the screenshot of
@@ -263,10 +259,11 @@ class ScreenRotationAnimation {
             t.setLayer(mBackColorSurface, -1);
             t.setColor(mBackColorSurface, new float[]{mStartLuma, mStartLuma, mStartLuma});
             t.setAlpha(mBackColorSurface, 1);
-            t.setBuffer(mScreenshotLayer, buffer);
+            t.setBuffer(mScreenshotLayer, hardwareBuffer);
             t.setColorSpace(mScreenshotLayer, screenshotBuffer.getColorSpace());
             t.show(mScreenshotLayer);
             t.show(mBackColorSurface);
+            hardwareBuffer.close();
 
             if (mRoundedCornerOverlay != null) {
                 for (SurfaceControl sc : mRoundedCornerOverlay) {
@@ -378,8 +375,7 @@ class ScreenRotationAnimation {
         // to the snapshot to make it stay in the same original position
         // with the current screen rotation.
         int delta = deltaRotation(rotation, mOriginalRotation);
-        RotationAnimationUtils.createRotationMatrix(delta, mOriginalWidth, mOriginalHeight,
-                mSnapshotInitialMatrix);
+        computeRotationMatrix(delta, mOriginalWidth, mOriginalHeight, mSnapshotInitialMatrix);
         setRotationTransform(t, mSnapshotInitialMatrix);
     }
 
@@ -803,6 +799,10 @@ class ScreenRotationAnimation {
                 if (mDisplayContent.getRotationAnimation() == ScreenRotationAnimation.this) {
                     // It also invokes kill().
                     mDisplayContent.setRotationAnimation(null);
+                    if (mDisplayContent.mDisplayRotationCompatPolicy != null) {
+                        mDisplayContent.mDisplayRotationCompatPolicy
+                                .onScreenRotationAnimationFinished();
+                    }
                 } else {
                     kill();
                 }

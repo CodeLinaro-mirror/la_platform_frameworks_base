@@ -20,6 +20,7 @@ import static android.app.UiModeManager.MODE_NIGHT_YES;
 
 import static com.google.common.truth.Truth.assertThat;
 
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 
@@ -29,16 +30,22 @@ import android.graphics.drawable.GradientDrawable;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
 import android.view.WindowManager;
+import android.view.accessibility.AccessibilityManager;
 
 import androidx.test.filters.SmallTest;
 
 import com.android.systemui.Prefs;
 import com.android.systemui.SysuiTestCase;
+import com.android.systemui.util.settings.SecureSettings;
 
 import org.junit.After;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 
 /** Tests for {@link MenuView}. */
 @RunWith(AndroidTestingRunner.class)
@@ -52,12 +59,19 @@ public class MenuViewTest extends SysuiTestCase {
     private String mLastPosition;
     private MenuViewAppearance mStubMenuViewAppearance;
 
+    @Rule
+    public MockitoRule mockito = MockitoJUnit.rule();
+
+    @Mock
+    private AccessibilityManager mAccessibilityManager;
+
     @Before
     public void setUp() throws Exception {
         mUiModeManager = mContext.getSystemService(UiModeManager.class);
         mNightMode = mUiModeManager.getNightMode();
         mUiModeManager.setNightMode(MODE_NIGHT_YES);
-        final MenuViewModel stubMenuViewModel = new MenuViewModel(mContext);
+        final MenuViewModel stubMenuViewModel = new MenuViewModel(mContext, mAccessibilityManager,
+                mock(SecureSettings.class));
         final WindowManager stubWindowManager = mContext.getSystemService(WindowManager.class);
         mStubMenuViewAppearance = new MenuViewAppearance(mContext, stubWindowManager);
         mMenuView = spy(new MenuView(mContext, stubMenuViewModel, mStubMenuViewAppearance));

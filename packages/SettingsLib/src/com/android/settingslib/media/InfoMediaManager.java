@@ -22,6 +22,7 @@ import static android.media.MediaRoute2Info.TYPE_DOCK;
 import static android.media.MediaRoute2Info.TYPE_GROUP;
 import static android.media.MediaRoute2Info.TYPE_HDMI;
 import static android.media.MediaRoute2Info.TYPE_HEARING_AID;
+import static android.media.MediaRoute2Info.TYPE_REMOTE_AUDIO_VIDEO_RECEIVER;
 import static android.media.MediaRoute2Info.TYPE_REMOTE_SPEAKER;
 import static android.media.MediaRoute2Info.TYPE_REMOTE_TV;
 import static android.media.MediaRoute2Info.TYPE_UNKNOWN;
@@ -34,18 +35,22 @@ import static android.media.MediaRoute2ProviderService.REASON_UNKNOWN_ERROR;
 
 import static com.android.settingslib.media.LocalMediaManager.MediaDeviceState.STATE_SELECTED;
 
+import android.annotation.Nullable;
 import android.annotation.TargetApi;
 import android.app.Notification;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
+import android.content.ComponentName;
 import android.content.Context;
 import android.media.MediaRoute2Info;
 import android.media.MediaRouter2Manager;
+import android.media.RouteListingPreference;
 import android.media.RoutingSessionInfo;
 import android.os.Build;
 import android.text.TextUtils;
 import android.util.Log;
 
+import androidx.annotation.DoNotInline;
 import androidx.annotation.RequiresApi;
 
 import com.android.internal.annotations.VisibleForTesting;
@@ -53,9 +58,15 @@ import com.android.settingslib.bluetooth.CachedBluetoothDevice;
 import com.android.settingslib.bluetooth.LocalBluetoothManager;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
+import java.util.stream.Collectors;
 
 /**
  * InfoMediaManager provide interface to get InfoMediaDevice list.
@@ -76,6 +87,8 @@ public class InfoMediaManager extends MediaManager {
 
     private MediaDevice mCurrentConnectedDevice;
     private LocalBluetoothManager mBluetoothManager;
+    private final Map<String, RouteListingPreference.Item> mPreferenceItemMap =
+            new ConcurrentHashMap<>();
 
     public InfoMediaManager(Context context, String packageName, Notification notification,
             LocalBluetoothManager localBluetoothManager) {
@@ -93,6 +106,15 @@ public class InfoMediaManager extends MediaManager {
         mMediaDevices.clear();
         mRouterManager.registerCallback(mExecutor, mMediaRouterCallback);
         mRouterManager.registerScanRequest();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+                && !TextUtils.isEmpty(mPackageName)) {
+            RouteListingPreference routeListingPreference =
+                    mRouterManager.getRouteListingPreference(mPackageName);
+            if (routeListingPreference != null) {
+                Api34Impl.onRouteListingPreferenceUpdated(null, routeListingPreference,
+                        mPreferenceItemMap);
+            }
+        }
         refreshDevices();
     }
 
@@ -176,6 +198,19 @@ public class InfoMediaManager extends MediaManager {
         return false;
     }
 
+    boolean preferRouteListingOrdering() {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+                && Api34Impl.preferRouteListingOrdering(mRouterManager, mPackageName);
+    }
+
+    @Nullable
+    ComponentName getLinkedItemComponentName() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            return null;
+        }
+        return Api34Impl.getLinkedItemComponentName(mRouterManager, mPackageName);
+    }
+
     /**
      * Remove a {@code device} from current media.
      *
@@ -237,7 +272,7 @@ public class InfoMediaManager extends MediaManager {
         if (info != null) {
             for (MediaRoute2Info route : mRouterManager.getSelectableRoutes(info)) {
                 deviceList.add(new InfoMediaDevice(mContext, mRouterManager,
-                        route, mPackageName));
+                        route, mPackageName, mPreferenceItemMap.get(route.getId())));
             }
             return deviceList;
         }
@@ -264,7 +299,7 @@ public class InfoMediaManager extends MediaManager {
         if (info != null) {
             for (MediaRoute2Info route : mRouterManager.getDeselectableRoutes(info)) {
                 deviceList.add(new InfoMediaDevice(mContext, mRouterManager,
-                        route, mPackageName));
+                        route, mPackageName, mPreferenceItemMap.get(route.getId())));
                 Log.d(TAG, route.getName() + " is deselectable for " + mPackageName);
             }
             return deviceList;
@@ -291,7 +326,7 @@ public class InfoMediaManager extends MediaManager {
         if (info != null) {
             for (MediaRoute2Info route : mRouterManager.getSelectedRoutes(info)) {
                 deviceList.add(new InfoMediaDevice(mContext, mRouterManager,
-                        route, mPackageName));
+                        route, mPackageName, mPreferenceItemMap.get(route.getId())));
             }
             return deviceList;
         }
@@ -418,6 +453,8 @@ public class InfoMediaManager extends MediaManager {
         dispatchDeviceListAdded();
     }
 
+    // MediaRoute2Info.getType was made public on API 34, but exists since API 30.
+    @SuppressWarnings("NewApi")
     private void buildAllRoutes() {
         for (MediaRoute2Info route : mRouterManager.getAllRoutes()) {
             if (DEBUG) {
@@ -437,6 +474,8 @@ public class InfoMediaManager extends MediaManager {
         return infos;
     }
 
+    // MediaRoute2Info.getType was made public on API 34, but exists since API 30.
+    @SuppressWarnings("NewApi")
     private synchronized void buildAvailableRoutes() {
         for (MediaRoute2Info route : getAvailableRoutes(mPackageName)) {
             if (DEBUG) {
@@ -448,10 +487,12 @@ public class InfoMediaManager extends MediaManager {
     }
 
     private synchronized List<MediaRoute2Info> getAvailableRoutes(String packageName) {
-        final List<MediaRoute2Info> infos = new ArrayList<>();
+        List<MediaRoute2Info> infos = new ArrayList<>();
         RoutingSessionInfo routingSessionInfo = getRoutingSessionInfo(packageName);
+        List<MediaRoute2Info> selectedRouteInfos = new ArrayList<>();
         if (routingSessionInfo != null) {
-            infos.addAll(mRouterManager.getSelectedRoutes(routingSessionInfo));
+            selectedRouteInfos = mRouterManager.getSelectedRoutes(routingSessionInfo);
+            infos.addAll(selectedRouteInfos);
             infos.addAll(mRouterManager.getSelectableRoutes(routingSessionInfo));
         }
         final List<MediaRoute2Info> transferableRoutes =
@@ -468,11 +509,29 @@ public class InfoMediaManager extends MediaManager {
                 infos.add(transferableRoute);
             }
         }
-        return infos;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+                && !TextUtils.isEmpty(mPackageName)) {
+            RouteListingPreference routeListingPreference =
+                    mRouterManager.getRouteListingPreference(mPackageName);
+            if (routeListingPreference != null) {
+                final List<RouteListingPreference.Item> preferenceRouteListing =
+                        Api34Impl.composePreferenceRouteListing(
+                                routeListingPreference);
+                infos = Api34Impl.arrangeRouteListByPreference(selectedRouteInfos,
+                                mRouterManager.getAvailableRoutes(packageName),
+                                preferenceRouteListing);
+            }
+            return Api34Impl.filterDuplicatedIds(infos);
+        } else {
+            return infos;
+        }
     }
 
+    // MediaRoute2Info.getType was made public on API 34, but exists since API 30.
+    @SuppressWarnings("NewApi")
     @VisibleForTesting
     void addMediaDevice(MediaRoute2Info route) {
+        //TODO(b/258141461): Attach flag and disable reason in MediaDevice
         final int deviceType = route.getType();
         MediaDevice mediaDevice = null;
         switch (deviceType) {
@@ -482,7 +541,7 @@ public class InfoMediaManager extends MediaManager {
             case TYPE_GROUP:
                 //TODO(b/148765806): use correct device type once api is ready.
                 mediaDevice = new InfoMediaDevice(mContext, mRouterManager, route,
-                        mPackageName);
+                        mPackageName, mPreferenceItemMap.get(route.getId()));
                 if (!TextUtils.isEmpty(mPackageName)
                         && getRoutingSessionInfo().getSelectedRoutes().contains(route.getId())) {
                     mediaDevice.setState(STATE_SELECTED);
@@ -514,6 +573,9 @@ public class InfoMediaManager extends MediaManager {
                             route, mPackageName);
                 }
                 break;
+            case TYPE_REMOTE_AUDIO_VIDEO_RECEIVER:
+                mediaDevice = new ComplexMediaDevice(mContext, mRouterManager, route,
+                        mPackageName, mPreferenceItemMap.get(route.getId()));
             default:
                 Log.w(TAG, "addMediaDevice() unknown device type : " + deviceType);
                 break;
@@ -572,6 +634,111 @@ public class InfoMediaManager extends MediaManager {
         @Override
         public void onSessionUpdated(RoutingSessionInfo sessionInfo) {
             refreshDevices();
+        }
+
+        @Override
+        public void onRouteListingPreferenceUpdated(
+                String packageName,
+                RouteListingPreference routeListingPreference) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                Api34Impl.onRouteListingPreferenceUpdated(packageName, routeListingPreference,
+                        mPreferenceItemMap);
+                refreshDevices();
+            }
+        }
+    }
+
+    @RequiresApi(34)
+    private static class Api34Impl {
+        @DoNotInline
+        static List<RouteListingPreference.Item> composePreferenceRouteListing(
+                RouteListingPreference routeListingPreference) {
+            List<RouteListingPreference.Item> finalizedItemList = new ArrayList<>();
+            List<RouteListingPreference.Item> itemList = routeListingPreference.getItems();
+            for (RouteListingPreference.Item item : itemList) {
+                // Put suggested devices on the top first before further organization
+                if ((item.getFlags() & RouteListingPreference.Item.FLAG_SUGGESTED) != 0) {
+                    finalizedItemList.add(0, item);
+                } else {
+                    finalizedItemList.add(item);
+                }
+            }
+            return finalizedItemList;
+        }
+
+        @DoNotInline
+        static synchronized List<MediaRoute2Info> filterDuplicatedIds(List<MediaRoute2Info> infos) {
+            List<MediaRoute2Info> filteredInfos = new ArrayList<>();
+            Set<String> foundDeduplicationIds = new HashSet<>();
+            for (MediaRoute2Info mediaRoute2Info : infos) {
+                if (!Collections.disjoint(mediaRoute2Info.getDeduplicationIds(),
+                        foundDeduplicationIds)) {
+                    continue;
+                }
+                filteredInfos.add(mediaRoute2Info);
+                foundDeduplicationIds.addAll(mediaRoute2Info.getDeduplicationIds());
+            }
+            return filteredInfos;
+        }
+
+        @DoNotInline
+        static List<MediaRoute2Info> arrangeRouteListByPreference(
+                List<MediaRoute2Info> selectedRouteInfos, List<MediaRoute2Info> infolist,
+                List<RouteListingPreference.Item> preferenceRouteListing) {
+            final List<MediaRoute2Info> sortedInfoList = new ArrayList<>(selectedRouteInfos);
+            for (RouteListingPreference.Item item : preferenceRouteListing) {
+                for (MediaRoute2Info info : infolist) {
+                    if (item.getRouteId().equals(info.getId())
+                            && !selectedRouteInfos.contains(info)) {
+                        sortedInfoList.add(info);
+                        break;
+                    }
+                }
+            }
+            if (sortedInfoList.size() != infolist.size()) {
+                infolist.removeAll(sortedInfoList);
+                sortedInfoList.addAll(infolist.stream().filter(
+                        MediaRoute2Info::isSystemRoute).collect(Collectors.toList()));
+            }
+            return sortedInfoList;
+        }
+
+        @DoNotInline
+        static boolean preferRouteListingOrdering(MediaRouter2Manager mediaRouter2Manager,
+                String packageName) {
+            if (TextUtils.isEmpty(packageName)) {
+                return false;
+            }
+            RouteListingPreference routeListingPreference =
+                    mediaRouter2Manager.getRouteListingPreference(packageName);
+            return routeListingPreference != null
+                    && !routeListingPreference.getUseSystemOrdering();
+        }
+
+        @DoNotInline
+        @Nullable
+        static ComponentName getLinkedItemComponentName(
+                MediaRouter2Manager mediaRouter2Manager, String packageName) {
+            if (TextUtils.isEmpty(packageName)) {
+                return null;
+            }
+            RouteListingPreference routeListingPreference =
+                    mediaRouter2Manager.getRouteListingPreference(packageName);
+            return routeListingPreference == null ? null
+                    : routeListingPreference.getLinkedItemComponentName();
+        }
+
+        @DoNotInline
+        static void onRouteListingPreferenceUpdated(
+                String packageName,
+                RouteListingPreference routeListingPreference,
+                Map<String, RouteListingPreference.Item> preferenceItemMap) {
+            preferenceItemMap.clear();
+            if (routeListingPreference != null) {
+                routeListingPreference.getItems().forEach((item) -> {
+                    preferenceItemMap.put(item.getRouteId(), item);
+                });
+            }
         }
     }
 }

@@ -364,7 +364,8 @@ bool ExtractResourceConfig(const std::string& path, IAaptContext* context,
   }
   std::unordered_set<ResourceName> resources_exclude_list;
   bool result = ParseResourceConfig(content, context, resources_exclude_list,
-                                    out_options.name_collapse_exemptions);
+                                    out_options.name_collapse_exemptions,
+                                    out_options.path_shorten_exemptions);
   if (!result) {
     return false;
   }
@@ -387,7 +388,7 @@ int ConvertCommand::Action(const std::vector<std::string>& args) {
   }
 
   Context context;
-  const StringPiece& path = args[0];
+  StringPiece path = args[0];
   unique_ptr<LoadedApk> apk = LoadedApk::LoadApkFromPath(path, context.GetDiagnostics());
   if (apk == nullptr) {
     context.GetDiagnostics()->Error(android::DiagMessage(path) << "failed to load APK");

@@ -16,22 +16,26 @@
 
 package com.android.systemui.statusbar.pipeline.mobile.ui
 
+import com.android.systemui.CoreStartable
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.statusbar.phone.StatusBarIconController
-import com.android.systemui.statusbar.phone.StatusBarIconController.IconManager
 import com.android.systemui.statusbar.pipeline.StatusBarPipelineFlags
 import com.android.systemui.statusbar.pipeline.mobile.domain.interactor.MobileIconsInteractor
 import com.android.systemui.statusbar.pipeline.mobile.ui.viewmodel.MobileIconsViewModel
+import java.io.PrintWriter
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 
 /**
  * This class is intended to provide a context to collect on the
@@ -50,12 +54,13 @@ constructor(
     interactor: MobileIconsInteractor,
     private val iconController: StatusBarIconController,
     private val iconsViewModelFactory: MobileIconsViewModel.Factory,
-    @Application scope: CoroutineScope,
+    private val logger: MobileViewLogger,
+    @Application private val scope: CoroutineScope,
     private val statusBarPipelineFlags: StatusBarPipelineFlags,
-) {
+) : CoreStartable {
     private val mobileSubIds: Flow<List<Int>> =
-        interactor.filteredSubscriptions.mapLatest { infos ->
-            infos.map { subscriptionInfo -> subscriptionInfo.subscriptionId }
+        interactor.filteredSubscriptions.mapLatest { subscriptions ->
+            subscriptions.map { subscriptionModel -> subscriptionModel.subscriptionId }
         }
 
     /**
@@ -67,23 +72,35 @@ constructor(
      */
     private val mobileSubIdsState: StateFlow<List<Int>> =
         mobileSubIds
-            .onEach {
-                // Only notify the icon controller if we want to *render* the new icons.
-                // Note that this flow may still run if
-                // [statusBarPipelineFlags.runNewMobileIconsBackend] is true because we may want to
-                // get the logging data without rendering.
-                if (statusBarPipelineFlags.useNewMobileIcons()) {
-                    // Notify the icon controller here so that it knows to add icons
+            .distinctUntilChanged()
+            .onEach { logger.logUiAdapterSubIdsUpdated(it) }
+            .stateIn(scope, SharingStarted.WhileSubscribed(), listOf())
+
+    /** In order to keep the logs tame, we will reuse the same top-level mobile icons view model */
+    val mobileIconsViewModel = iconsViewModelFactory.create(mobileSubIdsState)
+
+    private var isCollecting: Boolean = false
+    private var lastValue: List<Int>? = null
+
+    override fun start() {
+        // Only notify the icon controller if we want to *render* the new icons.
+        // Note that this flow may still run if
+        // [statusBarPipelineFlags.runNewMobileIconsBackend] is true because we may want to
+        // get the logging data without rendering.
+        if (statusBarPipelineFlags.useNewMobileIcons()) {
+            scope.launch {
+                isCollecting = true
+                mobileSubIds.collectLatest {
+                    logger.logUiAdapterSubIdsSentToIconController(it)
+                    lastValue = it
                     iconController.setNewMobileIconSubIds(it)
                 }
             }
-            .stateIn(scope, SharingStarted.WhileSubscribed(), listOf())
+        }
+    }
 
-    /**
-     * Create a MobileIconsViewModel for a given [IconManager], and bind it to to the manager's
-     * lifecycle. This will start collecting on [mobileSubIdsState] and link our new pipeline with
-     * the old view system.
-     */
-    fun createMobileIconsViewModel(): MobileIconsViewModel =
-        iconsViewModelFactory.create(mobileSubIdsState)
+    override fun dump(pw: PrintWriter, args: Array<out String>) {
+        pw.println("isCollecting=$isCollecting")
+        pw.println("Last values sent to icon controller: $lastValue")
+    }
 }

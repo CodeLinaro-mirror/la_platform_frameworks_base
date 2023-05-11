@@ -20,10 +20,9 @@ import static android.view.InsetsSourceProto.FRAME;
 import static android.view.InsetsSourceProto.TYPE;
 import static android.view.InsetsSourceProto.VISIBLE;
 import static android.view.InsetsSourceProto.VISIBLE_FRAME;
-import static android.view.InsetsState.ITYPE_CAPTION_BAR;
-import static android.view.InsetsState.ITYPE_IME;
-import static android.view.ViewRootImpl.CAPTION_ON_SHELL;
+import static android.view.WindowInsets.Type.ime;
 
+import android.annotation.IntRange;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.graphics.Insets;
@@ -31,34 +30,45 @@ import android.graphics.Rect;
 import android.os.Parcel;
 import android.os.Parcelable;
 import android.util.proto.ProtoOutputStream;
-import android.view.InsetsState.InternalInsetsType;
+import android.view.WindowInsets.Type.InsetsType;
 
 import java.io.PrintWriter;
 import java.util.Objects;
 
 /**
- * Represents the state of a single window generating insets for clients.
+ * Represents the state of a single entity generating insets for clients.
  * @hide
  */
 public class InsetsSource implements Parcelable {
 
-    private final @InternalInsetsType int mType;
+    /** The insets source ID of IME */
+    public static final int ID_IME = createId(null, 0, ime());
+
+    /**
+     * An unique integer to identify this source across processes.
+     */
+    private final int mId;
+
+    private final @InsetsType int mType;
 
     /** Frame of the source in screen coordinate space */
     private final Rect mFrame;
     private @Nullable Rect mVisibleFrame;
+
     private boolean mVisible;
     private boolean mInsetsRoundedCornerFrame;
 
     private final Rect mTmpFrame = new Rect();
 
-    public InsetsSource(@InternalInsetsType int type) {
+    public InsetsSource(int id, @InsetsType int type) {
+        mId = id;
         mType = type;
         mFrame = new Rect();
-        mVisible = InsetsState.getDefaultVisibility(type);
+        mVisible = (WindowInsets.Type.defaultVisible() & type) != 0;
     }
 
     public InsetsSource(InsetsSource other) {
+        mId = other.mId;
         mType = other.mType;
         mFrame = new Rect(other.mFrame);
         mVisible = other.mVisible;
@@ -77,23 +87,31 @@ public class InsetsSource implements Parcelable {
         mInsetsRoundedCornerFrame = other.mInsetsRoundedCornerFrame;
     }
 
-    public void setFrame(int left, int top, int right, int bottom) {
+    public InsetsSource setFrame(int left, int top, int right, int bottom) {
         mFrame.set(left, top, right, bottom);
+        return this;
     }
 
-    public void setFrame(Rect frame) {
+    public InsetsSource setFrame(Rect frame) {
         mFrame.set(frame);
+        return this;
     }
 
-    public void setVisibleFrame(@Nullable Rect visibleFrame) {
-        mVisibleFrame = visibleFrame != null ? new Rect(visibleFrame) : visibleFrame;
+    public InsetsSource setVisibleFrame(@Nullable Rect visibleFrame) {
+        mVisibleFrame = visibleFrame != null ? new Rect(visibleFrame) : null;
+        return this;
     }
 
-    public void setVisible(boolean visible) {
+    public InsetsSource setVisible(boolean visible) {
         mVisible = visible;
+        return this;
     }
 
-    public @InternalInsetsType int getType() {
+    public int getId() {
+        return mId;
+    }
+
+    public @InsetsType int getType() {
         return mType;
     }
 
@@ -114,12 +132,13 @@ public class InsetsSource implements Parcelable {
         return mVisibleFrame == null || !mVisibleFrame.isEmpty();
     }
 
-    public boolean getInsetsRoundedCornerFrame() {
+    public boolean insetsRoundedCornerFrame() {
         return mInsetsRoundedCornerFrame;
     }
 
-    public void setInsetsRoundedCornerFrame(boolean insetsRoundedCornerFrame) {
+    public InsetsSource setInsetsRoundedCornerFrame(boolean insetsRoundedCornerFrame) {
         mInsetsRoundedCornerFrame = insetsRoundedCornerFrame;
+        return this;
     }
 
     /**
@@ -149,7 +168,7 @@ public class InsetsSource implements Parcelable {
         // During drag-move and drag-resizing, the caption insets position may not get updated
         // before the app frame get updated. To layout the app content correctly during drag events,
         // we always return the insets with the corresponding height covering the top.
-        if (!CAPTION_ON_SHELL && getType() == ITYPE_CAPTION_BAR) {
+        if (getType() == WindowInsets.Type.captionBar()) {
             return Insets.of(0, frame.height(), 0, 0);
         }
         // Checks for whether there is shared edge with insets for 0-width/height window.
@@ -162,7 +181,7 @@ public class InsetsSource implements Parcelable {
 
         // TODO: Currently, non-floating IME always intersects at bottom due to issues with cutout.
         // However, we should let the policy decide from the server.
-        if (getType() == ITYPE_IME) {
+        if (getType() == WindowInsets.Type.ime()) {
             return Insets.of(0, 0, 0, mTmpFrame.height());
         }
 
@@ -213,6 +232,29 @@ public class InsetsSource implements Parcelable {
     }
 
     /**
+     * Creates an identifier of an {@link InsetsSource}.
+     *
+     * @param owner An object owned by the owner. Only the owner can modify its own sources.
+     * @param index An owner may have multiple sources with the same type. For example, the system
+     *              server might have multiple display cutout sources. This is used to identify
+     *              which one is which. The value must be in a range of [0, 2047].
+     * @param type The {@link WindowInsets.Type.InsetsType type} of the source.
+     * @return a unique integer as the identifier.
+     */
+    public static int createId(Object owner, @IntRange(from = 0, to = 2047) int index,
+            @InsetsType int type) {
+        if (index < 0 || index >= 2048) {
+            throw new IllegalArgumentException();
+        }
+        // owner takes top 16 bits;
+        // index takes 11 bits since the 6th bit;
+        // type takes bottom 5 bits.
+        return (((owner != null ? owner.hashCode() : 1) % (1 << 16)) << 16)
+                + (index << 5)
+                + WindowInsets.Type.indexOf(type);
+    }
+
+    /**
      * Export the state of {@link InsetsSource} into a protocol buffer output stream.
      *
      * @param proto   Stream to write the state to
@@ -220,7 +262,7 @@ public class InsetsSource implements Parcelable {
      */
     public void dumpDebug(ProtoOutputStream proto, long fieldId) {
         final long token = proto.start(fieldId);
-        proto.write(TYPE, InsetsState.typeToString(mType));
+        proto.write(TYPE, WindowInsets.Type.toString(mType));
         mFrame.dumpDebug(proto, FRAME);
         if (mVisibleFrame != null) {
             mVisibleFrame.dumpDebug(proto, VISIBLE_FRAME);
@@ -231,7 +273,8 @@ public class InsetsSource implements Parcelable {
 
     public void dump(String prefix, PrintWriter pw) {
         pw.print(prefix);
-        pw.print("InsetsSource type="); pw.print(InsetsState.typeToString(mType));
+        pw.print("InsetsSource id="); pw.print(Integer.toHexString(mId));
+        pw.print(" type="); pw.print(WindowInsets.Type.toString(mType));
         pw.print(" frame="); pw.print(mFrame.toShortString());
         if (mVisibleFrame != null) {
             pw.print(" visibleFrame="); pw.print(mVisibleFrame.toShortString());
@@ -247,7 +290,7 @@ public class InsetsSource implements Parcelable {
     }
 
     /**
-     * @param excludeInvisibleImeFrames If {@link InsetsState#ITYPE_IME} frames should be ignored
+     * @param excludeInvisibleImeFrames If {@link WindowInsets.Type#ime()} frames should be ignored
      *                                  when IME is not visible.
      */
     public boolean equals(@Nullable Object o, boolean excludeInvisibleImeFrames) {
@@ -256,9 +299,10 @@ public class InsetsSource implements Parcelable {
 
         InsetsSource that = (InsetsSource) o;
 
+        if (mId != that.mId) return false;
         if (mType != that.mType) return false;
         if (mVisible != that.mVisible) return false;
-        if (excludeInvisibleImeFrames && !mVisible && mType == ITYPE_IME) return true;
+        if (excludeInvisibleImeFrames && !mVisible && mType == WindowInsets.Type.ime()) return true;
         if (!Objects.equals(mVisibleFrame, that.mVisibleFrame)) return false;
         if (mInsetsRoundedCornerFrame != that.mInsetsRoundedCornerFrame) return false;
         return mFrame.equals(that.mFrame);
@@ -266,15 +310,11 @@ public class InsetsSource implements Parcelable {
 
     @Override
     public int hashCode() {
-        int result = mType;
-        result = 31 * result + mFrame.hashCode();
-        result = 31 * result + (mVisibleFrame != null ? mVisibleFrame.hashCode() : 0);
-        result = 31 * result + (mVisible ? 1 : 0);
-        result = 31 * result + (mInsetsRoundedCornerFrame ? 1 : 0);
-        return result;
+        return Objects.hash(mId, mType, mFrame, mVisibleFrame, mVisible, mInsetsRoundedCornerFrame);
     }
 
     public InsetsSource(Parcel in) {
+        mId = in.readInt();
         mType = in.readInt();
         mFrame = Rect.CREATOR.createFromParcel(in);
         if (in.readInt() != 0) {
@@ -293,6 +333,7 @@ public class InsetsSource implements Parcelable {
 
     @Override
     public void writeToParcel(Parcel dest, int flags) {
+        dest.writeInt(mId);
         dest.writeInt(mType);
         mFrame.writeToParcel(dest, 0);
         if (mVisibleFrame != null) {
@@ -307,15 +348,15 @@ public class InsetsSource implements Parcelable {
 
     @Override
     public String toString() {
-        return "InsetsSource: {"
-                + "mType=" + InsetsState.typeToString(mType)
-                + ", mFrame=" + mFrame.toShortString()
-                + ", mVisible=" + mVisible
-                + ", mInsetsRoundedCornerFrame=" + mInsetsRoundedCornerFrame
+        return "InsetsSource: {" + Integer.toHexString(mId)
+                + " mType=" + WindowInsets.Type.toString(mType)
+                + " mFrame=" + mFrame.toShortString()
+                + " mVisible=" + mVisible
+                + (mInsetsRoundedCornerFrame ? " insetsRoundedCornerFrame" : "")
                 + "}";
     }
 
-    public static final @android.annotation.NonNull Creator<InsetsSource> CREATOR = new Creator<InsetsSource>() {
+    public static final @NonNull Creator<InsetsSource> CREATOR = new Creator<>() {
 
         public InsetsSource createFromParcel(Parcel in) {
             return new InsetsSource(in);

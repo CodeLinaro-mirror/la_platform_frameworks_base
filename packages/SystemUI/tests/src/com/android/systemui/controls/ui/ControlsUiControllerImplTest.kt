@@ -16,35 +16,61 @@
 
 package com.android.systemui.controls.ui
 
+import android.app.PendingIntent
 import android.content.ComponentName
+import android.content.Context
+import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
+import android.os.UserHandle
+import android.service.controls.ControlsProviderService
 import android.testing.AndroidTestingRunner
 import android.testing.TestableLooper
+import android.util.AttributeSet
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import android.widget.FrameLayout
 import androidx.test.filters.SmallTest
+import com.android.systemui.R
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.controls.ControlsMetricsLogger
+import com.android.systemui.controls.ControlsServiceInfo
 import com.android.systemui.controls.CustomIconCache
 import com.android.systemui.controls.controller.ControlsController
 import com.android.systemui.controls.controller.StructureInfo
 import com.android.systemui.controls.management.ControlsListingController
+import com.android.systemui.controls.management.ControlsProviderSelectorActivity
+import com.android.systemui.controls.panels.AuthorizedPanelsRepository
+import com.android.systemui.controls.panels.FakeSelectedComponentRepository
+import com.android.systemui.controls.panels.SelectedComponentRepository
+import com.android.systemui.controls.settings.FakeControlsSettingsRepository
+import com.android.systemui.dump.DumpManager
+import com.android.systemui.flags.FeatureFlags
 import com.android.systemui.plugins.ActivityStarter
-import com.android.systemui.settings.UserFileManager
 import com.android.systemui.settings.UserTracker
-import com.android.systemui.shade.ShadeController
-import com.android.systemui.statusbar.policy.DeviceControlsControllerImpl
 import com.android.systemui.statusbar.policy.KeyguardStateController
-import com.android.systemui.util.FakeSharedPreferences
+import com.android.systemui.util.FakeSystemUIDialogController
 import com.android.systemui.util.concurrency.FakeExecutor
+import com.android.systemui.util.mockito.any
+import com.android.systemui.util.mockito.argumentCaptor
+import com.android.systemui.util.mockito.capture
+import com.android.systemui.util.mockito.eq
+import com.android.systemui.util.mockito.mock
+import com.android.systemui.util.mockito.whenever
 import com.android.systemui.util.time.FakeSystemClock
+import com.android.wm.shell.TaskView
+import com.android.wm.shell.TaskViewFactory
 import com.google.common.truth.Truth.assertThat
-import dagger.Lazy
+import java.util.Optional
+import java.util.function.Consumer
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.mockito.Mock
-import org.mockito.Mockito.anyInt
-import org.mockito.Mockito.anyString
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.times
+import org.mockito.Mockito.clearInvocations
+import org.mockito.Mockito.never
+import org.mockito.Mockito.spy
 import org.mockito.Mockito.verify
 import org.mockito.Mockito.`when`
 import org.mockito.MockitoAnnotations
@@ -57,99 +83,379 @@ class ControlsUiControllerImplTest : SysuiTestCase() {
     @Mock lateinit var controlsListingController: ControlsListingController
     @Mock lateinit var controlActionCoordinator: ControlActionCoordinator
     @Mock lateinit var activityStarter: ActivityStarter
-    @Mock lateinit var shadeController: ShadeController
     @Mock lateinit var iconCache: CustomIconCache
     @Mock lateinit var controlsMetricsLogger: ControlsMetricsLogger
     @Mock lateinit var keyguardStateController: KeyguardStateController
-    @Mock lateinit var userFileManager: UserFileManager
     @Mock lateinit var userTracker: UserTracker
-    val sharedPreferences = FakeSharedPreferences()
+    @Mock lateinit var taskViewFactory: TaskViewFactory
+    @Mock lateinit var dumpManager: DumpManager
+    @Mock lateinit var authorizedPanelsRepository: AuthorizedPanelsRepository
+    @Mock lateinit var featureFlags: FeatureFlags
+    @Mock lateinit var packageManager: PackageManager
 
-    var uiExecutor = FakeExecutor(FakeSystemClock())
-    var bgExecutor = FakeExecutor(FakeSystemClock())
-    lateinit var underTest: ControlsUiControllerImpl
+    private val preferredPanelRepository = FakeSelectedComponentRepository()
+    private val fakeDialogController = FakeSystemUIDialogController()
+    private val uiExecutor = FakeExecutor(FakeSystemClock())
+    private val bgExecutor = FakeExecutor(FakeSystemClock())
+
+    private lateinit var controlsSettingsRepository: FakeControlsSettingsRepository
+    private lateinit var parent: FrameLayout
+    private lateinit var underTest: ControlsUiControllerImpl
 
     @Before
     fun setup() {
         MockitoAnnotations.initMocks(this)
 
+        controlsSettingsRepository = FakeControlsSettingsRepository()
+
+        // This way, it won't be cloned every time `LayoutInflater.fromContext` is called, but we
+        // need to clone it once so we don't modify the original one.
+        mContext.addMockSystemService(
+            Context.LAYOUT_INFLATER_SERVICE,
+            mContext.baseContext
+                .getSystemService(LayoutInflater::class.java)!!
+                .cloneInContext(mContext)
+        )
+
+        parent = FrameLayout(mContext)
+
         underTest =
             ControlsUiControllerImpl(
-                Lazy { controlsController },
+                { controlsController },
                 context,
+                packageManager,
                 uiExecutor,
                 bgExecutor,
-                Lazy { controlsListingController },
+                { controlsListingController },
                 controlActionCoordinator,
                 activityStarter,
-                shadeController,
                 iconCache,
                 controlsMetricsLogger,
                 keyguardStateController,
-                userFileManager,
-                userTracker
+                userTracker,
+                Optional.of(taskViewFactory),
+                controlsSettingsRepository,
+                authorizedPanelsRepository,
+                preferredPanelRepository,
+                featureFlags,
+                ControlsDialogsFactory { fakeDialogController.dialog },
+                dumpManager,
             )
-        `when`(
-                userFileManager.getSharedPreferences(
-                    DeviceControlsControllerImpl.PREFS_CONTROLS_FILE,
-                    0,
-                    0
-                )
-            )
-            .thenReturn(sharedPreferences)
-        `when`(userFileManager.getSharedPreferences(anyString(), anyInt(), anyInt()))
-            .thenReturn(sharedPreferences)
         `when`(userTracker.userId).thenReturn(0)
+        `when`(userTracker.userHandle).thenReturn(UserHandle.of(0))
     }
 
     @Test
-    fun testGetPreferredStructure() {
-        val structureInfo = mock(StructureInfo::class.java)
-        underTest.getPreferredStructure(listOf(structureInfo))
-        verify(userFileManager, times(2))
-            .getSharedPreferences(
-                fileName = DeviceControlsControllerImpl.PREFS_CONTROLS_FILE,
-                mode = 0,
-                userId = 0
+    fun testGetPreferredPanel() {
+        val panel = SelectedItem.PanelItem("App name", ComponentName("pkg", "cls"))
+
+        preferredPanelRepository.setSelectedComponent(
+            SelectedComponentRepository.SelectedComponent(
+                name = panel.appName.toString(),
+                componentName = panel.componentName,
+                isPanel = true,
             )
+        )
+
+        val selected = underTest.getPreferredSelectedItem(emptyList())
+
+        assertThat(selected).isEqualTo(panel)
     }
 
     @Test
-    fun testGetPreferredStructure_differentUserId() {
-        val structureInfo =
-            listOf(
-                StructureInfo(ComponentName.unflattenFromString("pkg/.cls1"), "a", ArrayList()),
-                StructureInfo(ComponentName.unflattenFromString("pkg/.cls2"), "b", ArrayList()),
-            )
-        sharedPreferences
-            .edit()
-            .putString("controls_component", structureInfo[0].componentName.flattenToString())
-            .putString("controls_structure", structureInfo[0].structure.toString())
-            .commit()
+    fun testPanelDoesNotRefreshControls() {
+        val panel = SelectedItem.PanelItem("App name", ComponentName("pkg", "cls"))
+        setUpPanel(panel)
 
-        val differentSharedPreferences = FakeSharedPreferences()
-        differentSharedPreferences
-            .edit()
-            .putString("controls_component", structureInfo[1].componentName.flattenToString())
-            .putString("controls_structure", structureInfo[1].structure.toString())
-            .commit()
+        underTest.show(parent, {}, context)
+        verify(controlsController, never()).refreshStatus(any(), any())
+    }
 
-        val previousPreferredStructure = underTest.getPreferredStructure(structureInfo)
+    @Test
+    fun testPanelBindsForPanel() {
+        val panel = SelectedItem.PanelItem("App name", ComponentName("pkg", "cls"))
+        setUpPanel(panel)
 
-        `when`(
-                userFileManager.getSharedPreferences(
-                    DeviceControlsControllerImpl.PREFS_CONTROLS_FILE,
-                    0,
-                    1
+        underTest.show(parent, {}, context)
+        verify(controlsController).bindComponentForPanel(panel.componentName)
+    }
+
+    @Test
+    fun testPanelCallsTaskViewFactoryCreate() {
+        mockLayoutInflater()
+        val packageName = "pkg"
+        `when`(authorizedPanelsRepository.getAuthorizedPanels()).thenReturn(setOf(packageName))
+        val panel = SelectedItem.PanelItem("App name", ComponentName(packageName, "cls"))
+        val serviceInfo = setUpPanel(panel)
+
+        underTest.show(parent, {}, context)
+
+        val captor = argumentCaptor<ControlsListingController.ControlsListingCallback>()
+
+        verify(controlsListingController).addCallback(capture(captor))
+
+        captor.value.onServicesUpdated(listOf(serviceInfo))
+        FakeExecutor.exhaustExecutors(uiExecutor, bgExecutor)
+
+        verify(taskViewFactory).create(eq(context), eq(uiExecutor), any())
+    }
+
+    @Test
+    fun testPanelControllerStartActivityWithCorrectArguments() {
+        mockLayoutInflater()
+        val packageName = "pkg"
+        `when`(authorizedPanelsRepository.getAuthorizedPanels()).thenReturn(setOf(packageName))
+        controlsSettingsRepository.setAllowActionOnTrivialControlsInLockscreen(true)
+
+        val panel = SelectedItem.PanelItem("App name", ComponentName(packageName, "cls"))
+        val serviceInfo = setUpPanel(panel)
+
+        underTest.show(parent, {}, context)
+
+        val captor = argumentCaptor<ControlsListingController.ControlsListingCallback>()
+
+        verify(controlsListingController).addCallback(capture(captor))
+
+        captor.value.onServicesUpdated(listOf(serviceInfo))
+        FakeExecutor.exhaustExecutors(uiExecutor, bgExecutor)
+
+        val pendingIntent = verifyPanelCreatedAndStartTaskView()
+
+        with(pendingIntent) {
+            assertThat(isActivity).isTrue()
+            assertThat(intent.component).isEqualTo(serviceInfo.panelActivity)
+            assertThat(
+                    intent.getBooleanExtra(
+                        ControlsProviderService.EXTRA_LOCKSCREEN_ALLOW_TRIVIAL_CONTROLS,
+                        false
+                    )
+                )
+                .isTrue()
+        }
+    }
+
+    @Test
+    fun testPendingIntentExtrasAreModified() {
+        mockLayoutInflater()
+        val packageName = "pkg"
+        `when`(authorizedPanelsRepository.getAuthorizedPanels()).thenReturn(setOf(packageName))
+        controlsSettingsRepository.setAllowActionOnTrivialControlsInLockscreen(true)
+
+        val panel = SelectedItem.PanelItem("App name", ComponentName(packageName, "cls"))
+        val serviceInfo = setUpPanel(panel)
+
+        underTest.show(parent, {}, context)
+
+        val captor = argumentCaptor<ControlsListingController.ControlsListingCallback>()
+
+        verify(controlsListingController).addCallback(capture(captor))
+
+        captor.value.onServicesUpdated(listOf(serviceInfo))
+        FakeExecutor.exhaustExecutors(uiExecutor, bgExecutor)
+
+        val pendingIntent = verifyPanelCreatedAndStartTaskView()
+        assertThat(
+                pendingIntent.intent.getBooleanExtra(
+                    ControlsProviderService.EXTRA_LOCKSCREEN_ALLOW_TRIVIAL_CONTROLS,
+                    false
                 )
             )
-            .thenReturn(differentSharedPreferences)
-        `when`(userTracker.userId).thenReturn(1)
+            .isTrue()
 
-        val currentPreferredStructure = underTest.getPreferredStructure(structureInfo)
+        underTest.hide(parent)
 
-        assertThat(previousPreferredStructure).isEqualTo(structureInfo[0])
-        assertThat(currentPreferredStructure).isEqualTo(structureInfo[1])
-        assertThat(currentPreferredStructure).isNotEqualTo(previousPreferredStructure)
+        clearInvocations(controlsListingController, taskViewFactory)
+        controlsSettingsRepository.setAllowActionOnTrivialControlsInLockscreen(false)
+        underTest.show(parent, {}, context)
+
+        verify(controlsListingController).addCallback(capture(captor))
+        captor.value.onServicesUpdated(listOf(serviceInfo))
+        FakeExecutor.exhaustExecutors(uiExecutor, bgExecutor)
+
+        val newPendingIntent = verifyPanelCreatedAndStartTaskView()
+        assertThat(
+                newPendingIntent.intent.getBooleanExtra(
+                    ControlsProviderService.EXTRA_LOCKSCREEN_ALLOW_TRIVIAL_CONTROLS,
+                    false
+                )
+            )
+            .isFalse()
+    }
+
+    @Test
+    fun testResolveActivityWhileSeeding_ControlsActivity() {
+        whenever(controlsController.addSeedingFavoritesCallback(any())).thenReturn(true)
+        assertThat(underTest.resolveActivity()).isEqualTo(ControlsActivity::class.java)
+    }
+
+    @Test
+    fun testResolveActivityNotSeedingNoFavoritesNoPanels_ControlsProviderSelectorActivity() {
+        whenever(controlsController.addSeedingFavoritesCallback(any())).thenReturn(false)
+        whenever(controlsController.getFavorites()).thenReturn(emptyList())
+
+        val selectedItems =
+            listOf(
+                SelectedItem.StructureItem(
+                    StructureInfo(ComponentName.unflattenFromString("pkg/.cls1"), "a", ArrayList())
+                ),
+            )
+        preferredPanelRepository.setSelectedComponent(
+            SelectedComponentRepository.SelectedComponent(selectedItems[0])
+        )
+
+        assertThat(underTest.resolveActivity())
+            .isEqualTo(ControlsProviderSelectorActivity::class.java)
+    }
+
+    @Test
+    fun testResolveActivityNotSeedingNoDefaultNoFavoritesPanel_ControlsActivity() {
+        val panel = SelectedItem.PanelItem("App name", ComponentName("pkg", "cls"))
+        val activity = ComponentName("pkg", "activity")
+        val csi = ControlsServiceInfo(panel.componentName, panel.appName, activity)
+        whenever(controlsController.addSeedingFavoritesCallback(any())).thenReturn(true)
+        whenever(controlsController.getFavorites()).thenReturn(emptyList())
+        whenever(controlsListingController.getCurrentServices()).thenReturn(listOf(csi))
+
+        assertThat(underTest.resolveActivity()).isEqualTo(ControlsActivity::class.java)
+    }
+
+    @Test
+    fun testRemoveViewsOnlyForParentPassedInHide() {
+        underTest.show(parent, {}, context)
+        parent.addView(View(context))
+
+        val mockParent: ViewGroup = mock()
+
+        underTest.hide(mockParent)
+
+        verify(mockParent).removeAllViews()
+        assertThat(parent.childCount).isGreaterThan(0)
+    }
+
+    @Test
+    fun testHideDifferentParentDoesntCancelListeners() {
+        underTest.show(parent, {}, context)
+        underTest.hide(mock())
+
+        verify(controlsController, never()).unsubscribe()
+        verify(controlsListingController, never()).removeCallback(any())
+    }
+
+    @Test
+    fun testRemovingAppsRemovesFavorite() {
+        val componentName = ComponentName(context, "cls")
+        whenever(controlsController.removeFavorites(eq(componentName))).thenReturn(true)
+        val panel = SelectedItem.PanelItem("App name", componentName)
+        preferredPanelRepository.setSelectedComponent(
+                SelectedComponentRepository.SelectedComponent(panel)
+        )
+        underTest.show(parent, {}, context)
+        underTest.startRemovingApp(componentName, "Test App")
+
+        fakeDialogController.clickPositive()
+
+        verify(controlsController).removeFavorites(eq(componentName))
+        assertThat(underTest.getPreferredSelectedItem(emptyList()))
+            .isEqualTo(SelectedItem.EMPTY_SELECTION)
+        assertThat(preferredPanelRepository.shouldAddDefaultComponent()).isFalse()
+        assertThat(preferredPanelRepository.getSelectedComponent()).isNull()
+    }
+
+    @Test
+    fun testHideCancelsTheRemoveAppDialog() {
+        val componentName = ComponentName(context, "cls")
+        underTest.show(parent, {}, context)
+        underTest.startRemovingApp(componentName, "Test App")
+
+        underTest.hide(parent)
+
+        verify(fakeDialogController.dialog).cancel()
+    }
+
+    private fun setUpPanel(panel: SelectedItem.PanelItem): ControlsServiceInfo {
+        val activity = ComponentName(context, "activity")
+        preferredPanelRepository.setSelectedComponent(
+                SelectedComponentRepository.SelectedComponent(panel)
+        )
+        return ControlsServiceInfo(panel.componentName, panel.appName, activity)
+    }
+
+    private fun verifyPanelCreatedAndStartTaskView(): PendingIntent {
+        val taskViewConsumerCaptor = argumentCaptor<Consumer<TaskView>>()
+        verify(taskViewFactory).create(eq(context), eq(uiExecutor), capture(taskViewConsumerCaptor))
+
+        val taskView: TaskView = mock {
+            `when`(this.post(any())).thenAnswer {
+                uiExecutor.execute(it.arguments[0] as Runnable)
+                true
+            }
+        }
+        // calls PanelTaskViewController#launchTaskView
+        taskViewConsumerCaptor.value.accept(taskView)
+        val listenerCaptor = argumentCaptor<TaskView.Listener>()
+        verify(taskView).setListener(any(), capture(listenerCaptor))
+        listenerCaptor.value.onInitialized()
+        FakeExecutor.exhaustExecutors(uiExecutor, bgExecutor)
+
+        val pendingIntentCaptor = argumentCaptor<PendingIntent>()
+        verify(taskView).startActivity(capture(pendingIntentCaptor), any(), any(), any())
+        return pendingIntentCaptor.value
+    }
+
+    private fun ControlsServiceInfo(
+        componentName: ComponentName,
+        label: CharSequence,
+        panelComponentName: ComponentName? = null
+    ): ControlsServiceInfo {
+        val serviceInfo =
+            ServiceInfo().apply {
+                applicationInfo = ApplicationInfo()
+                packageName = componentName.packageName
+                name = componentName.className
+            }
+        return spy(ControlsServiceInfo(mContext, serviceInfo)).apply {
+            `when`(loadLabel()).thenReturn(label)
+            `when`(loadIcon()).thenReturn(mock())
+            `when`(panelActivity).thenReturn(panelComponentName)
+        }
+    }
+
+    private fun mockLayoutInflater() {
+        LayoutInflater.from(context)
+            .setPrivateFactory(
+                object : LayoutInflater.Factory2 {
+                    override fun onCreateView(
+                        view: View?,
+                        name: String,
+                        context: Context,
+                        attrs: AttributeSet
+                    ): View? {
+                        return onCreateView(name, context, attrs)
+                    }
+
+                    override fun onCreateView(
+                        name: String,
+                        context: Context,
+                        attrs: AttributeSet
+                    ): View? {
+                        if (FrameLayout::class.java.simpleName.equals(name)) {
+                            val mock: FrameLayout = mock {
+                                `when`(this.context).thenReturn(context)
+                                `when`(this.id).thenReturn(R.id.controls_panel)
+                                `when`(this.requireViewById<View>(any())).thenCallRealMethod()
+                                `when`(this.findViewById<View>(R.id.controls_panel))
+                                    .thenReturn(this)
+                                `when`(this.post(any())).thenAnswer {
+                                    uiExecutor.execute(it.arguments[0] as Runnable)
+                                    true
+                                }
+                            }
+                            return mock
+                        } else {
+                            return null
+                        }
+                    }
+                }
+            )
     }
 }

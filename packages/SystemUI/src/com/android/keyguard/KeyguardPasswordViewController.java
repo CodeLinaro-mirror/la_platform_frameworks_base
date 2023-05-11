@@ -16,7 +16,6 @@
 
 package com.android.keyguard;
 
-import android.content.res.ColorStateList;
 import android.content.res.Resources;
 import android.os.UserHandle;
 import android.text.Editable;
@@ -39,7 +38,6 @@ import android.widget.TextView.OnEditorActionListener;
 import com.android.internal.util.LatencyTracker;
 import com.android.internal.widget.LockPatternUtils;
 import com.android.keyguard.KeyguardSecurityModel.SecurityMode;
-import com.android.settingslib.Utils;
 import com.android.systemui.R;
 import com.android.systemui.classifier.FalsingCollector;
 import com.android.systemui.dagger.qualifiers.Main;
@@ -94,18 +92,6 @@ public class KeyguardPasswordViewController
             }
         }
     };
-
-    @Override
-    public void reloadColors() {
-        super.reloadColors();
-        int textColor = Utils.getColorAttr(mView.getContext(),
-                android.R.attr.textColorPrimary).getDefaultColor();
-        mPasswordEntry.setTextColor(textColor);
-        mPasswordEntry.setHighlightColor(textColor);
-        mPasswordEntry.setBackgroundTintList(ColorStateList.valueOf(textColor));
-        mPasswordEntry.setForegroundTintList(ColorStateList.valueOf(textColor));
-        mSwitchImeButton.setImageTintList(ColorStateList.valueOf(textColor));
-    }
 
     protected KeyguardPasswordViewController(KeyguardPasswordView view,
             KeyguardUpdateMonitor keyguardUpdateMonitor,
@@ -171,6 +157,15 @@ public class KeyguardPasswordViewController
         // TODO: Remove this workaround by ensuring such a race condition never happens.
         mMainExecutor.executeDelayed(
                 this::updateSwitchImeButton, DELAY_MILLIS_TO_REEVALUATE_IME_SWITCH_ICON);
+        mView.setOnApplyWindowInsetsListener(new View.OnApplyWindowInsetsListener() {
+            @Override
+            public WindowInsets onApplyWindowInsets(View v, WindowInsets insets) {
+                if (!mKeyguardViewController.isBouncerShowing()) {
+                    mView.hideKeyboard();
+                }
+                return insets;
+            }
+        });
     }
 
     @Override
@@ -214,12 +209,9 @@ public class KeyguardPasswordViewController
             return;
         }
 
-        mView.post(() -> {
-            if (mView.isShown()) {
-                mPasswordEntry.requestFocus();
-                mPasswordEntry.getWindowInsetsController().show(WindowInsets.Type.ime());
-            }
-        });
+        if (mView.isShown()) {
+            mView.showKeyboard();
+        }
     }
 
     @Override
@@ -241,16 +233,12 @@ public class KeyguardPasswordViewController
                 super.onPause();
             });
         }
-        if (mPasswordEntry.isAttachedToWindow()) {
-            mPasswordEntry.getWindowInsetsController().hide(WindowInsets.Type.ime());
-        }
+        mView.hideKeyboard();
     }
 
     @Override
     public void onStartingToHide() {
-        if (mPasswordEntry.isAttachedToWindow()) {
-            mPasswordEntry.getWindowInsetsController().hide(WindowInsets.Type.ime());
-        }
+        mView.hideKeyboard();
     }
 
     private void updateSwitchImeButton() {

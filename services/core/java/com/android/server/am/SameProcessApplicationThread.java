@@ -18,14 +18,17 @@ package com.android.server.am;
 
 import android.annotation.NonNull;
 import android.app.IApplicationThread;
+import android.app.ReceiverInfo;
 import android.content.IIntentReceiver;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.res.CompatibilityInfo;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.RemoteCallback;
 import android.os.RemoteException;
 
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -45,12 +48,13 @@ public class SameProcessApplicationThread extends IApplicationThread.Default {
 
     @Override
     public void scheduleReceiver(Intent intent, ActivityInfo info, CompatibilityInfo compatInfo,
-            int resultCode, String data, Bundle extras, boolean sync, int sendingUser,
-            int processState) {
+            int resultCode, String data, Bundle extras, boolean ordered, boolean assumeDelivered,
+            int sendingUser, int processState, int sendingUid, String sendingPackage) {
         mHandler.post(() -> {
             try {
-                mWrapped.scheduleReceiver(intent, info, compatInfo, resultCode, data, extras, sync,
-                        sendingUser, processState);
+                mWrapped.scheduleReceiver(intent, info, compatInfo, resultCode, data, extras,
+                        ordered, assumeDelivered, sendingUser, processState, sendingUid,
+                        sendingPackage);
             } catch (RemoteException e) {
                 throw new RuntimeException(e);
             }
@@ -59,12 +63,35 @@ public class SameProcessApplicationThread extends IApplicationThread.Default {
 
     @Override
     public void scheduleRegisteredReceiver(IIntentReceiver receiver, Intent intent, int resultCode,
-            String data, Bundle extras, boolean ordered, boolean sticky, int sendingUser,
-            int processState) {
+            String data, Bundle extras, boolean ordered, boolean sticky, boolean assumeDelivered,
+            int sendingUser, int processState, int sendingUid, String sendingPackage) {
         mHandler.post(() -> {
             try {
                 mWrapped.scheduleRegisteredReceiver(receiver, intent, resultCode, data, extras,
-                        ordered, sticky, sendingUser, processState);
+                        ordered, sticky, assumeDelivered, sendingUser, processState, sendingUid,
+                        sendingPackage);
+            } catch (RemoteException e) {
+                throw new RuntimeException(e);
+            }
+        });
+    }
+
+    @Override
+    public void scheduleReceiverList(List<ReceiverInfo> info) {
+        mHandler.post(() -> {
+            try {
+                mWrapped.scheduleReceiverList(info);
+            } catch (RemoteException e) {
+                throw new RuntimeException(e);
+            }
+        });
+    }
+
+    @Override
+    public void schedulePing(RemoteCallback pong) {
+        mHandler.post(() -> {
+            try {
+                mWrapped.schedulePing(pong);
             } catch (RemoteException e) {
                 throw new RuntimeException(e);
             }

@@ -57,6 +57,7 @@ import android.os.RemoteException;
 import android.os.Trace;
 import android.os.UserHandle;
 import android.permission.PermissionManager;
+import android.util.Log;
 
 import com.android.internal.R;
 import com.android.internal.content.InstallLocationUtils;
@@ -254,6 +255,12 @@ public abstract class IPackageManagerBase extends IPackageManager.Stub {
 
     @Override
     @Deprecated
+    public final void clearPersistentPreferredActivity(IntentFilter filter, int userId) {
+        mPreferredActivityHelper.clearPersistentPreferredActivity(filter, userId);
+    }
+
+    @Override
+    @Deprecated
     public final void clearPackagePreferredActivities(String packageName) {
         mPreferredActivityHelper.clearPackagePreferredActivities(snapshot(),
                 packageName);
@@ -292,12 +299,6 @@ public abstract class IPackageManagerBase extends IPackageManager.Stub {
     @Deprecated
     public final ResolveInfo findPersistentPreferredActivity(Intent intent, int userId) {
         return mPreferredActivityHelper.findPersistentPreferredActivity(snapshot(), intent, userId);
-    }
-
-    @Override
-    @Deprecated
-    public final void forceDexOpt(String packageName) {
-        mDexOptHelper.forceDexOpt(snapshot(), packageName);
     }
 
     @Override
@@ -964,8 +965,12 @@ public abstract class IPackageManagerBase extends IPackageManager.Stub {
             boolean checkProfiles, String targetCompilerFilter, boolean force,
             boolean bootComplete, String splitName) {
         final Computer snapshot = snapshot();
-        return mDexOptHelper.performDexOptMode(snapshot, packageName, checkProfiles,
-                targetCompilerFilter, force, bootComplete, splitName);
+        if (!checkProfiles) {
+            // There is no longer a flag to skip profile checking.
+            Log.w(PackageManagerService.TAG, "Ignored checkProfiles=false flag");
+        }
+        return mDexOptHelper.performDexOptMode(
+                snapshot, packageName, targetCompilerFilter, force, bootComplete, splitName);
     }
 
     /**
@@ -1148,9 +1153,10 @@ public abstract class IPackageManagerBase extends IPackageManager.Stub {
 
     @Override
     @Deprecated
-    public final boolean canPackageQuery(@NonNull String sourcePackageName,
-            @NonNull String targetPackageName, @UserIdInt int userId) {
-        return snapshot().canPackageQuery(sourcePackageName, targetPackageName, userId);
+    @NonNull
+    public final boolean[] canPackageQuery(@NonNull String sourcePackageName,
+            @NonNull String[] targetPackageNames, @UserIdInt int userId) {
+        return snapshot().canPackageQuery(sourcePackageName, targetPackageNames, userId);
     }
 
     @Override

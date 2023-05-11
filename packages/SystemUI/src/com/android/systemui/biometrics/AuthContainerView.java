@@ -120,6 +120,7 @@ public class AuthContainerView extends LinearLayout
     private final Interpolator mLinearOutSlowIn;
     private final LockPatternUtils mLockPatternUtils;
     private final WakefulnessLifecycle mWakefulnessLifecycle;
+    private final AuthDialogPanelInteractionDetector mPanelInteractionDetector;
     private final InteractionJankMonitor mInteractionJankMonitor;
 
     // TODO: these should be migrated out once ready
@@ -141,8 +142,6 @@ public class AuthContainerView extends LinearLayout
     private final OnBackInvokedCallback mBackCallback = this::onBackInvoked;
 
     private final @Background DelayableExecutor mBackgroundExecutor;
-    private int mOrientation;
-    private boolean mSkipFirstLostFocus = false;
 
     // Non-null only if the dialog is in the act of dismissing and has not sent the reason yet.
     @Nullable @AuthDialogCallback.DismissedReason private Integer mPendingCallbackReason;
@@ -236,6 +235,7 @@ public class AuthContainerView extends LinearLayout
                 @Nullable List<FingerprintSensorPropertiesInternal> fpProps,
                 @Nullable List<FaceSensorPropertiesInternal> faceProps,
                 @NonNull WakefulnessLifecycle wakefulnessLifecycle,
+                @NonNull AuthDialogPanelInteractionDetector panelInteractionDetector,
                 @NonNull UserManager userManager,
                 @NonNull LockPatternUtils lockPatternUtils,
                 @NonNull InteractionJankMonitor jankMonitor,
@@ -243,8 +243,9 @@ public class AuthContainerView extends LinearLayout
                 @NonNull Provider<CredentialViewModel> credentialViewModelProvider) {
             mConfig.mSensorIds = sensorIds;
             return new AuthContainerView(mConfig, fpProps, faceProps, wakefulnessLifecycle,
-                    userManager, lockPatternUtils, jankMonitor, biometricPromptInteractor,
-                    credentialViewModelProvider, new Handler(Looper.getMainLooper()), bgExecutor);
+                    panelInteractionDetector, userManager, lockPatternUtils, jankMonitor,
+                    biometricPromptInteractor, credentialViewModelProvider,
+                    new Handler(Looper.getMainLooper()), bgExecutor);
         }
     }
 
@@ -332,6 +333,7 @@ public class AuthContainerView extends LinearLayout
             @Nullable List<FingerprintSensorPropertiesInternal> fpProps,
             @Nullable List<FaceSensorPropertiesInternal> faceProps,
             @NonNull WakefulnessLifecycle wakefulnessLifecycle,
+            @NonNull AuthDialogPanelInteractionDetector panelInteractionDetector,
             @NonNull UserManager userManager,
             @NonNull LockPatternUtils lockPatternUtils,
             @NonNull InteractionJankMonitor jankMonitor,
@@ -347,6 +349,7 @@ public class AuthContainerView extends LinearLayout
         mHandler = mainHandler;
         mWindowManager = mContext.getSystemService(WindowManager.class);
         mWakefulnessLifecycle = wakefulnessLifecycle;
+        mPanelInteractionDetector = panelInteractionDetector;
 
         mTranslationY = getResources()
                 .getDimension(R.dimen.biometric_dialog_animation_translation_offset);
@@ -494,28 +497,12 @@ public class AuthContainerView extends LinearLayout
     }
 
     @Override
-    public void onWindowFocusChanged(boolean hasWindowFocus) {
-        super.onWindowFocusChanged(hasWindowFocus);
-        if (!hasWindowFocus) {
-            //it's a workaround to avoid closing BP incorrectly
-            //BP gets a onWindowFocusChanged(false) and then gets a onWindowFocusChanged(true)
-            if (mSkipFirstLostFocus) {
-                mSkipFirstLostFocus = false;
-                return;
-            }
-            Log.v(TAG, "Lost window focus, dismissing the dialog");
-            animateAway(AuthDialogCallback.DISMISSED_USER_CANCELED);
-        }
-    }
-
-    @Override
     public void onAttachedToWindow() {
         super.onAttachedToWindow();
 
-        //save the first orientation
-        mOrientation = getResources().getConfiguration().orientation;
-
         mWakefulnessLifecycle.addObserver(this);
+        mPanelInteractionDetector.enable(
+                () -> animateAway(AuthDialogCallback.DISMISSED_USER_CANCELED));
 
         if (Utils.isBiometricAllowed(mConfig.mPromptInfo)) {
             mBiometricScrollView.addView(mBiometricView);
@@ -669,11 +656,6 @@ public class AuthContainerView extends LinearLayout
             mBiometricView.restoreState(savedState);
         }
 
-        if (savedState != null) {
-            mSkipFirstLostFocus = savedState.getBoolean(
-                    AuthDialog.KEY_BIOMETRIC_ORIENTATION_CHANGED);
-        }
-
         wm.addView(this, getLayoutParams(mWindowToken, mConfig.mPromptInfo.getTitle()));
     }
 
@@ -692,6 +674,7 @@ public class AuthContainerView extends LinearLayout
 
     @Override
     public void dismissWithoutCallback(boolean animate) {
+        mPanelInteractionDetector.disable();
         if (animate) {
             animateAway(false /* sendReason */, 0 /* reason */);
         } else {
@@ -702,6 +685,7 @@ public class AuthContainerView extends LinearLayout
 
     @Override
     public void dismissFromSystemServer() {
+        mPanelInteractionDetector.disable();
         animateAway(false /* sendReason */, 0 /* reason */);
     }
 
@@ -763,10 +747,6 @@ public class AuthContainerView extends LinearLayout
         outState.putBoolean(AuthDialog.KEY_BIOMETRIC_SHOWING,
                 mBiometricView != null && mCredentialView == null);
         outState.putBoolean(AuthDialog.KEY_CREDENTIAL_SHOWING, mCredentialView != null);
-
-        if (mOrientation != getResources().getConfiguration().orientation) {
-            outState.putBoolean(AuthDialog.KEY_BIOMETRIC_ORIENTATION_CHANGED, true);
-        }
 
         if (mBiometricView != null) {
             mBiometricView.onSaveState(outState);

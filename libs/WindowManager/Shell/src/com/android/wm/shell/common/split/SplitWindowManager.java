@@ -93,7 +93,7 @@ public final class SplitWindowManager extends WindowlessWindowManager {
     }
 
     @Override
-    protected void attachToParentSurface(IWindow window, SurfaceControl.Builder b) {
+    protected SurfaceControl getParentSurface(IWindow window, WindowManager.LayoutParams attrs) {
         // Can't set position for the ViewRootImpl SC directly. Create a leash to manipulate later.
         final SurfaceControl.Builder builder = new SurfaceControl.Builder(new SurfaceSession())
                 .setContainerLayer()
@@ -103,7 +103,7 @@ public final class SplitWindowManager extends WindowlessWindowManager {
         mParentContainerCallbacks.attachToParentSurface(builder);
         mLeash = builder.build();
         mParentContainerCallbacks.onLeashReady(mLeash);
-        b.setParent(mLeash);
+        return mLeash;
     }
 
     /** Inflates {@link DividerView} on to the root surface. */
@@ -113,7 +113,8 @@ public final class SplitWindowManager extends WindowlessWindowManager {
                     "Try to inflate divider view again without release first");
         }
 
-        mViewHost = new SurfaceControlViewHost(mContext, mContext.getDisplay(), this);
+        mViewHost = new SurfaceControlViewHost(mContext, mContext.getDisplay(), this,
+                "SplitWindowManager");
         mDividerView = (DividerView) LayoutInflater.from(mContext)
                 .inflate(R.layout.split_divider, null /* root */);
 
@@ -167,9 +168,16 @@ public final class SplitWindowManager extends WindowlessWindowManager {
         }
     }
 
-    void setInteractive(boolean interactive) {
+    /**
+     * Set divider should interactive to user or not.
+     *
+     * @param interactive divider interactive.
+     * @param hideHandle divider handle hidden or not, only work when interactive is false.
+     * @param from caller from where.
+     */
+    void setInteractive(boolean interactive, boolean hideHandle, String from) {
         if (mDividerView == null) return;
-        mDividerView.setInteractive(interactive);
+        mDividerView.setInteractive(interactive, hideHandle, from);
     }
 
     View getDividerView() {

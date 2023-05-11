@@ -16,27 +16,26 @@
 
 package com.android.server.wm.flicker.launch
 
-import android.platform.test.annotations.FlakyTest
 import android.platform.test.annotations.Postsubmit
 import android.platform.test.annotations.Presubmit
-import android.platform.test.annotations.RequiresDevice
+import android.tools.common.datatypes.component.ComponentNameMatcher
+import android.tools.device.flicker.junit.FlickerParametersRunnerFactory
+import android.tools.device.flicker.legacy.FlickerBuilder
+import android.tools.device.flicker.legacy.FlickerTest
+import android.tools.device.flicker.legacy.FlickerTestFactory
+import android.tools.device.helpers.wakeUpAndGoToHomeScreen
 import android.view.WindowInsets
 import android.view.WindowManager
+import androidx.test.filters.RequiresDevice
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.Until
-import com.android.server.wm.flicker.FlickerParametersRunnerFactory
-import com.android.server.wm.flicker.FlickerTestParameter
-import com.android.server.wm.flicker.FlickerTestParameterFactory
-import com.android.server.wm.flicker.dsl.FlickerBuilder
 import com.android.server.wm.flicker.helpers.NotificationAppHelper
 import com.android.server.wm.flicker.helpers.setRotation
-import com.android.server.wm.flicker.helpers.wakeUpAndGoToHomeScreen
 import com.android.server.wm.flicker.navBarLayerIsVisibleAtEnd
 import com.android.server.wm.flicker.navBarLayerPositionAtEnd
 import com.android.server.wm.flicker.navBarWindowIsVisibleAtEnd
 import com.android.server.wm.flicker.taskBarLayerIsVisibleAtEnd
 import com.android.server.wm.flicker.taskBarWindowIsVisibleAtEnd
-import com.android.server.wm.traces.common.ComponentNameMatcher
 import org.junit.Assume
 import org.junit.FixMethodOrder
 import org.junit.Ignore
@@ -56,8 +55,7 @@ import org.junit.runners.Parameterized
 @RunWith(Parameterized::class)
 @Parameterized.UseParametersRunnerFactory(FlickerParametersRunnerFactory::class)
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
-open class OpenAppFromNotificationWarm(testSpec: FlickerTestParameter) :
-    OpenAppTransition(testSpec) {
+open class OpenAppFromNotificationWarm(flicker: FlickerTest) : OpenAppTransition(flicker) {
     override val testApp: NotificationAppHelper = NotificationAppHelper(instrumentation)
 
     open val openingNotificationsFromLockScreen = false
@@ -67,7 +65,7 @@ open class OpenAppFromNotificationWarm(testSpec: FlickerTestParameter) :
         get() = {
             setup {
                 device.wakeUpAndGoToHomeScreen()
-                this.setRotation(testSpec.startRotation)
+                this.setRotation(flicker.scenario.startRotation)
                 testApp.launchViaIntent(wmHelper)
                 wmHelper.StateSyncBuilder().withFullScreenApp(testApp).waitForAndVerify()
                 testApp.postNotification(wmHelper)
@@ -113,26 +111,26 @@ open class OpenAppFromNotificationWarm(testSpec: FlickerTestParameter) :
             teardown { testApp.exit(wmHelper) }
         }
 
-    @FlakyTest @Test override fun appWindowBecomesVisible() = appWindowBecomesVisible_warmStart()
+    @Presubmit @Test override fun appWindowBecomesVisible() = appWindowBecomesVisible_warmStart()
 
-    @Postsubmit @Test override fun appLayerBecomesVisible() = appLayerBecomesVisible_warmStart()
+    @Presubmit @Test override fun appLayerBecomesVisible() = appLayerBecomesVisible_warmStart()
 
     @Presubmit
     @Test
     open fun notificationAppWindowVisibleAtEnd() {
-        testSpec.assertWmEnd { this.isAppWindowVisible(testApp) }
+        flicker.assertWmEnd { this.isAppWindowVisible(testApp) }
     }
 
     @Presubmit
     @Test
     open fun notificationAppWindowOnTopAtEnd() {
-        testSpec.assertWmEnd { this.isAppWindowOnTop(testApp) }
+        flicker.assertWmEnd { this.isAppWindowOnTop(testApp) }
     }
 
     @Presubmit
     @Test
     open fun notificationAppLayerVisibleAtEnd() {
-        testSpec.assertLayersEnd { this.isVisible(testApp) }
+        flicker.assertLayersEnd { this.isVisible(testApp) }
     }
 
     /**
@@ -144,8 +142,8 @@ open class OpenAppFromNotificationWarm(testSpec: FlickerTestParameter) :
     @Presubmit
     @Test
     open fun taskBarWindowIsVisibleAtEnd() {
-        Assume.assumeTrue(testSpec.isTablet)
-        testSpec.taskBarWindowIsVisibleAtEnd()
+        Assume.assumeTrue(flicker.scenario.isTablet)
+        flicker.taskBarWindowIsVisibleAtEnd()
     }
 
     /**
@@ -156,31 +154,31 @@ open class OpenAppFromNotificationWarm(testSpec: FlickerTestParameter) :
     @Presubmit
     @Test
     open fun taskBarLayerIsVisibleAtEnd() {
-        Assume.assumeTrue(testSpec.isTablet)
-        testSpec.taskBarLayerIsVisibleAtEnd()
+        Assume.assumeTrue(flicker.scenario.isTablet)
+        flicker.taskBarLayerIsVisibleAtEnd()
     }
 
     /** Checks the position of the [ComponentNameMatcher.NAV_BAR] at the end of the transition */
     @Presubmit
     @Test
     open fun navBarLayerPositionAtEnd() {
-        Assume.assumeFalse(testSpec.isTablet)
-        testSpec.navBarLayerPositionAtEnd()
+        Assume.assumeFalse(flicker.scenario.isTablet)
+        flicker.navBarLayerPositionAtEnd()
     }
 
     /** {@inheritDoc} */
     @Presubmit
     @Test
     open fun navBarLayerIsVisibleAtEnd() {
-        Assume.assumeFalse(testSpec.isTablet)
-        testSpec.navBarLayerIsVisibleAtEnd()
+        Assume.assumeFalse(flicker.scenario.isTablet)
+        flicker.navBarLayerIsVisibleAtEnd()
     }
 
     @Presubmit
     @Test
     open fun navBarWindowIsVisibleAtEnd() {
-        Assume.assumeFalse(testSpec.isTablet)
-        testSpec.navBarWindowIsVisibleAtEnd()
+        Assume.assumeFalse(flicker.scenario.isTablet)
+        flicker.navBarWindowIsVisibleAtEnd()
     }
 
     /** {@inheritDoc} */
@@ -203,13 +201,13 @@ open class OpenAppFromNotificationWarm(testSpec: FlickerTestParameter) :
         /**
          * Creates the test configurations.
          *
-         * See [FlickerTestParameterFactory.getConfigNonRotationTests] for configuring repetitions,
-         * screen orientation and navigation modes.
+         * See [FlickerTestFactory.nonRotationTests] for configuring screen orientation and
+         * navigation modes.
          */
         @Parameterized.Parameters(name = "{0}")
         @JvmStatic
-        fun getParams(): Collection<FlickerTestParameter> {
-            return FlickerTestParameterFactory.getInstance().getConfigNonRotationTests()
+        fun getParams(): Collection<FlickerTest> {
+            return FlickerTestFactory.nonRotationTests()
         }
     }
 }

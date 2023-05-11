@@ -43,6 +43,7 @@ import android.view.SurfaceControl;
 import android.view.SurfaceControlViewHost;
 import android.view.WindowInfo;
 import android.view.WindowManager.DisplayImePolicy;
+import android.view.inputmethod.ImeTracker;
 
 import com.android.internal.policy.KeyInterceptionInfo;
 import com.android.server.input.InputManagerService;
@@ -656,6 +657,17 @@ public abstract class WindowManagerInternal {
     public abstract int getWindowOwnerUserId(IBinder windowToken);
 
     /**
+     * Control visilibility of a {@link WallpaperWindowToken} {@code} binder on the lock screen.
+     *
+     * <p>This will also affect its Z-ordering as {@code showWhenLocked} wallpaper tokens are
+     * arranged underneath non-{@code showWhenLocked} wallpaper tokens.
+     *
+     * @param windowToken wallpaper token previously added via {@link #addWindowToken}
+     * @param showWhenLocked whether {@param token} can continue to be shown on the lock screen.
+     */
+    public abstract void setWallpaperShowWhenLocked(IBinder windowToken, boolean showWhenLocked);
+
+    /**
      * Returns {@code true} if a Window owned by {@code uid} has focus.
      */
     public abstract boolean isUidFocused(int uid);
@@ -729,16 +741,20 @@ public abstract class WindowManagerInternal {
      * Show IME on imeTargetWindow once IME has finished layout.
      *
      * @param imeTargetWindowToken token of the (IME target) window on which IME should be shown.
+     * @param statsToken the token tracking the current IME show request or {@code null} otherwise.
      */
-    public abstract void showImePostLayout(IBinder imeTargetWindowToken);
+    public abstract void showImePostLayout(IBinder imeTargetWindowToken,
+            @Nullable ImeTracker.Token statsToken);
 
     /**
      * Hide IME using imeTargetWindow when requested.
      *
      * @param imeTargetWindowToken token of the (IME target) window on which IME should be hidden.
      * @param displayId the id of the display the IME is on.
+     * @param statsToken the token tracking the current IME hide request or {@code null} otherwise.
      */
-    public abstract void hideIme(IBinder imeTargetWindowToken, int displayId);
+    public abstract void hideIme(IBinder imeTargetWindowToken, int displayId,
+            @Nullable ImeTracker.Token statsToken);
 
     /**
      * Tell window manager about a package that should be running with a restricted range of
@@ -898,4 +914,7 @@ public abstract class WindowManagerInternal {
      * could not be prepared and the session needs to be torn down.
      */
     public abstract boolean setContentRecordingSession(ContentRecordingSession incomingSession);
+
+    /** Returns the SurfaceControl accessibility services should use for accessibility overlays. */
+    public abstract SurfaceControl getA11yOverlayLayer(int displayId);
 }

@@ -51,6 +51,8 @@ object CombinedShadeHeadersConstraintManagerImpl : CombinedShadeHeadersConstrain
                 connect(R.id.statusIcons, ConstraintSet.START, R.id.date, ConstraintSet.END)
                 connect(R.id.privacy_container, ConstraintSet.START, R.id.date, ConstraintSet.END)
                 constrainWidth(R.id.statusIcons, ViewGroup.LayoutParams.WRAP_CONTENT)
+                constrainedWidth(R.id.date, true)
+                constrainedWidth(R.id.statusIcons, true)
             }
         )
     }
@@ -67,7 +69,8 @@ object CombinedShadeHeadersConstraintManagerImpl : CombinedShadeHeadersConstrain
         }
         return ConstraintsChanges(
             qqsConstraintsChanges = change,
-            qsConstraintsChanges = change
+            qsConstraintsChanges = change,
+            largeScreenConstraintsChanges = change,
         )
     }
 
@@ -92,7 +95,8 @@ object CombinedShadeHeadersConstraintManagerImpl : CombinedShadeHeadersConstrain
                     centerEnd,
                     ConstraintSet.END
                 )
-                constrainWidth(R.id.statusIcons, 0)
+                constrainedWidth(R.id.date, true)
+                constrainedWidth(R.id.statusIcons, true)
             },
             qsConstraintsChanges = {
                 setGuidelineBegin(centerStart, offsetFromEdge)

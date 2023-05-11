@@ -17,6 +17,8 @@
 package com.android.settingslib.spa.gallery.preference
 
 import android.os.Bundle
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AirplanemodeActive
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -25,8 +27,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.tooling.preview.Preview
 import com.android.settingslib.spa.framework.common.SettingsEntry
 import com.android.settingslib.spa.framework.common.SettingsEntryBuilder
-import com.android.settingslib.spa.framework.common.SettingsPage
 import com.android.settingslib.spa.framework.common.SettingsPageProvider
+import com.android.settingslib.spa.framework.common.createSettingsPage
 import com.android.settingslib.spa.framework.compose.navigator
 import com.android.settingslib.spa.framework.compose.stateOf
 import com.android.settingslib.spa.framework.theme.SettingsTheme
@@ -34,42 +36,45 @@ import com.android.settingslib.spa.widget.preference.Preference
 import com.android.settingslib.spa.widget.preference.PreferenceModel
 import com.android.settingslib.spa.widget.preference.SwitchPreference
 import com.android.settingslib.spa.widget.preference.SwitchPreferenceModel
+import com.android.settingslib.spa.widget.ui.SettingsIcon
 import kotlinx.coroutines.delay
 
 private const val TITLE = "Sample SwitchPreference"
 
 object SwitchPreferencePageProvider : SettingsPageProvider {
     override val name = "SwitchPreference"
+    private val owner = createSettingsPage()
 
     override fun buildEntry(arguments: Bundle?): List<SettingsEntry> {
-        val owner = SettingsPage.create(name)
         val entryList = mutableListOf<SettingsEntry>()
         entryList.add(
             SettingsEntryBuilder.create( "SwitchPreference", owner)
-                .setIsAllowSearch(true)
                 .setUiLayoutFn {
                     SampleSwitchPreference()
                 }.build()
         )
         entryList.add(
             SettingsEntryBuilder.create( "SwitchPreference with summary", owner)
-                .setIsAllowSearch(true)
                 .setUiLayoutFn {
                     SampleSwitchPreferenceWithSummary()
                 }.build()
         )
         entryList.add(
             SettingsEntryBuilder.create( "SwitchPreference with async summary", owner)
-                .setIsAllowSearch(true)
                 .setUiLayoutFn {
                     SampleSwitchPreferenceWithAsyncSummary()
                 }.build()
         )
         entryList.add(
             SettingsEntryBuilder.create( "SwitchPreference not changeable", owner)
-                .setIsAllowSearch(true)
                 .setUiLayoutFn {
                     SampleNotChangeableSwitchPreference()
+                }.build()
+        )
+        entryList.add(
+            SettingsEntryBuilder.create( "SwitchPreference with icon", owner)
+                .setUiLayoutFn {
+                    SampleSwitchPreferenceWithIcon()
                 }.build()
         )
 
@@ -77,8 +82,7 @@ object SwitchPreferencePageProvider : SettingsPageProvider {
     }
 
     fun buildInjectEntry(): SettingsEntryBuilder {
-        return SettingsEntryBuilder.createInject(owner = SettingsPage.create(name))
-            .setIsAllowSearch(true)
+        return SettingsEntryBuilder.createInject(owner)
             .setUiLayoutFn {
                 Preference(object : PreferenceModel {
                     override val title = TITLE
@@ -144,6 +148,21 @@ private fun SampleNotChangeableSwitchPreference() {
             override val changeable = stateOf(false)
             override val checked = checked
             override val onCheckedChange = { newChecked: Boolean -> checked.value = newChecked }
+        }
+    })
+}
+
+@Composable
+private fun SampleSwitchPreferenceWithIcon() {
+    val checked = rememberSaveable { mutableStateOf(true) }
+    SwitchPreference(remember {
+        object : SwitchPreferenceModel {
+            override val title = "SwitchPreference"
+            override val checked = checked
+            override val onCheckedChange = { newChecked: Boolean -> checked.value = newChecked }
+            override val icon = @Composable {
+                SettingsIcon(imageVector = Icons.Outlined.AirplanemodeActive)
+            }
         }
     })
 }

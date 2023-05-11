@@ -23,8 +23,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.ArrowDropDown
-import androidx.compose.material.icons.outlined.ArrowDropUp
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
@@ -45,8 +45,13 @@ import androidx.compose.ui.unit.dp
 import com.android.settingslib.spa.framework.theme.SettingsDimension
 import com.android.settingslib.spa.framework.theme.SettingsTheme
 
+data class SpinnerOption(
+    val id: Int,
+    val text: String,
+)
+
 @Composable
-fun Spinner(options: List<String>, selectedIndex: Int, setIndex: (index: Int) -> Unit) {
+fun Spinner(options: List<SpinnerOption>, selectedId: Int?, setId: (id: Int) -> Unit) {
     if (options.isEmpty()) {
         return
     }
@@ -68,11 +73,11 @@ fun Spinner(options: List<String>, selectedIndex: Int, setIndex: (index: Int) ->
             ),
             contentPadding = contentPadding,
         ) {
-            SpinnerText(options[selectedIndex])
+            SpinnerText(options.find { it.id == selectedId })
             Icon(
                 imageVector = when {
-                    expanded -> Icons.Outlined.ArrowDropUp
-                    else -> Icons.Outlined.ArrowDropDown
+                    expanded -> Icons.Outlined.ExpandLess
+                    else -> Icons.Outlined.ExpandMore
                 },
                 contentDescription = null,
             )
@@ -83,18 +88,18 @@ fun Spinner(options: List<String>, selectedIndex: Int, setIndex: (index: Int) ->
             modifier = Modifier.background(SettingsTheme.colorScheme.spinnerItemContainer),
             offset = DpOffset(x = 0.dp, y = 4.dp),
         ) {
-            options.forEachIndexed { index, option ->
+            for (option in options) {
                 DropdownMenuItem(
                     text = {
                         SpinnerText(
-                            text = option,
+                            option = option,
                             modifier = Modifier.padding(end = 24.dp),
                             color = SettingsTheme.colorScheme.onSpinnerItemContainer,
                         )
                     },
                     onClick = {
                         expanded = false
-                        setIndex(index)
+                        setId(option.id)
                     },
                     contentPadding = contentPadding,
                 )
@@ -105,12 +110,12 @@ fun Spinner(options: List<String>, selectedIndex: Int, setIndex: (index: Int) ->
 
 @Composable
 private fun SpinnerText(
-    text: String,
+    option: SpinnerOption?,
     modifier: Modifier = Modifier,
     color: Color = Color.Unspecified,
 ) {
     Text(
-        text = text,
+        text = option?.text ?: "",
         modifier = modifier.padding(end = SettingsDimension.itemPaddingEnd),
         color = color,
         style = MaterialTheme.typography.labelLarge,
@@ -121,11 +126,11 @@ private fun SpinnerText(
 @Composable
 private fun SpinnerPreview() {
     SettingsTheme {
-        var selectedIndex by rememberSaveable { mutableStateOf(0) }
+        var selectedId by rememberSaveable { mutableStateOf(1) }
         Spinner(
-            options = (1..3).map { "Option $it" },
-            selectedIndex = selectedIndex,
-            setIndex = { selectedIndex = it },
+            options = (1..3).map { SpinnerOption(id = it, text = "Option $it") },
+            selectedId = selectedId,
+            setId = { selectedId = it },
         )
     }
 }

@@ -18,6 +18,7 @@ package com.android.systemui.navigationbar.gestural;
 import static android.view.WindowManager.LayoutParams.PRIVATE_FLAG_EXCLUDE_FROM_SCREEN_MAGNIFICATION;
 
 import static com.android.systemui.classifier.Classifier.BACK_GESTURE;
+import static com.android.systemui.navigationbar.gestural.Utilities.isTrackpadMotionEvent;
 
 import android.annotation.NonNull;
 import android.app.ActivityManager;
@@ -27,6 +28,7 @@ import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.res.Configuration;
 import android.content.res.Resources;
+import android.graphics.Insets;
 import android.graphics.PixelFormat;
 import android.graphics.Point;
 import android.graphics.PointF;
@@ -53,13 +55,13 @@ import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.ViewConfiguration;
+import android.view.WindowInsets;
 import android.view.WindowManager;
 import android.window.BackEvent;
 
 import com.android.internal.config.sysui.SystemUiDeviceConfigFlags;
 import com.android.internal.policy.GestureNavigationSettingsObserver;
 import com.android.systemui.R;
-import com.android.systemui.broadcast.BroadcastDispatcher;
 import com.android.systemui.dagger.qualifiers.Background;
 import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.flags.FeatureFlags;
@@ -70,9 +72,9 @@ import com.android.systemui.navigationbar.NavigationModeController;
 import com.android.systemui.plugins.FalsingManager;
 import com.android.systemui.plugins.NavigationEdgeBackPlugin;
 import com.android.systemui.plugins.PluginListener;
+import com.android.systemui.plugins.PluginManager;
 import com.android.systemui.recents.OverviewProxyService;
-import com.android.systemui.settings.CurrentUserTracker;
-import com.android.systemui.shared.plugins.PluginManager;
+import com.android.systemui.settings.UserTracker;
 import com.android.systemui.shared.system.ActivityManagerWrapper;
 import com.android.systemui.shared.system.InputChannelCompat;
 import com.android.systemui.shared.system.QuickStepContract;
@@ -102,8 +104,8 @@ import javax.inject.Provider;
 /**
  * Utility class to handle edge swipes for back gesture
  */
-public class EdgeBackGestureHandler extends CurrentUserTracker
-        implements PluginListener<NavigationEdgeBackPlugin>, ProtoTraceable<SystemUiTraceProto> {
+public class EdgeBackGestureHandler implements PluginListener<NavigationEdgeBackPlugin>,
+        ProtoTraceable<SystemUiTraceProto> {
 
     private static final String TAG = "EdgeBackGestureHandler";
     private static final int MAX_LONG_PRESS_TIMEOUT = SystemProperties.getInt(
@@ -172,6 +174,7 @@ public class EdgeBackGestureHandler extends CurrentUserTracker
 
 
     private final Context mContext;
+    private final UserTracker mUserTracker;
     private final OverviewProxyService mOverviewProxyService;
     private final SysUiState mSysUiState;
     private Runnable mStateChangeCallback;
@@ -233,6 +236,7 @@ public class EdgeBackGestureHandler extends CurrentUserTracker
     private boolean mLogGesture = false;
     private boolean mInRejectedExclusion = false;
     private boolean mIsOnLeftEdge;
+    private boolean mDeferSetIsOnLeftEdge;
 
     private boolean mIsAttached;
     private boolean mIsGesturalModeEnabled;
@@ -241,6 +245,7 @@ public class EdgeBackGestureHandler extends CurrentUserTracker
     private boolean mIsBackGestureAllowed;
     private boolean mGestureBlockingActivityRunning;
     private boolean mIsNewBackAffordanceEnabled;
+    private boolean mIsTrackpadGestureBackEnabled;
     private boolean mIsButtonForceVisible;
 
     private InputMonitor mInputMonitor;
@@ -275,7 +280,6 @@ public class EdgeBackGestureHandler extends CurrentUserTracker
                 @Override
                 public void triggerBack() {
                     // Notify FalsingManager that an intentional gesture has occurred.
-                    // TODO(b/186519446): use a different method than isFalseTouch
                     mFalsingManager.isFalseTouch(BACK_GESTURE);
                     // Only inject back keycodes when ahead-of-time back dispatching is disabled.
                     if (mBackAnimation == null) {
@@ -321,6 +325,15 @@ public class EdgeBackGestureHandler extends CurrentUserTracker
     private final Consumer<Boolean> mOnIsInPipStateChangedListener =
             (isInPip) -> mIsInPip = isInPip;
 
+    private final UserTracker.Callback mUserChangedCallback =
+            new UserTracker.Callback() {
+                @Override
+                public void onUserChanged(int newUser, @NonNull Context userContext) {
+                    updateIsEnabled();
+                    updateCurrentUserResources();
+                }
+            };
+
     EdgeBackGestureHandler(
             Context context,
             OverviewProxyService overviewProxyService,
@@ -328,7 +341,7 @@ public class EdgeBackGestureHandler extends CurrentUserTracker
             PluginManager pluginManager,
             @Main Executor executor,
             @Background Executor backgroundExecutor,
-            BroadcastDispatcher broadcastDispatcher,
+            UserTracker userTracker,
             ProtoTracer protoTracer,
             NavigationModeController navigationModeController,
             BackPanelController.Factory backPanelControllerFactory,
@@ -340,11 +353,11 @@ public class EdgeBackGestureHandler extends CurrentUserTracker
             Provider<NavigationBarEdgePanel> navigationBarEdgePanelProvider,
             Provider<BackGestureTfClassifierProvider> backGestureTfClassifierProviderProvider,
             FeatureFlags featureFlags) {
-        super(broadcastDispatcher);
         mContext = context;
         mDisplayId = context.getDisplayId();
         mMainExecutor = executor;
         mBackgroundExecutor = backgroundExecutor;
+        mUserTracker = userTracker;
         mOverviewProxyService = overviewProxyService;
         mSysUiState = sysUiState;
         mPluginManager = pluginManager;
@@ -463,14 +476,8 @@ public class EdgeBackGestureHandler extends CurrentUserTracker
         }
     }
 
-    @Override
-    public void onUserSwitched(int newUserId) {
-        updateIsEnabled();
-        updateCurrentUserResources();
-    }
-
     /**
-     * @see NavigationBarView#onAttachedToWindow()
+     * Called when the nav/task bar is attached.
      */
     public void onNavBarAttached() {
         mIsAttached = true;
@@ -478,11 +485,11 @@ public class EdgeBackGestureHandler extends CurrentUserTracker
         mOverviewProxyService.addCallback(mQuickSwitchListener);
         mSysUiState.addCallback(mSysUiStateCallback);
         updateIsEnabled();
-        startTracking();
+        mUserTracker.addCallback(mUserChangedCallback, mMainExecutor);
     }
 
     /**
-     * @see NavigationBarView#onDetachedFromWindow()
+     * Called when the nav/task bar is detached.
      */
     public void onNavBarDetached() {
         mIsAttached = false;
@@ -490,7 +497,7 @@ public class EdgeBackGestureHandler extends CurrentUserTracker
         mOverviewProxyService.removeCallback(mQuickSwitchListener);
         mSysUiState.removeCallback(mSysUiStateCallback);
         updateIsEnabled();
-        stopTracking();
+        mUserTracker.removeCallback(mUserChangedCallback);
     }
 
     /**
@@ -518,6 +525,15 @@ public class EdgeBackGestureHandler extends CurrentUserTracker
     }
 
     private void updateIsEnabled() {
+        try {
+            Trace.beginSection("EdgeBackGestureHandler#updateIsEnabled");
+            updateIsEnabledTraced();
+        } finally {
+            Trace.endSection();
+        }
+    }
+
+    private void updateIsEnabledTraced() {
         boolean isEnabled = mIsAttached && mIsGesturalModeEnabled;
         if (isEnabled == mIsEnabled) {
             return;
@@ -567,7 +583,7 @@ public class EdgeBackGestureHandler extends CurrentUserTracker
             }
 
             // Register input event receiver
-            mInputMonitor = InputManager.getInstance().monitorGestureInput(
+            mInputMonitor = mContext.getSystemService(InputManager.class).monitorGestureInput(
                     "edge-swipe", mDisplayId);
             mInputEventReceiver = new InputChannelCompat.InputEventReceiver(
                     mInputMonitor.getInputChannel(), Looper.getMainLooper(),
@@ -575,6 +591,7 @@ public class EdgeBackGestureHandler extends CurrentUserTracker
 
             // Add a nav bar panel window
             mIsNewBackAffordanceEnabled = mFeatureFlags.isEnabled(Flags.NEW_BACK_AFFORDANCE);
+            mIsTrackpadGestureBackEnabled = mFeatureFlags.isEnabled(Flags.TRACKPAD_GESTURE_BACK);
             resetEdgeBackPlugin();
             mPluginManager.addPluginListener(
                     this, NavigationEdgeBackPlugin.class, /*allowMultiple=*/ false);
@@ -603,13 +620,15 @@ public class EdgeBackGestureHandler extends CurrentUserTracker
     }
 
     private void setEdgeBackPlugin(NavigationEdgeBackPlugin edgeBackPlugin) {
-        if (mEdgeBackPlugin != null) {
-            mEdgeBackPlugin.onDestroy();
+        try {
+            Trace.beginSection("setEdgeBackPlugin");
+            mEdgeBackPlugin = edgeBackPlugin;
+            mEdgeBackPlugin.setBackCallback(mBackCallback);
+            mEdgeBackPlugin.setLayoutParams(createLayoutParams());
+            updateDisplaySize();
+        } finally {
+            Trace.endSection();
         }
-        mEdgeBackPlugin = edgeBackPlugin;
-        mEdgeBackPlugin.setBackCallback(mBackCallback);
-        mEdgeBackPlugin.setLayoutParams(createLayoutParams());
-        updateDisplaySize();
     }
 
     public boolean isHandlingGestures() {
@@ -651,8 +670,9 @@ public class EdgeBackGestureHandler extends CurrentUserTracker
     }
 
     private void updateMLModelState() {
-        boolean newState = mIsEnabled && DeviceConfig.getBoolean(DeviceConfig.NAMESPACE_SYSTEMUI,
-                SystemUiDeviceConfigFlags.USE_BACK_GESTURE_ML_MODEL, false);
+        boolean newState =
+                mIsGesturalModeEnabled && DeviceConfig.getBoolean(DeviceConfig.NAMESPACE_SYSTEMUI,
+                        SystemUiDeviceConfigFlags.USE_BACK_GESTURE_ML_MODEL, false);
 
         if (newState == mUseMLModel) {
             return;
@@ -758,6 +778,19 @@ public class EdgeBackGestureHandler extends CurrentUserTracker
         return true;
     }
 
+    private boolean isValidTrackpadBackGesture(boolean isTrackpadEvent) {
+        if (!isTrackpadEvent) {
+            return false;
+        }
+        // for trackpad gestures, unless the whole screen is excluded region, 3-finger swipe
+        // gestures are allowed even if the cursor is in the excluded region.
+        WindowInsets windowInsets = mWindowManager.getCurrentWindowMetrics().getWindowInsets();
+        Insets insets = windowInsets.getInsets(WindowInsets.Type.systemBars());
+        final Rect excludeBounds = mExcludeRegion.getBounds();
+        return !excludeBounds.contains(insets.left, insets.top, mDisplaySize.x - insets.right,
+                mDisplaySize.y - insets.bottom);
+    }
+
     private boolean isWithinTouchRegion(int x, int y) {
         // If the point is inside the PiP or Nav bar overlay excluded bounds, then ignore the back
         // gesture
@@ -782,7 +815,7 @@ public class EdgeBackGestureHandler extends CurrentUserTracker
             // ML model
             boolean withinMinRange = x < mMLEnableWidth + mLeftInset
                     || x >= (mDisplaySize.x - mMLEnableWidth - mRightInset);
-            if (!withinMinRange && mUseMLModel
+            if (!withinMinRange && mUseMLModel && !mMLModelIsLoading
                     && (results = getBackGesturePredictionsCategory(x, y, app)) != -1) {
                 withinRange = (results == 1);
             }
@@ -850,6 +883,7 @@ public class EdgeBackGestureHandler extends CurrentUserTracker
     }
 
     private void onMotionEvent(MotionEvent ev) {
+        boolean isTrackpadEvent = isTrackpadMotionEvent(mIsTrackpadGestureBackEnabled, ev);
         int action = ev.getActionMasked();
         if (action == MotionEvent.ACTION_DOWN) {
             if (DEBUG_MISSING_GESTURE) {
@@ -859,21 +893,32 @@ public class EdgeBackGestureHandler extends CurrentUserTracker
             // Verify if this is in within the touch region and we aren't in immersive mode, and
             // either the bouncer is showing or the notification panel is hidden
             mInputEventReceiver.setBatchingEnabled(false);
-            mIsOnLeftEdge = ev.getX() <= mEdgeWidthLeft + mLeftInset;
+            if (isTrackpadEvent) {
+                // Since trackpad gestures don't have zones, this will be determined later by the
+                // direction of the gesture. {@code mIsOnLeftEdge} is set to false to begin with.
+                mDeferSetIsOnLeftEdge = true;
+                mIsOnLeftEdge = false;
+            } else {
+                mIsOnLeftEdge = ev.getX() <= mEdgeWidthLeft + mLeftInset;
+            }
             mMLResults = 0;
             mLogGesture = false;
             mInRejectedExclusion = false;
             boolean isWithinInsets = isWithinInsets((int) ev.getX(), (int) ev.getY());
-            mAllowGesture = !mDisabledForQuickstep && mIsBackGestureAllowed && isWithinInsets
+            // Trackpad back gestures don't have zones, so we don't need to check if the down event
+            // is within insets.
+            mAllowGesture = !mDisabledForQuickstep && mIsBackGestureAllowed
+                    && (isTrackpadEvent || isWithinInsets)
                     && !mGestureBlockingActivityRunning
                     && !QuickStepContract.isBackGestureDisabled(mSysUiFlags)
-                    && isWithinTouchRegion((int) ev.getX(), (int) ev.getY());
+                    && (isValidTrackpadBackGesture(isTrackpadEvent) || isWithinTouchRegion(
+                    (int) ev.getX(), (int) ev.getY()));
             if (mAllowGesture) {
                 mEdgeBackPlugin.setIsLeftPanel(mIsOnLeftEdge);
                 mEdgeBackPlugin.onMotionEvent(ev);
                 dispatchToBackAnimation(ev);
             }
-            if (mLogGesture) {
+            if (mLogGesture || isTrackpadEvent) {
                 mDownPoint.set(ev.getX(), ev.getY());
                 mEndPoint.set(-1, -1);
                 mThresholdCrossed = false;
@@ -881,16 +926,16 @@ public class EdgeBackGestureHandler extends CurrentUserTracker
 
             // For debugging purposes, only log edge points
             (isWithinInsets ? mGestureLogInsideInsets : mGestureLogOutsideInsets).log(String.format(
-                    "Gesture [%d,alw=%B,%B,%B,%B,disp=%s,wl=%d,il=%d,wr=%d,ir=%d,excl=%s]",
-                    System.currentTimeMillis(), mAllowGesture, mIsOnLeftEdge,
-                    mIsBackGestureAllowed,
+                    "Gesture [%d,alw=%B,%B,%B,%B,%B,%B,disp=%s,wl=%d,il=%d,wr=%d,ir=%d,excl=%s]",
+                    System.currentTimeMillis(), isTrackpadEvent, mAllowGesture, mIsOnLeftEdge,
+                    mDeferSetIsOnLeftEdge, mIsBackGestureAllowed,
                     QuickStepContract.isBackGestureDisabled(mSysUiFlags), mDisplaySize,
                     mEdgeWidthLeft, mLeftInset, mEdgeWidthRight, mRightInset, mExcludeRegion));
         } else if (mAllowGesture || mLogGesture) {
             if (!mThresholdCrossed) {
                 mEndPoint.x = (int) ev.getX();
                 mEndPoint.y = (int) ev.getY();
-                if (action == MotionEvent.ACTION_POINTER_DOWN) {
+                if (action == MotionEvent.ACTION_POINTER_DOWN && !isTrackpadEvent) {
                     if (mAllowGesture) {
                         logGesture(SysUiStatsLog.BACK_GESTURE__TYPE__INCOMPLETE_MULTI_TOUCH);
                         if (DEBUG_MISSING_GESTURE) {
@@ -902,6 +947,14 @@ public class EdgeBackGestureHandler extends CurrentUserTracker
                     mLogGesture = false;
                     return;
                 } else if (action == MotionEvent.ACTION_MOVE) {
+                    if (isTrackpadEvent && mDeferSetIsOnLeftEdge) {
+                        // mIsOnLeftEdge is determined by the relative position between the down
+                        // and the current motion event for trackpad gestures instead of zoning.
+                        mIsOnLeftEdge = mEndPoint.x > mDownPoint.x;
+                        mEdgeBackPlugin.setIsLeftPanel(mIsOnLeftEdge);
+                        mDeferSetIsOnLeftEdge = false;
+                    }
+
                     if ((ev.getEventTime() - ev.getDownTime()) > mLongPressTimeout) {
                         if (mAllowGesture) {
                             logGesture(SysUiStatsLog.BACK_GESTURE__TYPE__INCOMPLETE_LONG_PRESS);
@@ -934,6 +987,10 @@ public class EdgeBackGestureHandler extends CurrentUserTracker
                             mThresholdCrossed = true;
                             // Capture inputs
                             mInputMonitor.pilferPointers();
+                            if (mBackAnimation != null) {
+                                // Notify FalsingManager that an intentional gesture has occurred.
+                                mFalsingManager.isFalseTouch(BACK_GESTURE);
+                            }
                             mInputEventReceiver.setBatchingEnabled(true);
                         } else {
                             logGesture(SysUiStatsLog.BACK_GESTURE__TYPE__INCOMPLETE_FAR_FROM_EDGE);
@@ -974,7 +1031,7 @@ public class EdgeBackGestureHandler extends CurrentUserTracker
         }
 
         // TODO(b/243765256): Disable this logging once b/243765256 is fixed.
-        Log.d(DEBUG_MISSING_GESTURE_TAG, "Config changed: newConfig=" + newConfig
+        Log.i(DEBUG_MISSING_GESTURE_TAG, "Config changed: newConfig=" + newConfig
                 + " lastReportedConfig=" + mLastReportedConfig);
         mLastReportedConfig.updateFrom(newConfig);
         updateDisplaySize();
@@ -1009,7 +1066,7 @@ public class EdgeBackGestureHandler extends CurrentUserTracker
                 InputDevice.SOURCE_KEYBOARD);
 
         ev.setDisplayId(mContext.getDisplay().getDisplayId());
-        return InputManager.getInstance()
+        return mContext.getSystemService(InputManager.class)
                 .injectInputEvent(ev, InputManager.INJECT_INPUT_EVENT_MODE_ASYNC);
     }
 
@@ -1093,7 +1150,7 @@ public class EdgeBackGestureHandler extends CurrentUserTracker
         private final PluginManager mPluginManager;
         private final Executor mExecutor;
         private final Executor mBackgroundExecutor;
-        private final BroadcastDispatcher mBroadcastDispatcher;
+        private final UserTracker mUserTracker;
         private final ProtoTracer mProtoTracer;
         private final NavigationModeController mNavigationModeController;
         private final BackPanelController.Factory mBackPanelControllerFactory;
@@ -1113,7 +1170,7 @@ public class EdgeBackGestureHandler extends CurrentUserTracker
                        PluginManager pluginManager,
                        @Main Executor executor,
                        @Background Executor backgroundExecutor,
-                       BroadcastDispatcher broadcastDispatcher,
+                       UserTracker userTracker,
                        ProtoTracer protoTracer,
                        NavigationModeController navigationModeController,
                        BackPanelController.Factory backPanelControllerFactory,
@@ -1131,7 +1188,7 @@ public class EdgeBackGestureHandler extends CurrentUserTracker
             mPluginManager = pluginManager;
             mExecutor = executor;
             mBackgroundExecutor = backgroundExecutor;
-            mBroadcastDispatcher = broadcastDispatcher;
+            mUserTracker = userTracker;
             mProtoTracer = protoTracer;
             mNavigationModeController = navigationModeController;
             mBackPanelControllerFactory = backPanelControllerFactory;
@@ -1154,7 +1211,7 @@ public class EdgeBackGestureHandler extends CurrentUserTracker
                     mPluginManager,
                     mExecutor,
                     mBackgroundExecutor,
-                    mBroadcastDispatcher,
+                    mUserTracker,
                     mProtoTracer,
                     mNavigationModeController,
                     mBackPanelControllerFactory,

@@ -16,7 +16,6 @@
 
 package com.android.server.wm;
 
-
 import static android.content.res.Configuration.ORIENTATION_PORTRAIT;
 import static android.hardware.display.DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR;
 import static android.view.Display.INVALID_DISPLAY;
@@ -36,6 +35,8 @@ import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.never;
 
+import android.app.WindowConfiguration;
+import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
 import android.graphics.Point;
 import android.graphics.Rect;
@@ -46,11 +47,14 @@ import android.platform.test.annotations.Presubmit;
 import android.provider.DeviceConfig;
 import android.util.DisplayMetrics;
 import android.view.ContentRecordingSession;
+import android.view.Gravity;
 import android.view.Surface;
 import android.view.SurfaceControl;
 
 import androidx.annotation.NonNull;
 import androidx.test.filters.SmallTest;
+
+import com.android.server.wm.ContentRecorder.MediaProjectionManagerWrapper;
 
 import org.junit.After;
 import org.junit.Before;
@@ -79,7 +83,7 @@ public class ContentRecorderTests extends WindowTestsBase {
     private ContentRecordingSession mTaskSession;
     private static Point sSurfaceSize;
     private ContentRecorder mContentRecorder;
-    @Mock private ContentRecorder.MediaProjectionManagerWrapper mMediaProjectionManagerWrapper;
+    @Mock private MediaProjectionManagerWrapper mMediaProjectionManagerWrapper;
     private SurfaceControl mRecordedSurface;
     // Handle feature flag.
     private ConfigListener mConfigListener;
@@ -241,7 +245,7 @@ public class ContentRecorderTests extends WindowTestsBase {
     }
 
     @Test
-    public void testOnTaskConfigurationChanged_resizesSurface() {
+    public void testOnTaskOrientationConfigurationChanged_resizesSurface() {
         mContentRecorder.setContentRecordingSession(mTaskSession);
         mContentRecorder.updateRecording();
 
@@ -253,6 +257,107 @@ public class ContentRecorderTests extends WindowTestsBase {
                 anyFloat());
         verify(mTransaction, atLeast(2)).setMatrix(eq(mRecordedSurface), anyFloat(), anyFloat(),
                 anyFloat(), anyFloat());
+    }
+
+    @Test
+    public void testOnTaskBoundsConfigurationChanged_notifiesCallback() {
+        mTask.getRootTask().setWindowingMode(WindowConfiguration.WINDOWING_MODE_MULTI_WINDOW);
+
+        final int recordedWidth = 333;
+        final int recordedHeight = 999;
+
+        final ActivityInfo info = new ActivityInfo();
+        info.windowLayout = new ActivityInfo.WindowLayout(-1 /* width */,
+                        -1 /* widthFraction */, -1 /* height */, -1 /* heightFraction */,
+                        Gravity.NO_GRAVITY, recordedWidth, recordedHeight);
+        mTask.setMinDimensions(info);
+
+        // WHEN a recording is ongoing.
+        mContentRecorder.setContentRecordingSession(mTaskSession);
+        mContentRecorder.updateRecording();
+        assertThat(mContentRecorder.isCurrentlyRecording()).isTrue();
+
+        // WHEN a configuration change arrives, and the recorded content is a different size.
+        mTask.setBounds(new Rect(0, 0, recordedWidth, recordedHeight));
+        assertThat(mContentRecorder.isCurrentlyRecording()).isTrue();
+
+        // THEN content in the captured DisplayArea is scaled to fit the surface size.
+        verify(mTransaction, atLeastOnce()).setMatrix(eq(mRecordedSurface), anyFloat(), eq(0f),
+                eq(0f),
+                anyFloat());
+        // THEN the resize callback is notified.
+        verify(mMediaProjectionManagerWrapper).notifyActiveProjectionCapturedContentResized(
+                recordedWidth, recordedHeight);
+    }
+
+    @Test
+    public void testStartRecording_notifiesCallback_taskSession() {
+        // WHEN a recording is ongoing.
+        mContentRecorder.setContentRecordingSession(mTaskSession);
+        mContentRecorder.updateRecording();
+        assertThat(mContentRecorder.isCurrentlyRecording()).isTrue();
+
+        // THEN the visibility change callback is notified.
+        verify(mMediaProjectionManagerWrapper)
+                .notifyActiveProjectionCapturedContentVisibilityChanged(true);
+    }
+
+    @Test
+    public void testStartRecording_notifiesCallback_displaySession() {
+        // WHEN a recording is ongoing.
+        mContentRecorder.setContentRecordingSession(mDisplaySession);
+        mContentRecorder.updateRecording();
+        assertThat(mContentRecorder.isCurrentlyRecording()).isTrue();
+
+        // THEN the visibility change callback is notified.
+        verify(mMediaProjectionManagerWrapper)
+                .notifyActiveProjectionCapturedContentVisibilityChanged(true);
+    }
+
+    @Test
+    public void testOnVisibleRequestedChanged_notifiesCallback() {
+        // WHEN a recording is ongoing.
+        mContentRecorder.setContentRecordingSession(mTaskSession);
+        mContentRecorder.updateRecording();
+        assertThat(mContentRecorder.isCurrentlyRecording()).isTrue();
+
+        // WHEN the child requests a visibility change.
+        boolean isVisibleRequested = true;
+        mContentRecorder.onVisibleRequestedChanged(isVisibleRequested);
+
+        // THEN the visibility change callback is notified.
+        verify(mMediaProjectionManagerWrapper, atLeastOnce())
+                .notifyActiveProjectionCapturedContentVisibilityChanged(isVisibleRequested);
+
+        // WHEN the child requests a visibility change.
+        isVisibleRequested = false;
+        mContentRecorder.onVisibleRequestedChanged(isVisibleRequested);
+
+        // THEN the visibility change callback is notified.
+        verify(mMediaProjectionManagerWrapper)
+                .notifyActiveProjectionCapturedContentVisibilityChanged(isVisibleRequested);
+    }
+
+    @Test
+    public void testOnVisibleRequestedChanged_noRecording_doesNotNotifyCallback() {
+        // WHEN a recording is not ongoing.
+        assertThat(mContentRecorder.isCurrentlyRecording()).isFalse();
+
+        // WHEN the child requests a visibility change.
+        boolean isVisibleRequested = true;
+        mContentRecorder.onVisibleRequestedChanged(isVisibleRequested);
+
+        // THEN the visibility change callback is not notified.
+        verify(mMediaProjectionManagerWrapper, never())
+                .notifyActiveProjectionCapturedContentVisibilityChanged(isVisibleRequested);
+
+        // WHEN the child requests a visibility change.
+        isVisibleRequested = false;
+        mContentRecorder.onVisibleRequestedChanged(isVisibleRequested);
+
+        // THEN the visibility change callback is not notified.
+        verify(mMediaProjectionManagerWrapper, never())
+                .notifyActiveProjectionCapturedContentVisibilityChanged(isVisibleRequested);
     }
 
     @Test
@@ -324,6 +429,9 @@ public class ContentRecorderTests extends WindowTestsBase {
         int scaledWidth = Math.round((float) displayAreaBounds.width() / xScale);
         int xInset = (sSurfaceSize.x - scaledWidth) / 2;
         verify(mTransaction, atLeastOnce()).setPosition(mRecordedSurface, xInset, 0);
+        // THEN the resize callback is notified.
+        verify(mMediaProjectionManagerWrapper).notifyActiveProjectionCapturedContentResized(
+                displayAreaBounds.width(), displayAreaBounds.height());
     }
 
     private static class RecordingTestToken extends Binder {

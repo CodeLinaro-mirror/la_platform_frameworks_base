@@ -25,6 +25,7 @@ import com.android.internal.logging.testing.UiEventLoggerFake
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.dump.DumpManager
 import com.android.systemui.plugins.statusbar.StatusBarStateController
+import com.android.systemui.shade.ShadeExpansionStateManager
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -36,6 +37,7 @@ import org.mockito.ArgumentMatchers.anyFloat
 import org.mockito.ArgumentMatchers.anyInt
 import org.mockito.ArgumentMatchers.eq
 import org.mockito.Mock
+import org.mockito.Mockito
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.verify
 import org.mockito.Mockito.`when` as whenever
@@ -48,6 +50,7 @@ class StatusBarStateControllerImplTest : SysuiTestCase() {
 
     @Mock lateinit var interactionJankMonitor: InteractionJankMonitor
     @Mock private lateinit var mockDarkAnimator: ObjectAnimator
+    @Mock private lateinit var shadeExpansionStateManager: ShadeExpansionStateManager
 
     private lateinit var controller: StatusBarStateControllerImpl
     private lateinit var uiEventLogger: UiEventLoggerFake
@@ -62,7 +65,7 @@ class StatusBarStateControllerImplTest : SysuiTestCase() {
         controller = object : StatusBarStateControllerImpl(
             uiEventLogger,
             mock(DumpManager::class.java),
-            interactionJankMonitor
+            interactionJankMonitor, shadeExpansionStateManager
         ) {
             override fun createDarkAnimator(): ObjectAnimator { return mockDarkAnimator }
         }
@@ -149,5 +152,19 @@ class StatusBarStateControllerImplTest : SysuiTestCase() {
         // waiting an extra frame. Waiting an extra frame will cause a relayout (which is expensive)
         // and cause us to drop a frame during the LOCKSCREEN_TRANSITION_FROM_AOD CUJ.
         assertEquals(0.99f, controller.dozeAmount, 0.009f)
+    }
+
+    @Test
+    fun testSetDreamState_invokesCallback() {
+        val listener = mock(StatusBarStateController.StateListener::class.java)
+        controller.addCallback(listener)
+
+        controller.setIsDreaming(true)
+        verify(listener).onDreamingChanged(true)
+
+        Mockito.clearInvocations(listener)
+
+        controller.setIsDreaming(false)
+        verify(listener).onDreamingChanged(false)
     }
 }

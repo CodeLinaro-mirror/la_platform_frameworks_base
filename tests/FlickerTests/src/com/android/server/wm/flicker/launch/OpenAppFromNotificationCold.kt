@@ -18,13 +18,13 @@ package com.android.server.wm.flicker.launch
 
 import android.platform.test.annotations.Postsubmit
 import android.platform.test.annotations.Presubmit
-import android.platform.test.annotations.RequiresDevice
-import com.android.server.wm.flicker.FlickerParametersRunnerFactory
-import com.android.server.wm.flicker.FlickerTestParameter
-import com.android.server.wm.flicker.FlickerTestParameterFactory
-import com.android.server.wm.flicker.dsl.FlickerBuilder
+import android.tools.common.datatypes.component.ComponentNameMatcher
+import android.tools.device.flicker.junit.FlickerParametersRunnerFactory
+import android.tools.device.flicker.legacy.FlickerBuilder
+import android.tools.device.flicker.legacy.FlickerTest
+import android.tools.device.flicker.legacy.FlickerTestFactory
+import androidx.test.filters.RequiresDevice
 import com.android.server.wm.flicker.statusBarLayerPositionAtEnd
-import com.android.server.wm.traces.common.ComponentNameMatcher
 import org.junit.FixMethodOrder
 import org.junit.Ignore
 import org.junit.Test
@@ -44,8 +44,8 @@ import org.junit.runners.Parameterized
 @Parameterized.UseParametersRunnerFactory(FlickerParametersRunnerFactory::class)
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
 @Postsubmit
-open class OpenAppFromNotificationCold(testSpec: FlickerTestParameter) :
-    OpenAppFromNotificationWarm(testSpec) {
+open class OpenAppFromNotificationCold(flicker: FlickerTest) :
+    OpenAppFromNotificationWarm(flicker) {
     /** {@inheritDoc} */
     override val transition: FlickerBuilder.() -> Unit
         get() = {
@@ -61,13 +61,9 @@ open class OpenAppFromNotificationCold(testSpec: FlickerTestParameter) :
             }
         }
 
-    @Postsubmit
-    @Test
-    override fun appWindowBecomesVisible() = appWindowBecomesVisible_coldStart()
+    @Presubmit @Test override fun appWindowBecomesVisible() = appWindowBecomesVisible_coldStart()
 
-    @Postsubmit
-    @Test
-    override fun appLayerBecomesVisible() = appLayerBecomesVisible_coldStart()
+    @Presubmit @Test override fun appLayerBecomesVisible() = appLayerBecomesVisible_coldStart()
 
     /** {@inheritDoc} */
     @Test
@@ -89,9 +85,7 @@ open class OpenAppFromNotificationCold(testSpec: FlickerTestParameter) :
      * Checks the position of the [ComponentNameMatcher.STATUS_BAR] at the start and end of the
      * transition
      */
-    @Presubmit
-    @Test
-    open fun statusBarLayerPositionAtEnd() = testSpec.statusBarLayerPositionAtEnd()
+    @Presubmit @Test open fun statusBarLayerPositionAtEnd() = flicker.statusBarLayerPositionAtEnd()
 
     /** {@inheritDoc} */
     @Test
@@ -107,13 +101,13 @@ open class OpenAppFromNotificationCold(testSpec: FlickerTestParameter) :
         /**
          * Creates the test configurations.
          *
-         * See [FlickerTestParameterFactory.getConfigNonRotationTests] for configuring repetitions,
-         * screen orientation and navigation modes.
+         * See [FlickerTestFactory.nonRotationTests] for configuring screen orientation and
+         * navigation modes.
          */
         @Parameterized.Parameters(name = "{0}")
         @JvmStatic
-        fun getParams(): Collection<FlickerTestParameter> {
-            return FlickerTestParameterFactory.getInstance().getConfigNonRotationTests()
+        fun getParams(): Collection<FlickerTest> {
+            return FlickerTestFactory.nonRotationTests()
         }
     }
 }

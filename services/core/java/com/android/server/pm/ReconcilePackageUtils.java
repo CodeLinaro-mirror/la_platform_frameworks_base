@@ -35,6 +35,7 @@ import com.android.server.pm.pkg.AndroidPackage;
 import com.android.server.pm.pkg.parsing.ParsingPackageUtils;
 import com.android.server.utils.WatchedLongSparseArray;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -48,14 +49,14 @@ import java.util.Map;
  * as install) led to the request.
  */
 final class ReconcilePackageUtils {
-    public static Map<String, ReconciledPackage> reconcilePackages(
+    public static List<ReconciledPackage> reconcilePackages(
             List<InstallRequest> installRequests,
             Map<String, AndroidPackage> allPackages,
             Map<String, Settings.VersionInfo> versionInfos,
             SharedLibrariesImpl sharedLibraries,
             KeySetManagerService ksms, Settings settings)
             throws ReconcileFailure {
-        final Map<String, ReconciledPackage> result = new ArrayMap<>(installRequests.size());
+        final List<ReconciledPackage> result = new ArrayList<>(installRequests.size());
 
         // make a copy of the existing set of packages so we can combine them with incoming packages
         final ArrayMap<String, AndroidPackage> combinedPackages =
@@ -81,12 +82,13 @@ final class ReconcilePackageUtils {
                 for (SharedLibraryInfo info : allowedSharedLibInfos) {
                     if (!SharedLibraryUtils.addSharedLibraryToPackageVersionMap(
                             incomingSharedLibraries, info)) {
-                        throw new ReconcileFailure("Shared Library " + info.getName()
-                                + " is being installed twice in this set!");
+                        throw ReconcileFailure.ofInternalError(
+                                "Shared Library " + info.getName()
+                                + " is being installed twice in this set!",
+                                PackageManagerException.INTERNAL_ERROR_SHARED_LIB_INSTALLED_TWICE);
                     }
                 }
             }
-
 
 
             final DeletePackageAction deletePackageAction;
@@ -213,8 +215,9 @@ final class ReconcilePackageUtils {
                     if (sharedUserSetting != null) {
                         if (sharedUserSetting.signaturesChanged != null
                                 && !PackageManagerServiceUtils.canJoinSharedUserId(
-                                parsedPackage.getSigningDetails(),
-                                sharedUserSetting.getSigningDetails())) {
+                                parsedPackage.getPackageName(), parsedPackage.getSigningDetails(),
+                                sharedUserSetting,
+                                PackageManagerServiceUtils.SHARED_USER_ID_JOIN_TYPE_SYSTEM)) {
                             if (SystemProperties.getInt("ro.product.first_api_level", 0) <= 29) {
                                 // Mismatched signatures is an error and silently skipping system
                                 // packages will likely break the device in unforeseen ways.
@@ -257,13 +260,11 @@ final class ReconcilePackageUtils {
                 }
             }
 
-            result.put(installPackageName,
+            final ReconciledPackage reconciledPackage =
                     new ReconciledPackage(installRequests, allPackages, installRequest,
                             deletePackageAction, allowedSharedLibInfos, signingDetails,
-                            sharedUserSignaturesChanged, removeAppKeySetData));
-        }
+                            sharedUserSignaturesChanged, removeAppKeySetData);
 
-        for (InstallRequest installRequest : installRequests) {
             // Check all shared libraries and map to their actual file path.
             // We only do this here for apps not on a system dir, because those
             // are the only ones that can fail an install due to this.  We
@@ -271,24 +272,21 @@ final class ReconcilePackageUtils {
             // library paths after the scan is done. Also during the initial
             // scan don't update any libs as we do this wholesale after all
             // apps are scanned to avoid dependency based scanning.
-            if ((installRequest.getScanFlags() & SCAN_BOOTING) != 0
-                    || (installRequest.getParseFlags() & ParsingPackageUtils.PARSE_IS_SYSTEM_DIR)
-                    != 0) {
-                continue;
+            if ((installRequest.getScanFlags() & SCAN_BOOTING) == 0
+                    && (installRequest.getParseFlags() & ParsingPackageUtils.PARSE_IS_SYSTEM_DIR)
+                    == 0) {
+                try {
+                    reconciledPackage.mCollectedSharedLibraryInfos =
+                            sharedLibraries.collectSharedLibraryInfos(
+                                    installRequest.getParsedPackage(), combinedPackages,
+                                    incomingSharedLibraries);
+                } catch (PackageManagerException e) {
+                    throw new ReconcileFailure(e.error, e.getMessage());
+                }
             }
-            final String installPackageName = installRequest.getParsedPackage().getPackageName();
-            try {
-                result.get(installPackageName).mCollectedSharedLibraryInfos =
-                        sharedLibraries.collectSharedLibraryInfos(
-                                installRequest.getParsedPackage(), combinedPackages,
-                                incomingSharedLibraries);
-            } catch (PackageManagerException e) {
-                throw new ReconcileFailure(e.error, e.getMessage());
-            }
-        }
 
-        for (InstallRequest installRequest : installRequests) {
             installRequest.onReconcileFinished();
+            result.add(reconciledPackage);
         }
 
         return result;

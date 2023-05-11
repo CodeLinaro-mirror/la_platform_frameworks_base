@@ -16,15 +16,15 @@
 
 package com.android.server.wm.flicker.rotation
 
-import android.platform.test.annotations.FlakyTest
+import android.platform.test.annotations.IwTest
 import android.platform.test.annotations.Presubmit
+import android.tools.common.datatypes.component.ComponentNameMatcher
+import android.tools.device.flicker.junit.FlickerParametersRunnerFactory
+import android.tools.device.flicker.legacy.FlickerBuilder
+import android.tools.device.flicker.legacy.FlickerTest
+import android.tools.device.flicker.legacy.FlickerTestFactory
 import androidx.test.filters.RequiresDevice
-import com.android.server.wm.flicker.FlickerParametersRunnerFactory
-import com.android.server.wm.flicker.FlickerTestParameter
-import com.android.server.wm.flicker.FlickerTestParameterFactory
-import com.android.server.wm.flicker.dsl.FlickerBuilder
 import com.android.server.wm.flicker.helpers.SimpleAppHelper
-import com.android.server.wm.traces.common.ComponentNameMatcher
 import org.junit.FixMethodOrder
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -77,7 +77,7 @@ import org.junit.runners.Parameterized
 @RunWith(Parameterized::class)
 @Parameterized.UseParametersRunnerFactory(FlickerParametersRunnerFactory::class)
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
-class ChangeAppRotationTest(testSpec: FlickerTestParameter) : RotationTransition(testSpec) {
+open class ChangeAppRotationTest(flicker: FlickerTest) : RotationTransition(flicker) {
     override val testApp = SimpleAppHelper(instrumentation)
     override val transition: FlickerBuilder.() -> Unit
         get() = {
@@ -92,15 +92,15 @@ class ChangeAppRotationTest(testSpec: FlickerTestParameter) : RotationTransition
     @Presubmit
     @Test
     fun focusChanges() {
-        testSpec.assertEventLog { this.focusChanges(testApp.`package`) }
+        flicker.assertEventLog { this.focusChanges(testApp.`package`) }
     }
 
     /**
-     * Checks that the [ComponentMatcher.ROTATION] layer appears during the transition, doesn't
+     * Checks that the [ComponentNameMatcher.ROTATION] layer appears during the transition, doesn't
      * flicker, and disappears before the transition is complete
      */
     fun rotationLayerAppearsAndVanishesAssertion() {
-        testSpec.assertLayers {
+        flicker.assertLayers {
             this.isVisible(testApp)
                 .then()
                 .isVisible(ComponentNameMatcher.ROTATION)
@@ -111,7 +111,7 @@ class ChangeAppRotationTest(testSpec: FlickerTestParameter) : RotationTransition
     }
 
     /**
-     * Checks that the [ComponentMatcher.ROTATION] layer appears during the transition, doesn't
+     * Checks that the [ComponentNameMatcher.ROTATION] layer appears during the transition, doesn't
      * flicker, and disappears before the transition is complete
      */
     @Presubmit
@@ -120,22 +120,25 @@ class ChangeAppRotationTest(testSpec: FlickerTestParameter) : RotationTransition
         rotationLayerAppearsAndVanishesAssertion()
     }
 
-    /** {@inheritDoc} */
-    @FlakyTest(bugId = 206753786)
     @Test
-    override fun navBarLayerPositionAtStartAndEnd() = super.navBarLayerPositionAtStartAndEnd()
+    @IwTest(focusArea = "framework")
+    override fun cujCompleted() {
+        super.cujCompleted()
+        focusChanges()
+        rotationLayerAppearsAndVanishes()
+    }
 
     companion object {
         /**
          * Creates the test configurations.
          *
-         * See [FlickerTestParameterFactory.getConfigRotationTests] for configuring repetitions,
-         * screen orientation and navigation modes.
+         * See [FlickerTestFactory.rotationTests] for configuring screen orientation and navigation
+         * modes.
          */
         @Parameterized.Parameters(name = "{0}")
         @JvmStatic
-        fun getParams(): Collection<FlickerTestParameter> {
-            return FlickerTestParameterFactory.getInstance().getConfigRotationTests()
+        fun getParams(): Collection<FlickerTest> {
+            return FlickerTestFactory.rotationTests()
         }
     }
 }

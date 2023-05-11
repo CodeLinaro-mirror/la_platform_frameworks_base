@@ -16,21 +16,17 @@
 
 package com.android.server.biometrics.sensors.fingerprint.aidl;
 
-import static android.hardware.biometrics.BiometricFingerprintConstants.FINGERPRINT_ACQUIRED_START;
-import static android.hardware.biometrics.BiometricFingerprintConstants.FINGERPRINT_ACQUIRED_VENDOR;
-
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.TaskStackListener;
 import android.content.Context;
 import android.hardware.biometrics.BiometricAuthenticator;
-import android.hardware.biometrics.BiometricConstants;
 import android.hardware.biometrics.BiometricFingerprintConstants;
 import android.hardware.biometrics.BiometricFingerprintConstants.FingerprintAcquired;
 import android.hardware.biometrics.BiometricManager.Authenticators;
 import android.hardware.biometrics.common.ICancellationSignal;
-import android.hardware.biometrics.common.OperationContext;
 import android.hardware.biometrics.fingerprint.PointerContext;
+import android.hardware.fingerprint.FingerprintAuthenticateOptions;
 import android.hardware.fingerprint.FingerprintSensorPropertiesInternal;
 import android.hardware.fingerprint.ISidefpsController;
 import android.hardware.fingerprint.IUdfpsOverlay;
@@ -47,6 +43,7 @@ import com.android.internal.R;
 import com.android.server.biometrics.log.BiometricContext;
 import com.android.server.biometrics.log.BiometricLogger;
 import com.android.server.biometrics.log.CallbackWithProbe;
+import com.android.server.biometrics.log.OperationContextExt;
 import com.android.server.biometrics.log.Probe;
 import com.android.server.biometrics.sensors.AuthSessionCoordinator;
 import com.android.server.biometrics.sensors.AuthenticationClient;
@@ -69,7 +66,8 @@ import java.util.function.Supplier;
  * Fingerprint-specific authentication client supporting the {@link
  * android.hardware.biometrics.fingerprint.IFingerprint} AIDL interface.
  */
-class FingerprintAuthenticationClient extends AuthenticationClient<AidlSession>
+class FingerprintAuthenticationClient
+        extends AuthenticationClient<AidlSession, FingerprintAuthenticateOptions>
         implements Udfps, LockoutConsumer, PowerPressHandler {
     private static final String TAG = "FingerprintAuthenticationClient";
     private static final int MESSAGE_AUTH_SUCCESS = 2;
@@ -101,13 +99,11 @@ class FingerprintAuthenticationClient extends AuthenticationClient<AidlSession>
             @NonNull IBinder token,
             long requestId,
             @NonNull ClientMonitorCallbackConverter listener,
-            int targetUserId,
             long operationId,
             boolean restricted,
-            @NonNull String owner,
+            @NonNull FingerprintAuthenticateOptions options,
             int cookie,
             boolean requireConfirmation,
-            int sensorId,
             @NonNull BiometricLogger biometricLogger,
             @NonNull BiometricContext biometricContext,
             boolean isStrongBiometric,
@@ -126,13 +122,11 @@ class FingerprintAuthenticationClient extends AuthenticationClient<AidlSession>
                 lazyDaemon,
                 token,
                 listener,
-                targetUserId,
                 operationId,
                 restricted,
-                owner,
+                options,
                 cookie,
                 requireConfirmation,
-                sensorId,
                 biometricLogger,
                 biometricContext,
                 isStrongBiometric,
@@ -140,7 +134,6 @@ class FingerprintAuthenticationClient extends AuthenticationClient<AidlSession>
                 null /* lockoutCache */,
                 allowBackgroundAuthentication,
                 false /* shouldVibrate */,
-                false /* isKeyguardBypassEnabled */,
                 biometricStrength);
         setRequestId(requestId);
         mSensorOverlays = new SensorOverlays(udfpsOverlayController,
@@ -214,13 +207,11 @@ class FingerprintAuthenticationClient extends AuthenticationClient<AidlSession>
         return false;
     }
 
-    public void handleAuthenticate(
+    @Override
+    public void onAuthenticated(
             BiometricAuthenticator.Identifier identifier,
             boolean authenticated,
             ArrayList<Byte> token) {
-        if (authenticated && mSensorProps.isAnySidefpsType()) {
-            Slog.i(TAG, "(sideFPS): No power press detected, sending auth");
-        }
         super.onAuthenticated(identifier, authenticated, token);
         if (authenticated) {
             mState = STATE_STOPPED;
@@ -231,74 +222,13 @@ class FingerprintAuthenticationClient extends AuthenticationClient<AidlSession>
     }
 
     @Override
-    public void onAuthenticated(
-            BiometricAuthenticator.Identifier identifier,
-            boolean authenticated,
-            ArrayList<Byte> token) {
-
-        mHandler.post(
-                () -> {
-                    long delay = 0;
-                    if (authenticated && mSensorProps.isAnySidefpsType()) {
-                        delay = isKeyguard() ? mWaitForAuthKeyguard : mWaitForAuthBp;
-
-                        if (mSideFpsLastAcquireStartTime != -1) {
-                            delay = Math.max(0,
-                                    delay - (mClock.millis() - mSideFpsLastAcquireStartTime));
-                        }
-
-                        Slog.i(TAG, "(sideFPS) Auth succeeded, sideFps "
-                                + "waiting for power until: " + delay + "ms");
-                    }
-
-                    if (mHandler.hasMessages(MESSAGE_FINGER_UP)) {
-                        Slog.i(TAG, "Finger up detected, sending auth");
-                        delay = 0;
-                    }
-
-                    mAuthSuccessRunnable =
-                            () -> handleAuthenticate(identifier, authenticated, token);
-                    mHandler.postDelayed(
-                            mAuthSuccessRunnable,
-                            MESSAGE_AUTH_SUCCESS,
-                            delay);
-                });
-    }
-
-    @Override
     public void onAcquired(@FingerprintAcquired int acquiredInfo, int vendorCode) {
         // For UDFPS, notify SysUI with acquiredInfo, so that the illumination can be turned off
         // for most ACQUIRED messages. See BiometricFingerprintConstants#FingerprintAcquired
         mSensorOverlays.ifUdfps(controller -> controller.onAcquired(getSensorId(), acquiredInfo));
         super.onAcquired(acquiredInfo, vendorCode);
-        if (mSensorProps.isAnySidefpsType()) {
-            if (acquiredInfo == FINGERPRINT_ACQUIRED_START) {
-                mSideFpsLastAcquireStartTime = mClock.millis();
-            }
-            final boolean shouldLookForVendor =
-                    mSkipWaitForPowerAcquireMessage == FINGERPRINT_ACQUIRED_VENDOR;
-            final boolean acquireMessageMatch = acquiredInfo == mSkipWaitForPowerAcquireMessage;
-            final boolean vendorMessageMatch = vendorCode == mSkipWaitForPowerVendorAcquireMessage;
-            final boolean ignorePowerPress =
-                    acquireMessageMatch && (!shouldLookForVendor || vendorMessageMatch);
-
-            if (ignorePowerPress) {
-                Slog.d(TAG, "(sideFPS) onFingerUp");
-                mHandler.post(() -> {
-                    if (mHandler.hasMessages(MESSAGE_AUTH_SUCCESS)) {
-                        Slog.d(TAG, "(sideFPS) skipping wait for power");
-                        mHandler.removeMessages(MESSAGE_AUTH_SUCCESS);
-                        mHandler.post(mAuthSuccessRunnable);
-                    } else {
-                        mHandler.postDelayed(() -> {
-                        }, MESSAGE_FINGER_UP, mFingerUpIgnoresPower);
-                    }
-                });
-            }
-        }
         PerformanceTracker pt = PerformanceTracker.getInstanceForSensorId(getSensorId());
         pt.incrementAcquireForUser(getTargetUserId(), isCryptoOperation());
-
     }
 
     @Override
@@ -331,7 +261,7 @@ class FingerprintAuthenticationClient extends AuthenticationClient<AidlSession>
     private ICancellationSignal doAuthenticate() throws RemoteException {
         final AidlSession session = getFreshDaemon();
 
-        final OperationContext opContext = getOperationContext();
+        final OperationContextExt opContext = getOperationContext();
         getBiometricContext().subscribe(opContext, ctx -> {
             if (session.hasContextMethods()) {
                 try {
@@ -354,7 +284,8 @@ class FingerprintAuthenticationClient extends AuthenticationClient<AidlSession>
         }
 
         if (session.hasContextMethods()) {
-            return session.getSession().authenticateWithContext(mOperationId, opContext);
+            return session.getSession().authenticateWithContext(
+                    mOperationId, opContext.toAidlContext(getOptions()));
         } else {
             return session.getSession().authenticate(mOperationId);
         }
@@ -381,23 +312,17 @@ class FingerprintAuthenticationClient extends AuthenticationClient<AidlSession>
     }
 
     @Override
-    public void onPointerDown(int x, int y, float minor, float major) {
+    public void onPointerDown(PointerContext pc) {
         try {
             mIsPointerDown = true;
             mState = STATE_STARTED;
 
             final AidlSession session = getFreshDaemon();
             if (session.hasContextMethods()) {
-                final PointerContext context = new PointerContext();
-                context.pointerId = 0;
-                context.x = x;
-                context.y = y;
-                context.minor = minor;
-                context.major = major;
-                context.isAod = getBiometricContext().isAod();
-                session.getSession().onPointerDownWithContext(context);
+                session.getSession().onPointerDownWithContext(pc);
             } else {
-                session.getSession().onPointerDown(0 /* pointerId */, x, y, minor, major);
+                session.getSession().onPointerDown(pc.pointerId, (int) pc.x, (int) pc.y, pc.minor,
+                        pc.major);
             }
 
             if (getListener() != null) {
@@ -409,18 +334,16 @@ class FingerprintAuthenticationClient extends AuthenticationClient<AidlSession>
     }
 
     @Override
-    public void onPointerUp() {
+    public void onPointerUp(PointerContext pc) {
         try {
             mIsPointerDown = false;
             mState = STATE_STARTED_PAUSED_ATTEMPTED;
 
             final AidlSession session = getFreshDaemon();
             if (session.hasContextMethods()) {
-                final PointerContext context = new PointerContext();
-                context.pointerId = 0;
-                session.getSession().onPointerUpWithContext(context);
+                session.getSession().onPointerUpWithContext(pc);
             } else {
-                session.getSession().onPointerUp(0 /* pointerId */);
+                session.getSession().onPointerUp(pc.pointerId);
             }
 
             if (getListener() != null) {
@@ -500,18 +423,5 @@ class FingerprintAuthenticationClient extends AuthenticationClient<AidlSession>
     }
 
     @Override
-    public void onPowerPressed() {
-        if (mSensorProps.isAnySidefpsType()) {
-            Slog.i(TAG, "(sideFPS): onPowerPressed");
-            mHandler.post(() -> {
-                Slog.i(TAG, "(sideFPS): finishing auth");
-                // Ignore auths after a power has been detected
-                mHandler.removeMessages(MESSAGE_AUTH_SUCCESS);
-                // Do not call onError() as that will send an additional callback to coex.
-                onErrorInternal(BiometricConstants.BIOMETRIC_ERROR_POWER_PRESSED,
-                        0, true);
-                mSensorOverlays.hide(getSensorId());
-            });
-        }
-    }
+    public void onPowerPressed() { }
 }

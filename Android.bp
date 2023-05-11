@@ -95,17 +95,22 @@ filegroup {
         ":platform-compat-native-aidl",
 
         // AIDL sources from external directories
+        ":android.hardware.biometrics.common-V3-java-source",
+        ":android.hardware.biometrics.fingerprint-V3-java-source",
         ":android.hardware.gnss-V2-java-source",
         ":android.hardware.graphics.common-V3-java-source",
-        ":android.hardware.security.keymint-V2-java-source",
+        ":android.hardware.keymaster-V4-java-source",
+        ":android.hardware.security.keymint-V3-java-source",
         ":android.hardware.security.secureclock-V1-java-source",
-        ":android.hardware.tv.tuner-V1-java-source",
+        ":android.hardware.thermal-V1-java-source",
+        ":android.hardware.tv.tuner-V2-java-source",
         ":android.security.apc-java-source",
         ":android.security.authorization-java-source",
         ":android.security.legacykeystore-java-source",
         ":android.security.maintenance-java-source",
         ":android.security.metrics-java-source",
-        ":android.system.keystore2-V1-java-source",
+        ":android.system.keystore2-V3-java-source",
+        ":android.hardware.cas-V1-java-source",
         ":credstore_aidl",
         ":dumpstate_aidl",
         ":framework_native_aidl",
@@ -196,13 +201,14 @@ java_library {
         "updatable-driver-protos",
         "ota_metadata_proto_java",
         "android.hidl.base-V1.0-java",
+        "android.hardware.cas-V1-java", // AIDL
         "android.hardware.cas-V1.0-java",
         "android.hardware.cas-V1.1-java",
         "android.hardware.cas-V1.2-java",
         "android.hardware.contexthub-V1.0-java",
         "android.hardware.contexthub-V1.1-java",
         "android.hardware.contexthub-V1.2-java",
-        "android.hardware.contexthub-V1-java",
+        "android.hardware.contexthub-V2-java",
         "android.hardware.gnss-V1.0-java",
         "android.hardware.gnss-V2.1-java",
         "android.hardware.health-V1.0-java-constants",
@@ -213,13 +219,13 @@ java_library {
         "android.hardware.radio-V1.4-java",
         "android.hardware.radio-V1.5-java",
         "android.hardware.radio-V1.6-java",
-        "android.hardware.radio.data-V1-java",
+        "android.hardware.radio.data-V2-java",
         "android.hardware.radio.ims-V1-java",
-        "android.hardware.radio.messaging-V1-java",
-        "android.hardware.radio.modem-V1-java",
+        "android.hardware.radio.messaging-V2-java",
+        "android.hardware.radio.modem-V2-java",
         "android.hardware.radio.network-V2-java",
-        "android.hardware.radio.sim-V1-java",
-        "android.hardware.radio.voice-V1-java",
+        "android.hardware.radio.sim-V2-java",
+        "android.hardware.radio.voice-V2-java",
         "android.hardware.thermal-V1.0-java-constants",
         "android.hardware.thermal-V1.0-java",
         "android.hardware.thermal-V1.1-java",
@@ -228,6 +234,7 @@ java_library {
         "android.hardware.usb-V1.0-java-constants",
         "android.hardware.usb-V1.1-java-constants",
         "android.hardware.usb-V1.2-java-constants",
+        "android.hardware.usb.gadget-V1-java",
         "android.hardware.usb.gadget-V1.0-java",
         "android.hardware.usb.gadget-V1.1-java",
         "android.hardware.usb.gadget-V1.2-java",
@@ -332,7 +339,10 @@ java_defaults {
             "packages/modules/Bluetooth/framework/aidl-export",
             "packages/modules/Connectivity/framework/aidl-export",
             "packages/modules/Media/apex/aidl/stable",
+            "hardware/interfaces/biometrics/common/aidl",
+            "hardware/interfaces/biometrics/fingerprint/aidl",
             "hardware/interfaces/graphics/common/aidl",
+            "hardware/interfaces/keymaster/aidl",
         ],
     },
     dxflags: [
@@ -397,7 +407,8 @@ java_defaults {
         "modules-utils-uieventlogger-interface",
         "framework-permission-aidl-java",
         "spatializer-aidl-java",
-        "audiopolicy-types-aidl-java",
+        "audiopolicy-aidl-java",
+        "sounddose-aidl-java",
     ],
 }
 
@@ -568,7 +579,7 @@ metalava_framework_docs_args = "" +
     "--hide Todo " +
     "--hide Typo " +
     "--hide UnavailableSymbol " +
-    "--manifest $(location core/res/AndroidManifest.xml) "
+    "--manifest $(location :frameworks-base-core-AndroidManifest.xml) "
 
 packages_to_document = [
     "android",
@@ -605,7 +616,7 @@ stubs_defaults {
     sdk_version: "none",
     system_modules: "none",
     java_version: "1.8",
-    arg_files: ["core/res/AndroidManifest.xml"],
+    arg_files: [":frameworks-base-core-AndroidManifest.xml"],
     aidl: {
         local_include_dirs: [
             "media/aidl",
@@ -617,7 +628,10 @@ stubs_defaults {
             "packages/modules/Bluetooth/framework/aidl-export",
             "packages/modules/Connectivity/framework/aidl-export",
             "packages/modules/Media/apex/aidl/stable",
+            "hardware/interfaces/biometrics/common/aidl",
+            "hardware/interfaces/biometrics/fingerprint/aidl",
             "hardware/interfaces/graphics/common/aidl",
+            "hardware/interfaces/keymaster/aidl",
         ],
     },
     // These are libs from framework-internal-utils that are required (i.e. being referenced)

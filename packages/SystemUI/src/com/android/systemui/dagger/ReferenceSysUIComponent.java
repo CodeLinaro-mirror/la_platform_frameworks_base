@@ -16,6 +16,8 @@
 
 package com.android.systemui.dagger;
 
+import com.android.systemui.keyguard.CustomizationProvider;
+import com.android.systemui.statusbar.NotificationInsetsModule;
 import com.android.systemui.statusbar.QsFrameTranslateModule;
 
 import dagger.Subcomponent;
@@ -27,6 +29,7 @@ import dagger.Subcomponent;
 @Subcomponent(modules = {
         DefaultComponentBinder.class,
         DependencyProvider.class,
+        NotificationInsetsModule.class,
         QsFrameTranslateModule.class,
         SystemUIBinder.class,
         SystemUIModule.class,
@@ -42,4 +45,9 @@ public interface ReferenceSysUIComponent extends SysUIComponent {
     interface Builder extends SysUIComponent.Builder {
         ReferenceSysUIComponent build();
     }
+
+    /**
+     * Member injection into the supplied argument.
+     */
+    void inject(CustomizationProvider customizationProvider);
 }

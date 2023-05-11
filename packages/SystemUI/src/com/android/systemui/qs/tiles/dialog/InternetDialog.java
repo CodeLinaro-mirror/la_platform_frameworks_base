@@ -249,15 +249,7 @@ public class InternetDialog extends SystemUIDialog implements
         mBackgroundOn = mContext.getDrawable(R.drawable.settingslib_switch_bar_bg_on);
         mInternetDialogTitle.setText(getDialogTitleText());
         mInternetDialogTitle.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
-
-        TypedArray typedArray = mContext.obtainStyledAttributes(
-                new int[]{android.R.attr.selectableItemBackground});
-        try {
-            mBackgroundOff = typedArray.getDrawable(0 /* index */);
-        } finally {
-            typedArray.recycle();
-        }
-
+        mBackgroundOff = mContext.getDrawable(R.drawable.internet_dialog_selected_effect);
         setOnClickListener();
         mTurnWifiOnLayout.setBackground(null);
         mAirplaneModeButton.setVisibility(
@@ -366,6 +358,9 @@ public class InternetDialog extends SystemUIDialog implements
                     if (!isChecked && shouldShowMobileDialog()) {
                         showTurnOffMobileDialog();
                     } else if (!shouldShowMobileDialog()) {
+                        if (mInternetDialogController.isMobileDataEnabled() == isChecked) {
+                            return;
+                        }
                         mInternetDialogController.setMobileDataEnabled(mContext, mDefaultDataSubId,
                                 isChecked, false);
                     }
@@ -801,6 +796,11 @@ public class InternetDialog extends SystemUIDialog implements
 
     @Override
     public void onDisplayInfoChanged(TelephonyDisplayInfo telephonyDisplayInfo) {
+        mHandler.post(() -> updateDialog(true /* shouldUpdateMobileNetwork */));
+    }
+
+    @Override
+    public void onCarrierNetworkChange(boolean active) {
         mHandler.post(() -> updateDialog(true /* shouldUpdateMobileNetwork */));
     }
 

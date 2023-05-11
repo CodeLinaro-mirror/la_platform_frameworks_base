@@ -35,6 +35,7 @@ import android.app.AlarmManager;
 import android.app.AppGlobals;
 import android.app.AppOpsManager;
 import android.app.AppOpsManagerInternal;
+import android.app.BroadcastOptions;
 import android.app.IApplicationThread;
 import android.app.IServiceConnection;
 import android.app.KeyguardManager;
@@ -257,6 +258,9 @@ class AppWidgetServiceImpl extends IAppWidgetService.Stub implements WidgetBacku
     private boolean mIsProviderInfoPersisted;
     private boolean mIsCombinedBroadcastEnabled;
 
+    // Mark widget lifecycle broadcasts as 'interactive'
+    private Bundle mInteractiveBroadcast;
+
     AppWidgetServiceImpl(Context context) {
         mContext = context;
     }
@@ -285,6 +289,11 @@ class AppWidgetServiceImpl extends IAppWidgetService.Stub implements WidgetBacku
         if (DEBUG_PROVIDER_INFO_CACHE && !mIsProviderInfoPersisted) {
             Slog.d(TAG, "App widget provider info will not be persisted on this device");
         }
+
+        BroadcastOptions opts = BroadcastOptions.makeBasic();
+        opts.setBackgroundActivityStartsAllowed(false);
+        opts.setInteractive(true);
+        mInteractiveBroadcast = opts.toBundle();
 
         computeMaximumWidgetBitmapMemory();
         registerBroadcastReceiver();
@@ -579,12 +588,6 @@ class AppWidgetServiceImpl extends IAppWidgetService.Stub implements WidgetBacku
                 }
             }
 
-            if (onClickIntent != null) {
-                views.setOnClickPendingIntent(android.R.id.background,
-                        PendingIntent.getActivity(mContext, 0, onClickIntent,
-                                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE));
-            }
-
             Icon icon = appInfo.icon != 0
                     ? Icon.createWithResource(appInfo.packageName, appInfo.icon)
                     : Icon.createWithResource(mContext, android.R.drawable.sym_def_app_icon);
@@ -596,6 +599,12 @@ class AppWidgetServiceImpl extends IAppWidgetService.Stub implements WidgetBacku
             for (int j = 0; j < widgetCount; j++) {
                 Widget widget = provider.widgets.get(j);
                 if (targetWidget != null && targetWidget != widget) continue;
+                if (onClickIntent != null) {
+                    views.setOnClickPendingIntent(android.R.id.background,
+                            PendingIntent.getActivity(mContext, widget.appWidgetId, onClickIntent,
+                                    PendingIntent.FLAG_UPDATE_CURRENT
+                                       | PendingIntent.FLAG_IMMUTABLE));
+                }
                 if (widget.replaceWithMaskedViewsLocked(views)) {
                     scheduleNotifyUpdateAppWidgetLocked(widget, widget.getEffectiveViewsLocked());
                 }
@@ -817,7 +826,8 @@ class AppWidgetServiceImpl extends IAppWidgetService.Stub implements WidgetBacku
             if (host != null) {
                 host.callbacks = null;
                 pruneHostLocked(host);
-                mAppOpsManagerInternal.updateAppWidgetVisibility(host.getWidgetUids(), false);
+                mAppOpsManagerInternal.updateAppWidgetVisibility(host.getWidgetUidsIfBound(),
+                        false);
             }
         }
     }
@@ -888,12 +898,8 @@ class AppWidgetServiceImpl extends IAppWidgetService.Stub implements WidgetBacku
             Host host = lookupHostLocked(id);
 
             if (host != null) {
-                try {
-                    mAppOpsManagerInternal.updateAppWidgetVisibility(host.getWidgetUids(), false);
-                } catch (NullPointerException e) {
-                    Slog.e(TAG, "setAppWidgetHidden(): Getting host uids: " + host.toString(), e);
-                    throw e;
-                }
+                mAppOpsManagerInternal.updateAppWidgetVisibility(host.getWidgetUidsIfBound(),
+                        false);
             }
         }
     }
@@ -1022,8 +1028,9 @@ class AppWidgetServiceImpl extends IAppWidgetService.Stub implements WidgetBacku
             intent.setComponent(provider.getInfoLocked(mContext).configure);
             intent.setFlags(secureFlags);
 
-            final ActivityOptions options = ActivityOptions.makeBasic();
-            options.setIgnorePendingIntentCreatorForegroundState(true);
+            final ActivityOptions options =
+                    ActivityOptions.makeBasic().setPendingIntentCreatorBackgroundActivityStartMode(
+                            ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_DENIED);
 
             // All right, create the sender.
             final long identity = Binder.clearCallingIdentity();
@@ -1135,7 +1142,7 @@ class AppWidgetServiceImpl extends IAppWidgetService.Stub implements WidgetBacku
             } else {
                 // For any widget other then the first one, we just send update intent
                 // as we normally would.
-                sendUpdateIntentLocked(provider, new int[]{appWidgetId});
+                sendUpdateIntentLocked(provider, new int[]{appWidgetId}, true);
             }
 
             // Schedule the future updates.
@@ -1205,7 +1212,7 @@ class AppWidgetServiceImpl extends IAppWidgetService.Stub implements WidgetBacku
     @Override
     public boolean bindRemoteViewsService(String callingPackage, int appWidgetId, Intent intent,
             IApplicationThread caller, IBinder activtiyToken, IServiceConnection connection,
-            int flags) {
+            long flags) {
         final int userId = UserHandle.getCallingUserId();
         if (DEBUG) {
             Slog.i(TAG, "bindRemoteViewsService() " + userId);
@@ -2372,40 +2379,47 @@ class AppWidgetServiceImpl extends IAppWidgetService.Stub implements WidgetBacku
         if (!canSendCombinedBroadcast) {
             // If this function is called by mistake, send two separate broadcasts instead
             sendEnableIntentLocked(p);
-            sendUpdateIntentLocked(p, appWidgetIds);
+            sendUpdateIntentLocked(p, appWidgetIds, true);
             return;
         }
 
         Intent intent = new Intent(AppWidgetManager.ACTION_APPWIDGET_ENABLE_AND_UPDATE);
         intent.putExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS, appWidgetIds);
         intent.setComponent(p.id.componentName);
-        sendBroadcastAsUser(intent, p.id.getProfile());
+        // Placing a widget is something users expect to be UX-responsive, so mark this
+        // broadcast as interactive
+        sendBroadcastAsUser(intent, p.id.getProfile(), true);
     }
 
     private void sendEnableIntentLocked(Provider p) {
         Intent intent = new Intent(AppWidgetManager.ACTION_APPWIDGET_ENABLED);
         intent.setComponent(p.id.componentName);
-        sendBroadcastAsUser(intent, p.id.getProfile());
+        // Enabling the widget is something users expect to be UX-responsive, so mark this
+        // broadcast as interactive
+        sendBroadcastAsUser(intent, p.id.getProfile(), true);
     }
 
-    private void sendUpdateIntentLocked(Provider provider, int[] appWidgetIds) {
+    private void sendUpdateIntentLocked(Provider provider, int[] appWidgetIds,
+            boolean interactive) {
         Intent intent = new Intent(AppWidgetManager.ACTION_APPWIDGET_UPDATE);
         intent.putExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS, appWidgetIds);
         intent.setComponent(provider.id.componentName);
-        sendBroadcastAsUser(intent, provider.id.getProfile());
+        sendBroadcastAsUser(intent, provider.id.getProfile(), interactive);
     }
 
     private void sendDeletedIntentLocked(Widget widget) {
         Intent intent = new Intent(AppWidgetManager.ACTION_APPWIDGET_DELETED);
         intent.setComponent(widget.provider.id.componentName);
         intent.putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widget.appWidgetId);
-        sendBroadcastAsUser(intent, widget.provider.id.getProfile());
+        // Cleanup after deletion isn't an interactive UX case
+        sendBroadcastAsUser(intent, widget.provider.id.getProfile(), false);
     }
 
     private void sendDisabledIntentLocked(Provider provider) {
         Intent intent = new Intent(AppWidgetManager.ACTION_APPWIDGET_DISABLED);
         intent.setComponent(provider.id.componentName);
-        sendBroadcastAsUser(intent, provider.id.getProfile());
+        // Cleanup after disable isn't an interactive UX case
+        sendBroadcastAsUser(intent, provider.id.getProfile(), false);
     }
 
     public void sendOptionsChangedIntentLocked(Widget widget) {
@@ -2413,7 +2427,9 @@ class AppWidgetServiceImpl extends IAppWidgetService.Stub implements WidgetBacku
         intent.setComponent(widget.provider.id.componentName);
         intent.putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widget.appWidgetId);
         intent.putExtra(AppWidgetManager.EXTRA_APPWIDGET_OPTIONS, widget.options);
-        sendBroadcastAsUser(intent, widget.provider.id.getProfile());
+        // The user's changed the options, so seeing them take effect promptly is
+        // an interactive UX expectation
+        sendBroadcastAsUser(intent, widget.provider.id.getProfile(), true);
     }
 
     @GuardedBy("mLock")
@@ -3573,7 +3589,7 @@ class AppWidgetServiceImpl extends IAppWidgetService.Stub implements WidgetBacku
                                 scheduleNotifyProviderChangedLocked(widget);
                             }
                             // Now that we've told the host, push out an update.
-                            sendUpdateIntentLocked(provider, appWidgetIds);
+                            sendUpdateIntentLocked(provider, appWidgetIds, false);
                         }
                     }
                     providersUpdated = true;
@@ -3666,10 +3682,17 @@ class AppWidgetServiceImpl extends IAppWidgetService.Stub implements WidgetBacku
         return null;
     }
 
-    private void sendBroadcastAsUser(Intent intent, UserHandle userHandle) {
+    /**
+     * Sends a widget lifecycle broadcast within the specified user.  If {@code isInteractive}
+     * is specified as {@code true}, the broadcast dispatch mechanism will be told that it
+     * is related to a UX flow with user-visible expectations about timely dispatch.  This
+     * should only be used for broadcast flows that do have such expectations.
+     */
+    private void sendBroadcastAsUser(Intent intent, UserHandle userHandle, boolean isInteractive) {
         final long identity = Binder.clearCallingIdentity();
         try {
-            mContext.sendBroadcastAsUser(intent, userHandle);
+            mContext.sendBroadcastAsUser(intent, userHandle, null,
+                    isInteractive ? mInteractiveBroadcast : null);
         } finally {
             Binder.restoreCallingIdentity(identity);
         }
@@ -4345,14 +4368,15 @@ class AppWidgetServiceImpl extends IAppWidgetService.Stub implements WidgetBacku
                     PendingHostUpdate.appWidgetRemoved(appWidgetId));
         }
 
-        public SparseArray<String> getWidgetUids() {
+        public SparseArray<String> getWidgetUidsIfBound() {
             final SparseArray<String> uids = new SparseArray<>();
             for (int i = widgets.size() - 1; i >= 0; i--) {
                 final Widget widget = widgets.get(i);
                 if (widget.provider == null) {
                     if (DEBUG) {
-                        Slog.e(TAG, "Widget with no provider " + widget.toString());
+                        Slog.d(TAG, "Widget with no provider " + widget.toString());
                     }
+                    continue;
                 }
                 final ProviderId providerId = widget.provider.id;
                 uids.put(providerId.uid, providerId.componentName.getPackageName());
@@ -5008,18 +5032,20 @@ class AppWidgetServiceImpl extends IAppWidgetService.Stub implements WidgetBacku
 
         private void sendWidgetRestoreBroadcastLocked(String action, Provider provider,
                 Host host, int[] oldIds, int[] newIds, UserHandle userHandle) {
+            // Users expect restore to emplace widgets properly ASAP, so flag these as
+            // being interactive broadcast dispatches
             Intent intent = new Intent(action);
             intent.putExtra(AppWidgetManager.EXTRA_APPWIDGET_OLD_IDS, oldIds);
             intent.putExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS, newIds);
             if (provider != null) {
                 intent.setComponent(provider.id.componentName);
-                sendBroadcastAsUser(intent, userHandle);
+                sendBroadcastAsUser(intent, userHandle, true);
             }
             if (host != null) {
                 intent.setComponent(null);
                 intent.setPackage(host.id.packageName);
                 intent.putExtra(AppWidgetManager.EXTRA_HOST_ID, host.id.hostId);
-                sendBroadcastAsUser(intent, userHandle);
+                sendBroadcastAsUser(intent, userHandle, true);
             }
         }
 

@@ -47,6 +47,8 @@ interface NativeInputManagerService {
 
     int getSwitchState(int deviceId, int sourceMask, int sw);
 
+    void addKeyRemapping(int deviceId, int fromKeyCode, int toKeyCode);
+
     boolean hasKeys(int deviceId, int sourceMask, int[] keyCodes, boolean[] keyExists);
 
     int getKeyCodeForKeyLocation(int deviceId, int locationKeyCode);
@@ -118,6 +120,14 @@ interface NativeInputManagerService {
 
     void setPointerAcceleration(float acceleration);
 
+    void setTouchpadPointerSpeed(int speed);
+
+    void setTouchpadNaturalScrollingEnabled(boolean enabled);
+
+    void setTouchpadTapToClickEnabled(boolean enabled);
+
+    void setTouchpadRightClickZoneEnabled(boolean enabled);
+
     void setShowTouches(boolean enabled);
 
     void setInteractive(boolean interactive);
@@ -184,6 +194,10 @@ interface NativeInputManagerService {
 
     void changeUniqueIdAssociation();
 
+    void changeTypeAssociation();
+
+    void changeKeyboardLayoutAssociation();
+
     void notifyPointerDisplayIdChanged();
 
     void setDisplayEligibilityForPointerCapture(int displayId, boolean enabled);
@@ -206,6 +220,9 @@ interface NativeInputManagerService {
 
     /** Get the bluetooth address of an input device if known, otherwise return null. */
     String getBluetoothAddress(int deviceId);
+
+    /** Set whether stylus button reporting through motion events should be enabled. */
+    void setStylusButtonMotionEventsEnabled(boolean enabled);
 
     /** The native implementation of InputManagerService methods. */
     class NativeImpl implements NativeInputManagerService {
@@ -233,6 +250,9 @@ interface NativeInputManagerService {
 
         @Override
         public native int getSwitchState(int deviceId, int sourceMask, int sw);
+
+        @Override
+        public native void addKeyRemapping(int deviceId, int fromKeyCode, int toKeyCode);
 
         @Override
         public native boolean hasKeys(int deviceId, int sourceMask, int[] keyCodes,
@@ -300,6 +320,18 @@ interface NativeInputManagerService {
 
         @Override
         public native void setPointerAcceleration(float acceleration);
+
+        @Override
+        public native void setTouchpadPointerSpeed(int speed);
+
+        @Override
+        public native void setTouchpadNaturalScrollingEnabled(boolean enabled);
+
+        @Override
+        public native void setTouchpadTapToClickEnabled(boolean enabled);
+
+        @Override
+        public native void setTouchpadRightClickZoneEnabled(boolean enabled);
 
         @Override
         public native void setShowTouches(boolean enabled);
@@ -395,6 +427,12 @@ interface NativeInputManagerService {
         public native void changeUniqueIdAssociation();
 
         @Override
+        public native void changeTypeAssociation();
+
+        @Override
+        public native void changeKeyboardLayoutAssociation();
+
+        @Override
         public native void notifyPointerDisplayIdChanged();
 
         @Override
@@ -424,5 +462,8 @@ interface NativeInputManagerService {
 
         @Override
         public native String getBluetoothAddress(int deviceId);
+
+        @Override
+        public native void setStylusButtonMotionEventsEnabled(boolean enabled);
     }
 }

@@ -21,6 +21,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
 
+import android.annotation.XmlRes;
 import android.content.Context;
 import android.net.NetworkStats;
 import android.os.BatteryConsumer;
@@ -34,7 +35,7 @@ import android.util.SparseArray;
 import androidx.test.InstrumentationRegistry;
 
 import com.android.internal.os.PowerProfile;
-import com.android.internal.power.MeasuredEnergyStats;
+import com.android.internal.power.EnergyConsumerStats;
 
 import org.junit.rules.TestRule;
 import org.junit.runner.Description;
@@ -50,6 +51,7 @@ public class BatteryUsageStatsRule implements TestRule {
                     .powerProfileModeledOnly()
                     .includePowerModels()
                     .build();
+    private final Context mContext;
 
     private final PowerProfile mPowerProfile;
     private final MockClock mMockClock = new MockClock();
@@ -67,12 +69,17 @@ public class BatteryUsageStatsRule implements TestRule {
     }
 
     public BatteryUsageStatsRule(long currentTime, File historyDir) {
-        Context context = InstrumentationRegistry.getContext();
-        mPowerProfile = spy(new PowerProfile(context, true /* forTest */));
+        mContext = InstrumentationRegistry.getContext();
+        mPowerProfile = spy(new PowerProfile(mContext, true /* forTest */));
         mMockClock.currentTime = currentTime;
         mBatteryStats = new MockBatteryStatsImpl(mMockClock, historyDir);
         mBatteryStats.setPowerProfile(mPowerProfile);
         mBatteryStats.onSystemReady();
+    }
+
+    public BatteryUsageStatsRule setTestPowerProfile(@XmlRes int xmlId) {
+        mPowerProfile.forceInitForTesting(mContext, xmlId);
+        return this;
     }
 
     public BatteryUsageStatsRule setAveragePower(String key, double value) {
@@ -130,6 +137,13 @@ public class BatteryUsageStatsRule implements TestRule {
         return this;
     }
 
+    public BatteryUsageStatsRule setPerUidModemModel(int perUidModemModel) {
+        synchronized (mBatteryStats) {
+            mBatteryStats.setPerUidModemModel(perUidModemModel);
+        }
+        return this;
+    }
+
     /** Call only after setting the power profile information. */
     public BatteryUsageStatsRule initMeasuredEnergyStatsLocked() {
         return initMeasuredEnergyStatsLocked(new String[0]);
@@ -139,11 +153,13 @@ public class BatteryUsageStatsRule implements TestRule {
     public BatteryUsageStatsRule initMeasuredEnergyStatsLocked(
             String[] customPowerComponentNames) {
         final boolean[] supportedStandardBuckets =
-                new boolean[MeasuredEnergyStats.NUMBER_STANDARD_POWER_BUCKETS];
+                new boolean[EnergyConsumerStats.NUMBER_STANDARD_POWER_BUCKETS];
         Arrays.fill(supportedStandardBuckets, true);
-        mBatteryStats.initMeasuredEnergyStatsLocked(supportedStandardBuckets,
-                customPowerComponentNames);
-        mBatteryStats.informThatAllExternalStatsAreFlushed();
+        synchronized (mBatteryStats) {
+            mBatteryStats.initEnergyConsumerStatsLocked(supportedStandardBuckets,
+                    customPowerComponentNames);
+            mBatteryStats.informThatAllExternalStatsAreFlushed();
+        }
         return this;
     }
 

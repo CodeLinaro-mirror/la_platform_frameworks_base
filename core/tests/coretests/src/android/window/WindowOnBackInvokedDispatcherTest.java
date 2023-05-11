@@ -17,13 +17,17 @@
 package android.window;
 
 import static org.junit.Assert.assertEquals;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.verifyZeroInteractions;
 
+import android.content.Context;
+import android.content.pm.ApplicationInfo;
 import android.os.RemoteException;
 import android.platform.test.annotations.Presubmit;
 import android.view.IWindow;
@@ -61,12 +65,21 @@ public class WindowOnBackInvokedDispatcherTest {
     @Mock
     private OnBackAnimationCallback mCallback2;
     @Mock
-    private BackEvent mBackEvent;
+    private Context mContext;
+    @Mock
+    private ApplicationInfo mApplicationInfo;
+
+    private final BackMotionEvent mBackEvent = new BackMotionEvent(
+            0, 0, 0, BackEvent.EDGE_LEFT, null);
 
     @Before
     public void setUp() throws Exception {
         MockitoAnnotations.initMocks(this);
-        mDispatcher = new WindowOnBackInvokedDispatcher(true /* applicationCallbackEnabled */);
+
+        doReturn(true).when(mApplicationInfo).isOnBackInvokedCallbackEnabled();
+        doReturn(mApplicationInfo).when(mContext).getApplicationInfo();
+
+        mDispatcher = new WindowOnBackInvokedDispatcher(mContext);
         mDispatcher.attachToWindow(mWindowSession, mWindow);
     }
 
@@ -89,12 +102,12 @@ public class WindowOnBackInvokedDispatcherTest {
                 captor.capture());
         captor.getAllValues().get(0).getCallback().onBackStarted(mBackEvent);
         waitForIdle();
-        verify(mCallback1).onBackStarted(mBackEvent);
+        verify(mCallback1).onBackStarted(any(BackEvent.class));
         verifyZeroInteractions(mCallback2);
 
         captor.getAllValues().get(1).getCallback().onBackStarted(mBackEvent);
         waitForIdle();
-        verify(mCallback2).onBackStarted(mBackEvent);
+        verify(mCallback2).onBackStarted(any(BackEvent.class));
         verifyNoMoreInteractions(mCallback1);
     }
 
@@ -114,7 +127,7 @@ public class WindowOnBackInvokedDispatcherTest {
         assertEquals(captor.getValue().getPriority(), OnBackInvokedDispatcher.PRIORITY_OVERLAY);
         captor.getValue().getCallback().onBackStarted(mBackEvent);
         waitForIdle();
-        verify(mCallback1).onBackStarted(mBackEvent);
+        verify(mCallback1).onBackStarted(any(BackEvent.class));
     }
 
     @Test
@@ -152,6 +165,6 @@ public class WindowOnBackInvokedDispatcherTest {
         verify(mWindowSession).setOnBackInvokedCallbackInfo(Mockito.eq(mWindow), captor.capture());
         captor.getValue().getCallback().onBackStarted(mBackEvent);
         waitForIdle();
-        verify(mCallback2).onBackStarted(mBackEvent);
+        verify(mCallback2).onBackStarted(any(BackEvent.class));
     }
 }

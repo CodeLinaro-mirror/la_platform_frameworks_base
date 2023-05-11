@@ -30,6 +30,7 @@ import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.RequiresPermission;
+import android.app.Notification;
 import android.compat.Compatibility;
 import android.compat.annotation.ChangeId;
 import android.compat.annotation.EnabledAfter;
@@ -396,6 +397,13 @@ public class JobInfo implements Parcelable {
     public static final int FLAG_EXPEDITED = 1 << 4;
 
     /**
+     * Whether it's a user initiated job or not.
+     *
+     * @hide
+     */
+    public static final int FLAG_USER_INITIATED = 1 << 5;
+
+    /**
      * @hide
      */
     public static final int CONSTRAINT_FLAG_CHARGING = 1 << 0;
@@ -723,6 +731,13 @@ public class JobInfo implements Parcelable {
     }
 
     /**
+     * @see JobInfo.Builder#setUserInitiated(boolean)
+     */
+    public boolean isUserInitiated() {
+        return (flags & FLAG_USER_INITIATED) != 0;
+    }
+
+    /**
      * @see JobInfo.Builder#setImportantWhileForeground(boolean)
      */
     public boolean isImportantWhileForeground() {
@@ -895,7 +910,8 @@ public class JobInfo implements Parcelable {
     @SuppressWarnings("UnsafeParcelApi")
     private JobInfo(Parcel in) {
         jobId = in.readInt();
-        extras = in.readPersistableBundle();
+        final PersistableBundle persistableExtras = in.readPersistableBundle();
+        extras = persistableExtras != null ? persistableExtras : PersistableBundle.EMPTY;
         transientExtras = in.readBundle();
         if (in.readInt() != 0) {
             clipData = ClipData.CREATOR.createFromParcel(in);
@@ -1222,6 +1238,9 @@ public class JobInfo implements Parcelable {
          * in them all being treated the same. The priorities each have slightly different
          * behaviors, as noted in their relevant javadoc.
          *
+         * Starting in Android version {@link android.os.Build.VERSION_CODES#UPSIDE_DOWN_CAKE},
+         * the priority will only affect sorting order within the job's namespace.
+         *
          * <b>NOTE:</b> Setting all of your jobs to high priority will not be
          * beneficial to your app and in fact may hurt its performance in the
          * long run.
@@ -1444,6 +1463,7 @@ public class JobInfo implements Parcelable {
          * @see JobInfo#getEstimatedNetworkUploadBytes()
          * @see JobWorkItem#JobWorkItem(android.content.Intent, long, long)
          */
+        // TODO(b/255371817): update documentation to reflect how this data will be used
         public Builder setEstimatedNetworkBytes(@BytesLong long downloadBytes,
                 @BytesLong long uploadBytes) {
             mNetworkDownloadBytes = downloadBytes;
@@ -1816,6 +1836,64 @@ public class JobInfo implements Parcelable {
         }
 
         /**
+         * Indicates that this job is being scheduled to fulfill an explicit user request.
+         * As such, user-initiated jobs can only be scheduled when the app is in the foreground
+         * or in a state where launching an activity is allowed, as defined
+         * <a href=
+         * "https://developer.android.com/guide/components/activities/background-starts#exceptions">
+         * here</a>. Attempting to schedule one outside of these conditions will throw a
+         * {@link SecurityException}.
+         *
+         * <p>
+         * This should <b>NOT</b> be used for automatic features.
+         *
+         * <p>
+         * All user-initiated jobs must have an associated notification, set via
+         * {@link JobService#setNotification(JobParameters, int, Notification, int)}, and will be
+         * shown in the Task Manager when running. These jobs cannot be rescheduled by the app
+         * if the user stops the job via system provided affordance (such as the Task Manager).
+         * Thus, it is best practice and recommended to provide action buttons in the
+         * associated notification to allow the user to stop the job gracefully
+         * and allow for rescheduling.
+         *
+         * <p>
+         * If the app doesn't hold the {@link android.Manifest.permission#RUN_USER_INITIATED_JOBS}
+         * permission when scheduling a user-initiated job, JobScheduler will throw a
+         * {@link SecurityException}.
+         *
+         * <p>
+         * In {@link android.os.Build.VERSION_CODES#UPSIDE_DOWN_CAKE}, user-initiated jobs can only
+         * be used for network data transfers. As such, they must specify a required network via
+         * {@link #setRequiredNetwork(NetworkRequest)} or {@link #setRequiredNetworkType(int)}.
+         *
+         * <p>
+         * These jobs will not be subject to quotas and will be started immediately once scheduled
+         * if all constraints are met and the device system health allows for additional tasks.
+         *
+         * @see JobInfo#isUserInitiated()
+         */
+        @RequiresPermission(android.Manifest.permission.RUN_USER_INITIATED_JOBS)
+        @NonNull
+        public Builder setUserInitiated(boolean userInitiated) {
+            if (userInitiated) {
+                mFlags |= FLAG_USER_INITIATED;
+                if (mPriority == PRIORITY_DEFAULT) {
+                    // The default priority for UIJs is MAX, but only change this if .setPriority()
+                    // hasn't been called yet.
+                    mPriority = PRIORITY_MAX;
+                }
+            } else {
+                if (mPriority == PRIORITY_MAX && (mFlags & FLAG_USER_INITIATED) != 0) {
+                    // Reset the priority for the job, but only change this if .setPriority()
+                    // hasn't been called yet.
+                    mPriority = PRIORITY_DEFAULT;
+                }
+                mFlags &= (~FLAG_USER_INITIATED);
+            }
+            return this;
+        }
+
+        /**
          * Setting this to true indicates that this job is important while the scheduling app
          * is in the foreground or on the temporary whitelist for background restrictions.
          * This means that the system will relax doze restrictions on this job during this time.
@@ -2025,10 +2103,12 @@ public class JobInfo implements Parcelable {
         }
 
         final boolean isExpedited = (flags & FLAG_EXPEDITED) != 0;
+        final boolean isUserInitiated = (flags & FLAG_USER_INITIATED) != 0;
         switch (mPriority) {
             case PRIORITY_MAX:
-                if (!isExpedited) {
-                    throw new IllegalArgumentException("Only expedited jobs can have max priority");
+                if (!(isExpedited || isUserInitiated)) {
+                    throw new IllegalArgumentException(
+                            "Only expedited or user-initiated jobs can have max priority");
                 }
                 break;
             case PRIORITY_HIGH:
@@ -2057,6 +2137,9 @@ public class JobInfo implements Parcelable {
             if (isPeriodic) {
                 throw new IllegalArgumentException("An expedited job cannot be periodic");
             }
+            if (isUserInitiated) {
+                throw new IllegalArgumentException("An expedited job cannot be user-initiated");
+            }
             if (mPriority != PRIORITY_MAX && mPriority != PRIORITY_HIGH) {
                 throw new IllegalArgumentException(
                         "An expedited job must be high or max priority. Don't use expedited jobs"
@@ -2070,6 +2153,42 @@ public class JobInfo implements Parcelable {
             if (triggerContentUris != null && triggerContentUris.length > 0) {
                 throw new IllegalArgumentException(
                         "Can't call addTriggerContentUri() on an expedited job");
+            }
+        }
+
+        if (isUserInitiated) {
+            if (hasEarlyConstraint) {
+                throw new IllegalArgumentException("A user-initiated job cannot have a time delay");
+            }
+            if (hasLateConstraint) {
+                throw new IllegalArgumentException("A user-initiated job cannot have a deadline");
+            }
+            if (isPeriodic) {
+                throw new IllegalArgumentException("A user-initiated job cannot be periodic");
+            }
+            if ((flags & FLAG_PREFETCH) != 0) {
+                throw new IllegalArgumentException(
+                        "A user-initiated job cannot also be a prefetch job");
+            }
+            if (mPriority != PRIORITY_MAX) {
+                throw new IllegalArgumentException("A user-initiated job must be max priority.");
+            }
+            if ((constraintFlags & CONSTRAINT_FLAG_DEVICE_IDLE) != 0) {
+                throw new IllegalArgumentException(
+                        "A user-initiated job cannot have a device-idle constraint");
+            }
+            if (triggerContentUris != null && triggerContentUris.length > 0) {
+                throw new IllegalArgumentException(
+                        "Can't call addTriggerContentUri() on a user-initiated job");
+            }
+            // UIDTs
+            if (networkRequest == null) {
+                throw new IllegalArgumentException(
+                        "A user-initaited data transfer job must specify a valid network type");
+            }
+            if (backoffPolicy == BACKOFF_POLICY_LINEAR) {
+                throw new IllegalArgumentException(
+                        "A user-initiated data transfer job cannot have a linear backoff policy.");
             }
         }
     }

@@ -571,6 +571,10 @@ import java.util.concurrent.locks.ReentrantLock;
    void onError(&hellip;) {
      &hellip;
    }
+   {@literal @Override}
+   void onCryptoError(&hellip;) {
+     &hellip;
+   }
  });
  codec.configure(format, &hellip;);
  mOutputFormat = codec.getOutputFormat(); // option B
@@ -1709,6 +1713,33 @@ final public class MediaCodec {
      */
     public static final int BUFFER_FLAG_MUXER_DATA = 16;
 
+    /**
+     * This indicates that the buffer is decoded and updates the internal state of the decoder,
+     * but does not produce any output buffer.
+     *
+     * When a buffer has this flag set,
+     * {@link OnFrameRenderedListener#onFrameRendered(MediaCodec, long, long)} and
+     * {@link Callback#onOutputBufferAvailable(MediaCodec, int, BufferInfo)} will not be called for
+     * that given buffer.
+     *
+     * For example, when seeking to a certain frame, that frame may need to reference previous
+     * frames in order for it to produce output. The preceding frames can be marked with this flag
+     * so that they are only decoded and their data is used when decoding the latter frame that
+     * should be initially displayed post-seek.
+     * Another example would be trick play, trick play is when a video is fast-forwarded and only a
+     * subset of the frames is to be rendered on the screen. The frames not to be rendered can be
+     * marked with this flag for the same reason as the above one.
+     * Marking frames with this flag improves the overall performance of playing a video stream as
+     * fewer frames need to be passed back to the app.
+     *
+     * In {@link CodecCapabilities#FEATURE_TunneledPlayback}, buffers marked with this flag
+     * are not rendered on the output surface.
+     *
+     * A frame should not be marked with this flag and {@link #BUFFER_FLAG_END_OF_STREAM}
+     * simultaneously, doing so will produce a {@link InvalidBufferFlagsException}
+     */
+    public static final int BUFFER_FLAG_DECODE_ONLY = 32;
+
     /** @hide */
     @IntDef(
         flag = true,
@@ -1719,6 +1750,7 @@ final public class MediaCodec {
             BUFFER_FLAG_END_OF_STREAM,
             BUFFER_FLAG_PARTIAL_FRAME,
             BUFFER_FLAG_MUXER_DATA,
+            BUFFER_FLAG_DECODE_ONLY,
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface BufferFlag {}
@@ -1744,6 +1776,9 @@ final public class MediaCodec {
     private static final int CB_OUTPUT_AVAILABLE = 2;
     private static final int CB_ERROR = 3;
     private static final int CB_OUTPUT_FORMAT_CHANGE = 4;
+    private static final String EOS_AND_DECODE_ONLY_ERROR_MESSAGE = "An input buffer cannot have "
+            + "both BUFFER_FLAG_END_OF_STREAM and BUFFER_FLAG_DECODE_ONLY flags";
+    private static final int CB_CRYPTO_ERROR = 6;
 
     private class EventHandler extends Handler {
         private MediaCodec mCodec;
@@ -1868,6 +1903,12 @@ final public class MediaCodec {
                 case CB_ERROR:
                 {
                     mCallback.onError(mCodec, (MediaCodec.CodecException) msg.obj);
+                    break;
+                }
+
+                case CB_CRYPTO_ERROR:
+                {
+                    mCallback.onCryptoError(mCodec, (MediaCodec.CryptoException) msg.obj);
                     break;
                 }
 
@@ -2074,12 +2115,25 @@ final public class MediaCodec {
      */
     public static final int CONFIGURE_FLAG_USE_BLOCK_MODEL = 2;
 
+    /**
+     * This flag should be used on a secure decoder only. MediaCodec configured with this
+     * flag does decryption in a separate thread. The flag requires MediaCodec to operate
+     * asynchronously and will throw CryptoException if any, in the onCryptoError()
+     * callback. Applications should override the default implementation of
+     * onCryptoError() and access the associated CryptoException.
+     *
+     * CryptoException thrown will contain {@link MediaCodec.CryptoInfo}
+     * This can be accessed using getCryptoInfo()
+     */
+    public static final int CONFIGURE_FLAG_USE_CRYPTO_ASYNC = 4;
+
     /** @hide */
     @IntDef(
         flag = true,
         value = {
             CONFIGURE_FLAG_ENCODE,
             CONFIGURE_FLAG_USE_BLOCK_MODEL,
+            CONFIGURE_FLAG_USE_CRYPTO_ASYNC,
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface ConfigureFlag {}
@@ -2100,6 +2154,16 @@ final public class MediaCodec {
 
         IncompatibleWithBlockModelException(Throwable cause) {
             super(cause);
+        }
+    }
+
+    /**
+     * Thrown when a buffer is marked with an invalid combination of flags
+     * (e.g. both {@link #BUFFER_FLAG_END_OF_STREAM} and {@link #BUFFER_FLAG_DECODE_ONLY})
+     */
+    public class InvalidBufferFlagsException extends RuntimeException {
+        InvalidBufferFlagsException(String message) {
+            super(message);
         }
     }
 
@@ -2480,10 +2544,23 @@ final public class MediaCodec {
     /**
      * Thrown when a crypto error occurs while queueing a secure input buffer.
      */
-    public final static class CryptoException extends RuntimeException {
+    public final static class CryptoException extends RuntimeException
+            implements MediaDrmThrowable {
         public CryptoException(int errorCode, @Nullable String detailMessage) {
-            super(detailMessage);
+            this(detailMessage, errorCode, 0, 0, 0, null);
+        }
+
+        /**
+         * @hide
+         */
+        public CryptoException(String message, int errorCode, int vendorError, int oemError,
+                int errorContext, @Nullable CryptoInfo cryptoInfo) {
+            super(message);
             mErrorCode = errorCode;
+            mVendorError = vendorError;
+            mOemError = oemError;
+            mErrorContext = errorContext;
+            mCryptoInfo = cryptoInfo;
         }
 
         /**
@@ -2602,7 +2679,33 @@ final public class MediaCodec {
             return mErrorCode;
         }
 
-        private int mErrorCode;
+        /**
+         * Returns CryptoInfo associated with this {@link CryptoException}
+         * if any
+         *
+         * @return CryptoInfo object if any. {@link MediaCodec.CryptoException}
+         */
+        public @Nullable CryptoInfo getCryptoInfo() {
+            return mCryptoInfo;
+        }
+
+        @Override
+        public int getVendorError() {
+            return mVendorError;
+        }
+
+        @Override
+        public int getOemError() {
+            return mOemError;
+        }
+
+        @Override
+        public int getErrorContext() {
+            return mErrorContext;
+        }
+
+        private final int mErrorCode, mVendorError, mOemError, mErrorContext;
+        private CryptoInfo mCryptoInfo;
     }
 
     /**
@@ -2666,6 +2769,10 @@ final public class MediaCodec {
             int index,
             int offset, int size, long presentationTimeUs, int flags)
         throws CryptoException {
+        if ((flags & BUFFER_FLAG_DECODE_ONLY) != 0
+                && (flags & BUFFER_FLAG_END_OF_STREAM) != 0) {
+            throw new InvalidBufferFlagsException(EOS_AND_DECODE_ONLY_ERROR_MESSAGE);
+        }
         synchronized(mBufferLock) {
             if (mBufferMode == BUFFER_MODE_BLOCK) {
                 throw new IncompatibleWithBlockModelException("queueInputBuffer() "
@@ -2936,6 +3043,10 @@ final public class MediaCodec {
             @NonNull CryptoInfo info,
             long presentationTimeUs,
             int flags) throws CryptoException {
+        if ((flags & BUFFER_FLAG_DECODE_ONLY) != 0
+                && (flags & BUFFER_FLAG_END_OF_STREAM) != 0) {
+            throw new InvalidBufferFlagsException(EOS_AND_DECODE_ONLY_ERROR_MESSAGE);
+        }
         synchronized(mBufferLock) {
             if (mBufferMode == BUFFER_MODE_BLOCK) {
                 throw new IncompatibleWithBlockModelException("queueSecureInputBuffer() "
@@ -5011,6 +5122,25 @@ final public class MediaCodec {
          * @param e The {@link MediaCodec.CodecException} object describing the error.
          */
         public abstract void onError(@NonNull MediaCodec codec, @NonNull CodecException e);
+
+        /**
+         * Called only when MediaCodec encountered a crypto(decryption) error when using
+         * a decoder configured with CONFIGURE_FLAG_USE_CRYPTO_ASYNC flag along with crypto
+         * or descrambler object.
+         *
+         * @param codec The MediaCodec object
+         * @param e The {@link MediaCodec.CryptoException} object with error details.
+         */
+        public void onCryptoError(@NonNull MediaCodec codec, @NonNull CryptoException e) {
+            /*
+             * A default implementation for backward compatibility.
+             * Use of CONFIGURE_FLAG_USE_CRYPTO_ASYNC requires override of this callback
+             * to receive CrytoInfo. Without an orverride an exception is thrown.
+             */
+            throw new IllegalStateException(
+                    "Client must override onCryptoError when the codec is " +
+                    "configured with CONFIGURE_FLAG_USE_CRYPTO_ASYNC.", e);
+        }
 
         /**
          * Called when the output format has changed

@@ -2498,12 +2498,8 @@ public final class CaptureRequest extends CameraMetadata<CaptureRequest.Key<?>>
      * <p><b>Available values for this device:</b><br>
      * {@link CameraCharacteristics#CONTROL_AVAILABLE_SETTINGS_OVERRIDES android.control.availableSettingsOverrides}</p>
      * <p><b>Optional</b> - The value for this key may be {@code null} on some devices.</p>
-     * <p><b>Limited capability</b> -
-     * Present on all camera devices that report being at least {@link CameraCharacteristics#INFO_SUPPORTED_HARDWARE_LEVEL_LIMITED HARDWARE_LEVEL_LIMITED} devices in the
-     * {@link CameraCharacteristics#INFO_SUPPORTED_HARDWARE_LEVEL android.info.supportedHardwareLevel} key</p>
      *
      * @see CameraCharacteristics#CONTROL_AVAILABLE_SETTINGS_OVERRIDES
-     * @see CameraCharacteristics#INFO_SUPPORTED_HARDWARE_LEVEL
      * @see #CONTROL_SETTINGS_OVERRIDE_OFF
      * @see #CONTROL_SETTINGS_OVERRIDE_ZOOM
      */
@@ -2511,6 +2507,42 @@ public final class CaptureRequest extends CameraMetadata<CaptureRequest.Key<?>>
     @NonNull
     public static final Key<Integer> CONTROL_SETTINGS_OVERRIDE =
             new Key<Integer>("android.control.settingsOverride", int.class);
+
+    /**
+     * <p>Automatic crop, pan and zoom to keep objects in the center of the frame.</p>
+     * <p>Auto-framing is a special mode provided by the camera device to dynamically crop, zoom
+     * or pan the camera feed to try to ensure that the people in a scene occupy a reasonable
+     * portion of the viewport. It is primarily designed to support video calling in
+     * situations where the user isn't directly in front of the device, especially for
+     * wide-angle cameras.
+     * {@link CaptureRequest#SCALER_CROP_REGION android.scaler.cropRegion} and {@link CaptureRequest#CONTROL_ZOOM_RATIO android.control.zoomRatio} in CaptureResult will be used
+     * to denote the coordinates of the auto-framed region.
+     * Zoom and video stabilization controls are disabled when auto-framing is enabled. The 3A
+     * regions must map the screen coordinates into the scaler crop returned from the capture
+     * result instead of using the active array sensor.</p>
+     * <p><b>Possible values:</b></p>
+     * <ul>
+     *   <li>{@link #CONTROL_AUTOFRAMING_OFF OFF}</li>
+     *   <li>{@link #CONTROL_AUTOFRAMING_ON ON}</li>
+     *   <li>{@link #CONTROL_AUTOFRAMING_AUTO AUTO}</li>
+     * </ul>
+     *
+     * <p><b>Optional</b> - The value for this key may be {@code null} on some devices.</p>
+     * <p><b>Limited capability</b> -
+     * Present on all camera devices that report being at least {@link CameraCharacteristics#INFO_SUPPORTED_HARDWARE_LEVEL_LIMITED HARDWARE_LEVEL_LIMITED} devices in the
+     * {@link CameraCharacteristics#INFO_SUPPORTED_HARDWARE_LEVEL android.info.supportedHardwareLevel} key</p>
+     *
+     * @see CaptureRequest#CONTROL_ZOOM_RATIO
+     * @see CameraCharacteristics#INFO_SUPPORTED_HARDWARE_LEVEL
+     * @see CaptureRequest#SCALER_CROP_REGION
+     * @see #CONTROL_AUTOFRAMING_OFF
+     * @see #CONTROL_AUTOFRAMING_ON
+     * @see #CONTROL_AUTOFRAMING_AUTO
+     */
+    @PublicKey
+    @NonNull
+    public static final Key<Integer> CONTROL_AUTOFRAMING =
+            new Key<Integer>("android.control.autoframing", int.class);
 
     /**
      * <p>Operation mode for edge
@@ -3054,9 +3086,9 @@ public final class CaptureRequest extends CameraMetadata<CaptureRequest.Key<?>>
      * <p>Output streams use this rectangle to produce their output, cropping to a smaller region
      * if necessary to maintain the stream's aspect ratio, then scaling the sensor input to
      * match the output's configured resolution.</p>
-     * <p>The crop region is applied after the RAW to other color space (e.g. YUV)
-     * conversion. Since raw streams (e.g. RAW16) don't have the conversion stage, they are not
-     * croppable. The crop region will be ignored by raw streams.</p>
+     * <p>The crop region is usually applied after the RAW to other color space (e.g. YUV)
+     * conversion. As a result RAW streams are not croppable unless supported by the
+     * camera device. See {@link CameraCharacteristics#SCALER_AVAILABLE_STREAM_USE_CASES android.scaler.availableStreamUseCases}#CROPPED_RAW for details.</p>
      * <p>For non-raw streams, any additional per-stream cropping will be done to maximize the
      * final pixel area of the stream.</p>
      * <p>For example, if the crop region is set to a 4:3 aspect ratio, then 4:3 streams will use
@@ -3151,6 +3183,7 @@ public final class CaptureRequest extends CameraMetadata<CaptureRequest.Key<?>>
      * @see CaptureRequest#CONTROL_ZOOM_RATIO
      * @see CaptureRequest#DISTORTION_CORRECTION_MODE
      * @see CameraCharacteristics#SCALER_AVAILABLE_MAX_DIGITAL_ZOOM
+     * @see CameraCharacteristics#SCALER_AVAILABLE_STREAM_USE_CASES
      * @see CameraCharacteristics#SCALER_CROPPING_TYPE
      * @see CameraCharacteristics#SENSOR_INFO_ACTIVE_ARRAY_SIZE
      * @see CameraCharacteristics#SENSOR_INFO_ACTIVE_ARRAY_SIZE_MAXIMUM_RESOLUTION
@@ -4122,9 +4155,44 @@ public final class CaptureRequest extends CameraMetadata<CaptureRequest.Key<?>>
     public static final Key<Integer> DISTORTION_CORRECTION_MODE =
             new Key<Integer>("android.distortionCorrection.mode", int.class);
 
+    /**
+     * <p>Strength of the extension post-processing effect</p>
+     * <p>This control allows Camera extension clients to configure the strength of the applied
+     * extension effect. Strength equal to 0 means that the extension must not apply any
+     * post-processing and return a regular captured frame. Strength equal to 100 is the
+     * default level of post-processing applied when the control is not supported or not set
+     * by the client. Values between 0 and 100 will have different effect depending on the
+     * extension type as described below:</p>
+     * <ul>
+     * <li>{@link android.hardware.camera2.CameraExtensionCharacteristics#EXTENSION_BOKEH BOKEH} -
+     * the strength is expected to control the amount of blur.</li>
+     * <li>{@link android.hardware.camera2.CameraExtensionCharacteristics#EXTENSION_HDR HDR} and
+     * {@link android.hardware.camera2.CameraExtensionCharacteristics#EXTENSION_NIGHT NIGHT} -
+     * the strength can control the amount of images fused and the brightness of the final image.</li>
+     * <li>{@link android.hardware.camera2.CameraExtensionCharacteristics#EXTENSION_FACE_RETOUCH FACE_RETOUCH} -
+     * the strength value will control the amount of cosmetic enhancement and skin
+     * smoothing.</li>
+     * </ul>
+     * <p>The control will be supported if the capture request key is part of the list generated by
+     * {@link android.hardware.camera2.CameraExtensionCharacteristics#getAvailableCaptureRequestKeys }.
+     * The control is only defined and available to clients sending capture requests via
+     * {@link android.hardware.camera2.CameraExtensionSession }.
+     * The default value is 100.</p>
+     * <p><b>Range of valid values:</b><br>
+     * 0 - 100</p>
+     * <p><b>Optional</b> - The value for this key may be {@code null} on some devices.</p>
+     */
+    @PublicKey
+    @NonNull
+    public static final Key<Integer> EXTENSION_STRENGTH =
+            new Key<Integer>("android.extension.strength", int.class);
+
     /*~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~
      * End generated code
      *~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~O@*/
+
+
+
 
 
 

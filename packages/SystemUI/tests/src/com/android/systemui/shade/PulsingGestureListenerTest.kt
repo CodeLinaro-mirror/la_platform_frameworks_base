@@ -21,6 +21,7 @@ import android.provider.Settings.Secure.DOZE_DOUBLE_TAP_GESTURE
 import android.provider.Settings.Secure.DOZE_TAP_SCREEN_GESTURE
 import android.testing.AndroidTestingRunner
 import android.testing.TestableLooper.RunWithLooper
+import android.os.PowerManager
 import android.view.MotionEvent
 import androidx.test.filters.SmallTest
 import com.android.systemui.SysuiTestCase
@@ -28,6 +29,7 @@ import com.android.systemui.dock.DockManager
 import com.android.systemui.dump.DumpManager
 import com.android.systemui.plugins.FalsingManager
 import com.android.systemui.plugins.statusbar.StatusBarStateController
+import com.android.systemui.settings.UserTracker
 import com.android.systemui.statusbar.phone.CentralSurfaces
 import com.android.systemui.tuner.TunerService
 import com.android.systemui.tuner.TunerService.Tunable
@@ -36,9 +38,9 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.mockito.ArgumentCaptor
+import org.mockito.ArgumentMatchers.any
 import org.mockito.ArgumentMatchers.anyInt
 import org.mockito.ArgumentMatchers.anyLong
-import org.mockito.ArgumentMatchers.anyObject
 import org.mockito.ArgumentMatchers.anyString
 import org.mockito.Mock
 import org.mockito.Mockito.never
@@ -68,6 +70,8 @@ class PulsingGestureListenerTest : SysuiTestCase() {
     private lateinit var statusBarStateController: StatusBarStateController
     @Mock
     private lateinit var shadeLogger: ShadeLogger
+    @Mock
+    private lateinit var userTracker: UserTracker
 
     private lateinit var tunableCaptor: ArgumentCaptor<Tunable>
     private lateinit var underTest: PulsingGestureListener
@@ -84,6 +88,7 @@ class PulsingGestureListenerTest : SysuiTestCase() {
                 ambientDisplayConfiguration,
                 statusBarStateController,
                 shadeLogger,
+                userTracker,
                 tunerService,
                 dumpManager
         )
@@ -106,7 +111,8 @@ class PulsingGestureListenerTest : SysuiTestCase() {
         underTest.onSingleTapUp(upEv)
 
         // THEN wake up device if dozing
-        verify(centralSurfaces).wakeUpIfDozing(anyLong(), anyObject(), anyString())
+        verify(centralSurfaces).wakeUpIfDozing(
+                anyLong(), any(), anyString(), eq(PowerManager.WAKE_REASON_TAP))
     }
 
     @Test
@@ -125,7 +131,8 @@ class PulsingGestureListenerTest : SysuiTestCase() {
         underTest.onDoubleTapEvent(upEv)
 
         // THEN wake up device if dozing
-        verify(centralSurfaces).wakeUpIfDozing(anyLong(), anyObject(), anyString())
+        verify(centralSurfaces).wakeUpIfDozing(
+                anyLong(), any(), anyString(), eq(PowerManager.WAKE_REASON_TAP))
     }
 
     @Test
@@ -156,7 +163,8 @@ class PulsingGestureListenerTest : SysuiTestCase() {
         underTest.onSingleTapUp(upEv)
 
         // THEN the device doesn't wake up
-        verify(centralSurfaces, never()).wakeUpIfDozing(anyLong(), anyObject(), anyString())
+        verify(centralSurfaces, never()).wakeUpIfDozing(
+                anyLong(), any(), anyString(), anyInt())
     }
 
     @Test
@@ -203,7 +211,8 @@ class PulsingGestureListenerTest : SysuiTestCase() {
         underTest.onDoubleTapEvent(upEv)
 
         // THEN the device doesn't wake up
-        verify(centralSurfaces, never()).wakeUpIfDozing(anyLong(), anyObject(), anyString())
+        verify(centralSurfaces, never()).wakeUpIfDozing(
+                anyLong(), any(), anyString(), anyInt())
     }
 
     @Test
@@ -222,7 +231,8 @@ class PulsingGestureListenerTest : SysuiTestCase() {
         underTest.onSingleTapUp(upEv)
 
         // THEN the device doesn't wake up
-        verify(centralSurfaces, never()).wakeUpIfDozing(anyLong(), anyObject(), anyString())
+        verify(centralSurfaces, never()).wakeUpIfDozing(
+                anyLong(), any(), anyString(), anyInt())
     }
 
     @Test
@@ -241,7 +251,8 @@ class PulsingGestureListenerTest : SysuiTestCase() {
         underTest.onDoubleTapEvent(upEv)
 
         // THEN the device doesn't wake up
-        verify(centralSurfaces, never()).wakeUpIfDozing(anyLong(), anyObject(), anyString())
+        verify(centralSurfaces, never()).wakeUpIfDozing(
+                anyLong(), any(), anyString(), anyInt())
     }
 
     fun updateSettings() {

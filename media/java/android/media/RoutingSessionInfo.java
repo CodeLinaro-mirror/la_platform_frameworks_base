@@ -23,7 +23,8 @@ import android.os.Bundle;
 import android.os.Parcel;
 import android.os.Parcelable;
 import android.text.TextUtils;
-import android.util.Log;
+
+import com.android.internal.util.Preconditions;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
@@ -106,15 +107,17 @@ public final class RoutingSessionInfo implements Parcelable {
     }
 
     RoutingSessionInfo(@NonNull Parcel src) {
-        Objects.requireNonNull(src, "src must not be null.");
+        mId = src.readString();
+        Preconditions.checkArgument(!TextUtils.isEmpty(mId));
 
-        mId = ensureString(src.readString());
         mName = TextUtils.CHAR_SEQUENCE_CREATOR.createFromParcel(src);
         mOwnerPackageName = src.readString();
         mClientPackageName = ensureString(src.readString());
         mProviderId = src.readString();
 
         mSelectedRoutes = ensureList(src.createStringArrayList());
+        Preconditions.checkArgument(!mSelectedRoutes.isEmpty());
+
         mSelectableRoutes = ensureList(src.createStringArrayList());
         mDeselectableRoutes = ensureList(src.createStringArrayList());
         mTransferableRoutes = ensureList(src.createStringArrayList());
@@ -177,7 +180,7 @@ public final class RoutingSessionInfo implements Parcelable {
      */
     @NonNull
     public String getId() {
-        if (mProviderId != null) {
+        if (!TextUtils.isEmpty(mProviderId)) {
             return MediaRouter2Utils.toUniqueId(mProviderId, mId);
         } else {
             return mId;
@@ -414,15 +417,21 @@ public final class RoutingSessionInfo implements Parcelable {
         return result.toString();
     }
 
+    /**
+     * Provides a new list with unique route IDs if {@link #mProviderId} is set, or the original IDs
+     * otherwise.
+     *
+     * @param routeIds list of route IDs to convert
+     * @return new list with unique IDs or original IDs
+     */
+
+    @NonNull
     private List<String> convertToUniqueRouteIds(@NonNull List<String> routeIds) {
-        if (routeIds == null) {
-            Log.w(TAG, "routeIds is null. Returning an empty list");
-            return Collections.emptyList();
-        }
+        Objects.requireNonNull(routeIds, "RouteIds cannot be null.");
 
         // mProviderId can be null if not set. Return the original list for this case.
-        if (mProviderId == null) {
-            return routeIds;
+        if (TextUtils.isEmpty(mProviderId)) {
+            return new ArrayList<>(routeIds);
         }
 
         List<String> result = new ArrayList<>();

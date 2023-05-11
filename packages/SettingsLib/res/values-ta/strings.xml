@@ -467,7 +467,8 @@
     <string name="power_charging" msgid="6727132649743436802">"<xliff:g id="LEVEL">%1$s</xliff:g> - <xliff:g id="STATE">%2$s</xliff:g>"</string>
     <string name="power_remaining_charging_duration_only" msgid="8085099012811384899">"முழுவதும் சார்ஜாக <xliff:g id="TIME">%1$s</xliff:g> ஆகும்"</string>
     <string name="power_charging_duration" msgid="6127154952524919719">"<xliff:g id="LEVEL">%1$s</xliff:g> - முழுவதும் சார்ஜாக <xliff:g id="TIME">%2$s</xliff:g> ஆகும்"</string>
-    <string name="power_charging_limited" msgid="6971664137170239141">"<xliff:g id="LEVEL">%1$s</xliff:g> - சார்ஜ் ஏறுவது இடைநிறுத்தப்பட்டுள்ளது"</string>
+    <string name="power_charging_limited" msgid="8202147604844938236">"<xliff:g id="LEVEL">%1$s</xliff:g> - சார்ஜிங் மேம்படுத்தப்பட்டது"</string>
+    <string name="power_charging_future_paused" msgid="4730177778538118032">"<xliff:g id="LEVEL">%1$s</xliff:g> - சார்ஜிங் மேம்படுத்தப்பட்டது"</string>
     <string name="battery_info_status_unknown" msgid="268625384868401114">"அறியப்படாத"</string>
     <string name="battery_info_status_charging" msgid="4279958015430387405">"சார்ஜ் ஆகிறது"</string>
     <string name="battery_info_status_charging_fast" msgid="8027559755902954885">"வேகமாக சார்ஜாகிறது"</string>
@@ -539,6 +540,13 @@
     <string name="media_transfer_this_device_name" product="default" msgid="2357329267148436433">"இந்த மொபைல்"</string>
     <string name="media_transfer_this_device_name" product="tablet" msgid="3714653244000242800">"இந்த டேப்லெட்"</string>
     <string name="media_transfer_this_phone" msgid="7194341457812151531">"இந்த மொபைல்"</string>
+    <string name="media_output_status_unknown_error" msgid="5098565887497902222">"இந்தச் சாதனத்தில் பிளே செய்ய முடியவில்லை"</string>
+    <string name="media_output_status_require_premium" msgid="8411255800047014822">"மாற்ற, கணக்கை மேம்படுத்துங்கள்"</string>
+    <string name="media_output_status_not_support_downloads" msgid="4523828729240373315">"பதிவிறக்கங்களை இங்கே பிளே செய்ய முடியாது"</string>
+    <string name="media_output_status_try_after_ad" msgid="8312579066856015441">"விளம்பரம் முடிந்த பிறகு மீண்டும் முயலுங்கள்"</string>
+    <string name="media_output_status_device_in_low_power_mode" msgid="8184631698321758451">"இங்கே பிளே செய்ய உங்கள் சாதனத்தைச் சார்ஜ் செய்யுங்கள்"</string>
+    <string name="media_output_status_unauthorized" msgid="5880222828273853838">"பிளே செய்வதற்குச் சாதனம் அனுமதிக்கப்படவில்லை"</string>
+    <string name="media_output_status_track_unsupported" msgid="5576313219317709664">"இந்த மீடியாவை இங்கே பிளே செய்ய முடியவில்லை"</string>
     <string name="profile_connect_timeout_subtext" msgid="4043408193005851761">"இணைப்பதில் சிக்கல். சாதனத்தை ஆஃப் செய்து மீண்டும் ஆன் செய்யவும்"</string>
     <string name="media_transfer_wired_device_name" msgid="4447880899964056007">"வயருடன்கூடிய ஆடியோ சாதனம்"</string>
     <string name="help_label" msgid="3528360748637781274">"உதவியும் கருத்தும்"</string>
@@ -563,6 +571,8 @@
     <string name="user_add_user_title" msgid="5457079143694924885">"புதியவரைச் சேர்க்கவா?"</string>
     <string name="user_add_user_message_long" msgid="1527434966294733380">"கூடுதல் பயனர்களை உருவாக்குவதன் மூலம், பிறருடன் இந்தச் சாதனத்தைப் பகிர்ந்துகொள்ளலாம். ஒவ்வொரு பயனருக்கும் அவர்களுக்கென ஒரு இடம் இருக்கும், அதில் அவர்கள் ஆப்ஸ், வால்பேப்பர் மற்றும் பலவற்றைப் பயன்படுத்திப் பிரத்தியேகப்படுத்தலாம். வைஃபை போன்ற மற்ற சாதன அமைப்புகளைப் பயனர்கள் மாற்றலாம், இந்த மாற்றம் அனைவருக்கும் பொருந்தும்.\n\nநீங்கள் புதிய பயனரைச் சேர்க்கும்போது, அவர் தனக்கான இடத்தை அமைக்க வேண்டும்.\n\nஎந்தவொரு பயனரும், பிற எல்லாப் பயனர்களுக்குமான ஆப்ஸைப் புதுப்பிக்கலாம். அணுகல்தன்மை அமைப்புகளையும் சேவைகளையும், புதிய பயனருக்கு இடமாற்ற முடியாமல் போகலாம்."</string>
     <string name="user_add_user_message_short" msgid="3295959985795716166">"புதியவரைச் சேர்க்கும் போது, அவர் தனக்கான இடத்தை அமைக்க வேண்டும்.\n\nஇருக்கும் ஆப்ஸை எவரும் புதுப்பிக்கலாம்."</string>
+    <string name="user_grant_admin_title" msgid="5565796912475193314">"நிர்வாக சிறப்புரிமைகளை வழங்கவா?"</string>
+    <string name="user_grant_admin_message" msgid="7925257971286380976">"நிர்வாகியாக, மற்ற பயனர்களை நிர்வகிக்கலாம் சாதன அமைப்புகளை மாற்றலாம் சாதனத்தை ஆரம்பநிலைக்கு மீட்டமைக்கலாம்."</string>
     <string name="user_setup_dialog_title" msgid="8037342066381939995">"இப்போது பயனரை அமைக்கவா?"</string>
     <string name="user_setup_dialog_message" msgid="269931619868102841">"இந்தச் சாதனத்தை இவர் பயன்படுத்தும் நிலையிலும், அவருக்கான அமைப்புகளை அவரே செய்து கொள்பவராகவும் இருக்க வேண்டும்."</string>
     <string name="user_setup_profile_dialog_message" msgid="4788197052296962620">"இப்போது சுயவிவரத்தை அமைக்கவா?"</string>
@@ -594,6 +604,8 @@
     <string name="guest_reset_and_restart_dialog_message" msgid="2764425635305200790">"புதிய கெஸ்ட் அமர்வு தொடங்கப்படும், மேலும் தற்போதைய கெஸ்ட் அமர்வின் ஆப்ஸ் மற்றும் தரவு அனைத்தும் நீக்கப்படும்"</string>
     <string name="guest_exit_dialog_title" msgid="1846494656849381804">"கெஸ்ட் முறையிலிருந்து வெளியேறவா?"</string>
     <string name="guest_exit_dialog_message" msgid="1743218864242719783">"தற்போதைய கெஸ்ட் அமர்வின் ஆப்ஸ் மற்றும் தரவு அனைத்தும் நீக்கப்படும்"</string>
+    <string name="grant_admin" msgid="4273077214151417783">"இந்தப் பயனருக்கு நிர்வாகச் சிறப்புரிமைகளை வழங்கவும்"</string>
+    <string name="not_grant_admin" msgid="6985027675930546850">"பயனருக்கு நிர்வாகச் சிறப்புரிமைகளை வழங்க வேண்டாம்"</string>
     <string name="guest_exit_dialog_button" msgid="1736401897067442044">"வெளியேறு"</string>
     <string name="guest_exit_dialog_title_non_ephemeral" msgid="7675327443743162986">"கெஸ்ட் செயல்பாடுகளைச் சேமிக்கவா?"</string>
     <string name="guest_exit_dialog_message_non_ephemeral" msgid="223385323235719442">"தற்போதைய அமர்வின் செயல்பாடுகளைச் சேமிக்கலாம் அல்லது ஆப்ஸையும் தரவையும் நீக்கலாம்"</string>
@@ -661,4 +673,10 @@
     <string name="back_navigation_animation" msgid="8105467568421689484">"கணிக்கக்கூடிய பின்செல் சைகைக்கான அனிமேஷன்கள்"</string>
     <string name="back_navigation_animation_summary" msgid="741292224121599456">"கணிக்கக்கூடிய பின்செல் சைகைக்காகச் சிஸ்டம் அனிமேஷன்களை இயக்கும்."</string>
     <string name="back_navigation_animation_dialog" msgid="8696966520944625596">"கணிக்கக்கூடிய சைகைக்கான அனிமேஷனுக்காக இந்த அமைப்பு சிஸ்டம் அனிமேஷன்களை இயக்கும். மெனிஃபெஸ்ட் ஃபைலில் ஒவ்வொரு ஆப்ஸுக்கும் enableOnBackInvokedCallbackகை \'சரி\' என அமைக்க வேண்டும்."</string>
+  <string-array name="udfps_accessibility_touch_hints">
+    <item msgid="1737722959616802157">"இடதுபுறம் நகர்த்துங்கள்"</item>
+    <item msgid="5425394847942513942">"கீழே நகர்த்துங்கள்"</item>
+    <item msgid="7728484337962740316">"வலதுபுறம் நகர்த்துங்கள்"</item>
+    <item msgid="324200556467459329">"மேலே நகர்த்துங்கள்"</item>
+  </string-array>
 </resources>

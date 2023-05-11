@@ -97,6 +97,8 @@ public class CoreSettingsObserverTest {
         mContentResolver = new MockContentResolver(mContext);
         mContentResolver.addProvider(Settings.AUTHORITY, new FakeSettingsProvider());
         when(mContext.getContentResolver()).thenReturn(mContentResolver);
+        when(mContext.getCacheDir()).thenReturn(originalContext.getCacheDir());
+        when(mContext.getAttributionSource()).thenReturn(originalContext.getAttributionSource());
         when(mContext.getResources()).thenReturn(mResources);
         // To prevent NullPointerException at the constructor of ActivityManagerConstants.
         when(mResources.getStringArray(anyInt())).thenReturn(new String[0]);
@@ -177,7 +179,8 @@ public class CoreSettingsObserverTest {
         }
 
         @Override
-        public AppOpsService getAppOpsService(File file, Handler handler) {
+        public AppOpsService getAppOpsService(File recentAccessesFile, File storageFile,
+                Handler handler) {
             return null;
         }
 

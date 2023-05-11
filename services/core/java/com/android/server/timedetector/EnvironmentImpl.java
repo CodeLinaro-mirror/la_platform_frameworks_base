@@ -128,4 +128,10 @@ final class EnvironmentImpl implements TimeDetectorStrategyImpl.Environment {
     @Override
     public void dumpDebugLog(@NonNull PrintWriter printWriter) {
         SystemClockTime.dump(printWriter);
-    }}
+    }
+
+    @Override
+    public void runAsync(@NonNull Runnable runnable) {
+        mHandler.post(runnable);
+    }
+}

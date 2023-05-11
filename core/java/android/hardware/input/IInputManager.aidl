@@ -17,11 +17,14 @@
 package android.hardware.input;
 
 import android.graphics.Rect;
+import android.hardware.input.HostUsiVersion;
 import android.hardware.input.InputDeviceIdentifier;
 import android.hardware.input.KeyboardLayout;
 import android.hardware.input.IInputDevicesChangedListener;
 import android.hardware.input.IInputDeviceBatteryListener;
 import android.hardware.input.IInputDeviceBatteryState;
+import android.hardware.input.IKeyboardBacklightListener;
+import android.hardware.input.IKeyboardBacklightState;
 import android.hardware.input.ITabletModeChangedListener;
 import android.hardware.input.TouchCalibration;
 import android.os.CombinedVibration;
@@ -32,6 +35,8 @@ import android.hardware.lights.LightState;
 import android.os.IBinder;
 import android.os.IVibratorStateListener;
 import android.os.VibrationEffect;
+import android.view.inputmethod.InputMethodInfo;
+import android.view.inputmethod.InputMethodSubtype;
 import android.view.InputDevice;
 import android.view.InputEvent;
 import android.view.InputMonitor;
@@ -80,16 +85,62 @@ interface IInputManager {
 
     // Keyboard layouts configuration.
     KeyboardLayout[] getKeyboardLayouts();
+
     KeyboardLayout[] getKeyboardLayoutsForInputDevice(in InputDeviceIdentifier identifier);
+
     KeyboardLayout getKeyboardLayout(String keyboardLayoutDescriptor);
+
     String getCurrentKeyboardLayoutForInputDevice(in InputDeviceIdentifier identifier);
+
+    @EnforcePermission("SET_KEYBOARD_LAYOUT")
+    @JavaPassthrough(annotation="@android.annotation.RequiresPermission(value = "
+            + "android.Manifest.permission.SET_KEYBOARD_LAYOUT)")
     void setCurrentKeyboardLayoutForInputDevice(in InputDeviceIdentifier identifier,
             String keyboardLayoutDescriptor);
+
     String[] getEnabledKeyboardLayoutsForInputDevice(in InputDeviceIdentifier identifier);
+
+    @EnforcePermission("SET_KEYBOARD_LAYOUT")
+    @JavaPassthrough(annotation="@android.annotation.RequiresPermission(value = "
+            + "android.Manifest.permission.SET_KEYBOARD_LAYOUT)")
     void addKeyboardLayoutForInputDevice(in InputDeviceIdentifier identifier,
             String keyboardLayoutDescriptor);
+
+    @EnforcePermission("SET_KEYBOARD_LAYOUT")
+    @JavaPassthrough(annotation="@android.annotation.RequiresPermission(value = "
+            + "android.Manifest.permission.SET_KEYBOARD_LAYOUT)")
     void removeKeyboardLayoutForInputDevice(in InputDeviceIdentifier identifier,
             String keyboardLayoutDescriptor);
+
+    // New Keyboard layout config APIs
+    String getKeyboardLayoutForInputDevice(in InputDeviceIdentifier identifier, int userId,
+            in InputMethodInfo imeInfo, in InputMethodSubtype imeSubtype);
+
+    @EnforcePermission("SET_KEYBOARD_LAYOUT")
+    @JavaPassthrough(annotation="@android.annotation.RequiresPermission(value = "
+            + "android.Manifest.permission.SET_KEYBOARD_LAYOUT)")
+    void setKeyboardLayoutForInputDevice(in InputDeviceIdentifier identifier, int userId,
+            in InputMethodInfo imeInfo, in InputMethodSubtype imeSubtype,
+            String keyboardLayoutDescriptor);
+
+    KeyboardLayout[] getKeyboardLayoutListForInputDevice(in InputDeviceIdentifier identifier,
+            int userId, in InputMethodInfo imeInfo, in InputMethodSubtype imeSubtype);
+
+    // Modifier key remapping APIs.
+    @EnforcePermission("REMAP_MODIFIER_KEYS")
+    @JavaPassthrough(annotation="@android.annotation.RequiresPermission(value = "
+            + "android.Manifest.permission.REMAP_MODIFIER_KEYS)")
+    void remapModifierKey(int fromKey, int toKey);
+
+    @EnforcePermission("REMAP_MODIFIER_KEYS")
+    @JavaPassthrough(annotation="@android.annotation.RequiresPermission(value = "
+            + "android.Manifest.permission.REMAP_MODIFIER_KEYS)")
+    void clearAllModifierKeyRemappings();
+
+    @EnforcePermission("REMAP_MODIFIER_KEYS")
+    @JavaPassthrough(annotation="@android.annotation.RequiresPermission(value = "
+            + "android.Manifest.permission.REMAP_MODIFIER_KEYS)")
+    Map getModifierKeyRemapping();
 
     // Registers an input devices changed listener.
     void registerInputDevicesChangedListener(IInputDevicesChangedListener listener);
@@ -168,4 +219,21 @@ interface IInputManager {
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission(value = "
             + "android.Manifest.permission.BLUETOOTH)")
     String getInputDeviceBluetoothAddress(int deviceId);
+
+    @EnforcePermission("MONITOR_INPUT")
+    @JavaPassthrough(annotation="@android.annotation.RequiresPermission(value = "
+            + "android.Manifest.permission.MONITOR_INPUT)")
+    void pilferPointers(IBinder inputChannelToken);
+
+    @EnforcePermission("MONITOR_KEYBOARD_BACKLIGHT")
+    @JavaPassthrough(annotation="@android.annotation.RequiresPermission(value = "
+            + "android.Manifest.permission.MONITOR_KEYBOARD_BACKLIGHT)")
+    void registerKeyboardBacklightListener(IKeyboardBacklightListener listener);
+
+    @EnforcePermission("MONITOR_KEYBOARD_BACKLIGHT")
+    @JavaPassthrough(annotation="@android.annotation.RequiresPermission(value = "
+            + "android.Manifest.permission.MONITOR_KEYBOARD_BACKLIGHT)")
+    void unregisterKeyboardBacklightListener(IKeyboardBacklightListener listener);
+
+    HostUsiVersion getHostUsiVersionFromDisplayConfig(int displayId);
 }

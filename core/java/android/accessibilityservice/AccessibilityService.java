@@ -54,9 +54,10 @@ import android.util.Log;
 import android.util.Slog;
 import android.util.SparseArray;
 import android.view.Display;
+import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
-import android.view.SurfaceView;
+import android.view.SurfaceControl;
 import android.view.WindowManager;
 import android.view.WindowManagerImpl;
 import android.view.accessibility.AccessibilityCache;
@@ -197,6 +198,26 @@ import java.util.function.Consumer;
  * possible for a node to contain outdated information because the window content may change at any
  * time.
  * </p>
+ * <h3>Drawing Accessibility Overlays</h3>
+ * <p>Accessibility services can draw overlays on top of existing screen contents.
+ * Accessibility overlays can be used to visually highlight items on the screen
+ * e.g. indicate the current item with accessibility focus.
+ * Overlays can also offer the user a way to interact with the service directly and quickly
+ * customize the service's behavior.</p>
+ * <p>Accessibility overlays can be attached to a particular window or to the display itself.
+ * Attaching an overlay to a window allows the overly to move, grow and shrink as the window does.
+ * The overlay will maintain the same relative position within the window bounds as the window
+ * moves. The overlay will also maintain the same relative position within the window bounds if
+ * the window is resized.
+ * To attach an overlay to a window, use {@link attachAccessibilityOverlayToWindow}.
+ * Attaching an overlay to the display means that the overlay is independent of the active
+ * windows on that display.
+ * To attach an overlay to a display, use {@link attachAccessibilityOverlayToDisplay}. </p>
+ * <p> When positioning an overlay that is attached to a window, the service must use window
+ * coordinates. In order to position an overlay on top of an existing UI element it is necessary
+ * to know the bounds of that element in window coordinates. To find the bounds in window
+ * coordinates of an element, find the corresponding {@link AccessibilityNodeInfo} as discussed
+ * above and call {@link AccessibilityNodeInfo#getBoundsInWindow}. </p>
  * <h3>Notification strategy</h3>
  * <p>
  * All accessibility services are notified of all events they have requested, regardless of their
@@ -696,7 +717,8 @@ public abstract class AccessibilityService extends Service {
             ERROR_TAKE_SCREENSHOT_INTERNAL_ERROR,
             ERROR_TAKE_SCREENSHOT_NO_ACCESSIBILITY_ACCESS,
             ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT,
-            ERROR_TAKE_SCREENSHOT_INVALID_DISPLAY
+            ERROR_TAKE_SCREENSHOT_INVALID_DISPLAY,
+            ERROR_TAKE_SCREENSHOT_INVALID_WINDOW
     })
     public @interface ScreenshotErrorCode {}
 
@@ -726,6 +748,18 @@ public abstract class AccessibilityService extends Service {
      * The status of taking screenshot is failure and the reason is invalid display Id.
      */
     public static final int ERROR_TAKE_SCREENSHOT_INVALID_DISPLAY = 4;
+
+    /**
+     * The status of taking screenshot is failure and the reason is invalid accessibility window Id.
+     */
+    public static final int ERROR_TAKE_SCREENSHOT_INVALID_WINDOW = 5;
+
+    /**
+     * The status of taking screenshot is failure and the reason is the window contains secure
+     * content.
+     * @see WindowManager.LayoutParams#FLAG_SECURE
+     */
+    public static final int ERROR_TAKE_SCREENSHOT_SECURE_WINDOW = 6;
 
     /**
      * The interval time of calling
@@ -784,6 +818,8 @@ public abstract class AccessibilityService extends Service {
 
     private FingerprintGestureController mFingerprintGestureController;
 
+    private int mMotionEventSources;
+
     /**
      * Callback for {@link android.view.accessibility.AccessibilityEvent}s.
      *
@@ -807,7 +843,11 @@ public abstract class AccessibilityService extends Service {
             for (int i = 0; i < mMagnificationControllers.size(); i++) {
                 mMagnificationControllers.valueAt(i).onServiceConnectedLocked();
             }
-            updateInputMethod(getServiceInfo());
+            final AccessibilityServiceInfo info = getServiceInfo();
+            if (info != null) {
+                updateInputMethod(info);
+                mMotionEventSources = info.getMotionEventSources();
+            }
         }
         if (mSoftKeyboardController != null) {
             mSoftKeyboardController.onServiceConnected();
@@ -931,6 +971,25 @@ public abstract class AccessibilityService extends Service {
     protected boolean onKeyEvent(KeyEvent event) {
         return false;
     }
+
+    /**
+     * Callback that allows an accessibility service to observe generic {@link MotionEvent}s.
+     * <p>
+     * Prefer {@link TouchInteractionController} to observe and control touchscreen events,
+     * including touch gestures. If this or any enabled service is using
+     * {@link AccessibilityServiceInfo#FLAG_REQUEST_TOUCH_EXPLORATION_MODE} then
+     * {@link #onMotionEvent} will not receive touchscreen events.
+     * </p>
+     * <p>
+     * <strong>Note:</strong> The service must first request to listen to events using
+     * {@link AccessibilityServiceInfo#setMotionEventSources}.
+     * {@link MotionEvent}s from sources in {@link AccessibilityServiceInfo#getMotionEventSources()}
+     * are not sent to the rest of the system. To stop listening to events from a given source, call
+     * {@link AccessibilityServiceInfo#setMotionEventSources} with that source removed.
+     * </p>
+     * @param event The event to be processed.
+     */
+    public void onMotionEvent(@NonNull MotionEvent event) { }
 
     /**
      * Gets the windows on the screen of the default display. This method returns only the windows
@@ -2454,8 +2513,8 @@ public abstract class AccessibilityService extends Service {
      * </p>
      * <p>
      * <strong>Note:</strong> If the view with {@link AccessibilityNodeInfo#FOCUS_INPUT}
-     * is on an embedded view hierarchy which is embedded in a {@link SurfaceView} via
-     * {@link SurfaceView#setChildSurfacePackage}, there is a limitation that this API
+     * is on an embedded view hierarchy which is embedded in a {@link android.view.SurfaceView} via
+     * {@link android.view.SurfaceView#setChildSurfacePackage}, there is a limitation that this API
      * won't be able to find the node for the view. It's because views don't know about
      * the embedded hierarchies. Instead, you could traverse all the nodes to find the
      * focus.
@@ -2508,6 +2567,7 @@ public abstract class AccessibilityService extends Service {
     public final void setServiceInfo(AccessibilityServiceInfo info) {
         mInfo = info;
         updateInputMethod(info);
+        mMotionEventSources = info.getMotionEventSources();
         sendServiceInfo();
     }
 
@@ -2520,6 +2580,10 @@ public abstract class AccessibilityService extends Service {
         IAccessibilityServiceConnection connection =
                 AccessibilityInteractionClient.getInstance(this).getConnection(mConnectionId);
         if (mInfo != null && connection != null) {
+            if (!mInfo.isWithinParcelableSize()) {
+                throw new IllegalStateException(
+                        "Cannot update service info: size is larger than safe parcelable limits.");
+            }
             try {
                 connection.setServiceInfo(mInfo);
                 mInfo = null;
@@ -2568,6 +2632,7 @@ public abstract class AccessibilityService extends Service {
      * @param executor Executor on which to run the callback.
      * @param callback The callback invoked when taking screenshot has succeeded or failed.
      *                 See {@link TakeScreenshotCallback} for details.
+     * @see #takeScreenshotOfWindow
      */
     public void takeScreenshot(int displayId, @NonNull @CallbackExecutor Executor executor,
             @NonNull TakeScreenshotCallback callback) {
@@ -2589,7 +2654,8 @@ public abstract class AccessibilityService extends Service {
                 final HardwareBuffer hardwareBuffer =
                         result.getParcelable(KEY_ACCESSIBILITY_SCREENSHOT_HARDWAREBUFFER, android.hardware.HardwareBuffer.class);
                 final ParcelableColorSpace colorSpace =
-                        result.getParcelable(KEY_ACCESSIBILITY_SCREENSHOT_COLORSPACE, android.graphics.ParcelableColorSpace.class);
+                        result.getParcelable(KEY_ACCESSIBILITY_SCREENSHOT_COLORSPACE,
+                                android.graphics.ParcelableColorSpace.class);
                 final ScreenshotResult screenshot = new ScreenshotResult(hardwareBuffer,
                         colorSpace.getColorSpace(),
                         result.getLong(KEY_ACCESSIBILITY_SCREENSHOT_TIMESTAMP));
@@ -2598,6 +2664,37 @@ public abstract class AccessibilityService extends Service {
         } catch (RemoteException re) {
             throw new RuntimeException(re);
         }
+    }
+
+    /**
+     * Takes a screenshot of the specified window and returns it via an
+     * {@link AccessibilityService.ScreenshotResult}. You can use {@link Bitmap#wrapHardwareBuffer}
+     * to construct the bitmap from the ScreenshotResult's payload.
+     * <p>
+     * <strong>Note:</strong> In order to take screenshots your service has
+     * to declare the capability to take screenshot by setting the
+     * {@link android.R.styleable#AccessibilityService_canTakeScreenshot}
+     * property in its meta-data. For details refer to {@link #SERVICE_META_DATA}.
+     * </p>
+     * <p>
+     * Both this method and {@link #takeScreenshot} can be used for machine learning-based visual
+     * screen understanding. Use <code>takeScreenshotOfWindow</code> if your target window might be
+     * visually underneath an accessibility overlay (from your or another accessibility service) in
+     * order to capture the window contents without the screenshot being covered by the overlay
+     * contents drawn on the screen.
+     * </p>
+     *
+     * @param accessibilityWindowId The window id, from {@link AccessibilityWindowInfo#getId()}.
+     * @param executor Executor on which to run the callback.
+     * @param callback The callback invoked when taking screenshot has succeeded or failed.
+     *                 See {@link TakeScreenshotCallback} for details.
+     * @see #takeScreenshot
+     */
+    public void takeScreenshotOfWindow(int accessibilityWindowId,
+            @NonNull @CallbackExecutor Executor executor,
+            @NonNull TakeScreenshotCallback callback) {
+        AccessibilityInteractionClient.getInstance(this).takeScreenshotOfWindow(
+                        mConnectionId, accessibilityWindowId, executor, callback);
     }
 
     /**
@@ -2678,7 +2775,7 @@ public abstract class AccessibilityService extends Service {
 
             @Override
             public void onMotionEvent(MotionEvent event) {
-                AccessibilityService.this.onMotionEvent(event);
+                AccessibilityService.this.sendMotionEventToCallback(event);
             }
 
             @Override
@@ -3113,7 +3210,8 @@ public abstract class AccessibilityService extends Service {
         private final @NonNull ColorSpace mColorSpace;
         private final long mTimestamp;
 
-        private ScreenshotResult(@NonNull HardwareBuffer hardwareBuffer,
+        /** @hide */
+        public ScreenshotResult(@NonNull HardwareBuffer hardwareBuffer,
                 @NonNull ColorSpace colorSpace, long timestamp) {
             Preconditions.checkNotNull(hardwareBuffer, "hardwareBuffer cannot be null");
             Preconditions.checkNotNull(colorSpace, "colorSpace cannot be null");
@@ -3312,14 +3410,23 @@ public abstract class AccessibilityService extends Service {
         }
     }
 
-    void onMotionEvent(MotionEvent event) {
-        TouchInteractionController controller;
-        synchronized (mLock) {
-            int displayId = event.getDisplayId();
-            controller = mTouchInteractionControllers.get(displayId);
+    void sendMotionEventToCallback(MotionEvent event) {
+        boolean sendingTouchEventToTouchInteractionController = false;
+        if (event.isFromSource(InputDevice.SOURCE_TOUCHSCREEN)) {
+            TouchInteractionController controller;
+            synchronized (mLock) {
+                int displayId = event.getDisplayId();
+                controller = mTouchInteractionControllers.get(displayId);
+            }
+            if (controller != null) {
+                sendingTouchEventToTouchInteractionController = true;
+                controller.onMotionEvent(event);
+            }
         }
-        if (controller != null) {
-            controller.onMotionEvent(event);
+        final int eventSourceWithoutClass = event.getSource() & ~InputDevice.SOURCE_CLASS_MASK;
+        if ((mMotionEventSources & eventSourceWithoutClass) != 0
+                && !sendingTouchEventToTouchInteractionController) {
+            onMotionEvent(event);
         }
     }
 
@@ -3331,5 +3438,78 @@ public abstract class AccessibilityService extends Service {
         if (controller != null) {
             controller.onStateChanged(state);
         }
+    }
+
+    /**
+     * <p>Attaches a {@link android.view.SurfaceControl} containing an accessibility
+     * overlay to the
+     * specified display. This type of overlay should be used for content that does
+     * not need to
+     * track the location and size of Views in the currently active app e.g. service
+     * configuration
+     * or general service UI.</p>
+     * <p>Generally speaking, an accessibility overlay  will be  a {@link android.view.View}.
+     * To embed the View into a {@link android.view.SurfaceControl}, create a
+     * {@link android.view.SurfaceControlViewHost} and attach the View using
+     * {@link android.view.SurfaceControlViewHost#setView}. Then obtain the SurfaceControl by
+     * calling <code> viewHost.getSurfacePackage().getSurfaceControl()</code>.</p>
+     * <p>To remove this overlay and free the associated
+     * resources, use
+     * <code> new SurfaceControl.Transaction().reparent(sc, null).apply();</code>.</p>
+     * <p>If the specified overlay has already been attached to the specified display
+     * this method does nothing.
+     * If the specified overlay has already been attached to a previous display this
+     * function will transfer the overlay to the new display.
+     * Services can attach multiple overlays. Use
+     * <code> new SurfaceControl.Transaction().setLayer(sc, layer).apply();</code>.
+     * to coordinate the order of the overlays on screen.</p>
+     *
+     * @param displayId the display to which the SurfaceControl should be attached.
+     * @param sc        the SurfaceControl containing the overlay content
+     */
+    public void attachAccessibilityOverlayToDisplay(int displayId, @NonNull SurfaceControl sc) {
+        Preconditions.checkNotNull(sc, "SurfaceControl cannot be null");
+        final IAccessibilityServiceConnection connection =
+                AccessibilityInteractionClient.getConnection(mConnectionId);
+        if (connection == null) {
+            return;
+        }
+        try {
+            connection.attachAccessibilityOverlayToDisplay(displayId, sc);
+        } catch (RemoteException re) {
+            re.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * <p>Attaches an accessibility overlay {@link android.view.SurfaceControl} to the
+     * specified
+     * window. This method should be used when you want the overlay to move and
+     * resize as the parent window moves and resizes.</p>
+     * <p>Generally speaking, an accessibility overlay  will be  a {@link android.view.View}.
+     * To embed the View into a {@link android.view.SurfaceControl}, create a
+     * {@link android.view.SurfaceControlViewHost} and attach the View using
+     * {@link android.view.SurfaceControlViewHost#setView}. Then obtain the SurfaceControl by
+     * calling <code> viewHost.getSurfacePackage().getSurfaceControl()</code>.</p>
+     * <p>To remove this overlay and free the associated resources, use
+     * <code> new SurfaceControl.Transaction().reparent(sc, null).apply();</code>.</p>
+     * <p>If the specified overlay has already been attached to the specified window
+     * this method does nothing.
+     * If the specified overlay has already been attached to a previous window this
+     * function will transfer the overlay to the new window.
+     * Services can attach multiple overlays. Use
+     * <code> new SurfaceControl.Transaction().setLayer(sc, layer).apply();</code>.
+     * to coordinate the order of the overlays on screen.</p>
+     *
+     * @param accessibilityWindowId The window id, from
+     *                              {@link AccessibilityWindowInfo#getId()}.
+     * @param sc                    the SurfaceControl containing the overlay
+     *                              content
+     */
+    public void attachAccessibilityOverlayToWindow(
+            int accessibilityWindowId, @NonNull SurfaceControl sc) {
+        Preconditions.checkNotNull(sc, "SurfaceControl cannot be null");
+        AccessibilityInteractionClient.getInstance(this)
+                .attachAccessibilityOverlayToWindow(mConnectionId, accessibilityWindowId, sc);
     }
 }

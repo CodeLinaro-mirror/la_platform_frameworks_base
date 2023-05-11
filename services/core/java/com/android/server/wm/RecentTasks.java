@@ -33,8 +33,11 @@ import static android.content.Intent.FLAG_ACTIVITY_MULTIPLE_TASK;
 import static android.content.Intent.FLAG_ACTIVITY_NEW_DOCUMENT;
 import static android.content.Intent.FLAG_ACTIVITY_NEW_TASK;
 import static android.os.Process.SYSTEM_UID;
+import static android.view.WindowManager.LayoutParams.FIRST_APPLICATION_WINDOW;
+import static android.view.WindowManager.LayoutParams.LAST_APPLICATION_WINDOW;
 
 import static com.android.internal.protolog.ProtoLogGroup.WM_DEBUG_TASKS;
+import static com.android.server.wm.ActivityRecord.State.RESUMED;
 import static com.android.server.wm.ActivityTaskManagerDebugConfig.DEBUG_RECENTS;
 import static com.android.server.wm.ActivityTaskManagerDebugConfig.DEBUG_RECENTS_TRIM_TASKS;
 import static com.android.server.wm.ActivityTaskManagerDebugConfig.POSTFIX_RECENTS;
@@ -215,10 +218,16 @@ class RecentTasks {
             int y = (int) ev.getY();
             mService.mH.post(PooledLambda.obtainRunnable((nonArg) -> {
                 synchronized (mService.mGlobalLock) {
-                    // Unfreeze the task list once we touch down in a task
                     final RootWindowContainer rac = mService.mRootWindowContainer;
                     final DisplayContent dc = rac.getDisplayContent(displayId).mDisplayContent;
-                    if (dc.pointWithinAppWindow(x, y)) {
+                    final WindowState win = dc.getTouchableWinAtPointLocked((float) x, (float) y);
+                    if (win == null) {
+                        return;
+                    }
+                    // Unfreeze the task list once we touch down in a task
+                    final boolean isAppWindowTouch = FIRST_APPLICATION_WINDOW <= win.mAttrs.type
+                            && win.mAttrs.type <= LAST_APPLICATION_WINDOW;
+                    if (isAppWindowTouch) {
                         final Task stack = mService.getTopDisplayFocusedRootTask();
                         final Task topTask = stack != null ? stack.getTopMostTask() : null;
                         resetFreezeTaskListReordering(topTask);
@@ -1213,7 +1222,7 @@ class RecentTasks {
     void onActivityIdle(ActivityRecord r) {
         // Clean up the hidden tasks when going to home because the user may not be unable to return
         // to the task from recents.
-        if (!mHiddenTasks.isEmpty() && r.isActivityTypeHome()) {
+        if (!mHiddenTasks.isEmpty() && r.isActivityTypeHome() && r.isState(RESUMED)) {
             removeUnreachableHiddenTasks(r.getWindowingMode());
         }
         if (mCheckTrimmableTasksOnIdle) {
@@ -1348,8 +1357,7 @@ class RecentTasks {
                     + " activityType=" + task.getActivityType()
                     + " windowingMode=" + task.getWindowingMode()
                     + " isAlwaysOnTopWhenVisible=" + task.isAlwaysOnTopWhenVisible()
-                    + " intentFlags=" + task.getBaseIntent().getFlags()
-                    + " isEmbedded=" + task.isEmbedded());
+                    + " intentFlags=" + task.getBaseIntent().getFlags());
         }
 
         switch (task.getActivityType()) {
@@ -1385,15 +1393,10 @@ class RecentTasks {
             return false;
         }
 
-        // Ignore the task if it is a embedded task
-        if (task.isEmbedded()) {
-            return false;
-        }
-
         // Ignore the task if it is started on a display which is not allow to show its tasks on
         // Recents.
         if (task.getDisplayContent() != null
-                && !task.getDisplayContent().canShowTasksInRecents()) {
+                && !task.getDisplayContent().canShowTasksInHostDeviceRecents()) {
             return false;
         }
 

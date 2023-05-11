@@ -16,18 +16,12 @@
 
 package com.android.settingslib.spa.framework.common
 
-import android.app.Activity
-import android.content.ComponentName
-import android.content.Context
-import android.content.Intent
 import android.os.Bundle
+import androidx.compose.runtime.Composable
 import androidx.navigation.NamedNavArgument
-import com.android.settingslib.spa.framework.BrowseActivity
+import com.android.settingslib.spa.framework.util.genPageId
 import com.android.settingslib.spa.framework.util.isRuntimeParam
 import com.android.settingslib.spa.framework.util.navLink
-import com.android.settingslib.spa.framework.util.normalize
-
-private const val NULL_PAGE_NAME = "NULL"
 
 /**
  * Defines data to identify a Settings page.
@@ -49,10 +43,7 @@ data class SettingsPage(
     val arguments: Bundle? = null,
 ) {
     companion object {
-        fun createNull(): SettingsPage {
-            return create(NULL_PAGE_NAME)
-        }
-
+        // TODO: cleanup it once all its usage in Settings are switched to Spp.createSettingsPage
         fun create(
             name: String,
             displayName: String? = null,
@@ -60,22 +51,12 @@ data class SettingsPage(
             arguments: Bundle? = null
         ): SettingsPage {
             return SettingsPage(
-                id = id(name, parameter, arguments),
+                id = genPageId(name, parameter, arguments),
                 sppName = name,
                 displayName = displayName ?: name,
                 parameter = parameter,
                 arguments = arguments
             )
-        }
-
-        // The unique id of this page, which is computed by name + normalized(arguments)
-        private fun id(
-            name: String,
-            parameter: List<NamedNavArgument> = emptyList(),
-            arguments: Bundle? = null
-        ): String {
-            val normArguments = parameter.normalize(arguments)
-            return "$name:${normArguments?.toString()}".toHashId()
         }
     }
 
@@ -88,68 +69,23 @@ data class SettingsPage(
         return sppName + parameter.navLink(arguments)
     }
 
-    fun hasRuntimeParam(): Boolean {
+    fun isBrowsable(): Boolean {
+        if (sppName == NullPageProvider.name) return false
         for (navArg in parameter) {
-            if (navArg.isRuntimeParam()) return true
+            if (navArg.isRuntimeParam()) return false
         }
-        return false
+        return true
     }
 
-    fun enterPage() {
-        SpaEnvironmentFactory.instance.logger.event(
-            id,
-            LogEvent.PAGE_ENTER,
-            category = LogCategory.FRAMEWORK,
-            details = displayName,
-        )
+    fun isEnabled(): Boolean =
+        SpaEnvironment.IS_DEBUG || getPageProvider(sppName)?.isEnabled(arguments) ?: false
+
+    fun getTitle(): String {
+        return getPageProvider(sppName)?.getTitle(arguments) ?: ""
     }
 
-    fun leavePage() {
-        SpaEnvironmentFactory.instance.logger.event(
-            id,
-            LogEvent.PAGE_LEAVE,
-            category = LogCategory.FRAMEWORK,
-            details = displayName,
-        )
+    @Composable
+    fun UiLayout() {
+        getPageProvider(sppName)?.Page(arguments)
     }
-
-    fun createBrowseIntent(
-        context: Context?,
-        browseActivityClass: Class<out Activity>?,
-        entryId: String? = null
-    ): Intent? {
-        if (!isBrowsable(context, browseActivityClass)) return null
-        return Intent().setComponent(ComponentName(context!!, browseActivityClass!!))
-            .apply {
-                putExtra(BrowseActivity.KEY_DESTINATION, buildRoute())
-                if (entryId != null) {
-                    putExtra(BrowseActivity.KEY_HIGHLIGHT_ENTRY, entryId)
-                }
-            }
-    }
-
-    fun createBrowseAdbCommand(
-        context: Context?,
-        browseActivityClass: Class<out Activity>?,
-        entryId: String? = null
-    ): String? {
-        if (!isBrowsable(context, browseActivityClass)) return null
-        val packageName = context!!.packageName
-        val activityName = browseActivityClass!!.name.replace(packageName, "")
-        val destinationParam = " -e ${BrowseActivity.KEY_DESTINATION} ${buildRoute()}"
-        val highlightParam =
-            if (entryId != null) " -e ${BrowseActivity.KEY_HIGHLIGHT_ENTRY} $entryId" else ""
-        return "adb shell am start -n $packageName/$activityName$destinationParam$highlightParam"
-    }
-
-    fun isBrowsable(context: Context?, browseActivityClass: Class<out Activity>?): Boolean {
-        return context != null &&
-            browseActivityClass != null &&
-            !isCreateBy(NULL_PAGE_NAME) &&
-            !hasRuntimeParam()
-    }
-}
-
-fun String.toHashId(): String {
-    return this.hashCode().toUInt().toString(36)
 }

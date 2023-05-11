@@ -21,6 +21,7 @@ import android.os.ResultReceiver;
 import android.view.InputChannel;
 import android.view.MotionEvent;
 import android.view.inputmethod.EditorInfo;
+import android.view.inputmethod.ImeTracker;
 import android.view.inputmethod.InputBinding;
 import android.view.inputmethod.InputMethodSubtype;
 import android.window.ImeOnBackInvokedDispatcher;
@@ -39,7 +40,6 @@ oneway interface IInputMethod {
     parcelable InitParams {
         IBinder token;
         IInputMethodPrivilegedOperations privilegedOperations;
-        int configChanges;
         int navigationBarFlags;
     }
 
@@ -69,9 +69,11 @@ oneway interface IInputMethod {
 
     void setSessionEnabled(IInputMethodSession session, boolean enabled);
 
-    void showSoftInput(in IBinder showInputToken, int flags, in ResultReceiver resultReceiver);
+    void showSoftInput(in IBinder showInputToken, in @nullable ImeTracker.Token statsToken,
+            int flags, in ResultReceiver resultReceiver);
 
-    void hideSoftInput(in IBinder hideInputToken, int flags, in ResultReceiver resultReceiver);
+    void hideSoftInput(in IBinder hideInputToken, in @nullable ImeTracker.Token statsToken,
+            int flags, in ResultReceiver resultReceiver);
 
     void updateEditorToolType(int toolType);
 

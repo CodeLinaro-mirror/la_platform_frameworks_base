@@ -16,16 +16,15 @@
 
 package com.android.server.wm.flicker.launch
 
-import android.platform.test.annotations.FlakyTest
 import android.platform.test.annotations.Presubmit
-import android.platform.test.annotations.RequiresDevice
-import com.android.server.wm.flicker.FlickerParametersRunnerFactory
-import com.android.server.wm.flicker.FlickerTestParameter
-import com.android.server.wm.flicker.FlickerTestParameterFactory
-import com.android.server.wm.flicker.annotation.FlickerServiceCompatible
-import com.android.server.wm.flicker.dsl.FlickerBuilder
+import android.tools.device.flicker.annotation.FlickerServiceCompatible
+import android.tools.device.flicker.junit.FlickerParametersRunnerFactory
+import android.tools.device.flicker.legacy.FlickerBuilder
+import android.tools.device.flicker.legacy.FlickerTest
+import android.tools.device.flicker.legacy.FlickerTestFactory
+import androidx.test.filters.RequiresDevice
 import com.android.server.wm.flicker.helpers.setRotation
-import com.android.server.wm.flicker.rules.RemoveAllTasksButHomeRule.Companion.removeAllTasksButHome
+import android.tools.device.flicker.rules.RemoveAllTasksButHomeRule.Companion.removeAllTasksButHome
 import org.junit.FixMethodOrder
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -57,24 +56,18 @@ import org.junit.runners.Parameterized
 @RunWith(Parameterized::class)
 @Parameterized.UseParametersRunnerFactory(FlickerParametersRunnerFactory::class)
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
-open class OpenAppColdTest(testSpec: FlickerTestParameter) :
-    OpenAppFromLauncherTransition(testSpec) {
+open class OpenAppColdTest(flicker: FlickerTest) : OpenAppFromLauncherTransition(flicker) {
     /** {@inheritDoc} */
     override val transition: FlickerBuilder.() -> Unit
         get() = {
             super.transition(this)
             setup {
                 removeAllTasksButHome()
-                this.setRotation(testSpec.startRotation)
+                this.setRotation(flicker.scenario.startRotation)
             }
             teardown { testApp.exit(wmHelper) }
             transitions { testApp.launchViaIntent(wmHelper) }
         }
-
-    /** {@inheritDoc} */
-    @FlakyTest(bugId = 206753786)
-    @Test
-    override fun navBarLayerPositionAtStartAndEnd() = super.navBarLayerPositionAtStartAndEnd()
 
     /** {@inheritDoc} */
     @Presubmit @Test override fun appLayerReplacesLauncher() = super.appLayerReplacesLauncher()
@@ -83,13 +76,13 @@ open class OpenAppColdTest(testSpec: FlickerTestParameter) :
         /**
          * Creates the test configurations.
          *
-         * See [FlickerTestParameterFactory.getConfigNonRotationTests] for configuring repetitions,
-         * screen orientation and navigation modes.
+         * See [FlickerTestFactory.nonRotationTests] for configuring screen orientation and
+         * navigation modes.
          */
         @Parameterized.Parameters(name = "{0}")
         @JvmStatic
-        fun getParams(): Collection<FlickerTestParameter> {
-            return FlickerTestParameterFactory.getInstance().getConfigNonRotationTests()
+        fun getParams(): Collection<FlickerTest> {
+            return FlickerTestFactory.nonRotationTests()
         }
     }
 }

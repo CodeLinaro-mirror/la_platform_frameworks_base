@@ -25,6 +25,7 @@ import android.graphics.Canvas;
 import android.graphics.Path;
 import android.graphics.Path.Direction;
 import android.graphics.drawable.ColorDrawable;
+import android.os.Trace;
 import android.service.notification.StatusBarNotification;
 import android.util.AttributeSet;
 import android.util.Log;
@@ -46,6 +47,7 @@ import com.android.systemui.statusbar.CrossFadeHelper;
 import com.android.systemui.statusbar.NotificationGroupingUtil;
 import com.android.systemui.statusbar.NotificationShelf;
 import com.android.systemui.statusbar.notification.FeedbackIcon;
+import com.android.systemui.statusbar.notification.LegacySourceType;
 import com.android.systemui.statusbar.notification.NotificationFadeAware;
 import com.android.systemui.statusbar.notification.NotificationUtils;
 import com.android.systemui.statusbar.notification.Roundable;
@@ -82,6 +84,7 @@ public class NotificationChildrenContainer extends ViewGroup
             return mAnimationFilter;
         }
     }.setDuration(200);
+    private static final SourceType FROM_PARENT = SourceType.from("FromParent(NCC)");
 
     private final List<View> mDividers = new ArrayList<>();
     private final List<ExpandableNotificationRow> mAttachedChildren = new ArrayList<>();
@@ -130,7 +133,7 @@ public class NotificationChildrenContainer extends ViewGroup
     private int mUntruncatedChildCount;
     private boolean mContainingNotificationIsFaded = false;
     private RoundableState mRoundableState;
-    private boolean mIsNotificationGroupCornerEnabled;
+    private boolean mUseRoundnessSourceTypes;
 
     public NotificationChildrenContainer(Context context) {
         this(context, null);
@@ -219,6 +222,7 @@ public class NotificationChildrenContainer extends ViewGroup
 
     @Override
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+        Trace.beginSection("NotificationChildrenContainer#onMeasure");
         int heightMode = MeasureSpec.getMode(heightMeasureSpec);
         boolean hasFixedHeight = heightMode == MeasureSpec.EXACTLY;
         boolean isHeightLimited = heightMode == MeasureSpec.AT_MOST;
@@ -267,6 +271,7 @@ public class NotificationChildrenContainer extends ViewGroup
         }
 
         setMeasuredDimension(width, height);
+        Trace.endSection();
     }
 
     @Override
@@ -291,6 +296,19 @@ public class NotificationChildrenContainer extends ViewGroup
     }
 
     /**
+     * Set the notification time in the group so that the view can show the latest event in the UI
+     * appropriately.
+     */
+    public void setNotificationGroupWhen(long whenMillis) {
+        if (mNotificationHeaderWrapper != null) {
+            mNotificationHeaderWrapper.setNotificationWhen(whenMillis);
+        }
+        if (mNotificationHeaderWrapperLowPriority != null) {
+            mNotificationHeaderWrapperLowPriority.setNotificationWhen(whenMillis);
+        }
+    }
+
+    /**
      * Add a child notification to this view.
      *
      * @param row        the row to add
@@ -310,15 +328,22 @@ public class NotificationChildrenContainer extends ViewGroup
         row.setContentTransformationAmount(0, false /* isLastChild */);
         row.setNotificationFaded(mContainingNotificationIsFaded);
 
-        // This is a workaround, the NotificationShelf should be the owner of `OnScroll` roundness.
-        // Here we should reset the `OnScroll` roundness only on top-level rows.
-        NotificationShelf.resetOnScrollRoundness(row);
+        if (!mUseRoundnessSourceTypes) {
+            // This is a workaround, the NotificationShelf should be the owner of `OnScroll`
+            // roundness.
+            // Here we should reset the `OnScroll` roundness only on top-level rows.
+            NotificationShelf.resetLegacyOnScrollRoundness(row);
+        }
 
         // It doesn't make sense to keep old animations around, lets cancel them!
         ExpandableViewState viewState = row.getViewState();
         if (viewState != null) {
             viewState.cancelAnimations(row);
             row.cancelAppearDrawing();
+        }
+
+        if (mUseRoundnessSourceTypes) {
+            applyRoundnessAndInvalidate();
         }
     }
 
@@ -353,6 +378,11 @@ public class NotificationChildrenContainer extends ViewGroup
         if (!row.isRemoved()) {
             mGroupingUtil.restoreChildNotification(row);
         }
+
+        if (mUseRoundnessSourceTypes) {
+            row.requestRoundnessReset(FROM_PARENT, /* animate = */ false);
+            applyRoundnessAndInvalidate();
+        }
     }
 
     /**
@@ -379,6 +409,10 @@ public class NotificationChildrenContainer extends ViewGroup
                             getContext(),
                             mNotificationHeader,
                             mContainingNotification);
+            mNotificationHeaderWrapper.useRoundnessSourceTypes(mUseRoundnessSourceTypes);
+            if (mUseRoundnessSourceTypes) {
+                mNotificationHeaderWrapper.setOnRoundnessChangedListener(this::invalidate);
+            }
             addView(mNotificationHeader, 0);
             invalidate();
         } else {
@@ -416,6 +450,12 @@ public class NotificationChildrenContainer extends ViewGroup
                                 getContext(),
                                 mNotificationHeaderLowPriority,
                                 mContainingNotification);
+                mNotificationHeaderWrapperLowPriority.useRoundnessSourceTypes(
+                        mUseRoundnessSourceTypes
+                );
+                if (mUseRoundnessSourceTypes) {
+                    mNotificationHeaderWrapper.setOnRoundnessChangedListener(this::invalidate);
+                }
                 addView(mNotificationHeaderLowPriority, 0);
                 invalidate();
             } else {
@@ -492,6 +532,20 @@ public class NotificationChildrenContainer extends ViewGroup
      */
     public List<ExpandableNotificationRow> getAttachedChildren() {
         return mAttachedChildren;
+    }
+
+    /**
+     * Sets the alpha on the content, while leaving the background of the container itself as is.
+     *
+     * @param alpha alpha value to apply to the content
+     */
+    public void setContentAlpha(float alpha) {
+        for (int i = 0; i < mNotificationHeader.getChildCount(); i++) {
+            mNotificationHeader.getChildAt(i).setAlpha(alpha);
+        }
+        for (ExpandableNotificationRow child : getAttachedChildren()) {
+            child.setContentAlpha(alpha);
+        }
     }
 
     /**
@@ -575,9 +629,8 @@ public class NotificationChildrenContainer extends ViewGroup
      * Update the state of all its children based on a linear layout algorithm.
      *
      * @param parentState  the state of the parent
-     * @param ambientState the ambient state containing ambient information
      */
-    public void updateState(ExpandableViewState parentState, AmbientState ambientState) {
+    public void updateState(ExpandableViewState parentState) {
         int childCount = mAttachedChildren.size();
         int yPosition = mNotificationHeaderMargin + mCurrentHeaderTranslation;
         boolean firstChild = true;
@@ -620,9 +673,17 @@ public class NotificationChildrenContainer extends ViewGroup
             childState.height = intrinsicHeight;
             childState.setYTranslation(yPosition + launchTransitionCompensation);
             childState.hidden = false;
-            // When the group is expanded, the children cast the shadows rather than the parent
-            // so use the parent's elevation here.
-            if (childrenExpandedAndNotAnimating && mEnableShadowOnChildNotifications) {
+            if (child.isExpandAnimationRunning() || mContainingNotification.hasExpandingChild()) {
+                // Not modifying translationZ during launch animation. The translationZ of the
+                // expanding child is handled inside ExpandableNotificationRow and the translationZ
+                // of the other children inside the group should remain unchanged. In particular,
+                // they should not take over the translationZ of the parent, since the parent has
+                // a positive translationZ set only for the expanding child to be drawn above other
+                // notifications.
+                childState.setZTranslation(child.getTranslationZ());
+            } else if (childrenExpandedAndNotAnimating && mEnableShadowOnChildNotifications) {
+                // When the group is expanded, the children cast the shadows rather than the parent
+                // so use the parent's elevation here.
                 childState.setZTranslation(parentState.getZTranslation());
             } else {
                 childState.setZTranslation(0);
@@ -675,9 +736,15 @@ public class NotificationChildrenContainer extends ViewGroup
                 mHeaderViewState = new ViewState();
             }
             mHeaderViewState.initFrom(mNotificationHeader);
-            mHeaderViewState.setZTranslation(childrenExpandedAndNotAnimating
-                    ? parentState.getZTranslation()
-                    : 0);
+
+            if (mContainingNotification.hasExpandingChild()) {
+                // Not modifying translationZ during expand animation.
+                mHeaderViewState.setZTranslation(mNotificationHeader.getTranslationZ());
+            } else if (childrenExpandedAndNotAnimating) {
+                mHeaderViewState.setZTranslation(parentState.getZTranslation());
+            } else {
+                mHeaderViewState.setZTranslation(0);
+            }
             mHeaderViewState.setYTranslation(mCurrentHeaderTranslation);
             mHeaderViewState.setAlpha(mHeaderVisibleAmount);
             // The hiding is done automatically by the alpha, otherwise we'll pick it up again
@@ -824,7 +891,7 @@ public class NotificationChildrenContainer extends ViewGroup
 
             isCanvasChanged = true;
             canvas.save();
-            if (mIsNotificationGroupCornerEnabled && translation != 0f) {
+            if (mUseRoundnessSourceTypes && translation != 0f) {
                 clipPath.offset(translation, 0f);
                 canvas.clipPath(clipPath);
                 clipPath.offset(-translation, 0f);
@@ -1375,24 +1442,45 @@ public class NotificationChildrenContainer extends ViewGroup
     }
 
     @Override
-    public void applyRoundness() {
-        Roundable.super.applyRoundness();
+    public void applyRoundnessAndInvalidate() {
         boolean last = true;
+        if (mUseRoundnessSourceTypes) {
+            if (mNotificationHeaderWrapper != null) {
+                mNotificationHeaderWrapper.requestTopRoundness(
+                        /* value = */ getTopRoundness(),
+                        /* sourceType = */ FROM_PARENT,
+                        /* animate = */ false
+                );
+            }
+            if (mNotificationHeaderWrapperLowPriority != null) {
+                mNotificationHeaderWrapperLowPriority.requestTopRoundness(
+                        /* value = */ getTopRoundness(),
+                        /* sourceType = */ FROM_PARENT,
+                        /* animate = */ false
+                );
+            }
+        }
         for (int i = mAttachedChildren.size() - 1; i >= 0; i--) {
             ExpandableNotificationRow child = mAttachedChildren.get(i);
             if (child.getVisibility() == View.GONE) {
                 continue;
             }
-            child.requestTopRoundness(
-                    /* value = */ 0f,
-                    /* animate = */ isShown(),
-                    SourceType.DefaultValue);
-            child.requestBottomRoundness(
-                    /* value = */ last ? getBottomRoundness() : 0f,
-                    /* animate = */ isShown(),
-                    SourceType.DefaultValue);
+            if (mUseRoundnessSourceTypes) {
+                child.requestRoundness(
+                        /* top = */ 0f,
+                        /* bottom = */ last ? getBottomRoundness() : 0f,
+                        /* sourceType = */ FROM_PARENT,
+                        /* animate = */ false);
+            } else {
+                child.requestRoundness(
+                        /* top = */ 0f,
+                        /* bottom = */ last ? getBottomRoundness() : 0f,
+                        LegacySourceType.DefaultValue,
+                        /* animate = */ isShown());
+            }
             last = false;
         }
+        Roundable.super.applyRoundnessAndInvalidate();
     }
 
     public void setHeaderVisibleAmount(float headerVisibleAmount) {
@@ -1450,10 +1538,17 @@ public class NotificationChildrenContainer extends ViewGroup
     }
 
     /**
-     * Enable the support for rounded corner in notification group
+     * Enable the support for rounded corner based on the SourceType
+     *
      * @param enabled true if is supported
      */
-    public void enableNotificationGroupCorner(boolean enabled) {
-        mIsNotificationGroupCornerEnabled = enabled;
+    public void useRoundnessSourceTypes(boolean enabled) {
+        mUseRoundnessSourceTypes = enabled;
+    }
+
+    @Override
+    public String toString() {
+        String roundableStateDebug = "RoundableState = " + getRoundableState().debugString();
+        return "NotificationChildrenContainer:" + hashCode() + " { " + roundableStateDebug + " }";
     }
 }

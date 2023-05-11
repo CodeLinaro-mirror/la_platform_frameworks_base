@@ -16,17 +16,26 @@
 
 package com.android.settingslib.spa.framework.common
 
+import android.content.Context
+import android.net.Uri
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.core.os.bundleOf
+import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.android.settingslib.spa.framework.util.genEntryId
+import com.android.settingslib.spa.framework.util.genPageId
+import com.android.settingslib.spa.slice.appendSpaParams
+import com.android.settingslib.spa.slice.getEntryId
+import com.android.settingslib.spa.tests.testutils.SpaEnvironmentForTest
+import com.android.settingslib.spa.tests.testutils.createSettingsPage
 import com.google.common.truth.Truth.assertThat
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
-const val INJECT_ENTRY_NAME = "INJECT"
-const val ROOT_ENTRY_NAME = "ROOT"
+const val INJECT_ENTRY_NAME_TEST = "INJECT"
+const val ROOT_ENTRY_NAME_TEST = "ROOT"
 
 class MacroForTest(private val pageId: String, private val entryId: String) : EntryMacro {
     @Composable
@@ -48,113 +57,176 @@ class MacroForTest(private val pageId: String, private val entryId: String) : En
 
 @RunWith(AndroidJUnit4::class)
 class SettingsEntryTest {
+    private val context: Context = ApplicationProvider.getApplicationContext()
+    private val spaEnvironment = SpaEnvironmentForTest(context)
+
     @get:Rule
     val composeTestRule = createComposeRule()
 
     @Test
     fun testBuildBasic() {
-        val owner = SettingsPage.create("mySpp")
+        val owner = createSettingsPage("mySpp")
         val entry = SettingsEntryBuilder.create(owner, "myEntry").build()
-        assertThat(entry.id).isEqualTo(getUniqueEntryId("myEntry", owner))
-        assertThat(entry.displayName).isEqualTo("myEntry")
+        assertThat(entry.id).isEqualTo(genEntryId("myEntry", owner))
+        assertThat(entry.label).isEqualTo("myEntry")
         assertThat(entry.owner.sppName).isEqualTo("mySpp")
         assertThat(entry.owner.displayName).isEqualTo("mySpp")
         assertThat(entry.fromPage).isNull()
         assertThat(entry.toPage).isNull()
         assertThat(entry.isAllowSearch).isFalse()
         assertThat(entry.isSearchDataDynamic).isFalse()
-        assertThat(entry.mutableStatus).isFalse()
+        assertThat(entry.hasMutableStatus).isFalse()
+        assertThat(entry.hasSliceSupport).isFalse()
     }
 
     @Test
     fun testBuildWithLink() {
-        val owner = SettingsPage.create("mySpp")
-        val fromPage = SettingsPage.create("fromSpp")
-        val toPage = SettingsPage.create("toSpp")
-        val entryFrom = SettingsEntryBuilder.createLinkFrom("myEntry", owner)
-            .setLink(toPage = toPage).build()
-        assertThat(entryFrom.id).isEqualTo(getUniqueEntryId("myEntry", owner, owner, toPage))
-        assertThat(entryFrom.displayName).isEqualTo("myEntry")
+        val owner = createSettingsPage("mySpp")
+        val fromPage = createSettingsPage("fromSpp")
+        val toPage = createSettingsPage("toSpp")
+        val entryFrom =
+            SettingsEntryBuilder.createLinkFrom("myEntry", owner).setLink(toPage = toPage).build()
+        assertThat(entryFrom.id).isEqualTo(genEntryId("myEntry", owner, owner, toPage))
+        assertThat(entryFrom.label).isEqualTo("myEntry")
         assertThat(entryFrom.fromPage!!.sppName).isEqualTo("mySpp")
         assertThat(entryFrom.toPage!!.sppName).isEqualTo("toSpp")
 
-        val entryTo = SettingsEntryBuilder.createLinkTo("myEntry", owner)
-            .setLink(fromPage = fromPage).build()
-        assertThat(entryTo.id).isEqualTo(getUniqueEntryId("myEntry", owner, fromPage, owner))
-        assertThat(entryTo.displayName).isEqualTo("myEntry")
+        val entryTo =
+            SettingsEntryBuilder.createLinkTo("myEntry", owner).setLink(fromPage = fromPage).build()
+        assertThat(entryTo.id).isEqualTo(genEntryId("myEntry", owner, fromPage, owner))
+        assertThat(entryTo.label).isEqualTo("myEntry")
         assertThat(entryTo.fromPage!!.sppName).isEqualTo("fromSpp")
         assertThat(entryTo.toPage!!.sppName).isEqualTo("mySpp")
     }
 
     @Test
     fun testBuildInject() {
-        val owner = SettingsPage.create("mySpp")
+        val owner = createSettingsPage("mySpp")
         val entryInject = SettingsEntryBuilder.createInject(owner).build()
         assertThat(entryInject.id).isEqualTo(
-            getUniqueEntryId(
-                INJECT_ENTRY_NAME,
-                owner,
-                toPage = owner
+            genEntryId(
+                INJECT_ENTRY_NAME_TEST, owner, toPage = owner
             )
         )
-        assertThat(entryInject.displayName).isEqualTo("${INJECT_ENTRY_NAME}_mySpp")
+        assertThat(entryInject.label).isEqualTo("${INJECT_ENTRY_NAME_TEST}_mySpp")
         assertThat(entryInject.fromPage).isNull()
         assertThat(entryInject.toPage).isNotNull()
     }
 
     @Test
     fun testBuildRoot() {
-        val owner = SettingsPage.create("mySpp")
+        val owner = createSettingsPage("mySpp")
         val entryInject = SettingsEntryBuilder.createRoot(owner, "myRootEntry").build()
         assertThat(entryInject.id).isEqualTo(
-            getUniqueEntryId(
-                ROOT_ENTRY_NAME,
-                owner,
-                toPage = owner
+            genEntryId(
+                ROOT_ENTRY_NAME_TEST, owner, toPage = owner
             )
         )
-        assertThat(entryInject.displayName).isEqualTo("myRootEntry")
+        assertThat(entryInject.label).isEqualTo("myRootEntry")
         assertThat(entryInject.fromPage).isNull()
         assertThat(entryInject.toPage).isNotNull()
     }
 
     @Test
     fun testSetAttributes() {
-        val owner = SettingsPage.create("mySpp")
-        val entry = SettingsEntryBuilder.create(owner, "myEntry")
-            .setDisplayName("myEntryDisplay")
-            .setIsAllowSearch(true)
-            .setIsSearchDataDynamic(false)
-            .setHasMutableStatus(true)
-            .build()
-        assertThat(entry.id).isEqualTo(getUniqueEntryId("myEntry", owner))
-        assertThat(entry.displayName).isEqualTo("myEntryDisplay")
+        SpaEnvironmentFactory.reset(spaEnvironment)
+        val owner = createSettingsPage("SppHome")
+        val entryBuilder =
+            SettingsEntryBuilder.create(owner, "myEntry")
+                .setLabel("myEntryDisplay")
+                .setIsSearchDataDynamic(false)
+                .setHasMutableStatus(true)
+                .setSearchDataFn { null }
+                .setSliceDataFn { _, _ -> null }
+        val entry = entryBuilder.build()
+        assertThat(entry.id).isEqualTo(genEntryId("myEntry", owner))
+        assertThat(entry.label).isEqualTo("myEntryDisplay")
         assertThat(entry.fromPage).isNull()
         assertThat(entry.toPage).isNull()
         assertThat(entry.isAllowSearch).isTrue()
         assertThat(entry.isSearchDataDynamic).isFalse()
-        assertThat(entry.mutableStatus).isTrue()
+        assertThat(entry.hasMutableStatus).isTrue()
+        assertThat(entry.hasSliceSupport).isTrue()
+
+        // Test disabled Spp
+        val ownerDisabled = createSettingsPage("SppDisabled")
+        val entryBuilderDisabled =
+            SettingsEntryBuilder.create(ownerDisabled, "myEntry")
+                .setLabel("myEntryDisplay")
+                .setIsSearchDataDynamic(false)
+                .setHasMutableStatus(true)
+                .setSearchDataFn { null }
+                .setSliceDataFn { _, _ -> null }
+        val entryDisabled = entryBuilderDisabled.build()
+        assertThat(entryDisabled.id).isEqualTo(genEntryId("myEntry", ownerDisabled))
+        assertThat(entryDisabled.label).isEqualTo("myEntryDisplay")
+        assertThat(entryDisabled.fromPage).isNull()
+        assertThat(entryDisabled.toPage).isNull()
+        assertThat(entryDisabled.isAllowSearch).isFalse()
+        assertThat(entryDisabled.isSearchDataDynamic).isFalse()
+        assertThat(entryDisabled.hasMutableStatus).isTrue()
+        assertThat(entryDisabled.hasSliceSupport).isFalse()
+
+        // Clear search data fn
+        val entry2 = entryBuilder.clearSearchDataFn().build()
+        assertThat(entry2.isAllowSearch).isFalse()
+
+        // Clear SppHome in spa environment
+        SpaEnvironmentFactory.reset()
+        val entry3 = entryBuilder.build()
+        assertThat(entry3.id).isEqualTo(genEntryId("myEntry", owner))
+        assertThat(entry3.label).isEqualTo("myEntryDisplay")
+        assertThat(entry3.fromPage).isNull()
+        assertThat(entry3.toPage).isNull()
+        assertThat(entry3.isAllowSearch).isFalse()
+        assertThat(entry3.isSearchDataDynamic).isFalse()
+        assertThat(entry3.hasMutableStatus).isTrue()
+        assertThat(entry3.hasSliceSupport).isFalse()
     }
 
     @Test
     fun testSetMarco() {
-        val owner = SettingsPage.create("mySpp", arguments = bundleOf("param" to "v1"))
-        val entry = SettingsEntryBuilder.create(owner, "myEntry")
-            .setMacro {
-                assertThat(it?.getString("param")).isEqualTo("v1")
-                assertThat(it?.getString("rtParam")).isEqualTo("v2")
-                assertThat(it?.getString("unknown")).isNull()
-                MacroForTest(getUniquePageId("mySpp"), getUniqueEntryId("myEntry", owner))
-            }
-            .build()
+        SpaEnvironmentFactory.reset(spaEnvironment)
+        val owner = createSettingsPage("SppHome", arguments = bundleOf("param" to "v1"))
+        val entry = SettingsEntryBuilder.create(owner, "myEntry").setMacro {
+            assertThat(it?.getString("param")).isEqualTo("v1")
+            assertThat(it?.getString("rtParam")).isEqualTo("v2")
+            assertThat(it?.getString("unknown")).isNull()
+            MacroForTest(genPageId("SppHome"), genEntryId("myEntry", owner))
+        }.build()
 
         val rtArguments = bundleOf("rtParam" to "v2")
         composeTestRule.setContent { entry.UiLayout(rtArguments) }
+        assertThat(entry.isAllowSearch).isTrue()
+        assertThat(entry.isSearchDataDynamic).isFalse()
+        assertThat(entry.hasMutableStatus).isFalse()
+        assertThat(entry.hasSliceSupport).isFalse()
         val searchData = entry.getSearchData(rtArguments)
         val statusData = entry.getStatusData(rtArguments)
         assertThat(searchData?.title).isEqualTo("myTitle")
         assertThat(searchData?.keyword).isEmpty()
         assertThat(statusData?.isDisabled).isTrue()
         assertThat(statusData?.isSwitchOff).isTrue()
+    }
+
+    @Test
+    fun testSetSliceDataFn() {
+        SpaEnvironmentFactory.reset(spaEnvironment)
+        val owner = createSettingsPage("SppHome")
+        val entryId = genEntryId("myEntry", owner)
+        val emptySliceData = EntrySliceData()
+
+        val entryBuilder = SettingsEntryBuilder.create(owner, "myEntry").setSliceDataFn { uri, _ ->
+            return@setSliceDataFn if (uri.getEntryId() == entryId) emptySliceData else null
+        }
+        val entry = entryBuilder.build()
+        assertThat(entry.id).isEqualTo(entryId)
+        assertThat(entry.hasSliceSupport).isTrue()
+        assertThat(entry.getSliceData(Uri.EMPTY)).isNull()
+        assertThat(
+            entry.getSliceData(
+                Uri.Builder().scheme("content").appendSpaParams(entryId = entryId).build()
+            )
+        ).isEqualTo(emptySliceData)
     }
 }

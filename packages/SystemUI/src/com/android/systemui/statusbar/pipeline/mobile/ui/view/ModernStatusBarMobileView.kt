@@ -17,46 +17,29 @@
 package com.android.systemui.statusbar.pipeline.mobile.ui.view
 
 import android.content.Context
-import android.graphics.Rect
 import android.util.AttributeSet
 import android.view.LayoutInflater
 import com.android.systemui.R
-import com.android.systemui.statusbar.BaseStatusBarFrameLayout
-import com.android.systemui.statusbar.StatusBarIconView.STATE_ICON
+import com.android.systemui.statusbar.StatusBarIconView.getVisibleStateString
+import com.android.systemui.statusbar.pipeline.mobile.ui.MobileViewLogger
 import com.android.systemui.statusbar.pipeline.mobile.ui.binder.MobileIconBinder
-import com.android.systemui.statusbar.pipeline.mobile.ui.viewmodel.MobileIconViewModel
-import java.util.ArrayList
+import com.android.systemui.statusbar.pipeline.mobile.ui.viewmodel.LocationBasedMobileViewModel
+import com.android.systemui.statusbar.pipeline.shared.ui.view.ModernStatusBarView
 
 class ModernStatusBarMobileView(
     context: Context,
     attrs: AttributeSet?,
-) : BaseStatusBarFrameLayout(context, attrs) {
+) : ModernStatusBarView(context, attrs) {
 
-    private lateinit var slot: String
-    override fun getSlot() = slot
+    var subId: Int = -1
 
-    override fun onDarkChanged(areas: ArrayList<Rect>?, darkIntensity: Float, tint: Int) {
-        // TODO
-    }
-
-    override fun setStaticDrawableColor(color: Int) {
-        // TODO
-    }
-
-    override fun setDecorColor(color: Int) {
-        // TODO
-    }
-
-    override fun setVisibleState(state: Int, animate: Boolean) {
-        // TODO
-    }
-
-    override fun getVisibleState(): Int {
-        return STATE_ICON
-    }
-
-    override fun isIconVisible(): Boolean {
-        return true
+    override fun toString(): String {
+        return "ModernStatusBarMobileView(" +
+            "slot='$slot', " +
+            "subId=$subId, " +
+            "isCollecting=${binding.isCollecting()}, " +
+            "visibleState=${getVisibleStateString(visibleState)}); " +
+            "viewString=${super.toString()}"
     }
 
     companion object {
@@ -68,15 +51,17 @@ class ModernStatusBarMobileView(
         @JvmStatic
         fun constructAndBind(
             context: Context,
+            logger: MobileViewLogger,
             slot: String,
-            viewModel: MobileIconViewModel,
+            viewModel: LocationBasedMobileViewModel,
         ): ModernStatusBarMobileView {
             return (LayoutInflater.from(context)
                     .inflate(R.layout.status_bar_mobile_signal_group_new, null)
                     as ModernStatusBarMobileView)
                 .also {
-                    it.slot = slot
-                    MobileIconBinder.bind(it, viewModel)
+                    it.subId = viewModel.subscriptionId
+                    it.initView(slot) { MobileIconBinder.bind(it, viewModel, logger) }
+                    logger.logNewViewBinding(it, viewModel)
                 }
         }
     }

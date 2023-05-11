@@ -38,6 +38,7 @@ import android.util.Log;
 import android.util.TimingsTraceLog;
 import android.view.SurfaceControl;
 import android.view.ThreadedRenderer;
+import android.view.View;
 
 import com.android.internal.protolog.common.ProtoLog;
 import com.android.systemui.dagger.GlobalRootComponent;
@@ -112,8 +113,14 @@ public class SystemUIApplication extends Application implements
         // the theme set there.
         setTheme(R.style.Theme_SystemUI);
 
+        View.setTraceLayoutSteps(
+                SystemProperties.getBoolean("persist.debug.trace_layouts", false));
+        View.setTracedRequestLayoutClassClass(
+                SystemProperties.get("persist.debug.trace_request_layout_class", null));
+
         if (Process.myUserHandle().equals(UserHandle.SYSTEM)) {
-            IntentFilter bootCompletedFilter = new IntentFilter(Intent.ACTION_BOOT_COMPLETED);
+            IntentFilter bootCompletedFilter = new
+                    IntentFilter(Intent.ACTION_LOCKED_BOOT_COMPLETED);
             bootCompletedFilter.setPriority(IntentFilter.SYSTEM_HIGH_PRIORITY);
 
             // If SF GPU context priority is set to realtime, then SysUI should run at high.

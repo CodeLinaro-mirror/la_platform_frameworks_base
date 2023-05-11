@@ -41,6 +41,7 @@ import static android.view.WindowManager.TRANSIT_OPEN;
 import static android.view.WindowManager.TRANSIT_RELAUNCH;
 import static android.view.WindowManager.TRANSIT_TO_BACK;
 import static android.view.WindowManager.TRANSIT_TO_FRONT;
+import static android.window.TransitionInfo.FLAG_BACK_GESTURE_ANIMATED;
 import static android.window.TransitionInfo.FLAG_CROSS_PROFILE_OWNER_THUMBNAIL;
 import static android.window.TransitionInfo.FLAG_CROSS_PROFILE_WORK_THUMBNAIL;
 import static android.window.TransitionInfo.FLAG_DISPLAY_HAS_ALERT_WINDOWS;
@@ -63,7 +64,6 @@ import static com.android.wm.shell.transition.TransitionAnimationHelper.addBackg
 import static com.android.wm.shell.transition.TransitionAnimationHelper.edgeExtendWindow;
 import static com.android.wm.shell.transition.TransitionAnimationHelper.getTransitionBackgroundColorIfSet;
 import static com.android.wm.shell.transition.TransitionAnimationHelper.loadAttributeAnimation;
-import static com.android.wm.shell.transition.TransitionAnimationHelper.sDisableCustomTaskAnimationProperty;
 
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
@@ -112,6 +112,7 @@ import com.android.wm.shell.common.ShellExecutor;
 import com.android.wm.shell.common.TransactionPool;
 import com.android.wm.shell.protolog.ShellProtoLogGroup;
 import com.android.wm.shell.sysui.ShellInit;
+import com.android.wm.shell.util.TransitionUtil;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -300,6 +301,14 @@ public class DefaultTransitionHandler implements Transitions.TransitionHandler {
             return true;
         }
 
+        // check if no-animation and skip animation if so.
+        if (Transitions.isAllNoAnimation(info)) {
+            startTransaction.apply();
+            finishTransaction.apply();
+            finishCallback.onTransitionFinished(null /* wct */, null /* wctCB */);
+            return true;
+        }
+
         if (mAnimations.containsKey(transition)) {
             throw new IllegalStateException("Got a duplicate startAnimation call for "
                     + transition);
@@ -395,6 +404,11 @@ public class DefaultTransitionHandler implements Transitions.TransitionHandler {
                 }
             }
 
+            // The back gesture has animated this change before transition happen, so here we don't
+            // play the animation again.
+            if (change.hasFlags(FLAG_BACK_GESTURE_ANIMATED)) {
+                continue;
+            }
             // Don't animate anything that isn't independent.
             if (!TransitionInfo.isIndependent(change, info)) continue;
 
@@ -431,9 +445,8 @@ public class DefaultTransitionHandler implements Transitions.TransitionHandler {
                 backgroundColorForTransition = getTransitionBackgroundColorIfSet(info, change, a,
                         backgroundColorForTransition);
 
-                boolean delayedEdgeExtension = false;
                 if (!isTask && a.hasExtension()) {
-                    if (!Transitions.isOpeningType(change.getMode())) {
+                    if (!TransitionUtil.isOpeningType(change.getMode())) {
                         // Can screenshot now (before startTransaction is applied)
                         edgeExtendWindow(change, a, startTransaction, finishTransaction);
                     } else {
@@ -441,28 +454,17 @@ public class DefaultTransitionHandler implements Transitions.TransitionHandler {
                         // may not be visible or ready yet.
                         postStartTransactionCallbacks
                                 .add(t -> edgeExtendWindow(change, a, t, finishTransaction));
-                        delayedEdgeExtension = true;
                     }
                 }
 
-                final Rect clipRect = Transitions.isClosingType(change.getMode())
+                final Rect clipRect = TransitionUtil.isClosingType(change.getMode())
                         ? new Rect(mRotator.getEndBoundsInStartRotation(change))
                         : new Rect(change.getEndAbsBounds());
                 clipRect.offsetTo(0, 0);
 
-                if (delayedEdgeExtension) {
-                    // If the edge extension needs to happen after the startTransition has been
-                    // applied, then we want to only start the animation after the edge extension
-                    // postStartTransaction callback has been run
-                    postStartTransactionCallbacks.add(t ->
-                            startSurfaceAnimation(animations, a, change.getLeash(), onAnimFinish,
-                                    mTransactionPool, mMainExecutor, mAnimExecutor,
-                                    change.getEndRelOffset(), cornerRadius, clipRect));
-                } else {
-                    startSurfaceAnimation(animations, a, change.getLeash(), onAnimFinish,
-                            mTransactionPool, mMainExecutor, mAnimExecutor,
-                            change.getEndRelOffset(), cornerRadius, clipRect);
-                }
+                buildSurfaceAnimation(animations, a, change.getLeash(), onAnimFinish,
+                        mTransactionPool, mMainExecutor, change.getEndRelOffset(), cornerRadius,
+                        clipRect);
 
                 if (info.getAnimationOptions() != null) {
                     attachThumbnail(animations, onAnimFinish, change, info.getAnimationOptions(),
@@ -476,19 +478,25 @@ public class DefaultTransitionHandler implements Transitions.TransitionHandler {
                     startTransaction, finishTransaction);
         }
 
-        // postStartTransactionCallbacks require that the start transaction is already
-        // applied to run otherwise they may result in flickers and UI inconsistencies.
-        boolean waitForStartTransactionApply = postStartTransactionCallbacks.size() > 0;
-        startTransaction.apply(waitForStartTransactionApply);
-
-        // Run tasks that require startTransaction to already be applied
-        for (Consumer<SurfaceControl.Transaction> postStartTransactionCallback :
-                postStartTransactionCallbacks) {
-            final SurfaceControl.Transaction t = mTransactionPool.acquire();
-            postStartTransactionCallback.accept(t);
-            t.apply();
-            mTransactionPool.release(t);
+        if (postStartTransactionCallbacks.size() > 0) {
+            // postStartTransactionCallbacks require that the start transaction is already
+            // applied to run otherwise they may result in flickers and UI inconsistencies.
+            startTransaction.apply(true /* sync */);
+            // startTransaction is empty now, so fill it with the edge-extension setup
+            for (Consumer<SurfaceControl.Transaction> postStartTransactionCallback :
+                    postStartTransactionCallbacks) {
+                postStartTransactionCallback.accept(startTransaction);
+            }
         }
+        startTransaction.apply();
+
+        // now start animations. they are started on another thread, so we have to post them
+        // *after* applying the startTransaction
+        mAnimExecutor.execute(() -> {
+            for (int i = 0; i < animations.size(); ++i) {
+                animations.get(i).start();
+            }
+        });
 
         mRotator.cleanUp(finishTransaction);
         TransitionMetrics.getInstance().reportAnimationStart(transition);
@@ -525,8 +533,8 @@ public class DefaultTransitionHandler implements Transitions.TransitionHandler {
             animations.removeAll(animGroupStore);
             onAnimFinish.run();
         };
-        anim.startAnimation(animGroup, finishCallback, mTransitionAnimationScaleSetting,
-                mMainExecutor, mAnimExecutor);
+        anim.buildAnimation(animGroup, finishCallback, mTransitionAnimationScaleSetting,
+                mMainExecutor);
         for (int i = animGroup.size() - 1; i >= 0; i--) {
             final Animator animator = animGroup.get(i);
             animGroupStore.add(animator);
@@ -555,13 +563,12 @@ public class DefaultTransitionHandler implements Transitions.TransitionHandler {
         final int flags = info.getFlags();
         final int changeMode = change.getMode();
         final int changeFlags = change.getFlags();
-        final boolean isOpeningType = Transitions.isOpeningType(type);
-        final boolean enter = Transitions.isOpeningType(changeMode);
+        final boolean isOpeningType = TransitionUtil.isOpeningType(type);
+        final boolean enter = TransitionUtil.isOpeningType(changeMode);
         final boolean isTask = change.getTaskInfo() != null;
         final TransitionInfo.AnimationOptions options = info.getAnimationOptions();
         final int overrideType = options != null ? options.getType() : ANIM_NONE;
-        final boolean canCustomContainer = !isTask || !sDisableCustomTaskAnimationProperty;
-        final Rect endBounds = Transitions.isClosingType(changeMode)
+        final Rect endBounds = TransitionUtil.isClosingType(changeMode)
                 ? mRotator.getEndBoundsInStartRotation(change)
                 : change.getEndAbsBounds();
 
@@ -583,7 +590,7 @@ public class DefaultTransitionHandler implements Transitions.TransitionHandler {
         } else if (type == TRANSIT_RELAUNCH) {
             a = mTransitionAnimation.createRelaunchAnimation(endBounds, mInsets, endBounds);
         } else if (overrideType == ANIM_CUSTOM
-                && (canCustomContainer || options.getOverrideTaskTransition())) {
+                && (!isTask || options.getOverrideTaskTransition())) {
             a = mTransitionAnimation.loadAnimationRes(options.getPackageName(), enter
                     ? options.getEnterResId() : options.getExitResId());
         } else if (overrideType == ANIM_OPEN_CROSS_PROFILE_APPS && enter) {
@@ -619,11 +626,12 @@ public class DefaultTransitionHandler implements Transitions.TransitionHandler {
         return a;
     }
 
-    static void startSurfaceAnimation(@NonNull ArrayList<Animator> animations,
+    /** Builds an animator for the surface and adds it to the `animations` list. */
+    static void buildSurfaceAnimation(@NonNull ArrayList<Animator> animations,
             @NonNull Animation anim, @NonNull SurfaceControl leash,
             @NonNull Runnable finishCallback, @NonNull TransactionPool pool,
-            @NonNull ShellExecutor mainExecutor, @NonNull ShellExecutor animExecutor,
-            @Nullable Point position, float cornerRadius, @Nullable Rect clipRect) {
+            @NonNull ShellExecutor mainExecutor, @Nullable Point position, float cornerRadius,
+            @Nullable Rect clipRect) {
         final SurfaceControl.Transaction transaction = pool.acquire();
         final ValueAnimator va = ValueAnimator.ofFloat(0f, 1f);
         final Transformation transformation = new Transformation();
@@ -677,14 +685,13 @@ public class DefaultTransitionHandler implements Transitions.TransitionHandler {
             }
         });
         animations.add(va);
-        animExecutor.execute(va::start);
     }
 
     private void attachThumbnail(@NonNull ArrayList<Animator> animations,
             @NonNull Runnable finishCallback, TransitionInfo.Change change,
             TransitionInfo.AnimationOptions options, float cornerRadius) {
-        final boolean isOpen = Transitions.isOpeningType(change.getMode());
-        final boolean isClose = Transitions.isClosingType(change.getMode());
+        final boolean isOpen = TransitionUtil.isOpeningType(change.getMode());
+        final boolean isClose = TransitionUtil.isClosingType(change.getMode());
         if (isOpen) {
             if (options.getType() == ANIM_OPEN_CROSS_PROFILE_APPS) {
                 attachCrossProfileThumbnailAnimation(animations, finishCallback, change,
@@ -731,9 +738,8 @@ public class DefaultTransitionHandler implements Transitions.TransitionHandler {
         };
         a.restrictDuration(MAX_ANIMATION_DURATION);
         a.scaleCurrentDuration(mTransitionAnimationScaleSetting);
-        startSurfaceAnimation(animations, a, wt.getSurface(), finisher, mTransactionPool,
-                mMainExecutor, mAnimExecutor, change.getEndRelOffset(),
-                cornerRadius, change.getEndAbsBounds());
+        buildSurfaceAnimation(animations, a, wt.getSurface(), finisher, mTransactionPool,
+                mMainExecutor, change.getEndRelOffset(), cornerRadius, change.getEndAbsBounds());
     }
 
     private void attachThumbnailAnimation(@NonNull ArrayList<Animator> animations,
@@ -756,9 +762,8 @@ public class DefaultTransitionHandler implements Transitions.TransitionHandler {
         };
         a.restrictDuration(MAX_ANIMATION_DURATION);
         a.scaleCurrentDuration(mTransitionAnimationScaleSetting);
-        startSurfaceAnimation(animations, a, wt.getSurface(), finisher, mTransactionPool,
-                mMainExecutor, mAnimExecutor, change.getEndRelOffset(),
-                cornerRadius, change.getEndAbsBounds());
+        buildSurfaceAnimation(animations, a, wt.getSurface(), finisher, mTransactionPool,
+                mMainExecutor, change.getEndRelOffset(), cornerRadius, change.getEndAbsBounds());
     }
 
     private static int getWallpaperTransitType(TransitionInfo info) {
@@ -768,16 +773,16 @@ public class DefaultTransitionHandler implements Transitions.TransitionHandler {
         for (int i = info.getChanges().size() - 1; i >= 0; --i) {
             final TransitionInfo.Change change = info.getChanges().get(i);
             if ((change.getFlags() & FLAG_SHOW_WALLPAPER) != 0) {
-                if (Transitions.isOpeningType(change.getMode())) {
+                if (TransitionUtil.isOpeningType(change.getMode())) {
                     hasOpenWallpaper = true;
-                } else if (Transitions.isClosingType(change.getMode())) {
+                } else if (TransitionUtil.isClosingType(change.getMode())) {
                     hasCloseWallpaper = true;
                 }
             }
         }
 
         if (hasOpenWallpaper && hasCloseWallpaper) {
-            return Transitions.isOpeningType(info.getType())
+            return TransitionUtil.isOpeningType(info.getType())
                     ? WALLPAPER_TRANSITION_INTRA_OPEN : WALLPAPER_TRANSITION_INTRA_CLOSE;
         } else if (hasOpenWallpaper) {
             return WALLPAPER_TRANSITION_OPEN;

@@ -27,8 +27,6 @@ import android.content.IntentFilter;
 import android.content.pm.ActivityInfo;
 import android.graphics.Insets;
 import android.graphics.PixelFormat;
-import android.graphics.PorterDuff;
-import android.graphics.PorterDuffColorFilter;
 import android.graphics.Rect;
 import android.os.Bundle;
 import android.os.UserHandle;
@@ -52,9 +50,12 @@ import android.widget.LinearLayout;
 import android.widget.SeekBar;
 import android.widget.Switch;
 
+import com.android.internal.accessibility.common.MagnificationConstants;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.graphics.SfVsyncFrameCallbackProvider;
 import com.android.systemui.R;
+import com.android.systemui.common.ui.view.SeekBarWithIconButtonsView;
+import com.android.systemui.util.settings.SecureSettings;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -68,6 +69,7 @@ class WindowMagnificationSettings implements MagnificationGestureDetector.OnGest
     private final Context mContext;
     private final AccessibilityManager mAccessibilityManager;
     private final WindowManager mWindowManager;
+    private final SecureSettings mSecureSettings;
 
     private final Runnable mWindowInsetChangeRunnable;
     private final SfVsyncFrameCallbackProvider mSfVsyncFrameProvider;
@@ -79,7 +81,7 @@ class WindowMagnificationSettings implements MagnificationGestureDetector.OnGest
     private final MagnificationGestureDetector mGestureDetector;
     private boolean mSingleTapDetected = false;
 
-    private SeekBar mZoomSeekbar;
+    private SeekBarWithIconButtonsView mZoomSeekbar;
     private Switch mAllowDiagonalScrollingSwitch;
     private LinearLayout mPanelView;
     private LinearLayout mSettingView;
@@ -87,12 +89,13 @@ class WindowMagnificationSettings implements MagnificationGestureDetector.OnGest
     private ImageButton mSmallButton;
     private ImageButton mMediumButton;
     private ImageButton mLargeButton;
-    private Button mCloseButton;
+    private Button mDoneButton;
     private Button mEditButton;
     private ImageButton mChangeModeButton;
+    private int mLastSelectedButtonIndex = MagnificationSize.NONE;
     private boolean mAllowDiagonalScrolling = false;
     private static final float A11Y_CHANGE_SCALE_DIFFERENCE = 1.0f;
-    private static final float A11Y_SCALE_MIN_VALUE = 2.0f;
+    private static final float A11Y_SCALE_MIN_VALUE = 1.0f;
     private WindowMagnificationSettingsCallback mCallback;
 
     @Retention(RetentionPolicy.SOURCE)
@@ -103,85 +106,31 @@ class WindowMagnificationSettings implements MagnificationGestureDetector.OnGest
             MagnificationSize.LARGE,
     })
     /** Denotes the Magnification size type. */
-    @interface MagnificationSize {
+    public @interface MagnificationSize {
         int NONE = 0;
-        int SMALL  = 1;
+        int SMALL = 1;
         int MEDIUM = 2;
         int LARGE = 3;
     }
 
     @VisibleForTesting
     WindowMagnificationSettings(Context context, WindowMagnificationSettingsCallback callback,
-                           SfVsyncFrameCallbackProvider sfVsyncFrameProvider) {
+            SfVsyncFrameCallbackProvider sfVsyncFrameProvider, SecureSettings secureSettings) {
         mContext = context;
         mAccessibilityManager = mContext.getSystemService(AccessibilityManager.class);
         mWindowManager = mContext.getSystemService(WindowManager.class);
         mSfVsyncFrameProvider = sfVsyncFrameProvider;
         mCallback = callback;
+        mSecureSettings = secureSettings;
 
-        mAllowDiagonalScrolling = Settings.Secure.getIntForUser(mContext.getContentResolver(),
+        mAllowDiagonalScrolling = mSecureSettings.getIntForUser(
                 Settings.Secure.ACCESSIBILITY_ALLOW_DIAGONAL_SCROLLING, 0,
                 UserHandle.USER_CURRENT) == 1;
 
-        float scale = Settings.Secure.getFloatForUser(mContext.getContentResolver(),
-                Settings.Secure.ACCESSIBILITY_DISPLAY_MAGNIFICATION_SCALE, 0,
-                UserHandle.USER_CURRENT);
-
-        mSettingView = (LinearLayout) View.inflate(context,
-                R.layout.window_magnification_settings_view, null);
-
-        mSettingView.setClickable(true);
-        mSettingView.setFocusable(true);
-        mSettingView.setOnTouchListener(this::onTouch);
-
-        mPanelView = mSettingView.findViewById(R.id.magnifier_panel_view);
-        mSmallButton = mSettingView.findViewById(R.id.magnifier_small_button);
-        mMediumButton = mSettingView.findViewById(R.id.magnifier_medium_button);
-        mLargeButton = mSettingView.findViewById(R.id.magnifier_large_button);
-        mCloseButton = mSettingView.findViewById(R.id.magnifier_close_button);
-        mEditButton = mSettingView.findViewById(R.id.magnifier_edit_button);
-        mChangeModeButton = mSettingView.findViewById(R.id.magnifier_full_button);
-
-        mZoomSeekbar = mSettingView.findViewById(R.id.magnifier_zoom_seekbar);
-        mZoomSeekbar.setOnSeekBarChangeListener(new ZoomSeekbarChangeListener());
-        setSeekbarProgress(scale);
-        mAllowDiagonalScrollingSwitch =
-                (Switch) mSettingView.findViewById(R.id.magnifier_horizontal_lock_switch);
-        mAllowDiagonalScrollingSwitch.setChecked(mAllowDiagonalScrolling);
-        mAllowDiagonalScrollingSwitch.setOnCheckedChangeListener((view, checked) -> {
-            toggleDiagonalScrolling();
-        });
-
         mParams = createLayoutParams(context);
-        applyResourcesValues();
-
-        mSmallButton.setAccessibilityDelegate(mButtonDelegate);
-        mSmallButton.setOnClickListener(mButtonClickListener);
-
-        mMediumButton.setAccessibilityDelegate(mButtonDelegate);
-        mMediumButton.setOnClickListener(mButtonClickListener);
-
-        mLargeButton.setAccessibilityDelegate(mButtonDelegate);
-        mLargeButton.setOnClickListener(mButtonClickListener);
-
-        mCloseButton.setAccessibilityDelegate(mButtonDelegate);
-        mCloseButton.setOnClickListener(mButtonClickListener);
-
-        mChangeModeButton.setAccessibilityDelegate(mButtonDelegate);
-        mChangeModeButton.setOnClickListener(mButtonClickListener);
-
-        mEditButton.setAccessibilityDelegate(mButtonDelegate);
-        mEditButton.setOnClickListener(mButtonClickListener);
-
         mWindowInsetChangeRunnable = this::onWindowInsetChanged;
-        mSettingView.setOnApplyWindowInsetsListener((v, insets) -> {
-            // Adds a pending post check to avoiding redundant calculation because this callback
-            // is sent frequently when the switch icon window dragged by the users.
-            if (!mSettingView.getHandler().hasCallbacks(mWindowInsetChangeRunnable)) {
-                mSettingView.getHandler().post(mWindowInsetChangeRunnable);
-            }
-            return v.onApplyWindowInsets(insets);
-        });
+
+        inflateView();
 
         mGestureDetector = new MagnificationGestureDetector(context,
                 context.getMainThreadHandler(), this);
@@ -191,9 +140,14 @@ class WindowMagnificationSettings implements MagnificationGestureDetector.OnGest
         @Override
         public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
             float scale = progress * A11Y_CHANGE_SCALE_DIFFERENCE + A11Y_SCALE_MIN_VALUE;
-            Settings.Secure.putFloatForUser(mContext.getContentResolver(),
-                    Settings.Secure.ACCESSIBILITY_DISPLAY_MAGNIFICATION_SCALE, scale,
-                    UserHandle.USER_CURRENT);
+            // Update persisted scale only when scale >= PERSISTED_SCALE_MIN_VALUE const.
+            // We assume if the scale is lower than the PERSISTED_SCALE_MIN_VALUE, there will be
+            // no obvious magnification effect.
+            if (scale >= MagnificationConstants.PERSISTED_SCALE_MIN_VALUE) {
+                Settings.Secure.putFloatForUser(mContext.getContentResolver(),
+                        Settings.Secure.ACCESSIBILITY_DISPLAY_MAGNIFICATION_SCALE, scale,
+                        UserHandle.USER_CURRENT);
+            }
             mCallback.onMagnifierScale(scale);
         }
 
@@ -218,9 +172,9 @@ class WindowMagnificationSettings implements MagnificationGestureDetector.OnGest
         } else if (viewId == R.id.magnifier_large_button) {
             return mContext.getResources().getString(
                     R.string.accessibility_magnification_large);
-        } else if (viewId == R.id.magnifier_close_button) {
+        } else if (viewId == R.id.magnifier_done_button) {
             return mContext.getResources().getString(
-                    R.string.accessibility_magnification_close);
+                    R.string.accessibility_magnification_done);
         } else if (viewId == R.id.magnifier_edit_button) {
             return mContext.getResources().getString(
                     R.string.accessibility_resize);
@@ -228,43 +182,6 @@ class WindowMagnificationSettings implements MagnificationGestureDetector.OnGest
             return mContext.getResources().getString(
                     R.string.magnification_mode_switch_description);
         }
-    }
-
-    private void applyResourcesValues() {
-        final int padding = mContext.getResources().getDimensionPixelSize(
-                R.dimen.magnification_switch_button_padding);
-
-        PorterDuffColorFilter filter = new PorterDuffColorFilter(mContext.getColor(
-                R.color.accessibility_magnifier_icon_color), PorterDuff.Mode.SRC_ATOP);
-
-        mSmallButton.setImageResource(R.drawable.ic_magnification_menu_small);
-        mSmallButton.setColorFilter(filter);
-        mSmallButton.setBackgroundResource(
-                R.drawable.accessibility_magnification_setting_view_btn_bg);
-        mSmallButton.setPadding(padding, padding, padding, padding);
-
-        mMediumButton.setImageResource(R.drawable.ic_magnification_menu_medium);
-        mMediumButton.setColorFilter(filter);
-        mMediumButton.setBackgroundResource(
-                R.drawable.accessibility_magnification_setting_view_btn_bg);
-        mMediumButton.setPadding(padding, padding, padding, padding);
-
-        mLargeButton.setImageResource(R.drawable.ic_magnification_menu_large);
-        mLargeButton.setColorFilter(filter);
-        mLargeButton.setBackgroundResource(
-                R.drawable.accessibility_magnification_setting_view_btn_bg);
-        mLargeButton.setPadding(padding, padding, padding, padding);
-
-        mChangeModeButton.setImageResource(R.drawable.ic_open_in_new_fullscreen);
-        mChangeModeButton.setColorFilter(filter);
-        mChangeModeButton.setBackgroundResource(
-                R.drawable.accessibility_magnification_setting_view_btn_bg);
-        mChangeModeButton.setPadding(padding, padding, padding, padding);
-
-        mCloseButton.setBackgroundResource(
-                R.drawable.accessibility_magnification_setting_view_btn_bg);
-        mEditButton.setBackgroundResource(
-                R.drawable.accessibility_magnification_setting_view_btn_bg);
     }
 
     private final AccessibilityDelegate mButtonDelegate = new AccessibilityDelegate() {
@@ -298,9 +215,7 @@ class WindowMagnificationSettings implements MagnificationGestureDetector.OnGest
 
         private boolean performA11yAction(View view, int action) {
             final Rect windowBounds = mWindowManager.getCurrentWindowMetrics().getBounds();
-            if (action == AccessibilityAction.ACTION_CLICK.getId()) {
-                handleSingleTap(view);
-            } else if (action == R.id.accessibility_action_move_up) {
+            if (action == R.id.accessibility_action_move_up) {
                 moveButton(0, -windowBounds.height());
             } else if (action == R.id.accessibility_action_move_down) {
                 moveButton(0, windowBounds.height());
@@ -314,14 +229,6 @@ class WindowMagnificationSettings implements MagnificationGestureDetector.OnGest
             return true;
         }
     };
-
-    private void applyResourcesValuesWithDensityChanged() {
-        if (mIsVisible) {
-            // Reset button to make its window layer always above the mirror window.
-            hideSettingPanel();
-            showSettingPanel(false);
-        }
-    }
 
     private boolean onTouch(View v, MotionEvent event) {
         if (!mIsVisible) {
@@ -342,13 +249,11 @@ class WindowMagnificationSettings implements MagnificationGestureDetector.OnGest
                 setMagnifierSize(MagnificationSize.LARGE);
             } else if (id == R.id.magnifier_edit_button) {
                 editMagnifierSizeMode(true);
-            } else if (id == R.id.magnifier_close_button) {
+            } else if (id == R.id.magnifier_done_button) {
                 hideSettingPanel();
             } else if (id == R.id.magnifier_full_button) {
                 hideSettingPanel();
                 toggleMagnificationMode();
-            } else {
-                hideSettingPanel();
             }
         }
     };
@@ -356,7 +261,6 @@ class WindowMagnificationSettings implements MagnificationGestureDetector.OnGest
     @Override
     public boolean onSingleTap(View view) {
         mSingleTapDetected = true;
-        handleSingleTap(view);
         return true;
     }
 
@@ -394,6 +298,10 @@ class WindowMagnificationSettings implements MagnificationGestureDetector.OnGest
     }
 
     public void hideSettingPanel() {
+        hideSettingPanel(true);
+    }
+
+    public void hideSettingPanel(boolean resetPosition) {
         if (!mIsVisible) {
             return;
         }
@@ -401,10 +309,13 @@ class WindowMagnificationSettings implements MagnificationGestureDetector.OnGest
         // Reset button status.
         mWindowManager.removeView(mSettingView);
         mIsVisible = false;
-        mParams.x = 0;
-        mParams.y = 0;
+        if (resetPosition) {
+            mParams.x = 0;
+            mParams.y = 0;
+        }
 
         mContext.unregisterReceiver(mScreenOffReceiver);
+        mCallback.onSettingsPanelVisibilityChanged(/* shown= */ false);
     }
 
     public void showSettingPanel() {
@@ -439,6 +350,7 @@ class WindowMagnificationSettings implements MagnificationGestureDetector.OnGest
             // Exclude magnification switch button from system gesture area.
             setSystemGestureExclusion();
             mIsVisible = true;
+            mCallback.onSettingsPanelVisibilityChanged(/* shown= */ true);
         }
         mContext.registerReceiver(mScreenOffReceiver, new IntentFilter(Intent.ACTION_SCREEN_OFF));
     }
@@ -458,11 +370,87 @@ class WindowMagnificationSettings implements MagnificationGestureDetector.OnGest
         mZoomSeekbar.setProgress(index);
     }
 
+    void inflateView() {
+        mSettingView = (LinearLayout) View.inflate(mContext,
+                R.layout.window_magnification_settings_view, null);
+
+        mSettingView.setFocusable(true);
+        mSettingView.setFocusableInTouchMode(true);
+        mSettingView.setOnTouchListener(this::onTouch);
+
+        mPanelView = mSettingView.findViewById(R.id.magnifier_panel_view);
+        mSmallButton = mSettingView.findViewById(R.id.magnifier_small_button);
+        mMediumButton = mSettingView.findViewById(R.id.magnifier_medium_button);
+        mLargeButton = mSettingView.findViewById(R.id.magnifier_large_button);
+        mDoneButton = mSettingView.findViewById(R.id.magnifier_done_button);
+        mEditButton = mSettingView.findViewById(R.id.magnifier_edit_button);
+        mChangeModeButton = mSettingView.findViewById(R.id.magnifier_full_button);
+
+        mZoomSeekbar = mSettingView.findViewById(R.id.magnifier_zoom_slider);
+        float scale = mSecureSettings.getFloatForUser(
+                Settings.Secure.ACCESSIBILITY_DISPLAY_MAGNIFICATION_SCALE, 0,
+                UserHandle.USER_CURRENT);
+        setSeekbarProgress(scale);
+        mZoomSeekbar.setOnSeekBarChangeListener(new ZoomSeekbarChangeListener());
+
+        mAllowDiagonalScrollingSwitch =
+                (Switch) mSettingView.findViewById(R.id.magnifier_horizontal_lock_switch);
+        mAllowDiagonalScrollingSwitch.setChecked(mAllowDiagonalScrolling);
+        mAllowDiagonalScrollingSwitch.setOnCheckedChangeListener((view, checked) -> {
+            toggleDiagonalScrolling();
+        });
+
+        mSmallButton.setAccessibilityDelegate(mButtonDelegate);
+        mSmallButton.setOnClickListener(mButtonClickListener);
+
+        mMediumButton.setAccessibilityDelegate(mButtonDelegate);
+        mMediumButton.setOnClickListener(mButtonClickListener);
+
+        mLargeButton.setAccessibilityDelegate(mButtonDelegate);
+        mLargeButton.setOnClickListener(mButtonClickListener);
+
+        mDoneButton.setAccessibilityDelegate(mButtonDelegate);
+        mDoneButton.setOnClickListener(mButtonClickListener);
+
+        mChangeModeButton.setAccessibilityDelegate(mButtonDelegate);
+        mChangeModeButton.setOnClickListener(mButtonClickListener);
+
+        mEditButton.setAccessibilityDelegate(mButtonDelegate);
+        mEditButton.setOnClickListener(mButtonClickListener);
+
+        mSettingView.setOnApplyWindowInsetsListener((v, insets) -> {
+            // Adds a pending post check to avoiding redundant calculation because this callback
+            // is sent frequently when the switch icon window dragged by the users.
+            if (mSettingView.isAttachedToWindow()
+                    && !mSettingView.getHandler().hasCallbacks(mWindowInsetChangeRunnable)) {
+                mSettingView.getHandler().post(mWindowInsetChangeRunnable);
+            }
+            return v.onApplyWindowInsets(insets);
+        });
+
+        updateSelectedButton(mLastSelectedButtonIndex);
+    }
+
     void onConfigurationChanged(int configDiff) {
-        if ((configDiff & ActivityInfo.CONFIG_UI_MODE) != 0) {
-            applyResourcesValues();
+        if ((configDiff & ActivityInfo.CONFIG_UI_MODE) != 0
+                || (configDiff & ActivityInfo.CONFIG_ASSETS_PATHS) != 0
+                || (configDiff & ActivityInfo.CONFIG_FONT_SCALE) != 0
+                || (configDiff & ActivityInfo.CONFIG_DENSITY) != 0) {
+            // We listen to following config changes to trigger layout inflation:
+            // CONFIG_UI_MODE: theme change
+            // CONFIG_ASSETS_PATHS: wallpaper change
+            // CONFIG_FONT_SCALE: font size change
+            // CONFIG_DENSITY: display size change
+
+            boolean showSettingPanelAfterThemeChange = mIsVisible;
+            hideSettingPanel(/* resetPosition= */ false);
+            inflateView();
+            if (showSettingPanelAfterThemeChange) {
+                showSettingPanel(/* resetPosition= */ false);
+            }
             return;
         }
+
         if ((configDiff & ActivityInfo.CONFIG_ORIENTATION) != 0) {
             final Rect previousDraggableBounds = new Rect(mDraggableWindowBounds);
             mDraggableWindowBounds.set(getDraggableWindowBounds());
@@ -474,10 +462,7 @@ class WindowMagnificationSettings implements MagnificationGestureDetector.OnGest
                     + mDraggableWindowBounds.top;
             return;
         }
-        if ((configDiff & ActivityInfo.CONFIG_DENSITY) != 0) {
-            applyResourcesValuesWithDensityChanged();
-            return;
-        }
+
         if ((configDiff & ActivityInfo.CONFIG_LOCALE) != 0) {
             updateAccessibilityWindowTitle();
             return;
@@ -509,41 +494,31 @@ class WindowMagnificationSettings implements MagnificationGestureDetector.OnGest
         }
     }
 
-    private void handleSingleTap(View view) {
-        int id = view.getId();
-        if (id == R.id.magnifier_small_button) {
-            setMagnifierSize(MagnificationSize.SMALL);
-        } else if (id == R.id.magnifier_medium_button) {
-            setMagnifierSize(MagnificationSize.MEDIUM);
-        } else if (id == R.id.magnifier_large_button) {
-            setMagnifierSize(MagnificationSize.LARGE);
-        } else if (id == R.id.magnifier_full_button) {
-            hideSettingPanel();
-            toggleMagnificationMode();
-        } else {
-            hideSettingPanel();
-        }
-    }
-
     public void editMagnifierSizeMode(boolean enable) {
         setEditMagnifierSizeMode(enable);
+        updateSelectedButton(MagnificationSize.NONE);
         hideSettingPanel();
     }
 
     private void setMagnifierSize(@MagnificationSize int index) {
         mCallback.onSetMagnifierSize(index);
+        updateSelectedButton(index);
     }
 
     private void toggleDiagonalScrolling() {
-        boolean enabled = Settings.Secure.getIntForUser(mContext.getContentResolver(),
+        boolean enabled = mSecureSettings.getIntForUser(
                 Settings.Secure.ACCESSIBILITY_ALLOW_DIAGONAL_SCROLLING, 0,
                 UserHandle.USER_CURRENT) == 1;
+        setDiagonalScrolling(!enabled);
+    }
 
+    @VisibleForTesting
+    void setDiagonalScrolling(boolean enabled) {
         Settings.Secure.putIntForUser(mContext.getContentResolver(),
-                Settings.Secure.ACCESSIBILITY_ALLOW_DIAGONAL_SCROLLING, enabled ? 0 : 1,
+                Settings.Secure.ACCESSIBILITY_ALLOW_DIAGONAL_SCROLLING, enabled ? 1 : 0,
                 UserHandle.USER_CURRENT);
 
-        mCallback.onSetDiagonalScrolling(!enabled);
+        mCallback.onSetDiagonalScrolling(enabled);
     }
 
     private void setEditMagnifierSizeMode(boolean enable) {
@@ -588,5 +563,27 @@ class WindowMagnificationSettings implements MagnificationGestureDetector.OnGest
                     Collections.singletonList(
                             new Rect(0, 0, mSettingView.getWidth(), mSettingView.getHeight())));
         });
+    }
+
+    private void updateSelectedButton(@MagnificationSize int index) {
+        // Clear the state of last selected button
+        if (mLastSelectedButtonIndex == MagnificationSize.SMALL) {
+            mSmallButton.setSelected(false);
+        } else if (mLastSelectedButtonIndex == MagnificationSize.MEDIUM) {
+            mMediumButton.setSelected(false);
+        } else if (mLastSelectedButtonIndex == MagnificationSize.LARGE) {
+            mLargeButton.setSelected(false);
+        }
+
+        // Set the state for selected button
+        if (index == MagnificationSize.SMALL) {
+            mSmallButton.setSelected(true);
+        } else if (index == MagnificationSize.MEDIUM) {
+            mMediumButton.setSelected(true);
+        } else if (index == MagnificationSize.LARGE) {
+            mLargeButton.setSelected(true);
+        }
+
+        mLastSelectedButtonIndex = index;
     }
 }

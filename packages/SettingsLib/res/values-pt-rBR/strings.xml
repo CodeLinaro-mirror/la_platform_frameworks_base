@@ -467,7 +467,8 @@
     <string name="power_charging" msgid="6727132649743436802">"<xliff:g id="LEVEL">%1$s</xliff:g> - <xliff:g id="STATE">%2$s</xliff:g>"</string>
     <string name="power_remaining_charging_duration_only" msgid="8085099012811384899">"<xliff:g id="TIME">%1$s</xliff:g> até a conclusão"</string>
     <string name="power_charging_duration" msgid="6127154952524919719">"<xliff:g id="LEVEL">%1$s</xliff:g>: <xliff:g id="TIME">%2$s</xliff:g> até a conclusão"</string>
-    <string name="power_charging_limited" msgid="6971664137170239141">"<xliff:g id="LEVEL">%1$s</xliff:g>: o carregamento está pausado"</string>
+    <string name="power_charging_limited" msgid="8202147604844938236">"<xliff:g id="LEVEL">%1$s</xliff:g> - Carregamento otimizado"</string>
+    <string name="power_charging_future_paused" msgid="4730177778538118032">"<xliff:g id="LEVEL">%1$s</xliff:g> - Carregamento otimizado"</string>
     <string name="battery_info_status_unknown" msgid="268625384868401114">"Desconhecido"</string>
     <string name="battery_info_status_charging" msgid="4279958015430387405">"Carregando"</string>
     <string name="battery_info_status_charging_fast" msgid="8027559755902954885">"Carregando rápido"</string>
@@ -521,7 +522,7 @@
     <string name="alarms_and_reminders_label" msgid="6918395649731424294">"Alarmes e lembretes"</string>
     <string name="alarms_and_reminders_switch_title" msgid="4939393911531826222">"Autorizar a definição de alarmes e lembretes"</string>
     <string name="alarms_and_reminders_title" msgid="8819933264635406032">"Alarmes e lembretes"</string>
-    <string name="alarms_and_reminders_footer_title" msgid="6302587438389079695">"Permitir que o app defina alarmes e programe ações mais imediatas. Essa opção autoriza o app a ser executado em segundo plano, o que pode consumir mais bateria.\n\nSe a permissão for desativada, os alarmes e eventos programados pelo app não funcionarão."</string>
+    <string name="alarms_and_reminders_footer_title" msgid="6302587438389079695">"Permitir que o app defina alarmes e programe ações com hora marcada. Essa opção autoriza o app a ser executado em segundo plano, o que pode consumir mais bateria.\n\nSe a permissão for desativada, os alarmes e eventos programados pelo app não funcionarão."</string>
     <string name="keywords_alarms_and_reminders" msgid="6633360095891110611">"programar, alarme, lembrete, relógio"</string>
     <string name="zen_mode_enable_dialog_turn_on" msgid="6418297231575050426">"Ativar"</string>
     <string name="zen_mode_settings_turn_on_dialog_title" msgid="2760567063190790696">"Ativar o Não perturbe"</string>
@@ -539,6 +540,13 @@
     <string name="media_transfer_this_device_name" product="default" msgid="2357329267148436433">"Este smartphone"</string>
     <string name="media_transfer_this_device_name" product="tablet" msgid="3714653244000242800">"Este tablet"</string>
     <string name="media_transfer_this_phone" msgid="7194341457812151531">"Este smartphone"</string>
+    <string name="media_output_status_unknown_error" msgid="5098565887497902222">"Não é possível reproduzir neste dispositivo"</string>
+    <string name="media_output_status_require_premium" msgid="8411255800047014822">"Faça upgrade da conta para trocar"</string>
+    <string name="media_output_status_not_support_downloads" msgid="4523828729240373315">"Não é possível abrir os downloads aqui"</string>
+    <string name="media_output_status_try_after_ad" msgid="8312579066856015441">"Tente de novo depois do anúncio"</string>
+    <string name="media_output_status_device_in_low_power_mode" msgid="8184631698321758451">"Ativar dispositivo para tocar aqui"</string>
+    <string name="media_output_status_unauthorized" msgid="5880222828273853838">"O dispositivo não foi aprovado para reprodução"</string>
+    <string name="media_output_status_track_unsupported" msgid="5576313219317709664">"Não é possível reproduzir essa mídia aqui"</string>
     <string name="profile_connect_timeout_subtext" msgid="4043408193005851761">"Ocorreu um problema na conexão. Desligue o dispositivo e ligue-o novamente"</string>
     <string name="media_transfer_wired_device_name" msgid="4447880899964056007">"Dispositivo de áudio com fio"</string>
     <string name="help_label" msgid="3528360748637781274">"Ajuda e feedback"</string>
@@ -563,6 +571,8 @@
     <string name="user_add_user_title" msgid="5457079143694924885">"Adicionar novo usuário?"</string>
     <string name="user_add_user_message_long" msgid="1527434966294733380">"Você pode compartilhar este dispositivo com outras pessoas, adicionando usuários. Cada usuário tem o próprio espaço, que pode ser personalizado com apps, planos de fundo, etc. Os usuários também podem ajustar as configurações do dispositivo, como o Wi‑Fi, que afetam a todos.\n\nQuando você adiciona um novo usuário, essa pessoa precisa configurar o próprio espaço.\n\nQualquer usuário pode atualizar apps para todos os outros. Serviços e configurações de acessibilidade podem não ser transferidos para novos usuários."</string>
     <string name="user_add_user_message_short" msgid="3295959985795716166">"Quando você adiciona um novo usuário, essa pessoa precisa configurar o próprio espaço.\n\nQualquer usuário pode atualizar apps para os demais usuários."</string>
+    <string name="user_grant_admin_title" msgid="5565796912475193314">"Dar privilégios de administrador ao usuário?"</string>
+    <string name="user_grant_admin_message" msgid="7925257971286380976">"Como administrador, essa pessoa poderá gerenciar outros usuários, modificar as configurações e redefinir o dispositivo para a configuração original."</string>
     <string name="user_setup_dialog_title" msgid="8037342066381939995">"Configurar o usuário agora?"</string>
     <string name="user_setup_dialog_message" msgid="269931619868102841">"Certifique-se de que a pessoa está disponível para acessar o dispositivo e fazer as próprias configurações"</string>
     <string name="user_setup_profile_dialog_message" msgid="4788197052296962620">"Configurar perfil agora?"</string>
@@ -594,6 +604,8 @@
     <string name="guest_reset_and_restart_dialog_message" msgid="2764425635305200790">"Essa ação vai iniciar uma nova Sessão de visitante e excluir todos os apps e dados da sessão atual"</string>
     <string name="guest_exit_dialog_title" msgid="1846494656849381804">"Sair do modo visitante?"</string>
     <string name="guest_exit_dialog_message" msgid="1743218864242719783">"Essa ação vai excluir apps e dados da Sessão de visitante atual"</string>
+    <string name="grant_admin" msgid="4273077214151417783">"Dar privilégios de administrador ao usuário"</string>
+    <string name="not_grant_admin" msgid="6985027675930546850">"Não dar privilégios de administrador ao usuário"</string>
     <string name="guest_exit_dialog_button" msgid="1736401897067442044">"Sair"</string>
     <string name="guest_exit_dialog_title_non_ephemeral" msgid="7675327443743162986">"Salvar a atividade do visitante?"</string>
     <string name="guest_exit_dialog_message_non_ephemeral" msgid="223385323235719442">"Você pode salvar a atividade da sessão atual ou excluir todos os apps e dados"</string>
@@ -661,4 +673,10 @@
     <string name="back_navigation_animation" msgid="8105467568421689484">"Animações de gestos \"Voltar\" preditivos"</string>
     <string name="back_navigation_animation_summary" msgid="741292224121599456">"Ativar animações do sistema para gestos \"Voltar\" preditivos."</string>
     <string name="back_navigation_animation_dialog" msgid="8696966520944625596">"Esta configuração ativa animações do sistema para gestos preditivos. Ela requer que a política enableOnBackInvokedCallback por app seja definida como verdadeira no arquivo de manifesto."</string>
+  <string-array name="udfps_accessibility_touch_hints">
+    <item msgid="1737722959616802157">"Mover para esquerda"</item>
+    <item msgid="5425394847942513942">"Mover para baixo"</item>
+    <item msgid="7728484337962740316">"Mover para direita"</item>
+    <item msgid="324200556467459329">"Mover para cima"</item>
+  </string-array>
 </resources>

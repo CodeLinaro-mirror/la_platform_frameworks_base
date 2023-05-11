@@ -16,11 +16,11 @@
 
 package com.android.keyguard;
 
-import android.annotation.CallSuper;
 import android.annotation.Nullable;
 import android.content.res.ColorStateList;
 import android.content.res.Resources;
 import android.telephony.TelephonyManager;
+import android.text.TextUtils;
 import android.util.Log;
 import android.view.inputmethod.InputMethodManager;
 
@@ -30,6 +30,7 @@ import com.android.keyguard.KeyguardSecurityModel.SecurityMode;
 import com.android.systemui.R;
 import com.android.systemui.classifier.FalsingCollector;
 import com.android.systemui.dagger.qualifiers.Main;
+import com.android.systemui.flags.FeatureFlags;
 import com.android.systemui.statusbar.policy.DevicePostureController;
 import com.android.systemui.util.ViewController;
 import com.android.systemui.util.concurrency.DelayableExecutor;
@@ -51,26 +52,7 @@ public abstract class KeyguardInputViewController<T extends KeyguardInputView>
     // The following is used to ignore callbacks from SecurityViews that are no longer current
     // (e.g. face unlock). This avoids unwanted asynchronous events from messing with the
     // state for the current security method.
-    private KeyguardSecurityCallback mNullCallback = new KeyguardSecurityCallback() {
-        @Override
-        public void userActivity() { }
-        @Override
-        public void reportUnlockAttempt(int userId, boolean success, int timeoutMs) { }
-        @Override
-        public boolean isVerifyUnlockOnly() {
-            return false;
-        }
-        @Override
-        public void dismiss(boolean securityVerified, int targetUserId,
-                SecurityMode expectedSecurityMode) { }
-        @Override
-        public void dismiss(boolean authenticated, int targetId,
-                boolean bypassSecondaryLockScreen, SecurityMode expectedSecurityMode) { }
-        @Override
-        public void onUserInput() { }
-        @Override
-        public void reset() {}
-    };
+    private KeyguardSecurityCallback mNullCallback = new KeyguardSecurityCallback() {};
 
     protected KeyguardInputViewController(T view, SecurityMode securityMode,
             KeyguardSecurityCallback keyguardSecurityCallback,
@@ -121,6 +103,7 @@ public abstract class KeyguardInputViewController<T extends KeyguardInputView>
 
     @Override
     public void reset() {
+        mMessageAreaController.setMessage("", false);
     }
 
     @Override
@@ -141,18 +124,13 @@ public abstract class KeyguardInputViewController<T extends KeyguardInputView>
     public void showMessage(CharSequence message, ColorStateList colorState) {
     }
 
-    /**
-     * Reload colors from resources.
-     **/
-    @CallSuper
-    public void reloadColors() {
-        if (mEmergencyButton != null) {
-            mEmergencyButton.reloadColors();
-        }
-    }
-
     public void startAppearAnimation() {
-        mMessageAreaController.setMessage(getInitialMessageResId());
+        if (TextUtils.isEmpty(mMessageAreaController.getMessage())
+                && getInitialMessageResId() != 0) {
+            mMessageAreaController.setMessage(
+                    mView.getResources().getString(getInitialMessageResId()),
+                    /* animate= */ false);
+        }
         mView.startAppearAnimation();
     }
 
@@ -171,9 +149,7 @@ public abstract class KeyguardInputViewController<T extends KeyguardInputView>
     }
 
     /** Determines the message to show in the bouncer when it first appears. */
-    protected int getInitialMessageResId() {
-        return 0;
-    }
+    protected abstract int getInitialMessageResId();
 
     /** Factory for a {@link KeyguardInputViewController}. */
     public static class Factory {
@@ -190,6 +166,7 @@ public abstract class KeyguardInputViewController<T extends KeyguardInputView>
         private final FalsingCollector mFalsingCollector;
         private final DevicePostureController mDevicePostureController;
         private final KeyguardViewController mKeyguardViewController;
+        private final FeatureFlags mFeatureFlags;
 
         @Inject
         public Factory(KeyguardUpdateMonitor keyguardUpdateMonitor,
@@ -201,7 +178,8 @@ public abstract class KeyguardInputViewController<T extends KeyguardInputView>
                 TelephonyManager telephonyManager, FalsingCollector falsingCollector,
                 EmergencyButtonController.Factory emergencyButtonControllerFactory,
                 DevicePostureController devicePostureController,
-                KeyguardViewController keyguardViewController) {
+                KeyguardViewController keyguardViewController,
+                FeatureFlags featureFlags) {
             mKeyguardUpdateMonitor = keyguardUpdateMonitor;
             mLockPatternUtils = lockPatternUtils;
             mLatencyTracker = latencyTracker;
@@ -215,6 +193,7 @@ public abstract class KeyguardInputViewController<T extends KeyguardInputView>
             mFalsingCollector = falsingCollector;
             mDevicePostureController = devicePostureController;
             mKeyguardViewController = keyguardViewController;
+            mFeatureFlags = featureFlags;
         }
 
         /** Create a new {@link KeyguardInputViewController}. */
@@ -242,7 +221,7 @@ public abstract class KeyguardInputViewController<T extends KeyguardInputView>
                         mKeyguardUpdateMonitor, securityMode, mLockPatternUtils,
                         keyguardSecurityCallback, mMessageAreaControllerFactory, mLatencyTracker,
                         mLiftToActivateListener, emergencyButtonController, mFalsingCollector,
-                        mDevicePostureController);
+                        mDevicePostureController, mFeatureFlags);
             } else if (keyguardInputView instanceof KeyguardSimPinView) {
                 return new KeyguardSimPinViewController((KeyguardSimPinView) keyguardInputView,
                         mKeyguardUpdateMonitor, securityMode, mLockPatternUtils,

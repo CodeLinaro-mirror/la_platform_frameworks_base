@@ -30,26 +30,29 @@ import android.content.res.Configuration;
 import android.graphics.Rect;
 import android.os.Bundle;
 import android.os.IBinder;
+import android.util.DisplayMetrics;
 import android.util.LayoutDirection;
 import android.util.Pair;
 import android.util.Size;
 import android.view.View;
 import android.view.WindowInsets;
 import android.view.WindowMetrics;
+import android.window.TaskFragmentAnimationParams;
+import android.window.TaskFragmentCreationParams;
 import android.window.WindowContainerTransaction;
 
-import androidx.annotation.GuardedBy;
 import androidx.annotation.IntDef;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.window.extensions.core.util.function.Function;
 import androidx.window.extensions.embedding.SplitAttributes.SplitType;
 import androidx.window.extensions.embedding.SplitAttributes.SplitType.ExpandContainersSplitType;
 import androidx.window.extensions.embedding.SplitAttributes.SplitType.HingeSplitType;
 import androidx.window.extensions.embedding.SplitAttributes.SplitType.RatioSplitType;
-import androidx.window.extensions.embedding.SplitAttributesCalculator.SplitAttributesCalculatorParams;
 import androidx.window.extensions.embedding.TaskContainer.TaskProperties;
 import androidx.window.extensions.layout.DisplayFeature;
 import androidx.window.extensions.layout.FoldingFeature;
+import androidx.window.extensions.layout.WindowLayoutComponentImpl;
 import androidx.window.extensions.layout.WindowLayoutInfo;
 
 import com.android.internal.annotations.VisibleForTesting;
@@ -62,7 +65,10 @@ import java.util.concurrent.Executor;
 /**
  * Controls the visual presentation of the splits according to the containers formed by
  * {@link SplitController}.
+ *
+ * Note that all calls into this class must hold the {@link SplitController} internal lock.
  */
+@SuppressWarnings("GuardedBy")
 class SplitPresenter extends JetpackTaskFragmentOrganizer {
     @VisibleForTesting
     static final int POSITION_START = 0;
@@ -133,12 +139,21 @@ class SplitPresenter extends JetpackTaskFragmentOrganizer {
             .setSplitType(new ExpandContainersSplitType())
             .build();
 
+    private final WindowLayoutComponentImpl mWindowLayoutComponent;
     private final SplitController mController;
 
-    SplitPresenter(@NonNull Executor executor, @NonNull SplitController controller) {
+    SplitPresenter(@NonNull Executor executor,
+            @NonNull WindowLayoutComponentImpl windowLayoutComponent,
+            @NonNull SplitController controller) {
         super(executor, controller);
+        mWindowLayoutComponent = windowLayoutComponent;
         mController = controller;
         registerOrganizer();
+        if (!SplitController.ENABLE_SHELL_TRANSITIONS) {
+            // TODO(b/207070762): cleanup with legacy app transition
+            // Animation will be handled by WM Shell when Shell transition is enabled.
+            overrideSplitAnimation();
+        }
     }
 
     /**
@@ -148,12 +163,8 @@ class SplitPresenter extends JetpackTaskFragmentOrganizer {
     void cleanupContainer(@NonNull WindowContainerTransaction wct,
             @NonNull TaskFragmentContainer container, boolean shouldFinishDependent) {
         container.finish(shouldFinishDependent, this, wct, mController);
-
-        final TaskFragmentContainer newTopContainer = mController.getTopActiveContainer(
-                container.getTaskId());
-        if (newTopContainer != null) {
-            mController.updateContainer(wct, newTopContainer);
-        }
+        // Make sure the containers in the Task is up-to-date.
+        mController.updateContainersInTaskIfVisible(wct, container.getTaskId());
     }
 
     /**
@@ -161,7 +172,6 @@ class SplitPresenter extends JetpackTaskFragmentOrganizer {
      * @return The newly created secondary container.
      */
     @NonNull
-    @GuardedBy("mController.mLock")
     TaskFragmentContainer createNewSplitWithEmptySideContainer(
             @NonNull WindowContainerTransaction wct, @NonNull Activity primaryActivity,
             @NonNull Intent secondaryIntent, @NonNull SplitPairRule rule) {
@@ -169,23 +179,23 @@ class SplitPresenter extends JetpackTaskFragmentOrganizer {
         final Pair<Size, Size> minDimensionsPair = getActivityIntentMinDimensionsPair(
                 primaryActivity, secondaryIntent);
         final SplitAttributes splitAttributes = computeSplitAttributes(taskProperties, rule,
-                minDimensionsPair);
-        final Rect primaryRectBounds = getBoundsForPosition(POSITION_START, taskProperties,
+                rule.getDefaultSplitAttributes(), minDimensionsPair);
+        final Rect primaryRelBounds = getRelBoundsForPosition(POSITION_START, taskProperties,
                 splitAttributes);
         final TaskFragmentContainer primaryContainer = prepareContainerForActivity(wct,
-                primaryActivity, primaryRectBounds, null);
+                primaryActivity, primaryRelBounds, splitAttributes, null /* containerToAvoid */);
 
         // Create new empty task fragment
         final int taskId = primaryContainer.getTaskId();
         final TaskFragmentContainer secondaryContainer = mController.newContainer(
                 secondaryIntent, primaryActivity, taskId);
-        final Rect secondaryRectBounds = getBoundsForPosition(POSITION_END, taskProperties,
+        final Rect secondaryRelBounds = getRelBoundsForPosition(POSITION_END, taskProperties,
                 splitAttributes);
         final int windowingMode = mController.getTaskContainer(taskId)
-                .getWindowingModeForSplitTaskFragment(secondaryRectBounds);
+                .getWindowingModeForSplitTaskFragment(secondaryRelBounds);
         createTaskFragment(wct, secondaryContainer.getTaskFragmentToken(),
-                primaryActivity.getActivityToken(), secondaryRectBounds,
-                windowingMode);
+                primaryActivity.getActivityToken(), secondaryRelBounds, windowingMode);
+        updateAnimationParams(wct, secondaryContainer.getTaskFragmentToken(), splitAttributes);
 
         // Set adjacent to each other so that the containers below will be invisible.
         setAdjacentTaskFragments(wct, primaryContainer, secondaryContainer, rule,
@@ -208,7 +218,6 @@ class SplitPresenter extends JetpackTaskFragmentOrganizer {
      *                          created and the activity will be re-parented to it.
      * @param rule The split rule to be applied to the container.
      */
-    @GuardedBy("mController.mLock")
     void createNewSplitContainer(@NonNull WindowContainerTransaction wct,
             @NonNull Activity primaryActivity, @NonNull Activity secondaryActivity,
             @NonNull SplitPairRule rule) {
@@ -216,13 +225,13 @@ class SplitPresenter extends JetpackTaskFragmentOrganizer {
         final Pair<Size, Size> minDimensionsPair = getActivitiesMinDimensionsPair(primaryActivity,
                 secondaryActivity);
         final SplitAttributes splitAttributes = computeSplitAttributes(taskProperties, rule,
-                minDimensionsPair);
-        final Rect primaryRectBounds = getBoundsForPosition(POSITION_START, taskProperties,
+                rule.getDefaultSplitAttributes(), minDimensionsPair);
+        final Rect primaryRelBounds = getRelBoundsForPosition(POSITION_START, taskProperties,
                 splitAttributes);
         final TaskFragmentContainer primaryContainer = prepareContainerForActivity(wct,
-                primaryActivity, primaryRectBounds, null);
+                primaryActivity, primaryRelBounds, splitAttributes, null /* containerToAvoid */);
 
-        final Rect secondaryRectBounds = getBoundsForPosition(POSITION_END, taskProperties,
+        final Rect secondaryRelBounds = getRelBoundsForPosition(POSITION_END, taskProperties,
                 splitAttributes);
         final TaskFragmentContainer curSecondaryContainer = mController.getContainerWithActivity(
                 secondaryActivity);
@@ -234,7 +243,7 @@ class SplitPresenter extends JetpackTaskFragmentOrganizer {
             containerToAvoid = curSecondaryContainer;
         }
         final TaskFragmentContainer secondaryContainer = prepareContainerForActivity(wct,
-                secondaryActivity, secondaryRectBounds, containerToAvoid);
+                secondaryActivity, secondaryRelBounds, splitAttributes, containerToAvoid);
 
         // Set adjacent to each other so that the containers below will be invisible.
         setAdjacentTaskFragments(wct, primaryContainer, secondaryContainer, rule,
@@ -251,23 +260,26 @@ class SplitPresenter extends JetpackTaskFragmentOrganizer {
      */
     private TaskFragmentContainer prepareContainerForActivity(
             @NonNull WindowContainerTransaction wct, @NonNull Activity activity,
-            @NonNull Rect bounds, @Nullable TaskFragmentContainer containerToAvoid) {
+            @NonNull Rect relBounds, @NonNull SplitAttributes splitAttributes,
+            @Nullable TaskFragmentContainer containerToAvoid) {
         TaskFragmentContainer container = mController.getContainerWithActivity(activity);
         final int taskId = container != null ? container.getTaskId() : activity.getTaskId();
         if (container == null || container == containerToAvoid) {
             container = mController.newContainer(activity, taskId);
             final int windowingMode = mController.getTaskContainer(taskId)
-                    .getWindowingModeForSplitTaskFragment(bounds);
-            createTaskFragment(wct, container.getTaskFragmentToken(), activity.getActivityToken(),
-                    bounds, windowingMode);
+                    .getWindowingModeForSplitTaskFragment(relBounds);
+            final IBinder reparentActivityToken = activity.getActivityToken();
+            createTaskFragment(wct, container.getTaskFragmentToken(), reparentActivityToken,
+                    relBounds, windowingMode, reparentActivityToken);
             wct.reparentActivityToTaskFragment(container.getTaskFragmentToken(),
-                    activity.getActivityToken());
+                    reparentActivityToken);
         } else {
-            resizeTaskFragmentIfRegistered(wct, container, bounds);
+            resizeTaskFragmentIfRegistered(wct, container, relBounds);
             final int windowingMode = mController.getTaskContainer(taskId)
-                    .getWindowingModeForSplitTaskFragment(bounds);
+                    .getWindowingModeForSplitTaskFragment(relBounds);
             updateTaskFragmentWindowingModeIfRegistered(wct, container, windowingMode);
         }
+        updateAnimationParams(wct, container.getTaskFragmentToken(), splitAttributes);
 
         return container;
     }
@@ -283,15 +295,14 @@ class SplitPresenter extends JetpackTaskFragmentOrganizer {
      * @param rule              The split rule to be applied to the container.
      * @param isPlaceholder     Whether the launch is a placeholder.
      */
-    @GuardedBy("mController.mLock")
     void startActivityToSide(@NonNull WindowContainerTransaction wct,
             @NonNull Activity launchingActivity, @NonNull Intent activityIntent,
             @Nullable Bundle activityOptions, @NonNull SplitRule rule,
             @NonNull SplitAttributes splitAttributes, boolean isPlaceholder) {
         final TaskProperties taskProperties = getTaskProperties(launchingActivity);
-        final Rect primaryRectBounds = getBoundsForPosition(POSITION_START, taskProperties,
+        final Rect primaryRelBounds = getRelBoundsForPosition(POSITION_START, taskProperties,
                 splitAttributes);
-        final Rect secondaryRectBounds = getBoundsForPosition(POSITION_END, taskProperties,
+        final Rect secondaryRelBounds = getRelBoundsForPosition(POSITION_END, taskProperties,
                 splitAttributes);
 
         TaskFragmentContainer primaryContainer = mController.getContainerWithActivity(
@@ -302,15 +313,18 @@ class SplitPresenter extends JetpackTaskFragmentOrganizer {
         }
 
         final int taskId = primaryContainer.getTaskId();
-        final TaskFragmentContainer secondaryContainer = mController.newContainer(activityIntent,
-                launchingActivity, taskId);
-        final int windowingMode = mController.getTaskContainer(taskId)
-                .getWindowingModeForSplitTaskFragment(primaryRectBounds);
+        final TaskFragmentContainer secondaryContainer = mController.newContainer(
+                null /* pendingAppearedActivity */, activityIntent, launchingActivity, taskId,
+                // Pass in the primary container to make sure it is added right above the primary.
+                primaryContainer);
+        final TaskContainer taskContainer = mController.getTaskContainer(taskId);
+        final int windowingMode = taskContainer.getWindowingModeForSplitTaskFragment(
+                primaryRelBounds);
         mController.registerSplit(wct, primaryContainer, launchingActivity, secondaryContainer,
                 rule, splitAttributes);
-        startActivityToSide(wct, primaryContainer.getTaskFragmentToken(), primaryRectBounds,
-                launchingActivity, secondaryContainer.getTaskFragmentToken(), secondaryRectBounds,
-                activityIntent, activityOptions, rule, windowingMode);
+        startActivityToSide(wct, primaryContainer.getTaskFragmentToken(), primaryRelBounds,
+                launchingActivity, secondaryContainer.getTaskFragmentToken(), secondaryRelBounds,
+                activityIntent, activityOptions, rule, windowingMode, splitAttributes);
         if (isPlaceholder) {
             // When placeholder is launched in split, we should keep the focus on the primary.
             wct.requestFocusOnTaskFragment(primaryContainer.getTaskFragmentToken());
@@ -320,12 +334,9 @@ class SplitPresenter extends JetpackTaskFragmentOrganizer {
     /**
      * Updates the positions of containers in an existing split.
      * @param splitContainer The split container to be updated.
-     * @param updatedContainer The task fragment that was updated and caused this split update.
      * @param wct WindowContainerTransaction that this update should be performed with.
      */
-    @GuardedBy("mController.mLock")
     void updateSplitContainer(@NonNull SplitContainer splitContainer,
-            @NonNull TaskFragmentContainer updatedContainer,
             @NonNull WindowContainerTransaction wct) {
         // Getting the parent configuration using the updated container - it will have the recent
         // value.
@@ -335,49 +346,52 @@ class SplitPresenter extends JetpackTaskFragmentOrganizer {
         if (activity == null) {
             return;
         }
-        final TaskProperties taskProperties = getTaskProperties(updatedContainer);
-        final SplitAttributes splitAttributes = splitContainer.getSplitAttributes();
-        final Rect primaryRectBounds = getBoundsForPosition(POSITION_START, taskProperties,
+        final TaskContainer taskContainer = splitContainer.getTaskContainer();
+        final TaskProperties taskProperties = taskContainer.getTaskProperties();
+        final SplitAttributes splitAttributes = splitContainer.getCurrentSplitAttributes();
+        final Rect primaryRelBounds = getRelBoundsForPosition(POSITION_START, taskProperties,
                 splitAttributes);
-        final Rect secondaryRectBounds = getBoundsForPosition(POSITION_END, taskProperties,
+        final Rect secondaryRelBounds = getRelBoundsForPosition(POSITION_END, taskProperties,
                 splitAttributes);
         final TaskFragmentContainer secondaryContainer = splitContainer.getSecondaryContainer();
         // Whether the placeholder is becoming side-by-side with the primary from fullscreen.
         final boolean isPlaceholderBecomingSplit = splitContainer.isPlaceholderContainer()
                 && secondaryContainer.areLastRequestedBoundsEqual(null /* bounds */)
-                && !secondaryRectBounds.isEmpty();
+                && !secondaryRelBounds.isEmpty();
 
         // If the task fragments are not registered yet, the positions will be updated after they
         // are created again.
-        resizeTaskFragmentIfRegistered(wct, primaryContainer, primaryRectBounds);
-        resizeTaskFragmentIfRegistered(wct, secondaryContainer, secondaryRectBounds);
+        resizeTaskFragmentIfRegistered(wct, primaryContainer, primaryRelBounds);
+        resizeTaskFragmentIfRegistered(wct, secondaryContainer, secondaryRelBounds);
         setAdjacentTaskFragments(wct, primaryContainer, secondaryContainer, rule,
                 splitAttributes);
         if (isPlaceholderBecomingSplit) {
             // When placeholder is shown in split, we should keep the focus on the primary.
             wct.requestFocusOnTaskFragment(primaryContainer.getTaskFragmentToken());
         }
-        final TaskContainer taskContainer = updatedContainer.getTaskContainer();
         final int windowingMode = taskContainer.getWindowingModeForSplitTaskFragment(
-                primaryRectBounds);
+                primaryRelBounds);
         updateTaskFragmentWindowingModeIfRegistered(wct, primaryContainer, windowingMode);
         updateTaskFragmentWindowingModeIfRegistered(wct, secondaryContainer, windowingMode);
+        updateAnimationParams(wct, primaryContainer.getTaskFragmentToken(), splitAttributes);
+        updateAnimationParams(wct, secondaryContainer.getTaskFragmentToken(), splitAttributes);
     }
 
-    @GuardedBy("mController.mLock")
     private void setAdjacentTaskFragments(@NonNull WindowContainerTransaction wct,
             @NonNull TaskFragmentContainer primaryContainer,
             @NonNull TaskFragmentContainer secondaryContainer, @NonNull SplitRule splitRule,
             @NonNull SplitAttributes splitAttributes) {
         // Clear adjacent TaskFragments if the container is shown in fullscreen, or the
         // secondaryContainer could not be finished.
-        if (!shouldShowSplit(splitAttributes)) {
-            setAdjacentTaskFragments(wct, primaryContainer.getTaskFragmentToken(),
-                    null /* secondary */, null /* splitRule */);
+        boolean isStacked = !shouldShowSplit(splitAttributes);
+        if (isStacked) {
+            clearAdjacentTaskFragments(wct, primaryContainer.getTaskFragmentToken());
         } else {
-            setAdjacentTaskFragments(wct, primaryContainer.getTaskFragmentToken(),
+            setAdjacentTaskFragmentsWithRule(wct, primaryContainer.getTaskFragmentToken(),
                     secondaryContainer.getTaskFragmentToken(), splitRule);
         }
+        setCompanionTaskFragment(wct, primaryContainer.getTaskFragmentToken(),
+                secondaryContainer.getTaskFragmentToken(), splitRule, isStacked);
     }
 
     /**
@@ -385,13 +399,13 @@ class SplitPresenter extends JetpackTaskFragmentOrganizer {
      * creation has not been reported from the server yet.
      */
     // TODO(b/190433398): Handle resize if the fragment hasn't appeared yet.
-    void resizeTaskFragmentIfRegistered(@NonNull WindowContainerTransaction wct,
+    private void resizeTaskFragmentIfRegistered(@NonNull WindowContainerTransaction wct,
             @NonNull TaskFragmentContainer container,
-            @Nullable Rect bounds) {
+            @Nullable Rect relBounds) {
         if (container.getInfo() == null) {
             return;
         }
-        resizeTaskFragment(wct, container.getTaskFragmentToken(), bounds);
+        resizeTaskFragment(wct, container.getTaskFragmentToken(), relBounds);
     }
 
     private void updateTaskFragmentWindowingModeIfRegistered(
@@ -404,35 +418,36 @@ class SplitPresenter extends JetpackTaskFragmentOrganizer {
     }
 
     @Override
-    void createTaskFragment(@NonNull WindowContainerTransaction wct, @NonNull IBinder fragmentToken,
-            @NonNull IBinder ownerToken, @NonNull Rect bounds, @WindowingMode int windowingMode) {
-        final TaskFragmentContainer container = mController.getContainer(fragmentToken);
+    void createTaskFragment(@NonNull WindowContainerTransaction wct,
+            @NonNull TaskFragmentCreationParams fragmentOptions) {
+        final TaskFragmentContainer container = mController.getContainer(
+                fragmentOptions.getFragmentToken());
         if (container == null) {
             throw new IllegalStateException(
-                    "Creating a task fragment that is not registered with controller.");
+                    "Creating a TaskFragment that is not registered with controller.");
         }
 
-        container.setLastRequestedBounds(bounds);
-        container.setLastRequestedWindowingMode(windowingMode);
-        super.createTaskFragment(wct, fragmentToken, ownerToken, bounds, windowingMode);
+        container.setLastRequestedBounds(fragmentOptions.getInitialRelativeBounds());
+        container.setLastRequestedWindowingMode(fragmentOptions.getWindowingMode());
+        super.createTaskFragment(wct, fragmentOptions);
     }
 
     @Override
     void resizeTaskFragment(@NonNull WindowContainerTransaction wct, @NonNull IBinder fragmentToken,
-            @Nullable Rect bounds) {
+            @Nullable Rect relBounds) {
         TaskFragmentContainer container = mController.getContainer(fragmentToken);
         if (container == null) {
             throw new IllegalStateException(
-                    "Resizing a task fragment that is not registered with controller.");
+                    "Resizing a TaskFragment that is not registered with controller.");
         }
 
-        if (container.areLastRequestedBoundsEqual(bounds)) {
+        if (container.areLastRequestedBoundsEqual(relBounds)) {
             // Return early if the provided bounds were already requested
             return;
         }
 
-        container.setLastRequestedBounds(bounds);
-        super.resizeTaskFragment(wct, fragmentToken, bounds);
+        container.setLastRequestedBounds(relBounds);
+        super.resizeTaskFragment(wct, fragmentToken, relBounds);
     }
 
     @Override
@@ -440,7 +455,7 @@ class SplitPresenter extends JetpackTaskFragmentOrganizer {
             @NonNull IBinder fragmentToken, @WindowingMode int windowingMode) {
         final TaskFragmentContainer container = mController.getContainer(fragmentToken);
         if (container == null) {
-            throw new IllegalStateException("Setting windowing mode for a task fragment that is"
+            throw new IllegalStateException("Setting windowing mode for a TaskFragment that is"
                     + " not registered with controller.");
         }
 
@@ -451,6 +466,82 @@ class SplitPresenter extends JetpackTaskFragmentOrganizer {
 
         container.setLastRequestedWindowingMode(windowingMode);
         super.updateWindowingMode(wct, fragmentToken, windowingMode);
+    }
+
+    @Override
+    void updateAnimationParams(@NonNull WindowContainerTransaction wct,
+            @NonNull IBinder fragmentToken, @NonNull TaskFragmentAnimationParams animationParams) {
+        final TaskFragmentContainer container = mController.getContainer(fragmentToken);
+        if (container == null) {
+            throw new IllegalStateException("Setting animation params for a TaskFragment that is"
+                    + " not registered with controller.");
+        }
+
+        if (container.areLastRequestedAnimationParamsEqual(animationParams)) {
+            // Return early if the animation params were already requested
+            return;
+        }
+
+        container.setLastRequestAnimationParams(animationParams);
+        super.updateAnimationParams(wct, fragmentToken, animationParams);
+    }
+
+    @Override
+    void setAdjacentTaskFragments(@NonNull WindowContainerTransaction wct,
+            @NonNull IBinder primary, @NonNull IBinder secondary,
+            @Nullable WindowContainerTransaction.TaskFragmentAdjacentParams adjacentParams) {
+        final TaskFragmentContainer primaryContainer = mController.getContainer(primary);
+        final TaskFragmentContainer secondaryContainer = mController.getContainer(secondary);
+        if (primaryContainer == null || secondaryContainer == null) {
+            throw new IllegalStateException("setAdjacentTaskFragments on TaskFragment that is"
+                    + " not registered with controller.");
+        }
+
+        if (primaryContainer.isLastAdjacentTaskFragmentEqual(secondary, adjacentParams)
+                && secondaryContainer.isLastAdjacentTaskFragmentEqual(primary, adjacentParams)) {
+            // Return early if the same adjacent TaskFragments were already requested
+            return;
+        }
+
+        primaryContainer.setLastAdjacentTaskFragment(secondary, adjacentParams);
+        secondaryContainer.setLastAdjacentTaskFragment(primary, adjacentParams);
+        super.setAdjacentTaskFragments(wct, primary, secondary, adjacentParams);
+    }
+
+    @Override
+    void clearAdjacentTaskFragments(@NonNull WindowContainerTransaction wct,
+            @NonNull IBinder fragmentToken) {
+        final TaskFragmentContainer container = mController.getContainer(fragmentToken);
+        if (container == null) {
+            throw new IllegalStateException("clearAdjacentTaskFragments on TaskFragment that is"
+                    + " not registered with controller.");
+        }
+
+        if (container.isLastAdjacentTaskFragmentEqual(null /* fragmentToken*/, null /* params */)) {
+            // Return early if no adjacent TaskFragment was yet requested
+            return;
+        }
+
+        container.clearLastAdjacentTaskFragment();
+        super.clearAdjacentTaskFragments(wct, fragmentToken);
+    }
+
+    @Override
+    void setCompanionTaskFragment(@NonNull WindowContainerTransaction wct, @NonNull IBinder primary,
+            @Nullable IBinder secondary) {
+        final TaskFragmentContainer container = mController.getContainer(primary);
+        if (container == null) {
+            throw new IllegalStateException("setCompanionTaskFragment on TaskFragment that is"
+                    + " not registered with controller.");
+        }
+
+        if (container.isLastCompanionTaskFragmentEqual(secondary)) {
+            // Return early if the same companion TaskFragment was already requested
+            return;
+        }
+
+        container.setLastCompanionTaskFragment(secondary);
+        super.setCompanionTaskFragment(wct, primary, secondary);
     }
 
     /**
@@ -479,9 +570,9 @@ class SplitPresenter extends JetpackTaskFragmentOrganizer {
         // Expand the splitContainer if minimum dimensions are not satisfied.
         final TaskContainer taskContainer = splitContainer.getTaskContainer();
         final SplitAttributes splitAttributes = sanitizeSplitAttributes(
-                taskContainer.getTaskProperties(), splitContainer.getSplitAttributes(),
+                taskContainer.getTaskProperties(), splitContainer.getCurrentSplitAttributes(),
                 minDimensionsPair);
-        splitContainer.setSplitAttributes(splitAttributes);
+        splitContainer.updateCurrentSplitAttributes(splitAttributes);
         if (!shouldShowSplit(splitAttributes)) {
             // If the client side hasn't received TaskFragmentInfo yet, we can't change TaskFragment
             // bounds. Return failure to create a new SplitContainer which fills task bounds.
@@ -489,44 +580,51 @@ class SplitPresenter extends JetpackTaskFragmentOrganizer {
                     || splitContainer.getSecondaryContainer().getInfo() == null) {
                 return RESULT_EXPAND_FAILED_NO_TF_INFO;
             }
-            expandTaskFragment(wct, splitContainer.getPrimaryContainer().getTaskFragmentToken());
-            expandTaskFragment(wct, splitContainer.getSecondaryContainer().getTaskFragmentToken());
+            final IBinder primaryToken =
+                    splitContainer.getPrimaryContainer().getTaskFragmentToken();
+            final IBinder secondaryToken =
+                    splitContainer.getSecondaryContainer().getTaskFragmentToken();
+            expandTaskFragment(wct, primaryToken);
+            expandTaskFragment(wct, secondaryToken);
+            // Set the companion TaskFragment when the two containers stacked.
+            setCompanionTaskFragment(wct, primaryToken, secondaryToken,
+                    splitContainer.getSplitRule(), true /* isStacked */);
             return RESULT_EXPANDED;
         }
         return RESULT_NOT_EXPANDED;
     }
 
     static boolean shouldShowSplit(@NonNull SplitContainer splitContainer) {
-        return shouldShowSplit(splitContainer.getSplitAttributes());
+        return shouldShowSplit(splitContainer.getCurrentSplitAttributes());
     }
 
     static boolean shouldShowSplit(@NonNull SplitAttributes splitAttributes) {
         return !(splitAttributes.getSplitType() instanceof ExpandContainersSplitType);
     }
 
-    @GuardedBy("mController.mLock")
     @NonNull
     SplitAttributes computeSplitAttributes(@NonNull TaskProperties taskProperties,
-            @NonNull SplitRule rule, @Nullable Pair<Size, Size> minDimensionsPair) {
+            @NonNull SplitRule rule, @NonNull SplitAttributes defaultSplitAttributes,
+            @Nullable Pair<Size, Size> minDimensionsPair) {
         final Configuration taskConfiguration = taskProperties.getConfiguration();
         final WindowMetrics taskWindowMetrics = getTaskWindowMetrics(taskConfiguration);
-        final SplitAttributesCalculator calculator = mController.getSplitAttributesCalculator();
-        final SplitAttributes defaultSplitAttributes = rule.getDefaultSplitAttributes();
-        final boolean isDefaultMinSizeSatisfied = rule.checkParentMetrics(taskWindowMetrics);
+        final Function<SplitAttributesCalculatorParams, SplitAttributes> calculator =
+                mController.getSplitAttributesCalculator();
+        final boolean areDefaultConstraintsSatisfied = rule.checkParentMetrics(taskWindowMetrics);
         if (calculator == null) {
-            if (!isDefaultMinSizeSatisfied) {
+            if (!areDefaultConstraintsSatisfied) {
                 return EXPAND_CONTAINERS_ATTRIBUTES;
             }
             return sanitizeSplitAttributes(taskProperties, defaultSplitAttributes,
                     minDimensionsPair);
         }
-        final WindowLayoutInfo windowLayoutInfo = mController.mWindowLayoutComponent
+        final WindowLayoutInfo windowLayoutInfo = mWindowLayoutComponent
                 .getCurrentWindowLayoutInfo(taskProperties.getDisplayId(),
                         taskConfiguration.windowConfiguration);
         final SplitAttributesCalculatorParams params = new SplitAttributesCalculatorParams(
-                taskWindowMetrics, taskConfiguration, defaultSplitAttributes,
-                isDefaultMinSizeSatisfied, windowLayoutInfo, rule.getTag());
-        final SplitAttributes splitAttributes = calculator.computeSplitAttributesForParams(params);
+                taskWindowMetrics, taskConfiguration, windowLayoutInfo, defaultSplitAttributes,
+                areDefaultConstraintsSatisfied, rule.getTag());
+        final SplitAttributes splitAttributes = calculator.apply(params);
         return sanitizeSplitAttributes(taskProperties, splitAttributes, minDimensionsPair);
     }
 
@@ -556,8 +654,8 @@ class SplitPresenter extends JetpackTaskFragmentOrganizer {
     }
 
     @NonNull
-    static Pair<Size, Size> getActivitiesMinDimensionsPair(@NonNull Activity primaryActivity,
-            @NonNull Activity secondaryActivity) {
+    private static Pair<Size, Size> getActivitiesMinDimensionsPair(
+            @NonNull Activity primaryActivity, @NonNull Activity secondaryActivity) {
         return new Pair<>(getMinDimensions(primaryActivity), getMinDimensions(secondaryActivity));
     }
 
@@ -603,7 +701,7 @@ class SplitPresenter extends JetpackTaskFragmentOrganizer {
         return new Size(windowLayout.minWidth, windowLayout.minHeight);
     }
 
-    static boolean boundsSmallerThanMinDimensions(@NonNull Rect bounds,
+    private static boolean boundsSmallerThanMinDimensions(@NonNull Rect bounds,
             @Nullable Size minDimensions) {
         if (minDimensions == null) {
             return false;
@@ -614,7 +712,7 @@ class SplitPresenter extends JetpackTaskFragmentOrganizer {
 
     @VisibleForTesting
     @NonNull
-    Rect getBoundsForPosition(@Position int position, @NonNull TaskProperties taskProperties,
+    Rect getRelBoundsForPosition(@Position int position, @NonNull TaskProperties taskProperties,
             @NonNull SplitAttributes splitAttributes) {
         final Configuration taskConfiguration = taskProperties.getConfiguration();
         final FoldingFeature foldingFeature = getFoldingFeature(taskProperties);
@@ -627,16 +725,24 @@ class SplitPresenter extends JetpackTaskFragmentOrganizer {
         if (!shouldShowSplit(computedSplitAttributes)) {
             return new Rect();
         }
+        final Rect bounds;
         switch (position) {
             case POSITION_START:
-                return getPrimaryBounds(taskConfiguration, computedSplitAttributes, foldingFeature);
-            case POSITION_END:
-                return getSecondaryBounds(taskConfiguration, computedSplitAttributes,
+                bounds = getPrimaryBounds(taskConfiguration, computedSplitAttributes,
                         foldingFeature);
+                break;
+            case POSITION_END:
+                bounds = getSecondaryBounds(taskConfiguration, computedSplitAttributes,
+                        foldingFeature);
+                break;
             case POSITION_FILL:
             default:
-                return new Rect();
+                bounds = new Rect();
         }
+        // Convert to relative bounds in parent coordinate. This is to avoid flicker when the Task
+        // resized before organizer requests have been applied.
+        taskProperties.translateAbsoluteBoundsToRelativeBounds(bounds);
+        return bounds;
     }
 
     @NonNull
@@ -802,7 +908,7 @@ class SplitPresenter extends JetpackTaskFragmentOrganizer {
         final int displayId = taskProperties.getDisplayId();
         final WindowConfiguration windowConfiguration = taskProperties.getConfiguration()
                 .windowConfiguration;
-        final WindowLayoutInfo info = mController.mWindowLayoutComponent
+        final WindowLayoutInfo info = mWindowLayoutComponent
                 .getCurrentWindowLayoutInfo(displayId, windowConfiguration);
         final List<DisplayFeature> displayFeatures = info.getDisplayFeatures();
         if (displayFeatures.isEmpty()) {
@@ -906,22 +1012,13 @@ class SplitPresenter extends JetpackTaskFragmentOrganizer {
     }
 
     @NonNull
-    static TaskProperties getTaskProperties(@NonNull TaskFragmentContainer container) {
-        return container.getTaskContainer().getTaskProperties();
-    }
-
-    @NonNull
     TaskProperties getTaskProperties(@NonNull Activity activity) {
         final TaskContainer taskContainer = mController.getTaskContainer(
                 mController.getTaskId(activity));
         if (taskContainer != null) {
             return taskContainer.getTaskProperties();
         }
-        // Use a copy of configuration because activity's configuration may be updated later,
-        // or we may get unexpected TaskContainer's configuration if Activity's configuration is
-        // updated. An example is Activity is going to be in split.
-        return new TaskProperties(activity.getDisplayId(),
-                new Configuration(activity.getResources().getConfiguration()));
+        return TaskProperties.getTaskPropertiesFromActivity(activity);
     }
 
     @NonNull
@@ -933,18 +1030,7 @@ class SplitPresenter extends JetpackTaskFragmentOrganizer {
     private static WindowMetrics getTaskWindowMetrics(@NonNull Configuration taskConfiguration) {
         final Rect taskBounds = taskConfiguration.windowConfiguration.getBounds();
         // TODO(b/190433398): Supply correct insets.
-        return new WindowMetrics(taskBounds, WindowInsets.CONSUMED);
-    }
-
-    /** Obtains the bounds from a non-embedded Activity. */
-    @NonNull
-    static Rect getNonEmbeddedActivityBounds(@NonNull Activity activity) {
-        final WindowConfiguration windowConfiguration =
-                activity.getResources().getConfiguration().windowConfiguration;
-        if (!activity.isInMultiWindowMode()) {
-            // In fullscreen mode the max bounds should correspond to the task bounds.
-            return windowConfiguration.getMaxBounds();
-        }
-        return windowConfiguration.getBounds();
+        final float density = taskConfiguration.densityDpi * DisplayMetrics.DENSITY_DEFAULT_SCALE;
+        return new WindowMetrics(taskBounds, WindowInsets.CONSUMED, density);
     }
 }

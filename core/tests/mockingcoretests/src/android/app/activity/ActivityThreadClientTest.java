@@ -51,6 +51,7 @@ import android.app.ActivityThread.ActivityClientRecord;
 import android.app.LoadedApk;
 import android.app.servertransaction.PendingTransactionActions;
 import android.content.ComponentName;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.pm.ApplicationInfo;
@@ -293,7 +294,7 @@ public class ActivityThreadClientTest {
 
         private Activity launchActivity(ActivityClientRecord r) {
             return mThread.handleLaunchActivity(r, null /* pendingActions */,
-                    null /* customIntent */);
+                    Context.DEVICE_ID_DEFAULT, null /* customIntent */);
         }
 
         private void startActivity(ActivityClientRecord r) {
@@ -302,7 +303,7 @@ public class ActivityThreadClientTest {
 
         private void resumeActivity(ActivityClientRecord r) {
             mThread.handleResumeActivity(r, true /* finalStateRequest */,
-                    true /* isForward */, "test");
+                    true /* isForward */, false /* shouldSendCompatFakeFocus */, "test");
         }
 
         private void pauseActivity(ActivityClientRecord r) {

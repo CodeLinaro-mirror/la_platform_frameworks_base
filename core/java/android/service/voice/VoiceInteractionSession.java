@@ -26,6 +26,7 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.TestApi;
 import android.app.Activity;
+import android.app.ActivityOptions;
 import android.app.Dialog;
 import android.app.DirectAction;
 import android.app.Instrumentation;
@@ -168,6 +169,20 @@ public class VoiceInteractionSession implements KeyEvent.Callback, ComponentCall
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface VoiceInteractionActivityEventType{}
+
+    /**
+     * Bundle key used to specify the id when the system prepares to show session. It increases for
+     * each request.
+     * <p>
+     * Type: int
+     * </p>
+     * @see VoiceInteractionService#showSession(Bundle, int)
+     * @see VoiceInteractionService#onPrepareToShowSession(Bundle, int)
+     * @see VoiceInteractionService#onShowSessionFailed(Bundle)
+     * @see #onShow(Bundle, int)
+     * @see #show(Bundle, int)
+     */
+    public static final String KEY_SHOW_SESSION_ID = "android.service.voice.SHOW_SESSION_ID";
 
     final Context mContext;
     final HandlerCaller mHandlerCaller;
@@ -1513,8 +1528,34 @@ public class VoiceInteractionSession implements KeyEvent.Callback, ComponentCall
      * <p>By default, the system will create a window for the UI for this session.  If you are using
      * an assistant activity instead, then you can disable the window creation by calling
      * {@link #setUiEnabled} in {@link #onPrepareShow(Bundle, int)}.</p>
+     *
+     * NOTE: if the app would like to override some options to start the Activity,
+     * use {@link #startAssistantActivity(Intent, Bundle)} instead.
      */
     public void startAssistantActivity(Intent intent) {
+        startAssistantActivity(intent, ActivityOptions.makeBasic().toBundle());
+    }
+
+    /**
+     * <p>Ask that a new assistant activity be started.  This will create a new task in the
+     * in activity manager: this means that
+     * {@link Intent#FLAG_ACTIVITY_NEW_TASK Intent.FLAG_ACTIVITY_NEW_TASK}
+     * will be set for you to make it a new task.</p>
+     *
+     * <p>The newly started activity will be displayed on top of other activities in the system
+     * in a new layer that is not affected by multi-window mode.  Tasks started from this activity
+     * will go into the normal activity layer and not this new layer.</p>
+     *
+     * <p>By default, the system will create a window for the UI for this session.  If you are using
+     * an assistant activity instead, then you can disable the window creation by calling
+     * {@link #setUiEnabled} in {@link #onPrepareShow(Bundle, int)}.</p>
+     *
+     * @param intent the intent used to start an assistant activity
+     * @param bundle Additional options for how the Activity should be started. See
+     * {@link ActivityOptions} for how to build the Bundle supplied here.
+     */
+    public void startAssistantActivity(@NonNull Intent intent, @NonNull Bundle bundle) {
+        Objects.requireNonNull(bundle);
         if (mToken == null) {
             throw new IllegalStateException("Can't call before onCreate()");
         }
@@ -1523,7 +1564,7 @@ public class VoiceInteractionSession implements KeyEvent.Callback, ComponentCall
             intent.prepareToLeaveProcess(mContext);
             int res = mSystemService.startAssistantActivity(mToken, intent,
                     intent.resolveType(mContext.getContentResolver()),
-                    mContext.getAttributionTag());
+                    mContext.getAttributionTag(), bundle);
             Instrumentation.checkStartActivityResult(res, intent);
         } catch (RemoteException e) {
         }
@@ -1763,14 +1804,17 @@ public class VoiceInteractionSession implements KeyEvent.Callback, ComponentCall
      * @param args The arguments that were supplied to
      * {@link VoiceInteractionService#showSession VoiceInteractionService.showSession}.
      * Some example keys include : "invocation_type", "invocation_phone_state",
-     * "invocation_time_ms", Intent.EXTRA_TIME ("android.intent.extra.TIME") indicating timing
+     * {@link #KEY_SHOW_SESSION_ID}, "invocation_time_ms",
+     * Intent.EXTRA_TIME ("android.intent.extra.TIME") indicating timing
      * in milliseconds of the KeyEvent that triggered Assistant and
      * Intent.EXTRA_ASSIST_INPUT_DEVICE_ID (android.intent.extra.ASSIST_INPUT_DEVICE_ID)
-     *  referring to the device that sent the request.
+     *  referring to the device that sent the request. Starting from Android 14, the system will
+     * add {@link VoiceInteractionService#KEY_SHOW_SESSION_ID}, the Bundle is not null. But the
+     * application should handle null case before Android 14.
      * @param showFlags The show flags originally provided to
      * {@link VoiceInteractionService#showSession VoiceInteractionService.showSession}.
      */
-    public void onShow(Bundle args, int showFlags) {
+    public void onShow(@Nullable Bundle args, int showFlags) {
     }
 
     /**

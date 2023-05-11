@@ -17,6 +17,7 @@
 package com.android.server.audio;
 
 import static org.mockito.Mockito.atLeast;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 
@@ -45,6 +46,7 @@ public class AudioDeviceVolumeManagerTest {
     private SystemServerAdapter mSystemServer;
     private SettingsAdapter mSettingsAdapter;
     private TestLooper mTestLooper;
+    private AudioPolicyFacade mAudioPolicyMock = mock(AudioPolicyFacade.class);
 
     private AudioService mAudioService;
 
@@ -59,7 +61,7 @@ public class AudioDeviceVolumeManagerTest {
         mSystemServer = new NoOpSystemServerAdapter();
         mSettingsAdapter = new NoOpSettingsAdapter();
         mAudioService = new AudioService(mContext, mSpyAudioSystem, mSystemServer,
-                mSettingsAdapter, mTestLooper.getLooper()) {
+                mSettingsAdapter, mAudioPolicyMock, mTestLooper.getLooper()) {
             @Override
             public int getDeviceForStream(int stream) {
                 return AudioSystem.DEVICE_OUT_SPEAKER;
@@ -84,12 +86,12 @@ public class AudioDeviceVolumeManagerTest {
         final AudioDeviceAttributes usbDevice = new AudioDeviceAttributes(
                 /*native type*/ AudioSystem.DEVICE_OUT_USB_DEVICE, /*address*/ "bla");
 
-        mAudioService.setDeviceVolume(volMin, usbDevice, mPackageName, TAG);
+        mAudioService.setDeviceVolume(volMin, usbDevice, mPackageName);
         mTestLooper.dispatchAll();
         verify(mSpyAudioSystem, atLeast(1)).setStreamVolumeIndexAS(
                         AudioManager.STREAM_MUSIC, minIndex, AudioSystem.DEVICE_OUT_USB_DEVICE);
 
-        mAudioService.setDeviceVolume(volMid, usbDevice, mPackageName, TAG);
+        mAudioService.setDeviceVolume(volMid, usbDevice, mPackageName);
         mTestLooper.dispatchAll();
         verify(mSpyAudioSystem, atLeast(1)).setStreamVolumeIndexAS(
                 AudioManager.STREAM_MUSIC, midIndex, AudioSystem.DEVICE_OUT_USB_DEVICE);

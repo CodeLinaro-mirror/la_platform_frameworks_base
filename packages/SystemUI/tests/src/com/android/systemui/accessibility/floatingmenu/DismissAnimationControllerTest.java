@@ -16,21 +16,28 @@
 
 package com.android.systemui.accessibility.floatingmenu;
 
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
 import android.view.WindowManager;
+import android.view.accessibility.AccessibilityManager;
 
 import androidx.test.filters.SmallTest;
 
 import com.android.systemui.SysuiTestCase;
+import com.android.systemui.util.settings.SecureSettings;
 import com.android.wm.shell.bubbles.DismissView;
 
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 
 /** Tests for {@link DismissAnimationController}. */
 @SmallTest
@@ -40,10 +47,17 @@ public class DismissAnimationControllerTest extends SysuiTestCase {
     private DismissAnimationController mDismissAnimationController;
     private DismissView mDismissView;
 
+    @Rule
+    public MockitoRule mockito = MockitoJUnit.rule();
+
+    @Mock
+    private AccessibilityManager mAccessibilityManager;
+
     @Before
     public void setUp() throws Exception {
         final WindowManager stubWindowManager = mContext.getSystemService(WindowManager.class);
-        final MenuViewModel stubMenuViewModel = new MenuViewModel(mContext);
+        final MenuViewModel stubMenuViewModel = new MenuViewModel(mContext, mAccessibilityManager,
+                mock(SecureSettings.class));
         final MenuViewAppearance stubMenuViewAppearance = new MenuViewAppearance(mContext,
                 stubWindowManager);
         final MenuView stubMenuView = new MenuView(mContext, stubMenuViewModel,

@@ -27,18 +27,12 @@ class FakeFeatureFlags : FeatureFlags {
     private val listenerFlagIds = mutableMapOf<FlagListenable.Listener, MutableSet<Int>>()
 
     init {
-        Flags.flagFields.forEach { entry: Map.Entry<String, Flag<*>> ->
+        FlagsFactory.knownFlags.forEach { entry: Map.Entry<String, Flag<*>> ->
             knownFlagNames[entry.value.id] = entry.key
         }
     }
 
     fun set(flag: BooleanFlag, value: Boolean) {
-        if (booleanFlags.put(flag.id, value)?.let { value != it } != false) {
-            notifyFlagChanged(flag)
-        }
-    }
-
-    fun set(flag: DeviceConfigBooleanFlag, value: Boolean) {
         if (booleanFlags.put(flag.id, value)?.let { value != it } != false) {
             notifyFlagChanged(flag)
         }
@@ -73,7 +67,7 @@ class FakeFeatureFlags : FeatureFlags {
             listeners.forEach { listener ->
                 listener.onFlagChanged(
                     object : FlagListenable.FlagEvent {
-                        override val flagId = flag.id
+                        override val flagName = flag.name
                         override fun requestNoRestart() {}
                     }
                 )
@@ -86,8 +80,6 @@ class FakeFeatureFlags : FeatureFlags {
     override fun isEnabled(flag: ReleasedFlag): Boolean = requireBooleanValue(flag.id)
 
     override fun isEnabled(flag: ResourceBooleanFlag): Boolean = requireBooleanValue(flag.id)
-
-    override fun isEnabled(flag: DeviceConfigBooleanFlag): Boolean = requireBooleanValue(flag.id)
 
     override fun isEnabled(flag: SysPropBooleanFlag): Boolean = requireBooleanValue(flag.id)
 

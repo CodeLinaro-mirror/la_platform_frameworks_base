@@ -16,6 +16,7 @@
 
 package android.provider.settings.validators;
 
+import static android.provider.settings.validators.SettingsValidators.ANY_INTEGER_VALIDATOR;
 import static android.provider.settings.validators.SettingsValidators.ANY_STRING_VALIDATOR;
 import static android.provider.settings.validators.SettingsValidators.BOOLEAN_VALIDATOR;
 import static android.provider.settings.validators.SettingsValidators.COMPONENT_NAME_VALIDATOR;
@@ -111,7 +112,6 @@ public class SystemSettingsValidators {
                 });
         VALIDATORS.put(System.DISPLAY_COLOR_MODE_VENDOR_HINT, ANY_STRING_VALIDATOR);
         VALIDATORS.put(System.SCREEN_OFF_TIMEOUT, NON_NEGATIVE_INTEGER_VALIDATOR);
-        VALIDATORS.put(System.SCREEN_BRIGHTNESS_FOR_VR, new InclusiveIntegerRangeValidator(0, 255));
         VALIDATORS.put(System.SCREEN_BRIGHTNESS_MODE, BOOLEAN_VALIDATOR);
         VALIDATORS.put(System.ADAPTIVE_SLEEP, BOOLEAN_VALIDATOR);
         VALIDATORS.put(System.MODE_RINGER_STREAMS_AFFECTED, NON_NEGATIVE_INTEGER_VALIDATOR);
@@ -187,6 +187,10 @@ public class SystemSettingsValidators {
         VALIDATORS.put(System.SIP_ADDRESS_ONLY, BOOLEAN_VALIDATOR);
         VALIDATORS.put(System.SIP_ASK_ME_EACH_TIME, BOOLEAN_VALIDATOR);
         VALIDATORS.put(System.POINTER_SPEED, new InclusiveFloatRangeValidator(-7, 7));
+        VALIDATORS.put(System.TOUCHPAD_POINTER_SPEED, new InclusiveIntegerRangeValidator(-7, 7));
+        VALIDATORS.put(System.TOUCHPAD_NATURAL_SCROLLING, BOOLEAN_VALIDATOR);
+        VALIDATORS.put(System.TOUCHPAD_TAP_TO_CLICK, BOOLEAN_VALIDATOR);
+        VALIDATORS.put(System.TOUCHPAD_RIGHT_CLICK_ZONE, BOOLEAN_VALIDATOR);
         VALIDATORS.put(System.LOCK_TO_APP_ENABLED, BOOLEAN_VALIDATOR);
         VALIDATORS.put(
                 System.EGG_MODE,
@@ -211,5 +215,9 @@ public class SystemSettingsValidators {
         VALIDATORS.put(System.CLOCKWORK_BLUETOOTH_SETTINGS_PREF, BOOLEAN_VALIDATOR);
         VALIDATORS.put(System.UNREAD_NOTIFICATION_DOT_INDICATOR, BOOLEAN_VALIDATOR);
         VALIDATORS.put(System.AUTO_LAUNCH_MEDIA_CONTROLS, BOOLEAN_VALIDATOR);
+        VALIDATORS.put(System.LOCALE_PREFERENCES, ANY_STRING_VALIDATOR);
+        VALIDATORS.put(System.CAMERA_FLASH_NOTIFICATION, BOOLEAN_VALIDATOR);
+        VALIDATORS.put(System.SCREEN_FLASH_NOTIFICATION, BOOLEAN_VALIDATOR);
+        VALIDATORS.put(System.SCREEN_FLASH_NOTIFICATION_COLOR, ANY_INTEGER_VALIDATOR);
     }
 }

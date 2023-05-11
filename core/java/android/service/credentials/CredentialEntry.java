@@ -16,74 +16,148 @@
 
 package android.service.credentials;
 
+import static java.util.Objects.requireNonNull;
+
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.annotation.SuppressLint;
 import android.app.PendingIntent;
 import android.app.slice.Slice;
-import android.credentials.Credential;
+import android.credentials.GetCredentialResponse;
 import android.os.Parcel;
 import android.os.Parcelable;
 
 import com.android.internal.util.Preconditions;
 
-import java.util.Objects;
-
 /**
- * A credential entry that is displayed on the account selector UI. Each entry corresponds to
- * something that the user can select.
+ * A credential entry that is to be displayed on the account selector that is presented to the
+ * user.
  *
- * @hide
+ * <p>If user selects this entry, the corresponding {@link PendingIntent},
+ * set on the {@code slice} will be invoked to launch activities that require some user engagement
+ * before getting the credential corresponding to this entry, e.g. authentication,
+ * confirmation etc. The extras associated with the resulting {@link android.app.Activity} will
+ * also contain the complete credential request containing all required parameters. This request
+ * can be retrieved against {@link CredentialProviderService#EXTRA_GET_CREDENTIAL_REQUEST}.
+ *
+ * Once the activity fulfills the required user engagement, the {@link android.app.Activity}
+ * result should be set to {@link android.app.Activity#RESULT_OK}, and the
+ * {@link CredentialProviderService#EXTRA_GET_CREDENTIAL_RESPONSE} must be set with a
+ * {@link GetCredentialResponse} object.
+ *
+ * <p>Any class that derives this class must only add extra field values to the {@code slice}
+ * object passed into the constructor. Any other field will not be parceled through. If the
+ * derived class has custom parceling implementation, this class will not be able to unpack
+ * the parcel without having access to that implementation.
+ *
+ * <p>While creating this entry, providers must set a {@code requestId} to be retrieved
+ * from {@link BeginGetCredentialOption#getId()}, to determine for which request this entry is
+ * being presented to the user. This will ensure that when user selects the entry, the correct
+ * complete request is added to the {@link PendingIntent} mentioned above.
  */
-public final class CredentialEntry implements Parcelable {
+@SuppressLint("ParcelNotFinal")
+public class CredentialEntry implements Parcelable {
+    /** The request option that corresponds to this entry. **/
+    private final @Nullable String mBeginGetCredentialOptionId;
+
     /** The type of the credential entry to be shown on the UI. */
     private final @NonNull String mType;
+
 
     /** The object containing display content to be shown along with this credential entry
      * on the UI. */
     private final @NonNull Slice mSlice;
 
-    /** The pending intent to be invoked when this credential entry is selected. */
-    private final @Nullable PendingIntent mPendingIntent;
+    /**
+     * Creates an entry that is associated with a {@link BeginGetCredentialOption} request.
+     * Providers must use this constructor when they extend from {@link CredentialProviderService}
+     * to respond to query phase {@link CredentialProviderService#onBeginGetCredential}
+     * credential retrieval requests.
+     *
+     * @param beginGetCredentialOptionId the beginGetCredentialOptionId to be retrieved from
+     * {@link BeginGetCredentialOption#getId()} - the request option for which this CredentialEntry
+     *                                   is being constructed This helps maintain an association
+     *                                   such that when the user selects this entry, providers can
+     *                                   receive the complete corresponding
+     *                                   {@link GetCredentialRequest}.
+     * @param type the type of the credential for which this credential entry is being created
+     * @param slice the slice containing the metadata to be shown on the UI. Must be
+     *              constructed through the androidx.credentials jetpack library.
+     *
+     * @throws IllegalArgumentException If {@code beginGetCredentialOptionId} or {@code type}
+     * is null, or empty
+     */
+    public CredentialEntry(@NonNull String beginGetCredentialOptionId, @NonNull String type,
+            @NonNull Slice slice) {
+        mBeginGetCredentialOptionId = Preconditions.checkStringNotEmpty(
+                beginGetCredentialOptionId, "beginGetCredentialOptionId must not be "
+                        + "null, or empty");
+        mType = Preconditions.checkStringNotEmpty(type, "type must not be null, or "
+                + "empty");
+        mSlice = requireNonNull(slice, "slice must not be null");
+    }
 
     /**
-     * The underlying credential to be returned to the app when the user selects
-     * this credential entry.
+     * Creates an entry that is associated with a {@link BeginGetCredentialOption} request.
+     * Providers must use this constructor when they extend from {@link CredentialProviderService}
+     * to respond to query phase {@link CredentialProviderService#onBeginGetCredential}
+     * credential retrieval requests.
+     *
+     * @param beginGetCredentialOption the request option for which this credential entry is
+     *                                 being constructed This helps maintain an association,
+     *                                 such that when the user selects this entry, providers
+     *                                 can receive the complete corresponding request.
+     * @param slice the slice containing the metadata to be shown on the UI. Must be
+     *              constructed through the androidx.credentials jetpack library.
      */
-    private final @Nullable Credential mCredential;
+    public CredentialEntry(@NonNull BeginGetCredentialOption beginGetCredentialOption,
+            @NonNull Slice slice) {
+        requireNonNull(beginGetCredentialOption, "beginGetCredentialOption must not"
+                + " be null");
+        mBeginGetCredentialOptionId = Preconditions.checkStringNotEmpty(
+                beginGetCredentialOption.getId(), "Id in beginGetCredentialOption "
+                        + "must not be null");
+        mType = Preconditions.checkStringNotEmpty(beginGetCredentialOption.getType(),
+                "type in beginGetCredentialOption must not be null");
+        mSlice = requireNonNull(slice, "slice must not be null");
+    }
 
-    /** A flag denoting whether auto-select is enabled for this entry. */
-    private final @NonNull boolean mAutoSelectAllowed;
-
-    private CredentialEntry(@NonNull String type, @NonNull Slice slice,
-            @Nullable PendingIntent pendingIntent, @Nullable Credential credential,
-            @NonNull boolean autoSeletAllowed) {
-        mType = type;
-        mSlice = slice;
-        mPendingIntent = pendingIntent;
-        mCredential = credential;
-        mAutoSelectAllowed = autoSeletAllowed;
+    /**
+     * Creates an entry that is independent of an incoming {@link BeginGetCredentialOption}
+     * request. Providers must use this constructor for constructing entries to be registered
+     * with the framework outside of the span of an API call.
+     *
+     * @param type the type of the credential
+     * @param slice the slice containing the metadata to be shown on the UI. Must be
+     *              constructed through the androidx.credentials jetpack library.
+     *
+     */
+    public CredentialEntry(@NonNull String type, @NonNull Slice slice) {
+        mBeginGetCredentialOptionId = null;
+        mType = requireNonNull(type, "type must not be null");
+        mSlice = requireNonNull(slice, "slice must not be null");
     }
 
     private CredentialEntry(@NonNull Parcel in) {
+        requireNonNull(in, "parcel must not be null");
         mType = in.readString8();
         mSlice = in.readTypedObject(Slice.CREATOR);
-        mPendingIntent = in.readTypedObject(PendingIntent.CREATOR);
-        mCredential = in.readTypedObject(Credential.CREATOR);
-        mAutoSelectAllowed = in.readBoolean();
+        mBeginGetCredentialOptionId = in.readString8();
     }
 
-    public static final @NonNull Creator<CredentialEntry> CREATOR =
+    @NonNull
+    public static final Creator<CredentialEntry> CREATOR =
             new Creator<CredentialEntry>() {
-        @Override
-        public CredentialEntry createFromParcel(@NonNull Parcel in) {
-            return new CredentialEntry(in);
-        }
+                @Override
+                public CredentialEntry createFromParcel(@NonNull Parcel in) {
+                    return new CredentialEntry(in);
+                }
 
-        @Override
-        public CredentialEntry[] newArray(int size) {
-            return new CredentialEntry[size];
-        }
-    };
+                @Override
+                public CredentialEntry[] newArray(int size) {
+                    return new CredentialEntry[size];
+                }
+            };
 
     @Override
     public int describeContents() {
@@ -94,133 +168,31 @@ public final class CredentialEntry implements Parcelable {
     public void writeToParcel(@NonNull Parcel dest, int flags) {
         dest.writeString8(mType);
         dest.writeTypedObject(mSlice, flags);
-        dest.writeTypedObject(mPendingIntent, flags);
-        dest.writeTypedObject(mCredential, flags);
-        dest.writeBoolean(mAutoSelectAllowed);
+        dest.writeString8(mBeginGetCredentialOptionId);
+    }
+
+    /**
+     * Returns the id of the {@link BeginGetCredentialOption} for which this credential
+     * entry has been constructed.
+     */
+    @NonNull
+    public String getBeginGetCredentialOptionId() {
+        return mBeginGetCredentialOptionId;
     }
 
     /**
      * Returns the specific credential type of the entry.
      */
-    public @NonNull String getType() {
+    @NonNull
+    public String getType() {
         return mType;
     }
 
     /**
      * Returns the {@link Slice} object containing UI display content to be shown for this entry.
      */
-    public @NonNull Slice getSlice() {
+    @NonNull
+    public Slice getSlice() {
         return mSlice;
-    }
-
-    /**
-     * Returns the pending intent to be invoked if the user selects this entry.
-     */
-    public @Nullable PendingIntent getPendingIntent() {
-        return mPendingIntent;
-    }
-
-    /**
-     * Returns the credential associated with this entry.
-     */
-    public @Nullable Credential getCredential() {
-        return mCredential;
-    }
-
-    /**
-     * Returns whether this entry can be auto selected if it is the only option for the user.
-     */
-    public boolean isAutoSelectAllowed() {
-        return mAutoSelectAllowed;
-    }
-
-    /**
-     * Builder for {@link CredentialEntry}.
-     */
-    public static final class Builder {
-        private String mType;
-        private Slice mSlice;
-        private PendingIntent mPendingIntent = null;
-        private Credential mCredential = null;
-        private boolean mAutoSelectAllowed = false;
-
-        /**
-         * Builds the instance.
-         * @param type the type of credential underlying this credential entry
-         * @param slice the content to be displayed with this entry on the UI
-         *
-         * @throws IllegalArgumentException If {@code type} is null or empty.
-         * @throws NullPointerException If {@code slice} is null.
-         */
-        public Builder(@NonNull String type, @NonNull Slice slice) {
-            mType = Preconditions.checkStringNotEmpty(type, "type must not be "
-                    + "null, or empty");
-            mSlice = Objects.requireNonNull(slice,
-                    "slice must not be null");
-        }
-
-        /**
-         * Sets the pendingIntent to be invoked if the user selects this entry.
-         *
-         * The pending intent can be used to launch activities that require some user engagement
-         * before getting the credential corresponding to this entry, e.g. authentication,
-         * confirmation etc.
-         * Once the activity fulfills the required user engagement, a {@link Credential} object
-         * must be returned as an extra on activity finish.
-         *
-         * @throws IllegalStateException If {@code credential} is already set. Must either set the
-         * {@code credential}, or the {@code pendingIntent}.
-         */
-        public @NonNull Builder setPendingIntent(@Nullable PendingIntent pendingIntent) {
-            if (pendingIntent != null) {
-                Preconditions.checkState(mCredential != null,
-                        "credential is already set. Cannot set both the pendingIntent "
-                                + "and the credential");
-            }
-            mPendingIntent = pendingIntent;
-            return this;
-        }
-
-        /**
-         * Sets the credential to be used, if the user selects this entry.
-         *
-         * @throws IllegalStateException If {@code pendingIntent} is already set. Must either set
-         * the {@code pendingIntent}, or the {@code credential}.
-         */
-        public @NonNull Builder setCredential(@Nullable Credential credential) {
-            if (credential != null) {
-                Preconditions.checkState(mPendingIntent != null,
-                        "pendingIntent is already set. Cannot set both the "
-                                + "pendingIntent and the credential");
-            }
-            mCredential = credential;
-            return this;
-        }
-
-        /**
-         * Sets whether the entry is allowed to be auto selected by the framework.
-         * The default value is set to false.
-         */
-        public @NonNull Builder setAutoSelectAllowed(@NonNull boolean autoSelectAllowed) {
-            mAutoSelectAllowed = autoSelectAllowed;
-            return this;
-        }
-
-        /**
-         * Creates a new {@link CredentialEntry} instance.
-         *
-         * @throws NullPointerException If {@code slice} is null.
-         * @throws IllegalArgumentException If {@code type} is null, or empty.
-         * @throws IllegalStateException If neither {@code pendingIntent} nor {@code credential}
-         * is set, or if both are set.
-         */
-        public @NonNull CredentialEntry build() {
-            Preconditions.checkState(mPendingIntent == null && mCredential == null,
-                    "Either pendingIntent or credential must be set");
-            Preconditions.checkState(mPendingIntent != null && mCredential != null,
-                    "Cannot set both the pendingIntent and credential");
-            return new CredentialEntry(mType, mSlice, mPendingIntent,
-                    mCredential, mAutoSelectAllowed);
-        }
     }
 }

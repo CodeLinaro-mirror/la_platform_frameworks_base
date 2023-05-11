@@ -25,6 +25,7 @@ import android.annotation.RequiresNoPermission;
 import android.annotation.RequiresPermission;
 import android.annotation.UserIdInt;
 import android.content.Context;
+import android.os.Binder;
 import android.os.IBinder;
 import android.os.RemoteException;
 import android.os.ResultReceiver;
@@ -33,6 +34,7 @@ import android.view.WindowManager;
 import android.window.ImeOnBackInvokedDispatcher;
 
 import com.android.internal.inputmethod.DirectBootAwareness;
+import com.android.internal.inputmethod.IImeTracker;
 import com.android.internal.inputmethod.IInputMethodClient;
 import com.android.internal.inputmethod.IRemoteAccessibilityInputConnection;
 import com.android.internal.inputmethod.IRemoteInputConnection;
@@ -60,6 +62,9 @@ import java.util.function.Consumer;
 final class IInputMethodManagerGlobalInvoker {
     @Nullable
     private static volatile IInputMethodManager sServiceCache = null;
+
+    @Nullable
+    private static volatile IImeTracker sTrackerServiceCache = null;
 
     /**
      * @return {@code true} if {@link IInputMethodManager} is available.
@@ -211,6 +216,21 @@ final class IInputMethodManagerGlobalInvoker {
     }
 
     @AnyThread
+    @Nullable
+    @RequiresPermission(value = Manifest.permission.INTERACT_ACROSS_USERS_FULL, conditional = true)
+    static InputMethodInfo getCurrentInputMethodInfoAsUser(@UserIdInt int userId) {
+        final IInputMethodManager service = getService();
+        if (service == null) {
+            return null;
+        }
+        try {
+            return service.getCurrentInputMethodInfoAsUser(userId);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    @AnyThread
     @NonNull
     @RequiresPermission(value = Manifest.permission.INTERACT_ACROSS_USERS_FULL, conditional = true)
     static List<InputMethodInfo> getInputMethodList(@UserIdInt int userId,
@@ -275,15 +295,16 @@ final class IInputMethodManagerGlobalInvoker {
 
     @AnyThread
     static boolean showSoftInput(@NonNull IInputMethodClient client, @Nullable IBinder windowToken,
-            int flags, int lastClickToolType, @Nullable ResultReceiver resultReceiver,
+            @Nullable ImeTracker.Token statsToken, int flags, int lastClickToolType,
+            @Nullable ResultReceiver resultReceiver,
             @SoftInputShowHideReason int reason) {
         final IInputMethodManager service = getService();
         if (service == null) {
             return false;
         }
         try {
-            return service.showSoftInput(
-                    client, windowToken, flags, lastClickToolType, resultReceiver, reason);
+            return service.showSoftInput(client, windowToken, statsToken, flags, lastClickToolType,
+                    resultReceiver, reason);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -291,14 +312,15 @@ final class IInputMethodManagerGlobalInvoker {
 
     @AnyThread
     static boolean hideSoftInput(@NonNull IInputMethodClient client, @Nullable IBinder windowToken,
-            int flags, @Nullable ResultReceiver resultReceiver,
-            @SoftInputShowHideReason int reason) {
+            @Nullable ImeTracker.Token statsToken, int flags,
+            @Nullable ResultReceiver resultReceiver, @SoftInputShowHideReason int reason) {
         final IInputMethodManager service = getService();
         if (service == null) {
             return false;
         }
         try {
-            return service.hideSoftInput(client, windowToken, flags, resultReceiver, reason);
+            return service.hideSoftInput(client, windowToken, statsToken, flags, resultReceiver,
+                    reason);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -484,6 +506,40 @@ final class IInputMethodManagerGlobalInvoker {
     }
 
     @AnyThread
+    static void prepareStylusHandwritingDelegation(
+            @NonNull IInputMethodClient client,
+            @NonNull String delegatePackageName,
+            @NonNull String delegatorPackageName) {
+        final IInputMethodManager service = getService();
+        if (service == null) {
+            return;
+        }
+        try {
+            service.prepareStylusHandwritingDelegation(
+                    client, delegatePackageName, delegatorPackageName);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    @AnyThread
+    static boolean acceptStylusHandwritingDelegation(
+            @NonNull IInputMethodClient client,
+            @NonNull String delegatePackageName,
+            @NonNull String delegatorPackageName) {
+        final IInputMethodManager service = getService();
+        if (service == null) {
+            return false;
+        }
+        try {
+            return service.acceptStylusHandwritingDelegation(
+                    client, delegatePackageName, delegatorPackageName);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    @AnyThread
     @RequiresPermission(value = Manifest.permission.INTERACT_ACROSS_USERS_FULL, conditional = true)
     static boolean isStylusHandwritingAvailableAsUser(@UserIdInt int userId) {
         final IInputMethodManager service = getService();
@@ -524,5 +580,148 @@ final class IInputMethodManagerGlobalInvoker {
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
+    }
+
+    /** @see com.android.server.inputmethod.ImeTrackerService#onRequestShow */
+    @AnyThread
+    @NonNull
+    static ImeTracker.Token onRequestShow(@NonNull String tag, int uid,
+            @ImeTracker.Origin int origin, @SoftInputShowHideReason int reason) {
+        final IImeTracker service = getImeTrackerService();
+        if (service == null) {
+            // Create token with "fake" binder if the service was not found.
+            return new ImeTracker.Token(new Binder(), tag);
+        }
+        try {
+            return service.onRequestShow(tag, uid, origin, reason);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /** @see com.android.server.inputmethod.ImeTrackerService#onRequestHide */
+    @AnyThread
+    @NonNull
+    static ImeTracker.Token onRequestHide(@NonNull String tag, int uid,
+            @ImeTracker.Origin int origin, @SoftInputShowHideReason int reason) {
+        final IImeTracker service = getImeTrackerService();
+        if (service == null) {
+            // Create token with "fake" binder if the service was not found.
+            return new ImeTracker.Token(new Binder(), tag);
+        }
+        try {
+            return service.onRequestHide(tag, uid, origin, reason);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /** @see com.android.server.inputmethod.ImeTrackerService#onProgress */
+    @AnyThread
+    static void onProgress(@NonNull IBinder binder, @ImeTracker.Phase int phase) {
+        final IImeTracker service = getImeTrackerService();
+        if (service == null) {
+            return;
+        }
+        try {
+            service.onProgress(binder, phase);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /** @see com.android.server.inputmethod.ImeTrackerService#onFailed */
+    @AnyThread
+    static void onFailed(@NonNull ImeTracker.Token statsToken, @ImeTracker.Phase int phase) {
+        final IImeTracker service = getImeTrackerService();
+        if (service == null) {
+            return;
+        }
+        try {
+            service.onFailed(statsToken, phase);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /** @see com.android.server.inputmethod.ImeTrackerService#onCancelled */
+    @AnyThread
+    static void onCancelled(@NonNull ImeTracker.Token statsToken, @ImeTracker.Phase int phase) {
+        final IImeTracker service = getImeTrackerService();
+        if (service == null) {
+            return;
+        }
+        try {
+            service.onCancelled(statsToken, phase);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /** @see com.android.server.inputmethod.ImeTrackerService#onShown */
+    @AnyThread
+    static void onShown(@NonNull ImeTracker.Token statsToken) {
+        final IImeTracker service = getImeTrackerService();
+        if (service == null) {
+            return;
+        }
+        try {
+            service.onShown(statsToken);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /** @see com.android.server.inputmethod.ImeTrackerService#onHidden */
+    @AnyThread
+    static void onHidden(@NonNull ImeTracker.Token statsToken) {
+        final IImeTracker service = getImeTrackerService();
+        if (service == null) {
+            return;
+        }
+        try {
+            service.onHidden(statsToken);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /** @see com.android.server.inputmethod.ImeTrackerService#hasPendingImeVisibilityRequests */
+    @AnyThread
+    @RequiresPermission(Manifest.permission.TEST_INPUT_METHOD)
+    static boolean hasPendingImeVisibilityRequests() {
+        final var service = getImeTrackerService();
+        if (service == null) {
+            return true;
+        }
+        try {
+            return service.hasPendingImeVisibilityRequests();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    @AnyThread
+    @Nullable
+    private static IImeTracker getImeTrackerService() {
+        var trackerService = sTrackerServiceCache;
+        if (trackerService == null) {
+            final var service = getService();
+            if (service == null) {
+                return null;
+            }
+
+            try {
+                trackerService = service.getImeTrackerService();
+                if (trackerService == null) {
+                    return null;
+                }
+
+                sTrackerServiceCache = trackerService;
+            } catch (RemoteException e) {
+                throw e.rethrowFromSystemServer();
+            }
+        }
+        return trackerService;
     }
 }

@@ -113,12 +113,11 @@ public class MockSyntheticPasswordManager extends SyntheticPasswordManager {
     }
 
     @Override
-    protected IWeaver getWeaverService() throws RemoteException {
+    protected IWeaver getWeaverHidlService() throws RemoteException {
         return mWeaverService;
     }
 
     public void enableWeaver() {
         mWeaverService = new MockWeaverService();
-        initWeaverService();
     }
 }

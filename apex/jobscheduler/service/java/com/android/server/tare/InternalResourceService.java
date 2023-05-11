@@ -16,6 +16,10 @@
 
 package com.android.server.tare;
 
+import static android.app.tare.EconomyManager.ENABLED_MODE_OFF;
+import static android.app.tare.EconomyManager.ENABLED_MODE_ON;
+import static android.app.tare.EconomyManager.ENABLED_MODE_SHADOW;
+import static android.app.tare.EconomyManager.enabledModeToString;
 import static android.provider.Settings.Global.TARE_ALARM_MANAGER_CONSTANTS;
 import static android.provider.Settings.Global.TARE_JOB_SCHEDULER_CONSTANTS;
 import static android.text.format.DateUtils.DAY_IN_MILLIS;
@@ -64,6 +68,7 @@ import android.util.IndentingPrintWriter;
 import android.util.Log;
 import android.util.Slog;
 import android.util.SparseArrayMap;
+import android.util.SparseLongArray;
 import android.util.SparseSetArray;
 
 import com.android.internal.annotations.GuardedBy;
@@ -108,6 +113,16 @@ public class InternalResourceService extends SystemService {
     /** The amount of time to delay reclamation by after boot. */
     private static final long RECLAMATION_STARTUP_DELAY_MS = 30_000L;
     /**
+     * The amount of time after TARE has first been set up that a system installer will be allowed
+     * expanded credit privileges.
+     */
+    static final long INSTALLER_FIRST_SETUP_GRACE_PERIOD_MS = 7 * DAY_IN_MILLIS;
+    /**
+     * The amount of time to wait after TARE has first been set up before considering adjusting the
+     * stock/consumption limit.
+     */
+    private static final long STOCK_ADJUSTMENT_FIRST_SETUP_GRACE_PERIOD_MS = 5 * DAY_IN_MILLIS;
+    /**
      * The battery level above which we may consider quantitative easing (increasing the consumption
      * limit).
      */
@@ -127,7 +142,7 @@ public class InternalResourceService extends SystemService {
     private static final long STOCK_RECALCULATION_MIN_DATA_DURATION_MS = 8 * HOUR_IN_MILLIS;
     private static final int PACKAGE_QUERY_FLAGS =
             PackageManager.MATCH_DIRECT_BOOT_AWARE | PackageManager.MATCH_DIRECT_BOOT_UNAWARE
-                    | PackageManager.MATCH_APEX;
+                    | PackageManager.MATCH_APEX | PackageManager.GET_PERMISSIONS;
 
     /** Global lock for all resource economy state. */
     private final Object mLock = new Object();
@@ -179,20 +194,30 @@ public class InternalResourceService extends SystemService {
     @GuardedBy("mLock")
     private final SparseArrayMap<String, Boolean> mVipOverrides = new SparseArrayMap<>();
 
+    /**
+     * Set of temporary Very Important Packages and when their VIP status ends, in the elapsed
+     * realtime ({@link android.annotation.ElapsedRealtimeLong}) timebase.
+     */
+    @GuardedBy("mLock")
+    private final SparseArrayMap<String, Long> mTemporaryVips = new SparseArrayMap<>();
+
     /** Set of apps each installer is responsible for installing. */
     @GuardedBy("mLock")
     private final SparseArrayMap<String, ArraySet<String>> mInstallers = new SparseArrayMap<>();
 
     private volatile boolean mHasBattery = true;
-    private volatile boolean mIsEnabled;
+    @EconomyManager.EnabledMode
+    private volatile int mEnabledMode;
     private volatile int mBootPhase;
     private volatile boolean mExemptListLoaded;
     // In the range [0,100] to represent 0% to 100% battery.
     @GuardedBy("mLock")
     private int mCurrentBatteryLevel;
 
-    // TODO(250007395): make configurable per device
-    private final int mTargetBackgroundBatteryLifeHours;
+    // TODO(250007395): make configurable per device (via config.xml)
+    private final int mDefaultTargetBackgroundBatteryLifeHours;
+    @GuardedBy("mLock")
+    private int mTargetBackgroundBatteryLifeHours;
 
     private final IAppOpsCallback mApbListener = new IAppOpsCallback.Stub() {
         @Override
@@ -308,6 +333,7 @@ public class InternalResourceService extends SystemService {
     private static final int MSG_PROCESS_USAGE_EVENT = 2;
     private static final int MSG_NOTIFY_STATE_CHANGE_LISTENERS = 3;
     private static final int MSG_NOTIFY_STATE_CHANGE_LISTENER = 4;
+    private static final int MSG_CLEAN_UP_TEMP_VIP_LIST = 5;
     private static final String ALARM_TAG_WEALTH_RECLAMATION = "*tare.reclamation*";
 
     /**
@@ -334,10 +360,11 @@ public class InternalResourceService extends SystemService {
 
         mConfigObserver = new ConfigObserver(mHandler, context);
 
-        mTargetBackgroundBatteryLifeHours =
+        mDefaultTargetBackgroundBatteryLifeHours =
                 mPackageManager.hasSystemFeature(PackageManager.FEATURE_WATCH)
-                        ? 200 // ~ 0.5%/hr
-                        : 100; // ~ 1%/hr
+                        ? 100 // ~ 1.0%/hr
+                        : 40; // ~ 2.5%/hr
+        mTargetBackgroundBatteryLifeHours = mDefaultTargetBackgroundBatteryLifeHours;
 
         publishLocalService(EconomyManagerInternal.class, new LocalService());
     }
@@ -413,6 +440,13 @@ public class InternalResourceService extends SystemService {
         return userPkgs;
     }
 
+    @Nullable
+    InstalledPackageInfo getInstalledPackageInfo(final int userId, @NonNull final String pkgName) {
+        synchronized (mLock) {
+            return mPkgCache.get(userId, pkgName);
+        }
+    }
+
     @GuardedBy("mLock")
     long getConsumptionLimitLocked() {
         return mCurrentBatteryLevel * mScribe.getSatiatedConsumptionLimitLocked() / 100;
@@ -429,6 +463,11 @@ public class InternalResourceService extends SystemService {
         return mCompleteEconomicPolicy.getInitialSatiatedConsumptionLimit();
     }
 
+
+    long getRealtimeSinceFirstSetupMs() {
+        return mScribe.getRealtimeSinceFirstSetupMs(SystemClock.elapsedRealtime());
+    }
+
     int getUid(final int userId, @NonNull final String pkgName) {
         synchronized (mPackageToUidCache) {
             Integer uid = mPackageToUidCache.get(userId, pkgName);
@@ -440,13 +479,20 @@ public class InternalResourceService extends SystemService {
         }
     }
 
-    boolean isEnabled() {
-        return mIsEnabled;
+    @EconomyManager.EnabledMode
+    int getEnabledMode() {
+        return mEnabledMode;
     }
 
-    boolean isEnabled(int policyId) {
+    @EconomyManager.EnabledMode
+    int getEnabledMode(int policyId) {
         synchronized (mLock) {
-            return isEnabled() && mCompleteEconomicPolicy.isPolicyEnabled(policyId);
+            // For now, treat enabled policies as using the same enabled mode as full TARE.
+            // TODO: have enabled mode by policy
+            if (mCompleteEconomicPolicy.isPolicyEnabled(policyId)) {
+                return mEnabledMode;
+            }
+            return ENABLED_MODE_OFF;
         }
     }
 
@@ -470,6 +516,10 @@ public class InternalResourceService extends SystemService {
     }
 
     boolean isVip(final int userId, @NonNull String pkgName) {
+        return isVip(userId, pkgName, SystemClock.elapsedRealtime());
+    }
+
+    boolean isVip(final int userId, @NonNull String pkgName, final long nowElapsed) {
         synchronized (mLock) {
             final Boolean override = mVipOverrides.get(userId, pkgName);
             if (override != null) {
@@ -480,6 +530,12 @@ public class InternalResourceService extends SystemService {
             // The government, I mean the system, can create ARCs as it needs to in order to
             // operate.
             return true;
+        }
+        synchronized (mLock) {
+            final Long expirationTimeElapsed = mTemporaryVips.get(userId, pkgName);
+            if (expirationTimeElapsed != null) {
+                return nowElapsed <= expirationTimeElapsed;
+            }
         }
         return false;
     }
@@ -569,7 +625,7 @@ public class InternalResourceService extends SystemService {
             mPackageToUidCache.add(userId, pkgName, uid);
         }
         synchronized (mLock) {
-            final InstalledPackageInfo ipo = new InstalledPackageInfo(packageInfo);
+            final InstalledPackageInfo ipo = new InstalledPackageInfo(getContext(), packageInfo);
             final InstalledPackageInfo oldIpo = mPkgCache.add(userId, pkgName, ipo);
             maybeUpdateInstallerStatusLocked(oldIpo, ipo);
             mUidToPackageCache.add(uid, pkgName);
@@ -626,11 +682,16 @@ public class InternalResourceService extends SystemService {
             final List<PackageInfo> pkgs =
                     mPackageManager.getInstalledPackagesAsUser(PACKAGE_QUERY_FLAGS, userId);
             for (int i = pkgs.size() - 1; i >= 0; --i) {
-                final InstalledPackageInfo ipo = new InstalledPackageInfo(pkgs.get(i));
+                final InstalledPackageInfo ipo =
+                        new InstalledPackageInfo(getContext(), pkgs.get(i));
                 final InstalledPackageInfo oldIpo = mPkgCache.add(userId, ipo.packageName, ipo);
                 maybeUpdateInstallerStatusLocked(oldIpo, ipo);
             }
             mAgent.grantBirthrightsLocked(userId);
+            final long nowElapsed = SystemClock.elapsedRealtime();
+            mScribe.setUserAddedTimeLocked(userId, nowElapsed);
+            grantInstallersTemporaryVipStatusLocked(userId,
+                    nowElapsed, INSTALLER_FIRST_SETUP_GRACE_PERIOD_MS);
         }
     }
 
@@ -647,6 +708,7 @@ public class InternalResourceService extends SystemService {
             mInstallers.delete(userId);
             mPkgCache.delete(userId);
             mAgent.onUserRemovedLocked(userId);
+            mScribe.onUserRemovedLocked(userId);
         }
     }
 
@@ -657,6 +719,10 @@ public class InternalResourceService extends SystemService {
     void maybePerformQuantitativeEasingLocked() {
         if (mConfigObserver.ENABLE_TIP3) {
             maybeAdjustDesiredStockLevelLocked();
+            return;
+        }
+        if (getRealtimeSinceFirstSetupMs() < STOCK_ADJUSTMENT_FIRST_SETUP_GRACE_PERIOD_MS) {
+            // Things can be very tumultuous soon after first setup.
             return;
         }
         // We don't need to increase the limit if the device runs out of consumable credits
@@ -685,6 +751,10 @@ public class InternalResourceService extends SystemService {
     @GuardedBy("mLock")
     void maybeAdjustDesiredStockLevelLocked() {
         if (!mConfigObserver.ENABLE_TIP3) {
+            return;
+        }
+        if (getRealtimeSinceFirstSetupMs() < STOCK_ADJUSTMENT_FIRST_SETUP_GRACE_PERIOD_MS) {
+            // Things can be very tumultuous soon after first setup.
             return;
         }
         // Don't adjust the limit too often or while the battery is low.
@@ -776,8 +846,30 @@ public class InternalResourceService extends SystemService {
     }
 
     @GuardedBy("mLock")
+    private void grantInstallersTemporaryVipStatusLocked(int userId, long nowElapsed,
+            long grantDurationMs) {
+        final long grantEndTimeElapsed = nowElapsed + grantDurationMs;
+        final int uIdx = mPkgCache.indexOfKey(userId);
+        if (uIdx < 0) {
+            return;
+        }
+        for (int pIdx = mPkgCache.numElementsForKey(uIdx) - 1; pIdx >= 0; --pIdx) {
+            final InstalledPackageInfo ipo = mPkgCache.valueAt(uIdx, pIdx);
+
+            if (ipo.isSystemInstaller) {
+                final Long currentGrantEndTimeElapsed = mTemporaryVips.get(userId, ipo.packageName);
+                if (currentGrantEndTimeElapsed == null
+                        || currentGrantEndTimeElapsed < grantEndTimeElapsed) {
+                    mTemporaryVips.add(userId, ipo.packageName, grantEndTimeElapsed);
+                }
+            }
+        }
+        mHandler.sendEmptyMessageDelayed(MSG_CLEAN_UP_TEMP_VIP_LIST, grantDurationMs);
+    }
+
+    @GuardedBy("mLock")
     private void processUsageEventLocked(final int userId, @NonNull UsageEvents.Event event) {
-        if (!mIsEnabled) {
+        if (mEnabledMode == ENABLED_MODE_OFF) {
             return;
         }
         final String pkgName = event.getPackageName();
@@ -870,7 +962,8 @@ public class InternalResourceService extends SystemService {
             final List<PackageInfo> pkgs =
                     mPackageManager.getInstalledPackagesAsUser(PACKAGE_QUERY_FLAGS, userId);
             for (int i = pkgs.size() - 1; i >= 0; --i) {
-                final InstalledPackageInfo ipo = new InstalledPackageInfo(pkgs.get(i));
+                final InstalledPackageInfo ipo =
+                        new InstalledPackageInfo(getContext(), pkgs.get(i));
                 final InstalledPackageInfo oldIpo = mPkgCache.add(userId, ipo.packageName, ipo);
                 maybeUpdateInstallerStatusLocked(oldIpo, ipo);
             }
@@ -947,17 +1040,23 @@ public class InternalResourceService extends SystemService {
 
     /** Perform long-running and/or heavy setup work. This should be called off the main thread. */
     private void setupHeavyWork() {
-        if (mBootPhase < PHASE_THIRD_PARTY_APPS_CAN_START || !mIsEnabled) {
+        if (mBootPhase < PHASE_THIRD_PARTY_APPS_CAN_START || mEnabledMode == ENABLED_MODE_OFF) {
             return;
         }
         synchronized (mLock) {
             mCompleteEconomicPolicy.setup(mConfigObserver.getAllDeviceConfigProperties());
             loadInstalledPackageListLocked();
+            final SparseLongArray timeSinceUsersAdded;
             final boolean isFirstSetup = !mScribe.recordExists();
+            final long nowElapsed = SystemClock.elapsedRealtime();
             if (isFirstSetup) {
                 mAgent.grantBirthrightsLocked();
                 mScribe.setConsumptionLimitLocked(
                         mCompleteEconomicPolicy.getInitialSatiatedConsumptionLimit());
+                // Set the last reclamation time to now so we don't start reclaiming assets
+                // too early.
+                mScribe.setLastReclamationTimeLocked(getCurrentTimeMillis());
+                timeSinceUsersAdded = new SparseLongArray();
             } else {
                 mScribe.loadFromDiskLocked();
                 if (mScribe.getSatiatedConsumptionLimitLocked()
@@ -971,13 +1070,28 @@ public class InternalResourceService extends SystemService {
                     // Adjust the supply in case battery level changed while the device was off.
                     adjustCreditSupplyLocked(true);
                 }
+                timeSinceUsersAdded = mScribe.getRealtimeSinceUsersAddedLocked(nowElapsed);
+            }
+
+            final int[] userIds = LocalServices.getService(UserManagerInternal.class).getUserIds();
+            for (int userId : userIds) {
+                final long timeSinceUserAddedMs = timeSinceUsersAdded.get(userId, 0);
+                // Temporarily mark installers as VIPs so they aren't subject to credit
+                // limits and policies on first boot.
+                if (timeSinceUserAddedMs < INSTALLER_FIRST_SETUP_GRACE_PERIOD_MS) {
+                    final long remainingGraceDurationMs =
+                            INSTALLER_FIRST_SETUP_GRACE_PERIOD_MS - timeSinceUserAddedMs;
+
+                    grantInstallersTemporaryVipStatusLocked(userId, nowElapsed,
+                            remainingGraceDurationMs);
+                }
             }
             scheduleUnusedWealthReclamationLocked();
         }
     }
 
     private void onBootPhaseSystemServicesReady() {
-        if (mBootPhase < PHASE_SYSTEM_SERVICES_READY || !mIsEnabled) {
+        if (mBootPhase < PHASE_SYSTEM_SERVICES_READY || mEnabledMode == ENABLED_MODE_OFF) {
             return;
         }
         synchronized (mLock) {
@@ -999,14 +1113,14 @@ public class InternalResourceService extends SystemService {
     }
 
     private void onBootPhaseThirdPartyAppsCanStart() {
-        if (mBootPhase < PHASE_THIRD_PARTY_APPS_CAN_START || !mIsEnabled) {
+        if (mBootPhase < PHASE_THIRD_PARTY_APPS_CAN_START || mEnabledMode == ENABLED_MODE_OFF) {
             return;
         }
         mHandler.post(this::setupHeavyWork);
     }
 
     private void onBootPhaseBootCompleted() {
-        if (mBootPhase < PHASE_BOOT_COMPLETED || !mIsEnabled) {
+        if (mBootPhase < PHASE_BOOT_COMPLETED || mEnabledMode == ENABLED_MODE_OFF) {
             return;
         }
         synchronized (mLock) {
@@ -1022,7 +1136,7 @@ public class InternalResourceService extends SystemService {
     }
 
     private void setupEverything() {
-        if (!mIsEnabled) {
+        if (mEnabledMode == ENABLED_MODE_OFF) {
             return;
         }
         if (mBootPhase >= PHASE_SYSTEM_SERVICES_READY) {
@@ -1037,7 +1151,7 @@ public class InternalResourceService extends SystemService {
     }
 
     private void tearDownEverything() {
-        if (mIsEnabled) {
+        if (mEnabledMode != ENABLED_MODE_OFF) {
             return;
         }
         synchronized (mLock) {
@@ -1079,6 +1193,36 @@ public class InternalResourceService extends SystemService {
         @Override
         public void handleMessage(Message msg) {
             switch (msg.what) {
+                case MSG_CLEAN_UP_TEMP_VIP_LIST: {
+                    removeMessages(MSG_CLEAN_UP_TEMP_VIP_LIST);
+
+                    synchronized (mLock) {
+                        final long nowElapsed = SystemClock.elapsedRealtime();
+
+                        long earliestExpiration = Long.MAX_VALUE;
+                        for (int u = 0; u < mTemporaryVips.numMaps(); ++u) {
+                            final int userId = mTemporaryVips.keyAt(u);
+
+                            for (int p = mTemporaryVips.numElementsForKeyAt(u) - 1; p >= 0; --p) {
+                                final String pkgName = mTemporaryVips.keyAt(u, p);
+                                final Long expiration = mTemporaryVips.valueAt(u, p);
+
+                                if (expiration == null || expiration < nowElapsed) {
+                                    mTemporaryVips.delete(userId, pkgName);
+                                } else {
+                                    earliestExpiration = Math.min(earliestExpiration, expiration);
+                                }
+                            }
+                        }
+
+                        if (earliestExpiration < Long.MAX_VALUE) {
+                            sendEmptyMessageDelayed(MSG_CLEAN_UP_TEMP_VIP_LIST,
+                                    earliestExpiration - nowElapsed);
+                        }
+                    }
+                }
+                break;
+
                 case MSG_NOTIFY_AFFORDABILITY_CHANGE_LISTENER: {
                     final SomeArgs args = (SomeArgs) msg.obj;
                     final int userId = args.argi1;
@@ -1099,7 +1243,7 @@ public class InternalResourceService extends SystemService {
                 case MSG_NOTIFY_STATE_CHANGE_LISTENER: {
                     final int policy = msg.arg1;
                     final TareStateChangeListener listener = (TareStateChangeListener) msg.obj;
-                    listener.onTareEnabledStateChanged(isEnabled(policy));
+                    listener.onTareEnabledModeChanged(getEnabledMode(policy));
                 }
                 break;
 
@@ -1114,10 +1258,10 @@ public class InternalResourceService extends SystemService {
                             }
                             final ArraySet<TareStateChangeListener> listeners =
                                     mStateChangeListeners.get(policy);
-                            final boolean isEnabled = isEnabled(policy);
+                            final int enabledMode = getEnabledMode(policy);
                             for (int p = listeners.size() - 1; p >= 0; --p) {
                                 final TareStateChangeListener listener = listeners.valueAt(p);
-                                listener.onTareEnabledStateChanged(isEnabled);
+                                listener.onTareEnabledModeChanged(enabledMode);
                             }
                         }
                     }
@@ -1250,7 +1394,7 @@ public class InternalResourceService extends SystemService {
 
         @Override
         public boolean canPayFor(int userId, @NonNull String pkgName, @NonNull ActionBill bill) {
-            if (!mIsEnabled) {
+            if (mEnabledMode == ENABLED_MODE_OFF) {
                 return true;
             }
             if (isVip(userId, pkgName)) {
@@ -1278,7 +1422,7 @@ public class InternalResourceService extends SystemService {
         @Override
         public long getMaxDurationMs(int userId, @NonNull String pkgName,
                 @NonNull ActionBill bill) {
-            if (!mIsEnabled) {
+            if (mEnabledMode == ENABLED_MODE_OFF) {
                 return FOREVER_MS;
             }
             if (isVip(userId, pkgName)) {
@@ -1305,19 +1449,19 @@ public class InternalResourceService extends SystemService {
         }
 
         @Override
-        public boolean isEnabled() {
-            return mIsEnabled;
+        public int getEnabledMode() {
+            return mEnabledMode;
         }
 
         @Override
-        public boolean isEnabled(int policyId) {
-            return InternalResourceService.this.isEnabled(policyId);
+        public int getEnabledMode(int policyId) {
+            return InternalResourceService.this.getEnabledMode(policyId);
         }
 
         @Override
         public void noteInstantaneousEvent(int userId, @NonNull String pkgName, int eventId,
                 @Nullable String tag) {
-            if (!mIsEnabled) {
+            if (mEnabledMode == ENABLED_MODE_OFF) {
                 return;
             }
             synchronized (mLock) {
@@ -1328,7 +1472,7 @@ public class InternalResourceService extends SystemService {
         @Override
         public void noteOngoingEventStarted(int userId, @NonNull String pkgName, int eventId,
                 @Nullable String tag) {
-            if (!mIsEnabled) {
+            if (mEnabledMode == ENABLED_MODE_OFF) {
                 return;
             }
             synchronized (mLock) {
@@ -1340,7 +1484,7 @@ public class InternalResourceService extends SystemService {
         @Override
         public void noteOngoingEventStopped(int userId, @NonNull String pkgName, int eventId,
                 @Nullable String tag) {
-            if (!mIsEnabled) {
+            if (mEnabledMode == ENABLED_MODE_OFF) {
                 return;
             }
             final long nowElapsed = SystemClock.elapsedRealtime();
@@ -1354,6 +1498,8 @@ public class InternalResourceService extends SystemService {
     private class ConfigObserver extends ContentObserver
             implements DeviceConfig.OnPropertiesChangedListener {
         private static final String KEY_ENABLE_TIP3 = "enable_tip3";
+        private static final String KEY_TARGET_BACKGROUND_BATTERY_LIFE_HOURS =
+                "target_bg_battery_life_hrs";
 
         private static final boolean DEFAULT_ENABLE_TIP3 = true;
 
@@ -1406,11 +1552,18 @@ public class InternalResourceService extends SystemService {
                         continue;
                     }
                     switch (name) {
-                        case EconomyManager.KEY_ENABLE_TARE:
+                        case EconomyManager.KEY_ENABLE_TARE_MODE:
                             updateEnabledStatus();
                             break;
                         case KEY_ENABLE_TIP3:
                             ENABLE_TIP3 = properties.getBoolean(name, DEFAULT_ENABLE_TIP3);
+                            break;
+                        case KEY_TARGET_BACKGROUND_BATTERY_LIFE_HOURS:
+                            synchronized (mLock) {
+                                mTargetBackgroundBatteryLifeHours = properties.getInt(name,
+                                        mDefaultTargetBackgroundBatteryLifeHours);
+                                maybeAdjustDesiredStockLevelLocked();
+                            }
                             break;
                         default:
                             if (!economicPolicyUpdated
@@ -1426,17 +1579,33 @@ public class InternalResourceService extends SystemService {
 
         private void updateEnabledStatus() {
             // User setting should override DeviceConfig setting.
-            final boolean isTareEnabledDC = DeviceConfig.getBoolean(DeviceConfig.NAMESPACE_TARE,
-                    EconomyManager.KEY_ENABLE_TARE, EconomyManager.DEFAULT_ENABLE_TARE);
-            final boolean isTareEnabled = isTareSupported()
-                    && Settings.Global.getInt(mContentResolver,
-                    Settings.Global.ENABLE_TARE, isTareEnabledDC ? 1 : 0) == 1;
-            if (mIsEnabled != isTareEnabled) {
-                mIsEnabled = isTareEnabled;
-                if (mIsEnabled) {
-                    setupEverything();
-                } else {
-                    tearDownEverything();
+            final int tareEnabledModeDC = DeviceConfig.getInt(DeviceConfig.NAMESPACE_TARE,
+                    EconomyManager.KEY_ENABLE_TARE_MODE, EconomyManager.DEFAULT_ENABLE_TARE_MODE);
+            final int tareEnabledModeConfig = isTareSupported()
+                    ? Settings.Global.getInt(mContentResolver,
+                            Settings.Global.ENABLE_TARE, tareEnabledModeDC)
+                    : ENABLED_MODE_OFF;
+            final int enabledMode;
+            if (tareEnabledModeConfig == ENABLED_MODE_OFF
+                    || tareEnabledModeConfig == ENABLED_MODE_ON
+                    || tareEnabledModeConfig == ENABLED_MODE_SHADOW) {
+                // Config has a valid enabled mode.
+                enabledMode = tareEnabledModeConfig;
+            } else {
+                enabledMode = EconomyManager.DEFAULT_ENABLE_TARE_MODE;
+            }
+            if (mEnabledMode != enabledMode) {
+                // A full change where we've gone from OFF to {SHADOW or ON}, or vie versa.
+                // With this transition, we'll have to set up or tear down.
+                final boolean fullEnableChange =
+                        mEnabledMode == ENABLED_MODE_OFF || enabledMode == ENABLED_MODE_OFF;
+                mEnabledMode = enabledMode;
+                if (fullEnableChange) {
+                    if (mEnabledMode != ENABLED_MODE_OFF) {
+                        setupEverything();
+                    } else {
+                        tearDownEverything();
+                    }
                 }
                 mHandler.obtainMessage(
                                 MSG_NOTIFY_STATE_CHANGE_LISTENERS, EconomicPolicy.ALL_POLICIES, 0)
@@ -1451,7 +1620,8 @@ public class InternalResourceService extends SystemService {
                 final int oldEnabledPolicies = mCompleteEconomicPolicy.getEnabledPolicyIds();
                 mCompleteEconomicPolicy.tearDown();
                 mCompleteEconomicPolicy = new CompleteEconomicPolicy(InternalResourceService.this);
-                if (mIsEnabled && mBootPhase >= PHASE_THIRD_PARTY_APPS_CAN_START) {
+                if (mEnabledMode != ENABLED_MODE_OFF
+                        && mBootPhase >= PHASE_THIRD_PARTY_APPS_CAN_START) {
                     mCompleteEconomicPolicy.setup(getAllDeviceConfigProperties());
                     if (minLimit != mCompleteEconomicPolicy.getMinSatiatedConsumptionLimit()
                             || maxLimit
@@ -1485,7 +1655,7 @@ public class InternalResourceService extends SystemService {
                 }
             }
             mVipOverrides.clear();
-            if (mIsEnabled) {
+            if (mEnabledMode != ENABLED_MODE_OFF) {
                 mAgent.onVipStatusChangedLocked(changedPkgs);
             }
         }
@@ -1504,7 +1674,7 @@ public class InternalResourceService extends SystemService {
                 mVipOverrides.add(userId, pkgName, newVipState);
             }
             changed = isVip(userId, pkgName) != wasVip;
-            if (mIsEnabled && changed) {
+            if (mEnabledMode != ENABLED_MODE_OFF && changed) {
                 mAgent.onVipStatusChangedLocked(userId, pkgName);
             }
         }
@@ -1527,8 +1697,8 @@ public class InternalResourceService extends SystemService {
             return;
         }
         synchronized (mLock) {
-            pw.print("Is enabled: ");
-            pw.println(mIsEnabled);
+            pw.print("Enabled mode: ");
+            pw.println(enabledModeToString(mEnabledMode));
 
             pw.print("Current battery level: ");
             pw.println(mCurrentBatteryLevel);
@@ -1540,6 +1710,12 @@ public class InternalResourceService extends SystemService {
             pw.print(cakeToString(mCompleteEconomicPolicy.getInitialSatiatedConsumptionLimit()));
             pw.print("/");
             pw.println(cakeToString(mScribe.getSatiatedConsumptionLimitLocked()));
+
+            pw.print("Target bg battery life (hours): ");
+            pw.print(mTargetBackgroundBatteryLifeHours);
+            pw.print(" (");
+            pw.print(String.format("%.2f", 100f / mTargetBackgroundBatteryLifeHours));
+            pw.println("%/hr)");
 
             final long remainingConsumable = mScribe.getRemainingConsumableCakesLocked();
             pw.print("Goods remaining: ");
@@ -1558,6 +1734,7 @@ public class InternalResourceService extends SystemService {
             boolean printedVips = false;
             pw.println();
             pw.print("VIPs:");
+            pw.increaseIndent();
             for (int u = 0; u < mVipOverrides.numMaps(); ++u) {
                 final int userId = mVipOverrides.keyAt(u);
 
@@ -1576,6 +1753,32 @@ public class InternalResourceService extends SystemService {
             } else {
                 pw.print(" None");
             }
+            pw.decreaseIndent();
+            pw.println();
+
+            boolean printedTempVips = false;
+            pw.println();
+            pw.print("Temp VIPs:");
+            pw.increaseIndent();
+            for (int u = 0; u < mTemporaryVips.numMaps(); ++u) {
+                final int userId = mTemporaryVips.keyAt(u);
+
+                for (int p = 0; p < mTemporaryVips.numElementsForKeyAt(u); ++p) {
+                    final String pkgName = mTemporaryVips.keyAt(u, p);
+
+                    printedTempVips = true;
+                    pw.println();
+                    pw.print(appToString(userId, pkgName));
+                    pw.print("=");
+                    pw.print(mTemporaryVips.valueAt(u, p));
+                }
+            }
+            if (printedTempVips) {
+                pw.println();
+            } else {
+                pw.print(" None");
+            }
+            pw.decreaseIndent();
             pw.println();
 
             pw.println();

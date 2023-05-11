@@ -19,22 +19,21 @@ package com.android.systemui.keyguard.ui.viewmodel
 import android.view.View
 import com.android.systemui.keyguard.data.BouncerView
 import com.android.systemui.keyguard.data.BouncerViewDelegate
-import com.android.systemui.keyguard.domain.interactor.BouncerInteractor
+import com.android.systemui.keyguard.domain.interactor.PrimaryBouncerInteractor
 import com.android.systemui.keyguard.shared.model.BouncerShowMessageModel
 import com.android.systemui.keyguard.shared.model.KeyguardBouncerModel
-import com.android.systemui.statusbar.phone.KeyguardBouncer.EXPANSION_VISIBLE
 import javax.inject.Inject
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 
 /** Models UI state for the lock screen bouncer; handles user input. */
 class KeyguardBouncerViewModel
 @Inject
 constructor(
     private val view: BouncerView,
-    private val interactor: BouncerInteractor,
+    private val interactor: PrimaryBouncerInteractor,
 ) {
     /** Observe on bouncer expansion amount. */
     val bouncerExpansionAmount: Flow<Float> = interactor.panelExpansionAmount
@@ -42,19 +41,11 @@ constructor(
     /** Observe on bouncer visibility. */
     val isBouncerVisible: Flow<Boolean> = interactor.isVisible
 
+    /** Can the user interact with the view? */
+    val isInteractable: Flow<Boolean> = interactor.isInteractable
+
     /** Observe whether bouncer is showing. */
     val show: Flow<KeyguardBouncerModel> = interactor.show
-
-    /** Observe bouncer prompt when bouncer is showing. */
-    val showPromptReason: Flow<Int> = interactor.show.map { it.promptReason }
-
-    /** Observe bouncer error message when bouncer is showing. */
-    val showBouncerErrorMessage: Flow<CharSequence> =
-        interactor.show.map { it.errorMessage }.filterNotNull()
-
-    /** Observe visible expansion when bouncer is showing. */
-    val showWithFullExpansion: Flow<KeyguardBouncerModel> =
-        interactor.show.filter { it.expansionAmount == EXPANSION_VISIBLE }
 
     /** Observe whether bouncer is hiding. */
     val hide: Flow<Unit> = interactor.hide
@@ -77,13 +68,17 @@ constructor(
     /** Observe whether keyguard is authenticated already. */
     val keyguardAuthenticated: Flow<Boolean> = interactor.keyguardAuthenticated
 
-    /** Observe whether screen is turned off. */
-    val screenTurnedOff: Flow<Unit> = interactor.screenTurnedOff
+    /** Observe whether the side fps is showing. */
+    val sideFpsShowing: Flow<Boolean> = interactor.sideFpsShowing
 
-    /** Notify that view visibility has changed. */
-    fun notifyBouncerVisibilityHasChanged(visibility: Int) {
-        return interactor.notifyBouncerVisibilityHasChanged(visibility)
-    }
+    /** Observe whether we should update fps is showing. */
+    val shouldUpdateSideFps: Flow<Unit> =
+        merge(
+            interactor.startingToHide,
+            interactor.isVisible.map {},
+            interactor.startingDisappearAnimation.filterNotNull().map {}
+        )
+
     /** Observe whether we want to update resources. */
     fun notifyUpdateResources() {
         interactor.notifyUpdatedResources()
@@ -92,6 +87,15 @@ constructor(
     /** Notify that keyguard authenticated was handled */
     fun notifyKeyguardAuthenticated() {
         interactor.notifyKeyguardAuthenticatedHandled()
+    }
+
+    /** Notifies that the message was shown. */
+    fun onMessageShown() {
+        interactor.onMessageShown()
+    }
+
+    fun updateSideFpsVisibility() {
+        interactor.updateSideFpsVisibility()
     }
 
     /** Observe whether back button is enabled. */

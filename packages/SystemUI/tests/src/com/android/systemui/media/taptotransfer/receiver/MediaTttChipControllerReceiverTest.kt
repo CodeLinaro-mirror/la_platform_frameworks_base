@@ -34,8 +34,8 @@ import androidx.test.filters.SmallTest
 import com.android.internal.logging.testing.UiEventLoggerFake
 import com.android.systemui.R
 import com.android.systemui.SysuiTestCase
+import com.android.systemui.dump.DumpManager
 import com.android.systemui.media.taptotransfer.MediaTttFlags
-import com.android.systemui.media.taptotransfer.common.MediaTttLogger
 import com.android.systemui.statusbar.CommandQueue
 import com.android.systemui.statusbar.policy.ConfigurationController
 import com.android.systemui.util.concurrency.FakeExecutor
@@ -67,11 +67,13 @@ class MediaTttChipControllerReceiverTest : SysuiTestCase() {
     @Mock
     private lateinit var applicationInfo: ApplicationInfo
     @Mock
-    private lateinit var logger: MediaTttLogger
+    private lateinit var logger: MediaTttReceiverLogger
     @Mock
     private lateinit var accessibilityManager: AccessibilityManager
     @Mock
     private lateinit var configurationController: ConfigurationController
+    @Mock
+    private lateinit var dumpManager: DumpManager
     @Mock
     private lateinit var mediaTttFlags: MediaTttFlags
     @Mock
@@ -82,6 +84,8 @@ class MediaTttChipControllerReceiverTest : SysuiTestCase() {
     private lateinit var windowManager: WindowManager
     @Mock
     private lateinit var commandQueue: CommandQueue
+    @Mock
+    private lateinit var rippleController: MediaTttReceiverRippleController
     private lateinit var commandQueueCallback: CommandQueue.Callbacks
     private lateinit var fakeAppIconDrawable: Drawable
     private lateinit var uiEventLoggerFake: UiEventLoggerFake
@@ -95,6 +99,7 @@ class MediaTttChipControllerReceiverTest : SysuiTestCase() {
     fun setUp() {
         MockitoAnnotations.initMocks(this)
         whenever(mediaTttFlags.isMediaTttEnabled()).thenReturn(true)
+        whenever(mediaTttFlags.isMediaTttReceiverSuccessRippleEnabled()).thenReturn(true)
 
         fakeAppIconDrawable = context.getDrawable(R.drawable.ic_cake)!!
         whenever(packageManager.getApplicationIcon(PACKAGE_NAME)).thenReturn(fakeAppIconDrawable)
@@ -114,7 +119,7 @@ class MediaTttChipControllerReceiverTest : SysuiTestCase() {
         fakeWakeLockBuilder = WakeLockFake.Builder(context)
         fakeWakeLockBuilder.setWakeLock(fakeWakeLock)
 
-        controllerReceiver = MediaTttChipControllerReceiver(
+        controllerReceiver = FakeMediaTttChipControllerReceiver(
             commandQueue,
             context,
             logger,
@@ -122,12 +127,15 @@ class MediaTttChipControllerReceiverTest : SysuiTestCase() {
             fakeExecutor,
             accessibilityManager,
             configurationController,
+            dumpManager,
             powerManager,
             Handler.getMain(),
             mediaTttFlags,
             receiverUiEventLogger,
             viewUtil,
             fakeWakeLockBuilder,
+            fakeClock,
+            rippleController,
         )
         controllerReceiver.start()
 
@@ -149,12 +157,15 @@ class MediaTttChipControllerReceiverTest : SysuiTestCase() {
             FakeExecutor(FakeSystemClock()),
             accessibilityManager,
             configurationController,
+            dumpManager,
             powerManager,
             Handler.getMain(),
             mediaTttFlags,
             receiverUiEventLogger,
             viewUtil,
             fakeWakeLockBuilder,
+            fakeClock,
+            rippleController,
         )
         controllerReceiver.start()
 
@@ -193,6 +204,36 @@ class MediaTttChipControllerReceiverTest : SysuiTestCase() {
     }
 
     @Test
+    fun commandQueueCallback_transferToReceiverSucceeded_noChipShown() {
+        commandQueueCallback.updateMediaTapToTransferReceiverDisplay(
+                StatusBarManager.MEDIA_TRANSFER_RECEIVER_STATE_TRANSFER_TO_RECEIVER_SUCCEEDED,
+                routeInfo,
+                null,
+                null
+        )
+
+        verify(windowManager, never()).addView(any(), any())
+        assertThat(uiEventLoggerFake.eventId(0)).isEqualTo(
+                MediaTttReceiverUiEvents.MEDIA_TTT_RECEIVER_TRANSFER_TO_RECEIVER_SUCCEEDED.id
+        )
+    }
+
+    @Test
+    fun commandQueueCallback_transferToReceiverFailed_noChipShown() {
+        commandQueueCallback.updateMediaTapToTransferReceiverDisplay(
+                StatusBarManager.MEDIA_TRANSFER_RECEIVER_STATE_TRANSFER_TO_RECEIVER_FAILED,
+                routeInfo,
+                null,
+                null
+        )
+
+        verify(windowManager, never()).addView(any(), any())
+        assertThat(uiEventLoggerFake.eventId(0)).isEqualTo(
+                MediaTttReceiverUiEvents.MEDIA_TTT_RECEIVER_TRANSFER_TO_RECEIVER_FAILED.id
+        )
+    }
+
+    @Test
     fun commandQueueCallback_closeThenFar_chipShownThenHidden() {
         commandQueueCallback.updateMediaTapToTransferReceiverDisplay(
             StatusBarManager.MEDIA_TRANSFER_RECEIVER_STATE_CLOSE_TO_SENDER,
@@ -203,6 +244,48 @@ class MediaTttChipControllerReceiverTest : SysuiTestCase() {
 
         commandQueueCallback.updateMediaTapToTransferReceiverDisplay(
             StatusBarManager.MEDIA_TRANSFER_RECEIVER_STATE_FAR_FROM_SENDER,
+            routeInfo,
+            null,
+            null
+        )
+
+        val viewCaptor = ArgumentCaptor.forClass(View::class.java)
+        verify(windowManager).addView(viewCaptor.capture(), any())
+        verify(windowManager).removeView(viewCaptor.value)
+    }
+
+    @Test
+    fun commandQueueCallback_closeThenSucceeded_chipShownThenHidden() {
+        commandQueueCallback.updateMediaTapToTransferReceiverDisplay(
+            StatusBarManager.MEDIA_TRANSFER_RECEIVER_STATE_CLOSE_TO_SENDER,
+            routeInfo,
+            null,
+            null
+        )
+
+        commandQueueCallback.updateMediaTapToTransferReceiverDisplay(
+            StatusBarManager.MEDIA_TRANSFER_RECEIVER_STATE_TRANSFER_TO_RECEIVER_SUCCEEDED,
+            routeInfo,
+            null,
+            null
+        )
+
+        val viewCaptor = ArgumentCaptor.forClass(View::class.java)
+        verify(windowManager).addView(viewCaptor.capture(), any())
+        verify(windowManager).removeView(viewCaptor.value)
+    }
+
+    @Test
+    fun commandQueueCallback_closeThenFailed_chipShownThenHidden() {
+        commandQueueCallback.updateMediaTapToTransferReceiverDisplay(
+            StatusBarManager.MEDIA_TRANSFER_RECEIVER_STATE_CLOSE_TO_SENDER,
+            routeInfo,
+            null,
+            null
+        )
+
+        commandQueueCallback.updateMediaTapToTransferReceiverDisplay(
+            StatusBarManager.MEDIA_TRANSFER_RECEIVER_STATE_TRANSFER_TO_RECEIVER_FAILED,
             routeInfo,
             null,
             null
@@ -261,12 +344,21 @@ class MediaTttChipControllerReceiverTest : SysuiTestCase() {
     @Test
     fun updateView_noOverrides_usesInfoFromAppIcon() {
         controllerReceiver.displayView(
-            ChipReceiverInfo(routeInfo, appIconDrawableOverride = null, appNameOverride = null)
+            ChipReceiverInfo(
+                routeInfo,
+                appIconDrawableOverride = null,
+                appNameOverride = null,
+                id = "id",
+            )
         )
 
         val view = getChipView()
         assertThat(view.getAppIconView().drawable).isEqualTo(fakeAppIconDrawable)
-        assertThat(view.getAppIconView().contentDescription).isEqualTo(APP_NAME)
+        assertThat(view.getAppIconView().contentDescription)
+            .isEqualTo(context.getString(
+                R.string.media_transfer_receiver_content_description_with_app_name,
+                APP_NAME,
+            ))
     }
 
     @Test
@@ -274,7 +366,12 @@ class MediaTttChipControllerReceiverTest : SysuiTestCase() {
         val drawableOverride = context.getDrawable(R.drawable.ic_celebration)!!
 
         controllerReceiver.displayView(
-            ChipReceiverInfo(routeInfo, drawableOverride, appNameOverride = null)
+            ChipReceiverInfo(
+                routeInfo,
+                drawableOverride,
+                appNameOverride = null,
+                id = "id",
+            )
         )
 
         val view = getChipView()
@@ -286,7 +383,12 @@ class MediaTttChipControllerReceiverTest : SysuiTestCase() {
         val appNameOverride = "Sweet New App"
 
         controllerReceiver.displayView(
-            ChipReceiverInfo(routeInfo, appIconDrawableOverride = null, appNameOverride)
+            ChipReceiverInfo(
+                routeInfo,
+                appIconDrawableOverride = null,
+                appNameOverride,
+                id = "id",
+            )
         )
 
         val view = getChipView()
@@ -340,7 +442,7 @@ class MediaTttChipControllerReceiverTest : SysuiTestCase() {
             .addFeature("feature")
             .setClientPackageName(packageName)
             .build()
-        return ChipReceiverInfo(routeInfo, null, null)
+        return ChipReceiverInfo(routeInfo, null, null, id = "id")
     }
 
     private fun ViewGroup.getAppIconView() = this.requireViewById<ImageView>(R.id.app_icon)

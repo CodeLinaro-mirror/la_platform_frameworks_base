@@ -27,6 +27,7 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.graphics.RectF;
 import android.os.Bundle;
+import android.os.CancellationSignal;
 import android.text.Editable;
 import android.text.Selection;
 import android.text.method.KeyListener;
@@ -43,7 +44,9 @@ import android.view.inputmethod.ExtractedTextRequest;
 import android.view.inputmethod.HandwritingGesture;
 import android.view.inputmethod.InputConnection;
 import android.view.inputmethod.InsertGesture;
+import android.view.inputmethod.InsertModeGesture;
 import android.view.inputmethod.JoinOrSplitGesture;
+import android.view.inputmethod.PreviewableHandwritingGesture;
 import android.view.inputmethod.RemoveSpaceGesture;
 import android.view.inputmethod.SelectGesture;
 import android.view.inputmethod.SelectRangeGesture;
@@ -269,9 +272,9 @@ public final class EditableInputConnection extends BaseInputConnection
 
     @Override
     public void requestTextBoundsInfo(
-            @NonNull RectF rectF, @Nullable @CallbackExecutor Executor executor,
+            @NonNull RectF bounds, @Nullable @CallbackExecutor Executor executor,
             @NonNull Consumer<TextBoundsInfoResult> consumer) {
-        final TextBoundsInfo textBoundsInfo = mTextView.getTextBoundsInfo(rectF);
+        final TextBoundsInfo textBoundsInfo = mTextView.getTextBoundsInfo(bounds);
         final int resultCode;
         if (textBoundsInfo != null) {
             resultCode = TextBoundsInfoResult.CODE_SUCCESS;
@@ -312,12 +315,21 @@ public final class EditableInputConnection extends BaseInputConnection
             result = mTextView.performHandwritingRemoveSpaceGesture((RemoveSpaceGesture) gesture);
         } else if (gesture instanceof JoinOrSplitGesture) {
             result = mTextView.performHandwritingJoinOrSplitGesture((JoinOrSplitGesture) gesture);
+        } else if (gesture instanceof InsertModeGesture) {
+            result = mTextView.performHandwritingInsertModeGesture((InsertModeGesture) gesture);
         } else {
             result = HANDWRITING_GESTURE_RESULT_UNSUPPORTED;
         }
         if (executor != null && consumer != null) {
             executor.execute(() -> consumer.accept(result));
         }
+    }
+
+    @Override
+    public boolean previewHandwritingGesture(
+            @NonNull PreviewableHandwritingGesture gesture,
+            @Nullable CancellationSignal cancellationSignal) {
+        return mTextView.previewHandwritingGesture(gesture, cancellationSignal);
     }
 
     @Override

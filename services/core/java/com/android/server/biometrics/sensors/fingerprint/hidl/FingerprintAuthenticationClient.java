@@ -24,7 +24,9 @@ import android.hardware.biometrics.BiometricAuthenticator;
 import android.hardware.biometrics.BiometricConstants;
 import android.hardware.biometrics.BiometricFingerprintConstants;
 import android.hardware.biometrics.BiometricManager.Authenticators;
+import android.hardware.biometrics.fingerprint.PointerContext;
 import android.hardware.biometrics.fingerprint.V2_1.IBiometricsFingerprint;
+import android.hardware.fingerprint.FingerprintAuthenticateOptions;
 import android.hardware.fingerprint.FingerprintSensorPropertiesInternal;
 import android.hardware.fingerprint.ISidefpsController;
 import android.hardware.fingerprint.IUdfpsOverlay;
@@ -56,7 +58,8 @@ import java.util.function.Supplier;
  * {@link android.hardware.biometrics.fingerprint.V2_1} and
  * {@link android.hardware.biometrics.fingerprint.V2_2} HIDL interfaces.
  */
-class FingerprintAuthenticationClient extends AuthenticationClient<IBiometricsFingerprint>
+class FingerprintAuthenticationClient
+        extends AuthenticationClient<IBiometricsFingerprint, FingerprintAuthenticateOptions>
         implements Udfps {
 
     private static final String TAG = "Biometrics/FingerprintAuthClient";
@@ -71,9 +74,9 @@ class FingerprintAuthenticationClient extends AuthenticationClient<IBiometricsFi
     FingerprintAuthenticationClient(@NonNull Context context,
             @NonNull Supplier<IBiometricsFingerprint> lazyDaemon,
             @NonNull IBinder token, long requestId,
-            @NonNull ClientMonitorCallbackConverter listener, int targetUserId, long operationId,
-            boolean restricted, @NonNull String owner, int cookie, boolean requireConfirmation,
-            int sensorId, @NonNull BiometricLogger logger,
+            @NonNull ClientMonitorCallbackConverter listener, long operationId,
+            boolean restricted, @NonNull FingerprintAuthenticateOptions options,
+            int cookie, boolean requireConfirmation, @NonNull BiometricLogger logger,
             @NonNull BiometricContext biometricContext, boolean isStrongBiometric,
             @NonNull TaskStackListener taskStackListener,
             @NonNull LockoutFrameworkImpl lockoutTracker,
@@ -83,11 +86,10 @@ class FingerprintAuthenticationClient extends AuthenticationClient<IBiometricsFi
             boolean allowBackgroundAuthentication,
             @NonNull FingerprintSensorPropertiesInternal sensorProps,
             @Authenticators.Types int sensorStrength) {
-        super(context, lazyDaemon, token, listener, targetUserId, operationId, restricted,
-                owner, cookie, requireConfirmation, sensorId, logger, biometricContext,
+        super(context, lazyDaemon, token, listener, operationId, restricted,
+                options, cookie, requireConfirmation, logger, biometricContext,
                 isStrongBiometric, taskStackListener, lockoutTracker, allowBackgroundAuthentication,
-                false /* shouldVibrate */, false /* isKeyguardBypassEnabled */,
-                sensorStrength);
+                false /* shouldVibrate */, sensorStrength);
         setRequestId(requestId);
         mLockoutFrameworkImpl = lockoutTracker;
         mSensorOverlays = new SensorOverlays(udfpsOverlayController,
@@ -234,11 +236,11 @@ class FingerprintAuthenticationClient extends AuthenticationClient<IBiometricsFi
     }
 
     @Override
-    public void onPointerDown(int x, int y, float minor, float major) {
+    public void onPointerDown(PointerContext pc) {
         mIsPointerDown = true;
         mState = STATE_STARTED;
         mALSProbeCallback.getProbe().enable();
-        UdfpsHelper.onFingerDown(getFreshDaemon(), x, y, minor, major);
+        UdfpsHelper.onFingerDown(getFreshDaemon(), (int) pc.x, (int) pc.y, pc.minor, pc.major);
 
         if (getListener() != null) {
             try {
@@ -250,7 +252,7 @@ class FingerprintAuthenticationClient extends AuthenticationClient<IBiometricsFi
     }
 
     @Override
-    public void onPointerUp() {
+    public void onPointerUp(PointerContext pc) {
         mIsPointerDown = false;
         mState = STATE_STARTED_PAUSED_ATTEMPTED;
         mALSProbeCallback.getProbe().disable();

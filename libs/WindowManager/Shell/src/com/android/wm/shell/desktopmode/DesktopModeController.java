@@ -16,9 +16,13 @@
 
 package com.android.wm.shell.desktopmode;
 
+import static android.app.WindowConfiguration.ACTIVITY_TYPE_HOME;
+import static android.app.WindowConfiguration.ACTIVITY_TYPE_STANDARD;
 import static android.app.WindowConfiguration.WINDOWING_MODE_FREEFORM;
 import static android.app.WindowConfiguration.WINDOWING_MODE_FULLSCREEN;
+import static android.app.WindowConfiguration.WINDOWING_MODE_UNDEFINED;
 import static android.view.WindowManager.TRANSIT_CHANGE;
+import static android.view.WindowManager.TRANSIT_NONE;
 import static android.view.WindowManager.TRANSIT_OPEN;
 import static android.view.WindowManager.TRANSIT_TO_FRONT;
 
@@ -33,10 +37,13 @@ import android.database.ContentObserver;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.IBinder;
+import android.os.RemoteException;
 import android.os.UserHandle;
 import android.provider.Settings;
 import android.util.ArraySet;
+import android.util.Pair;
 import android.view.SurfaceControl;
+import android.view.WindowManager;
 import android.window.DisplayAreaInfo;
 import android.window.TransitionInfo;
 import android.window.TransitionRequestInfo;
@@ -61,6 +68,7 @@ import com.android.wm.shell.transition.Transitions;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.List;
 import java.util.concurrent.Executor;
 
 /**
@@ -96,7 +104,9 @@ public class DesktopModeController implements RemoteCallable<DesktopModeControll
         mDesktopModeTaskRepository = desktopModeTaskRepository;
         mMainExecutor = mainExecutor;
         mSettingsObserver = new SettingsObserver(mContext, mainHandler);
-        shellInit.addInitCallback(this::onInit, this);
+        if (DesktopModeStatus.isProto1Enabled()) {
+            shellInit.addInitCallback(this::onInit, this);
+        }
     }
 
     private void onInit() {
@@ -151,21 +161,18 @@ public class DesktopModeController implements RemoteCallable<DesktopModeControll
 
         int displayId = mContext.getDisplayId();
 
+        ArrayList<RunningTaskInfo> runningTasks = mShellTaskOrganizer.getRunningTasks(displayId);
+
         WindowContainerTransaction wct = new WindowContainerTransaction();
-        // Reset freeform windowing mode that is set per task level (tasks should inherit
-        // container value)
-        wct.merge(mShellTaskOrganizer.prepareClearFreeformForStandardTasks(displayId),
-                true /* transfer */);
-        int targetWindowingMode;
+        // Reset freeform windowing mode that is set per task level so tasks inherit it
+        clearFreeformForStandardTasks(runningTasks, wct);
         if (active) {
-            targetWindowingMode = WINDOWING_MODE_FREEFORM;
+            moveHomeBehindVisibleTasks(runningTasks, wct);
+            setDisplayAreaWindowingMode(displayId, WINDOWING_MODE_FREEFORM, wct);
         } else {
-            targetWindowingMode = WINDOWING_MODE_FULLSCREEN;
-            // Clear any resized bounds
-            wct.merge(mShellTaskOrganizer.prepareClearBoundsForStandardTasks(displayId),
-                    true /* transfer */);
+            clearBoundsForStandardTasks(runningTasks, wct);
+            setDisplayAreaWindowingMode(displayId, WINDOWING_MODE_FULLSCREEN, wct);
         }
-        prepareWindowingModeChange(wct, displayId, targetWindowingMode);
         if (Transitions.ENABLE_SHELL_TRANSITIONS) {
             mTransitions.startTransition(TRANSIT_CHANGE, wct, null);
         } else {
@@ -173,17 +180,69 @@ public class DesktopModeController implements RemoteCallable<DesktopModeControll
         }
     }
 
-    private void prepareWindowingModeChange(WindowContainerTransaction wct,
-            int displayId, @WindowConfiguration.WindowingMode int windowingMode) {
-        DisplayAreaInfo displayAreaInfo = mRootTaskDisplayAreaOrganizer
-                .getDisplayAreaInfo(displayId);
+    private WindowContainerTransaction clearBoundsForStandardTasks(
+            ArrayList<RunningTaskInfo> runningTasks, WindowContainerTransaction wct) {
+        ProtoLog.v(WM_SHELL_DESKTOP_MODE, "prepareClearBoundsForTasks");
+        for (RunningTaskInfo taskInfo : runningTasks) {
+            if (taskInfo.getActivityType() == ACTIVITY_TYPE_STANDARD) {
+                ProtoLog.v(WM_SHELL_DESKTOP_MODE, "clearing bounds for token=%s taskInfo=%s",
+                        taskInfo.token, taskInfo);
+                wct.setBounds(taskInfo.token, null);
+            }
+        }
+        return wct;
+    }
+
+    private void clearFreeformForStandardTasks(ArrayList<RunningTaskInfo> runningTasks,
+            WindowContainerTransaction wct) {
+        ProtoLog.v(WM_SHELL_DESKTOP_MODE, "prepareClearFreeformForTasks");
+        for (RunningTaskInfo taskInfo : runningTasks) {
+            if (taskInfo.getWindowingMode() == WINDOWING_MODE_FREEFORM
+                    && taskInfo.getActivityType() == ACTIVITY_TYPE_STANDARD) {
+                ProtoLog.v(WM_SHELL_DESKTOP_MODE,
+                        "clearing windowing mode for token=%s taskInfo=%s", taskInfo.token,
+                        taskInfo);
+                wct.setWindowingMode(taskInfo.token, WINDOWING_MODE_UNDEFINED);
+            }
+        }
+    }
+
+    private void moveHomeBehindVisibleTasks(ArrayList<RunningTaskInfo> runningTasks,
+            WindowContainerTransaction wct) {
+        ProtoLog.v(WM_SHELL_DESKTOP_MODE, "moveHomeBehindVisibleTasks");
+        RunningTaskInfo homeTask = null;
+        ArrayList<RunningTaskInfo> visibleTasks = new ArrayList<>();
+        for (RunningTaskInfo taskInfo : runningTasks) {
+            if (taskInfo.getActivityType() == ACTIVITY_TYPE_HOME) {
+                homeTask = taskInfo;
+            } else if (taskInfo.getActivityType() == ACTIVITY_TYPE_STANDARD
+                    && taskInfo.isVisible()) {
+                visibleTasks.add(taskInfo);
+            }
+        }
+        if (homeTask == null) {
+            ProtoLog.w(WM_SHELL_DESKTOP_MODE, "moveHomeBehindVisibleTasks: home task not found");
+        } else {
+            ProtoLog.v(WM_SHELL_DESKTOP_MODE, "moveHomeBehindVisibleTasks: visible tasks %d",
+                    visibleTasks.size());
+            wct.reorder(homeTask.getToken(), true /* onTop */);
+            for (RunningTaskInfo task : visibleTasks) {
+                wct.reorder(task.getToken(), true /* onTop */);
+            }
+        }
+    }
+
+    private void setDisplayAreaWindowingMode(int displayId,
+            @WindowConfiguration.WindowingMode int windowingMode, WindowContainerTransaction wct) {
+        DisplayAreaInfo displayAreaInfo = mRootTaskDisplayAreaOrganizer.getDisplayAreaInfo(
+                displayId);
         if (displayAreaInfo == null) {
             ProtoLog.e(WM_SHELL_DESKTOP_MODE,
                     "unable to update windowing mode for display %d display not found", displayId);
             return;
         }
 
-        ProtoLog.d(WM_SHELL_DESKTOP_MODE,
+        ProtoLog.v(WM_SHELL_DESKTOP_MODE,
                 "setWindowingMode: displayId=%d current wmMode=%d new wmMode=%d", displayId,
                 displayAreaInfo.configuration.windowConfiguration.getWindowingMode(),
                 windowingMode);
@@ -195,33 +254,62 @@ public class DesktopModeController implements RemoteCallable<DesktopModeControll
      * Show apps on desktop
      */
     void showDesktopApps() {
-        WindowContainerTransaction wct = bringDesktopAppsToFront();
+        // Bring apps to front, ignoring their visibility status to always ensure they are on top.
+        WindowContainerTransaction wct = new WindowContainerTransaction();
+        bringDesktopAppsToFront(wct);
 
-        if (Transitions.ENABLE_SHELL_TRANSITIONS) {
-            mTransitions.startTransition(TRANSIT_TO_FRONT, wct, null /* handler */);
-        } else {
-            mShellTaskOrganizer.applyTransaction(wct);
+        if (!wct.isEmpty()) {
+            if (Transitions.ENABLE_SHELL_TRANSITIONS) {
+                // TODO(b/268662477): add animation for the transition
+                mTransitions.startTransition(TRANSIT_NONE, wct, null /* handler */);
+            } else {
+                mShellTaskOrganizer.applyTransaction(wct);
+            }
         }
     }
 
-    @NonNull
-    private WindowContainerTransaction bringDesktopAppsToFront() {
-        ArraySet<Integer> activeTasks = mDesktopModeTaskRepository.getActiveTasks();
+    /** Get number of tasks that are marked as visible */
+    int getVisibleTaskCount() {
+        return mDesktopModeTaskRepository.getVisibleTaskCount();
+    }
+
+    private void bringDesktopAppsToFront(WindowContainerTransaction wct) {
+        final ArraySet<Integer> activeTasks = mDesktopModeTaskRepository.getActiveTasks();
         ProtoLog.d(WM_SHELL_DESKTOP_MODE, "bringDesktopAppsToFront: tasks=%s", activeTasks.size());
-        ArrayList<RunningTaskInfo> taskInfos = new ArrayList<>();
+
+        final List<RunningTaskInfo> taskInfos = new ArrayList<>();
         for (Integer taskId : activeTasks) {
             RunningTaskInfo taskInfo = mShellTaskOrganizer.getRunningTaskInfo(taskId);
             if (taskInfo != null) {
                 taskInfos.add(taskInfo);
             }
         }
-        // Order by lastActiveTime, descending
-        taskInfos.sort(Comparator.comparingLong(task -> -task.lastActiveTime));
-        WindowContainerTransaction wct = new WindowContainerTransaction();
+
+        if (taskInfos.isEmpty()) {
+            return;
+        }
+
+        moveHomeTaskToFront(wct);
+
+        ProtoLog.d(WM_SHELL_DESKTOP_MODE,
+                "bringDesktopAppsToFront: reordering all active tasks to the front");
+        final List<Integer> allTasksInZOrder =
+                mDesktopModeTaskRepository.getFreeformTasksInZOrder();
+        // Sort by z-order, bottom to top, so that the top-most task is reordered to the top last
+        // in the WCT.
+        taskInfos.sort(Comparator.comparingInt(task -> -allTasksInZOrder.indexOf(task.taskId)));
         for (RunningTaskInfo task : taskInfos) {
             wct.reorder(task.token, true);
         }
-        return wct;
+    }
+
+    private void moveHomeTaskToFront(WindowContainerTransaction wct) {
+        for (RunningTaskInfo task : mShellTaskOrganizer.getRunningTasks(mContext.getDisplayId())) {
+            if (task.getActivityType() == ACTIVITY_TYPE_HOME) {
+                wct.reorder(task.token, true /* onTop */);
+                return;
+            }
+        }
     }
 
     /**
@@ -256,15 +344,17 @@ public class DesktopModeController implements RemoteCallable<DesktopModeControll
     @Override
     public WindowContainerTransaction handleRequest(@NonNull IBinder transition,
             @NonNull TransitionRequestInfo request) {
-        // Only do anything if we are in desktop mode and opening a task/app in freeform
+        // Only do anything if we are in desktop mode and opening/moving-to-front a task/app in
+        // freeform
         if (!DesktopModeStatus.isActive(mContext)) {
             ProtoLog.d(WM_SHELL_DESKTOP_MODE,
                     "skip shell transition request: desktop mode not active");
             return null;
         }
-        if (request.getType() != TRANSIT_OPEN) {
+        if (request.getType() != TRANSIT_OPEN && request.getType() != TRANSIT_TO_FRONT) {
             ProtoLog.d(WM_SHELL_DESKTOP_MODE,
-                    "skip shell transition request: only supports TRANSIT_OPEN");
+                    "skip shell transition request: unsupported type %s",
+                    WindowManager.transitTypeToString(request.getType()));
             return null;
         }
         if (request.getTriggerTask() == null
@@ -274,11 +364,11 @@ public class DesktopModeController implements RemoteCallable<DesktopModeControll
         }
         ProtoLog.d(WM_SHELL_DESKTOP_MODE, "handle shell transition request: %s", request);
 
-        WindowContainerTransaction wct = mTransitions.dispatchRequest(transition, request, this);
-        if (wct == null) {
-            wct = new WindowContainerTransaction();
-        }
-        wct.merge(bringDesktopAppsToFront(), true /* transfer */);
+        Pair<Transitions.TransitionHandler, WindowContainerTransaction> subHandler =
+                mTransitions.dispatchRequest(transition, request, this);
+        WindowContainerTransaction wct = subHandler != null
+                ? subHandler.second : new WindowContainerTransaction();
+        bringDesktopAppsToFront(wct);
         wct.reorder(request.getTriggerTask().token, true /* onTop */);
 
         return wct;
@@ -358,6 +448,16 @@ public class DesktopModeController implements RemoteCallable<DesktopModeControll
         public void showDesktopApps() {
             executeRemoteCallWithTaskPermission(mController, "showDesktopApps",
                     DesktopModeController::showDesktopApps);
+        }
+
+        @Override
+        public int getVisibleTaskCount() throws RemoteException {
+            int[] result = new int[1];
+            executeRemoteCallWithTaskPermission(mController, "getVisibleTaskCount",
+                    controller -> result[0] = controller.getVisibleTaskCount(),
+                    true /* blocking */
+            );
+            return result[0];
         }
     }
 }

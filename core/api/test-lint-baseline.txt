@@ -567,6 +567,10 @@ MissingNullability: android.telephony.SmsManager#checkSmsShortCodeDestination(St
     Missing nullability on parameter `destAddress` in method `checkSmsShortCodeDestination`
 MissingNullability: android.telephony.SmsManager#checkSmsShortCodeDestination(String, String) parameter #1:
     Missing nullability on parameter `countryIso` in method `checkSmsShortCodeDestination`
+MissingNullability: android.telephony.TelephonyManager#HAL_VERSION_UNKNOWN:
+    Missing nullability on field `HAL_VERSION_UNKNOWN` in class `class android.telephony.TelephonyManager`
+MissingNullability: android.telephony.TelephonyManager#HAL_VERSION_UNSUPPORTED:
+    Missing nullability on field `HAL_VERSION_UNSUPPORTED` in class `class android.telephony.TelephonyManager`
 MissingNullability: android.telephony.TelephonyManager#getLine1AlphaTag():
     Missing nullability on method `getLine1AlphaTag` return
 MissingNullability: android.telephony.TelephonyManager#getRadioHalVersion():
@@ -851,6 +855,10 @@ NoSettingsProvider: android.provider.Settings.Global#DYNAMIC_POWER_SAVINGS_DISAB
     New setting keys are not allowed (Field: DYNAMIC_POWER_SAVINGS_DISABLE_THRESHOLD); use getters/setters in relevant manager class
 NoSettingsProvider: android.provider.Settings.Global#DYNAMIC_POWER_SAVINGS_ENABLED:
     New setting keys are not allowed (Field: DYNAMIC_POWER_SAVINGS_ENABLED); use getters/setters in relevant manager class
+NoSettingsProvider: android.provider.Settings.Global#HDR_CONVERSION_MODE:
+    New setting keys are not allowed (Field: HDR_CONVERSION_MODE); use getters/setters in relevant manager class
+NoSettingsProvider: android.provider.Settings.Global#HDR_FORCE_CONVERSION_TYPE:
+    New setting keys are not allowed (Field: HDR_FORCE_CONVERSION_TYPE); use getters/setters in relevant manager class
 NoSettingsProvider: android.provider.Settings.Global#HIDDEN_API_BLACKLIST_EXEMPTIONS:
     New setting keys are not allowed (Field: HIDDEN_API_BLACKLIST_EXEMPTIONS); use getters/setters in relevant manager class
 NoSettingsProvider: android.provider.Settings.Global#HIDDEN_API_POLICY:
@@ -903,6 +911,8 @@ PackageLayering: android.util.FeatureFlagUtils:
     Method parameter type `android.content.Context` violates package layering: nothing in `package android.util` should depend on `package android.content`
 
 
+ParcelConstructor: android.credentials.ui.ProviderData#ProviderData(android.os.Parcel):
+    Parcelable inflation is exposed through CREATOR, not raw constructors, in android.credentials.ui.ProviderData
 ParcelConstructor: android.os.StrictMode.ViolationInfo#ViolationInfo(android.os.Parcel):
     Parcelable inflation is exposed through CREATOR, not raw constructors, in android.os.StrictMode.ViolationInfo
 ParcelConstructor: android.os.health.HealthStatsParceler#HealthStatsParceler(android.os.Parcel):

@@ -27,7 +27,9 @@ import android.view.accessibility.IAccessibilityInteractionConnection;
 import android.view.accessibility.IAccessibilityManagerClient;
 import android.view.accessibility.AccessibilityWindowAttributes;
 import android.view.accessibility.IWindowMagnificationConnection;
+import android.view.InputEvent;
 import android.view.IWindow;
+import android.view.MagnificationSpec;
 
 /**
  * Interface implemented by the AccessibilityManagerService called by
@@ -114,4 +116,20 @@ interface IAccessibilityManager {
 
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission(android.Manifest.permission.MANAGE_ACCESSIBILITY)")
     boolean unregisterProxyForDisplay(int displayId);
+
+    // Used by UiAutomation for tests on the InputFilter
+    void injectInputEventToInputFilter(in InputEvent event);
+
+    boolean startFlashNotificationSequence(String opPkg, int reason, IBinder token);
+    boolean stopFlashNotificationSequence(String opPkg);
+    boolean startFlashNotificationEvent(String opPkg, int reason, String reasonPkg);
+
+    boolean isAccessibilityTargetAllowed(String packageName, int uid, int userId);
+    boolean sendRestrictedDialogIntent(String packageName, int uid, int userId);
+
+    parcelable WindowTransformationSpec {
+        float[] transformationMatrix;
+        MagnificationSpec magnificationSpec;
+    }
+    WindowTransformationSpec getWindowTransformationSpec(int windowId);
 }

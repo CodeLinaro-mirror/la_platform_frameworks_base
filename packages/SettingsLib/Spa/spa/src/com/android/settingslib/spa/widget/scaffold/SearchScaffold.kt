@@ -24,17 +24,14 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.runtime.Composable
@@ -44,6 +41,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -75,6 +73,7 @@ fun SearchScaffold(
     actions: @Composable RowScope.() -> Unit = {},
     content: @Composable (bottomPadding: Dp, searchQuery: State<String>) -> Unit,
 ) {
+    var isSearchMode by rememberSaveable { mutableStateOf(false) }
     val viewModel: SearchScaffoldViewModel = viewModel()
 
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
@@ -85,8 +84,11 @@ fun SearchScaffold(
                 title = title,
                 actions = actions,
                 scrollBehavior = scrollBehavior,
+                isSearchMode = isSearchMode,
+                onSearchModeChange = { isSearchMode = it },
                 searchQuery = viewModel.searchQuery,
-            ) { viewModel.searchQuery = it }
+                onSearchQueryChange = { viewModel.searchQuery = it },
+            )
         },
     ) { paddingValues ->
         Box(
@@ -98,7 +100,7 @@ fun SearchScaffold(
             content(
                 bottomPadding = paddingValues.calculateBottomPadding(),
                 searchQuery = remember {
-                    derivedStateOf { viewModel.searchQuery?.text ?: "" }
+                    derivedStateOf { if (isSearchMode) viewModel.searchQuery.text else "" }
                 },
             )
         }
@@ -106,7 +108,8 @@ fun SearchScaffold(
 }
 
 internal class SearchScaffoldViewModel : ViewModel() {
-    var searchQuery: TextFieldValue? by mutableStateOf(null)
+    // Put in view model because TextFieldValue has not default Saver for rememberSaveable.
+    var searchQuery by mutableStateOf(TextFieldValue())
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -115,14 +118,16 @@ private fun SearchableTopAppBar(
     title: String,
     actions: @Composable RowScope.() -> Unit,
     scrollBehavior: TopAppBarScrollBehavior,
-    searchQuery: TextFieldValue?,
-    onSearchQueryChange: (TextFieldValue?) -> Unit,
+    isSearchMode: Boolean,
+    onSearchModeChange: (Boolean) -> Unit,
+    searchQuery: TextFieldValue,
+    onSearchQueryChange: (TextFieldValue) -> Unit,
 ) {
-    if (searchQuery != null) {
+    if (isSearchMode) {
         SearchTopAppBar(
             query = searchQuery,
             onQueryChange = onSearchQueryChange,
-            onClose = { onSearchQueryChange(null) },
+            onClose = { onSearchModeChange(false) },
             actions = actions,
         )
     } else {
@@ -130,13 +135,13 @@ private fun SearchableTopAppBar(
             SearchAction {
                 scrollBehavior.collapse()
                 onSearchQueryChange(TextFieldValue())
+                onSearchModeChange(true)
             }
             actions()
         }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SearchTopAppBar(
     query: TextFieldValue,
@@ -144,20 +149,16 @@ private fun SearchTopAppBar(
     onClose: () -> Unit,
     actions: @Composable RowScope.() -> Unit = {},
 ) {
-    Surface(color = SettingsTheme.colorScheme.surfaceHeader) {
-        TopAppBar(
-            title = { SearchBox(query, onQueryChange) },
-            modifier = Modifier.statusBarsPadding(),
-            navigationIcon = { CollapseAction(onClose) },
-            actions = {
-                if (query.text.isNotEmpty()) {
-                    ClearAction { onQueryChange(TextFieldValue()) }
-                }
-                actions()
-            },
-            colors = TopAppBarDefaults.smallTopAppBarColors(containerColor = Color.Transparent),
-        )
-    }
+    CustomizedTopAppBar(
+        title = { SearchBox(query, onQueryChange) },
+        navigationIcon = { CollapseAction(onClose) },
+        actions = {
+            if (query.text.isNotEmpty()) {
+                ClearAction { onQueryChange(TextFieldValue()) }
+            }
+            actions()
+        },
+    )
     BackHandler { onClose() }
 }
 
@@ -166,6 +167,7 @@ private fun SearchTopAppBar(
 private fun SearchBox(query: TextFieldValue, onQueryChange: (TextFieldValue) -> Unit) {
     val focusRequester = remember { FocusRequester() }
     val textStyle = MaterialTheme.typography.bodyLarge
+    val hideKeyboardAction = hideKeyboardAction()
     TextField(
         value = query,
         onValueChange = onQueryChange,
@@ -181,7 +183,7 @@ private fun SearchBox(query: TextFieldValue, onQueryChange: (TextFieldValue) -> 
             )
         },
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-        keyboardActions = KeyboardActions(onSearch = hideKeyboardAction()),
+        keyboardActions = KeyboardActions(onSearch = { hideKeyboardAction() }),
         singleLine = true,
         colors = TextFieldDefaults.textFieldColors(
             containerColor = Color.Transparent,

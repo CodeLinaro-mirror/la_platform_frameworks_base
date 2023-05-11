@@ -40,7 +40,6 @@ import static com.android.wm.shell.pip.PipTransitionState.ENTERED_PIP;
 import static com.android.wm.shell.transition.Transitions.TRANSIT_EXIT_PIP;
 import static com.android.wm.shell.transition.Transitions.TRANSIT_EXIT_PIP_TO_SPLIT;
 import static com.android.wm.shell.transition.Transitions.TRANSIT_REMOVE_PIP;
-import static com.android.wm.shell.transition.Transitions.isOpeningType;
 
 import android.animation.Animator;
 import android.app.ActivityManager;
@@ -50,6 +49,7 @@ import android.graphics.Matrix;
 import android.graphics.Point;
 import android.graphics.Rect;
 import android.os.IBinder;
+import android.os.SystemProperties;
 import android.view.Surface;
 import android.view.SurfaceControl;
 import android.view.WindowManager;
@@ -69,6 +69,7 @@ import com.android.wm.shell.splitscreen.SplitScreenController;
 import com.android.wm.shell.sysui.ShellInit;
 import com.android.wm.shell.transition.CounterRotatorHelper;
 import com.android.wm.shell.transition.Transitions;
+import com.android.wm.shell.util.TransitionUtil;
 
 import java.util.Optional;
 
@@ -82,6 +83,7 @@ public class PipTransition extends PipTransitionController {
 
     private final Context mContext;
     private final PipTransitionState mPipTransitionState;
+    private final PipDisplayLayoutState mPipDisplayLayoutState;
     private final int mEnterExitAnimationDuration;
     private final PipSurfaceTransactionHelper mSurfaceTransactionHelper;
     private final Optional<SplitScreenController> mSplitScreenOptional;
@@ -112,6 +114,7 @@ public class PipTransition extends PipTransitionController {
             @NonNull ShellTaskOrganizer shellTaskOrganizer,
             @NonNull Transitions transitions,
             PipBoundsState pipBoundsState,
+            PipDisplayLayoutState pipDisplayLayoutState,
             PipTransitionState pipTransitionState,
             PipMenuController pipMenuController,
             PipBoundsAlgorithm pipBoundsAlgorithm,
@@ -122,6 +125,7 @@ public class PipTransition extends PipTransitionController {
                 pipBoundsAlgorithm, pipAnimationController);
         mContext = context;
         mPipTransitionState = pipTransitionState;
+        mPipDisplayLayoutState = pipDisplayLayoutState;
         mEnterExitAnimationDuration = context.getResources()
                 .getInteger(R.integer.config_pipResizeAnimationDuration);
         mSurfaceTransactionHelper = pipSurfaceTransactionHelper;
@@ -307,7 +311,8 @@ public class PipTransition extends PipTransitionController {
             // initial state under the new rotation.
             int rotationDelta = deltaRotation(startRotation, endRotation);
             if (rotationDelta != Surface.ROTATION_0) {
-                mPipBoundsState.getDisplayLayout().rotateTo(mContext.getResources(), endRotation);
+                mPipDisplayLayoutState.rotateTo(endRotation);
+
                 final Rect destinationBounds = mPipBoundsAlgorithm.getEntryDestinationBounds();
                 wct.setBounds(mRequestedEnterTask, destinationBounds);
                 return true;
@@ -358,8 +363,10 @@ public class PipTransition extends PipTransitionController {
             WindowContainerTransaction wct = null;
             if (isOutPipDirection(direction)) {
                 // Only need to reset surface properties. The server-side operations were already
-                // done at the start.
-                if (tx != null) {
+                // done at the start. But if it is running fixed rotation, there will be a seamless
+                // display transition later. So the last rotation transform needs to be kept to
+                // avoid flickering, and then the display transition will reset the transform.
+                if (tx != null && !mInFixedRotation) {
                     mFinishTransaction.merge(tx);
                 }
             } else {
@@ -385,7 +392,7 @@ public class PipTransition extends PipTransitionController {
                 // Launcher may update the Shelf height during the animation, which will update the
                 // destination bounds. Because this is in fixed rotation, We need to make sure the
                 // finishTransaction is using the updated bounds in the display rotation.
-                final Rect displayBounds = mPipBoundsState.getDisplayBounds();
+                final Rect displayBounds = mPipDisplayLayoutState.getDisplayBounds();
                 final Rect finishBounds = new Rect(destinationBounds);
                 rotateBounds(finishBounds, displayBounds, mEndFixedRotation, displayRotation);
                 mSurfaceTransactionHelper.crop(mFinishTransaction, leash, finishBounds);
@@ -627,7 +634,7 @@ public class PipTransition extends PipTransitionController {
             @NonNull TaskInfo taskInfo) {
         startTransaction.apply();
         finishTransaction.setWindowCrop(info.getChanges().get(0).getLeash(),
-                mPipBoundsState.getDisplayBounds());
+                mPipDisplayLayoutState.getDisplayBounds());
         mPipOrganizer.onExitPipFinished(taskInfo);
         finishCallback.onTransitionFinished(null, null);
     }
@@ -660,8 +667,8 @@ public class PipTransition extends PipTransitionController {
             }
 
             // Please file a bug to handle the unexpected transition type.
-            throw new IllegalStateException("Entering PIP with unexpected transition type="
-                    + transitTypeToString(transitType));
+            android.util.Slog.e(TAG, "Found new PIP in transition with mis-matched type="
+                    + transitTypeToString(transitType), new Throwable());
         }
         return false;
     }
@@ -689,7 +696,7 @@ public class PipTransition extends PipTransitionController {
         for (int i = info.getChanges().size() - 1; i >= 0; --i) {
             final TransitionInfo.Change change = info.getChanges().get(i);
             if (change == enterPip) continue;
-            if (isOpeningType(change.getMode())) {
+            if (TransitionUtil.isOpeningType(change.getMode())) {
                 final SurfaceControl leash = change.getLeash();
                 startTransaction.show(leash).setAlpha(leash, 1.f);
             }
@@ -790,7 +797,20 @@ public class PipTransition extends PipTransitionController {
             if (sourceHintRect == null) {
                 // We use content overlay when there is no source rect hint to enter PiP use bounds
                 // animation.
-                animator.setColorContentOverlay(mContext);
+                // TODO(b/272819817): cleanup the null-check and extra logging.
+                final boolean hasTopActivityInfo = taskInfo.topActivityInfo != null;
+                if (!hasTopActivityInfo) {
+                    ProtoLog.w(ShellProtoLogGroup.WM_SHELL_TRANSITIONS,
+                            "%s: TaskInfo.topActivityInfo is null", TAG);
+                }
+                if (SystemProperties.getBoolean(
+                        "persist.wm.debug.enable_pip_app_icon_overlay", true)
+                        && hasTopActivityInfo) {
+                    animator.setAppIconContentOverlay(
+                            mContext, currentBounds, taskInfo.topActivityInfo);
+                } else {
+                    animator.setColorContentOverlay(mContext);
+                }
             }
         } else if (mOneShotAnimationType == ANIM_TYPE_ALPHA) {
             animator = mPipAnimationController.getAnimator(taskInfo, leash, destinationBounds,
@@ -815,8 +835,9 @@ public class PipTransition extends PipTransitionController {
     /** Computes destination bounds in old rotation and updates source hint rect if available. */
     private void computeEnterPipRotatedBounds(int rotationDelta, int startRotation, int endRotation,
             TaskInfo taskInfo, Rect outDestinationBounds, @Nullable Rect outSourceHintRect) {
-        mPipBoundsState.getDisplayLayout().rotateTo(mContext.getResources(), endRotation);
-        final Rect displayBounds = mPipBoundsState.getDisplayBounds();
+        mPipDisplayLayoutState.rotateTo(endRotation);
+
+        final Rect displayBounds = mPipDisplayLayoutState.getDisplayBounds();
         outDestinationBounds.set(mPipBoundsAlgorithm.getEntryDestinationBounds());
         // Transform the destination bounds to current display coordinates.
         rotateBounds(outDestinationBounds, displayBounds, endRotation, startRotation);
@@ -849,7 +870,7 @@ public class PipTransition extends PipTransitionController {
                 continue;
             }
 
-            if (isOpeningType(mode) && change.getParent() == null) {
+            if (TransitionUtil.isOpeningType(mode) && change.getParent() == null) {
                 final SurfaceControl leash = change.getLeash();
                 final Rect endBounds = change.getEndAbsBounds();
                 startTransaction

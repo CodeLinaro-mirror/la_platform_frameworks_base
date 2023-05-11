@@ -132,10 +132,14 @@ public abstract class SysuiTestCase {
 
     @After
     public void SysuiTeardown() {
-        InstrumentationRegistry.registerInstance(mRealInstrumentation,
-                InstrumentationRegistry.getArguments());
+        if (mRealInstrumentation != null) {
+            InstrumentationRegistry.registerInstance(mRealInstrumentation,
+                    InstrumentationRegistry.getArguments());
+        }
         if (TestableLooper.get(this) != null) {
             TestableLooper.get(this).processAllMessages();
+            // Must remove static reference to this test object to prevent leak (b/261039202)
+            TestableLooper.remove(this);
         }
         disallowTestableLooperAsMainThread();
         mContext.cleanUpReceivers(this.getClass().getSimpleName());

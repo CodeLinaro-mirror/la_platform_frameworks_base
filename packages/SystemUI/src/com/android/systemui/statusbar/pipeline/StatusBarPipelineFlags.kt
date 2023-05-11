@@ -16,6 +16,7 @@
 
 package com.android.systemui.statusbar.pipeline
 
+import android.content.Context
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.flags.FeatureFlags
 import com.android.systemui.flags.Flags
@@ -23,7 +24,15 @@ import javax.inject.Inject
 
 /** All flagging methods related to the new status bar pipeline (see b/238425913). */
 @SysUISingleton
-class StatusBarPipelineFlags @Inject constructor(private val featureFlags: FeatureFlags) {
+class StatusBarPipelineFlags
+@Inject
+constructor(
+    context: Context,
+    private val featureFlags: FeatureFlags,
+) {
+    private val mobileSlot = context.getString(com.android.internal.R.string.status_bar_mobile)
+    private val wifiSlot = context.getString(com.android.internal.R.string.status_bar_wifi)
+
     /** True if we should display the mobile icons using the new status bar data pipeline. */
     fun useNewMobileIcons(): Boolean = featureFlags.isEnabled(Flags.NEW_STATUS_BAR_MOBILE_ICONS)
 
@@ -49,9 +58,18 @@ class StatusBarPipelineFlags @Inject constructor(private val featureFlags: Featu
         featureFlags.isEnabled(Flags.NEW_STATUS_BAR_WIFI_ICON_BACKEND) || useNewWifiIcon()
 
     /**
-     * Returns true if we should apply some coloring to the wifi icon that was rendered with the new
+     * Returns true if we should apply some coloring to the icons that were rendered with the new
      * pipeline to help with debugging.
      */
-    // For now, just always apply the debug coloring if we've enabled the new icon.
-    fun useWifiDebugColoring(): Boolean = useNewWifiIcon()
+    fun useDebugColoring(): Boolean =
+        featureFlags.isEnabled(Flags.NEW_STATUS_BAR_ICONS_DEBUG_COLORING)
+
+    /**
+     * For convenience in the StatusBarIconController, we want to gate some actions based on slot
+     * name and the flag together.
+     *
+     * @return true if this icon is controlled by any of the status bar pipeline flags
+     */
+    fun isIconControlledByFlags(slotName: String): Boolean =
+        slotName == wifiSlot && useNewWifiIcon() || slotName == mobileSlot && useNewMobileIcons()
 }

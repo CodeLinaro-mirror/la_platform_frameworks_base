@@ -86,6 +86,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -165,6 +166,11 @@ final class DefaultPermissionGrantPolicy {
         COARSE_BACKGROUND_LOCATION_PERMISSIONS.add(Manifest.permission.ACCESS_BACKGROUND_LOCATION);
     }
 
+    private static final Set<String> FINE_LOCATION_PERMISSIONS = new ArraySet<>();
+    static {
+        FINE_LOCATION_PERMISSIONS.add(Manifest.permission.ACCESS_FINE_LOCATION);
+    }
+
     private static final Set<String> ACTIVITY_RECOGNITION_PERMISSIONS = new ArraySet<>();
     static {
         ACTIVITY_RECOGNITION_PERMISSIONS.add(Manifest.permission.ACTIVITY_RECOGNITION);
@@ -200,6 +206,8 @@ final class DefaultPermissionGrantPolicy {
     static {
         SENSORS_PERMISSIONS.add(Manifest.permission.BODY_SENSORS);
         SENSORS_PERMISSIONS.add(Manifest.permission.BODY_SENSORS_BACKGROUND);
+        SENSORS_PERMISSIONS.add(Manifest.permission.BODY_SENSORS_WRIST_TEMPERATURE);
+        SENSORS_PERMISSIONS.add(Manifest.permission.BODY_SENSORS_WRIST_TEMPERATURE_BACKGROUND);
     }
 
     private static final Set<String> STORAGE_PERMISSIONS = new ArraySet<>();
@@ -616,6 +624,10 @@ final class DefaultPermissionGrantPolicy {
         grantPermissionsToSystemPackage(pm, getDefaultCaptivePortalLoginPackage(), userId,
                 NOTIFICATION_PERMISSIONS);
 
+        // Dock Manager
+        grantPermissionsToSystemPackage(pm, getDefaultDockManagerPackage(), userId,
+                NOTIFICATION_PERMISSIONS);
+
         // Camera
         grantPermissionsToSystemPackage(pm,
                 getDefaultSystemHandlerActivityPackage(pm, MediaStore.ACTION_IMAGE_CAPTURE, userId),
@@ -783,6 +795,8 @@ final class DefaultPermissionGrantPolicy {
                         CONTACTS_PERMISSIONS, CALENDAR_PERMISSIONS, MICROPHONE_PERMISSIONS,
                         PHONE_PERMISSIONS, SMS_PERMISSIONS, COARSE_BACKGROUND_LOCATION_PERMISSIONS,
                         NEARBY_DEVICES_PERMISSIONS, NOTIFICATION_PERMISSIONS);
+                revokeRuntimePermissions(pm, voiceInteractPackageName, FINE_LOCATION_PERMISSIONS,
+                        false, userId);
             }
         }
 
@@ -933,6 +947,10 @@ final class DefaultPermissionGrantPolicy {
         return mContext.getString(R.string.config_defaultCaptivePortalLoginPackageName);
     }
 
+    private String getDefaultDockManagerPackage() {
+        return mContext.getString(R.string.config_defaultDockManagerPackageName);
+    }
+
     @SafeVarargs
     private final void grantPermissionToEachSystemPackage(PackageManagerWrapper pm,
             ArrayList<String> packages, int userId, Set<String>... permissions) {
@@ -1067,7 +1085,7 @@ final class DefaultPermissionGrantPolicy {
     public void grantDefaultPermissionsToActiveLuiApp(String packageName, int userId) {
         Log.i(TAG, "Granting permissions to active LUI app for user:" + userId);
         grantSystemFixedPermissionsToSystemPackage(NO_PM_CACHE, packageName, userId,
-                CAMERA_PERMISSIONS);
+                CAMERA_PERMISSIONS, NOTIFICATION_PERMISSIONS);
     }
 
     public void revokeDefaultPermissionsFromLuiApps(String[] packageNames, int userId) {
@@ -1784,6 +1802,15 @@ final class DefaultPermissionGrantPolicy {
             PermissionState permState;
             if (permIdx >= 0) {
                 permState = uidState.valueAt(permIdx);
+                // Quick and dirty fix for shared UID packages - we should grant permission with the
+                // correct package even if a previous checkPermission() used a package that isn't
+                // requesting the permission. Ideally we should use package manager snapshot and get
+                // rid of this entire inner class.
+                if (!ArrayUtils.contains(permState.mPkgRequestingPerm.requestedPermissions,
+                        permission) && ArrayUtils.contains(pkg.requestedPermissions,
+                        permission)) {
+                    permState.mPkgRequestingPerm = pkg;
+                }
             } else {
                 permState = new PermissionState(permission, pkg, user);
                 uidState.put(permission, permState);
@@ -1871,7 +1898,7 @@ final class DefaultPermissionGrantPolicy {
          */
         private class PermissionState {
             private final @NonNull String mPermission;
-            private final @NonNull PackageInfo mPkgRequestingPerm;
+            private @NonNull PackageInfo mPkgRequestingPerm;
             private final @NonNull UserHandle mUser;
 
             /** Permission flags when the state was created */
@@ -1924,7 +1951,7 @@ final class DefaultPermissionGrantPolicy {
                             mPkgRequestingPerm, newRestrictionExcemptFlags, -1, mUser);
                 }
 
-                if (newGranted != null && newGranted != mOriginalGranted) {
+                if (newGranted != null && !Objects.equals(newGranted, mOriginalGranted)) {
                     if (newGranted) {
                         NO_PM_CACHE.grantPermission(mPermission, mPkgRequestingPerm, mUser);
                     } else {

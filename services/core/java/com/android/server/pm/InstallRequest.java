@@ -16,6 +16,7 @@
 
 package com.android.server.pm;
 
+import static android.content.pm.PackageInstaller.SessionParams.USER_ACTION_UNSPECIFIED;
 import static android.content.pm.PackageManager.INSTALL_REASON_UNKNOWN;
 import static android.content.pm.PackageManager.INSTALL_SCENARIO_DEFAULT;
 import static android.content.pm.PackageManager.INSTALL_SUCCEEDED;
@@ -38,11 +39,14 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Process;
 import android.os.UserHandle;
+import android.util.ArrayMap;
 import android.util.ExceptionUtils;
 import android.util.Slog;
 
+import com.android.server.art.model.DexoptResult;
 import com.android.server.pm.parsing.pkg.ParsedPackage;
 import com.android.server.pm.pkg.AndroidPackage;
+import com.android.server.pm.pkg.PackageState;
 import com.android.server.pm.pkg.PackageStateInternal;
 import com.android.server.pm.pkg.parsing.ParsingPackageUtils;
 
@@ -59,8 +63,10 @@ final class InstallRequest {
     @Nullable
     private PackageRemovedInfo mRemovedInfo;
 
-    private @PackageManagerService.ScanFlags int mScanFlags;
-    private @ParsingPackageUtils.ParseFlags int mParseFlags;
+    @PackageManagerService.ScanFlags
+    private int mScanFlags;
+    @ParsingPackageUtils.ParseFlags
+    private int mParseFlags;
     private boolean mReplace;
 
     @Nullable /* The original Package if it is being replaced, otherwise {@code null} */
@@ -78,7 +84,7 @@ final class InstallRequest {
     /** Package Installed Info */
     @Nullable
     private String mName;
-    private int mUid = -1;
+    private int mAppId = INVALID_UID;
     // The set of users that originally had this package installed.
     @Nullable
     private int[] mOrigUsers;
@@ -88,6 +94,7 @@ final class InstallRequest {
     @Nullable
     private AndroidPackage mPkg;
     private int mReturnCode;
+    private int mInternalErrorCode;
     @Nullable
     private String mReturnMsg;
     // The set of packages consuming this shared library or null if no consumers exist.
@@ -104,6 +111,12 @@ final class InstallRequest {
     @Nullable
     private ApexInfo mApexInfo;
 
+    /**
+     * For tracking {@link PackageState#getApexModuleName()}.
+     */
+    @Nullable
+    private String mApexModuleName;
+
     @Nullable
     private ScanResult mScanResult;
 
@@ -112,6 +125,10 @@ final class InstallRequest {
 
     @Nullable
     private final PackageMetrics mPackageMetrics;
+    private final int mSessionId;
+    private final int mRequireUserAction;
+
+    private int mDexoptStatus;
 
     // New install
     InstallRequest(InstallingSession params) {
@@ -119,13 +136,15 @@ final class InstallRequest {
         mInstallArgs = new InstallArgs(params.mOriginInfo, params.mMoveInfo, params.mObserver,
                 params.mInstallFlags, params.mInstallSource, params.mVolumeUuid,
                 params.getUser(), null /*instructionSets*/, params.mPackageAbiOverride,
-                params.mGrantedRuntimePermissions, params.mAllowlistedRestrictedPermissions,
-                params.mAutoRevokePermissionsMode,
-                params.mTraceMethod, params.mTraceCookie, params.mSigningDetails,
-                params.mInstallReason, params.mInstallScenario, params.mForceQueryableOverride,
-                params.mDataLoaderType, params.mPackageSource);
+                params.mPermissionStates, params.mAllowlistedRestrictedPermissions,
+                params.mAutoRevokePermissionsMode, params.mTraceMethod, params.mTraceCookie,
+                params.mSigningDetails, params.mInstallReason, params.mInstallScenario,
+                params.mForceQueryableOverride, params.mDataLoaderType, params.mPackageSource,
+                params.mApplicationEnabledSettingPersistent);
         mPackageMetrics = new PackageMetrics(this);
         mIsInstallInherit = params.mIsInherit;
+        mSessionId = params.mSessionId;
+        mRequireUserAction = params.mRequireUserAction;
     }
 
     // Install existing package as user
@@ -139,6 +158,8 @@ final class InstallRequest {
         mPostInstallRunnable = runnable;
         mPackageMetrics = new PackageMetrics(this);
         mIsInstallForUsers = true;
+        mSessionId = -1;
+        mRequireUserAction = USER_ACTION_UNSPECIFIED;
     }
 
     // addForInit
@@ -148,14 +169,16 @@ final class InstallRequest {
             mUserId = user.getIdentifier();
         } else {
             // APEX
-            mUserId = INVALID_UID;
+            mUserId = UserHandle.USER_SYSTEM;
         }
         mInstallArgs = null;
         mParsedPackage = parsedPackage;
         mParseFlags = parseFlags;
         mScanFlags = scanFlags;
         mScanResult = scanResult;
-        mPackageMetrics = null; // No real logging from this code path
+        mPackageMetrics = null; // No logging from this code path
+        mSessionId = -1;
+        mRequireUserAction = USER_ACTION_UNSPECIFIED;
     }
 
     @Nullable
@@ -206,6 +229,10 @@ final class InstallRequest {
 
     public int getReturnCode() {
         return mReturnCode;
+    }
+
+    public int getInternalErrorCode() {
+        return mInternalErrorCode;
     }
 
     @Nullable
@@ -303,7 +330,12 @@ final class InstallRequest {
     @Nullable
     public String getInstallerPackageName() {
         return (mInstallArgs != null && mInstallArgs.mInstallSource != null)
-                ? mInstallArgs.mInstallSource.installerPackageName : null;
+                ? mInstallArgs.mInstallSource.mInstallerPackageName : null;
+    }
+
+    public int getInstallerPackageUid() {
+        return (mInstallArgs != null && mInstallArgs.mInstallSource != null)
+                ? mInstallArgs.mInstallSource.mInstallerPackageUid : INVALID_UID;
     }
 
     public int getDataLoaderType() {
@@ -331,8 +363,13 @@ final class InstallRequest {
     }
 
     @Nullable
+    public String getApexModuleName() {
+        return mApexModuleName;
+    }
+
+    @Nullable
     public String getSourceInstallerPackageName() {
-        return mInstallArgs.mInstallSource.installerPackageName;
+        return mInstallArgs.mInstallSource.mInstallerPackageName;
     }
 
     public boolean isRollback() {
@@ -350,13 +387,13 @@ final class InstallRequest {
         return mOrigUsers;
     }
 
-    public int getUid() {
-        return mUid;
+    public int getAppId() {
+        return mAppId;
     }
 
     @Nullable
-    public String[] getInstallGrantPermissions() {
-        return mInstallArgs == null ? null : mInstallArgs.mInstallGrantPermissions;
+    public ArrayMap<String, Integer> getPermissionStates() {
+        return mInstallArgs == null ? null : mInstallArgs.mPermissionStates;
     }
 
     @Nullable
@@ -393,11 +430,13 @@ final class InstallRequest {
         return mParsedPackage;
     }
 
-    public @ParsingPackageUtils.ParseFlags int getParseFlags() {
+    @ParsingPackageUtils.ParseFlags
+    public int getParseFlags() {
         return mParseFlags;
     }
 
-    public @PackageManagerService.ScanFlags int getScanFlags() {
+    @PackageManagerService.ScanFlags
+    public int getScanFlags() {
         return mScanFlags;
     }
 
@@ -433,6 +472,11 @@ final class InstallRequest {
 
     public boolean isInstallForUsers() {
         return mIsInstallForUsers;
+    }
+
+    public boolean isInstallFromAdb() {
+        return mInstallArgs != null
+                && (mInstallArgs.mInstallFlags & PackageManager.INSTALL_FROM_ADB) != 0;
     }
 
     @Nullable
@@ -473,6 +517,10 @@ final class InstallRequest {
     public List<String> getChangedAbiCodePath() {
         assertScanResultExists();
         return mScanResult.mChangedAbiCodePath;
+    }
+
+    public boolean isApplicationEnabledSettingPersistent() {
+        return mInstallArgs == null ? false : mInstallArgs.mApplicationEnabledSettingPersistent;
     }
 
     public boolean isForceQueryableOverride() {
@@ -556,6 +604,18 @@ final class InstallRequest {
         }
     }
 
+    public int getSessionId() {
+        return mSessionId;
+    }
+
+    public int getRequireUserAction() {
+        return mRequireUserAction;
+    }
+
+    public int getDexoptStatus() {
+        return mDexoptStatus;
+    }
+
     public void setScanFlags(int scanFlags) {
         mScanFlags = scanFlags;
     }
@@ -582,12 +642,23 @@ final class InstallRequest {
         setReturnCode(code);
         setReturnMessage(msg);
         Slog.w(TAG, msg);
+        if (mPackageMetrics != null) {
+            mPackageMetrics.onInstallFailed();
+        }
+    }
+
+    public void setError(PackageManagerException e) {
+        setError(null, e);
     }
 
     public void setError(String msg, PackageManagerException e) {
+        mInternalErrorCode = e.internalErrorCode;
         mReturnCode = e.error;
         setReturnMessage(ExceptionUtils.getCompleteMessage(msg, e));
         Slog.w(TAG, msg, e);
+        if (mPackageMetrics != null) {
+            mPackageMetrics.onInstallFailed();
+        }
     }
 
     public void setReturnCode(int returnCode) {
@@ -602,12 +673,16 @@ final class InstallRequest {
         mApexInfo = apexInfo;
     }
 
+    public void setApexModuleName(@Nullable String apexModuleName) {
+        mApexModuleName = apexModuleName;
+    }
+
     public void setPkg(AndroidPackage pkg) {
         mPkg = pkg;
     }
 
-    public void setUid(int uid) {
-        mUid = uid;
+    public void setAppId(int appId) {
+        mAppId = appId;
     }
 
     public void setNewUsers(int[] newUsers) {
@@ -729,6 +804,25 @@ final class InstallRequest {
         if (mPackageMetrics != null) {
             mPackageMetrics.onStepFinished(PackageMetrics.STEP_COMMIT);
         }
+    }
+
+    public void onDexoptFinished(DexoptResult dexoptResult) {
+        if (mPackageMetrics == null) {
+            return;
+        }
+        mDexoptStatus = dexoptResult.getFinalStatus();
+        if (mDexoptStatus != DexoptResult.DEXOPT_PERFORMED) {
+            return;
+        }
+        long durationMillis = 0;
+        for (DexoptResult.PackageDexoptResult packageResult :
+                dexoptResult.getPackageDexoptResults()) {
+            for (DexoptResult.DexContainerFileDexoptResult fileResult :
+                    packageResult.getDexContainerFileDexoptResults()) {
+                durationMillis += fileResult.getDex2oatWallTimeMillis();
+            }
+        }
+        mPackageMetrics.onStepFinished(PackageMetrics.STEP_DEXOPT, durationMillis);
     }
 
     public void onInstallCompleted() {

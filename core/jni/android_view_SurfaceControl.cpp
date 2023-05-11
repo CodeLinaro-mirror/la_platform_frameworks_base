@@ -27,6 +27,7 @@
 #include <android_runtime/AndroidRuntime.h>
 #include <android_runtime/android_graphics_GraphicBuffer.h>
 #include <android_runtime/android_hardware_HardwareBuffer.h>
+#include <android_runtime/android_hardware_OverlayProperties.h>
 #include <android_runtime/android_view_Surface.h>
 #include <android_runtime/android_view_SurfaceControl.h>
 #include <android_runtime/android_view_SurfaceSession.h>
@@ -108,6 +109,7 @@ static struct {
     jmethodID ctor;
     jfieldID supportedDisplayModes;
     jfieldID activeDisplayModeId;
+    jfieldID renderFrameRate;
     jfieldID supportedColorModes;
     jfieldID activeColorMode;
     jfieldID hdrCapabilities;
@@ -128,6 +130,7 @@ static struct {
     jfieldID appVsyncOffsetNanos;
     jfieldID presentationDeadlineNanos;
     jfieldID group;
+    jfieldID supportedHdrTypes;
 } gDisplayModeClassInfo;
 
 // Implements SkMallocPixelRef::ReleaseProc, to delete the screenshot on unref.
@@ -243,6 +246,17 @@ static struct {
     jmethodID invokeReleaseCallback;
 } gSurfaceControlClassInfo;
 
+static struct {
+    jclass clazz;
+    jfieldID mMinAlpha;
+    jfieldID mMinFractionRendered;
+    jfieldID mStabilityRequirementMs;
+} gTrustedPresentationThresholdsClassInfo;
+
+static struct {
+    jmethodID onTrustedPresentationChanged;
+} gTrustedPresentationCallbackClassInfo;
+
 constexpr ui::Dataspace pickDataspaceFromColorMode(const ui::ColorMode colorMode) {
     switch (colorMode) {
         case ui::ColorMode::DISPLAY_P3:
@@ -325,6 +339,47 @@ private:
     }
 };
 
+class TrustedPresentationCallbackWrapper {
+public:
+    explicit TrustedPresentationCallbackWrapper(JNIEnv* env, jobject trustedPresentationListener) {
+        env->GetJavaVM(&mVm);
+        mTrustedPresentationCallback = env->NewGlobalRef(trustedPresentationListener);
+        LOG_ALWAYS_FATAL_IF(!mTrustedPresentationCallback, "Failed to make global ref");
+    }
+
+    ~TrustedPresentationCallbackWrapper() {
+        getenv()->DeleteGlobalRef(mTrustedPresentationCallback);
+    }
+
+    void onTrustedPresentationChanged(bool inTrustedPresentationState) {
+        JNIEnv* env = getenv();
+        env->CallVoidMethod(mTrustedPresentationCallback,
+                            gTrustedPresentationCallbackClassInfo.onTrustedPresentationChanged,
+                            inTrustedPresentationState);
+    }
+
+    void addCallbackRef(const sp<SurfaceComposerClient::PresentationCallbackRAII>& callbackRef) {
+        mCallbackRef = callbackRef;
+    }
+
+    static void onTrustedPresentationChangedThunk(void* context, bool inTrustedPresentationState) {
+        TrustedPresentationCallbackWrapper* listener =
+                reinterpret_cast<TrustedPresentationCallbackWrapper*>(context);
+        listener->onTrustedPresentationChanged(inTrustedPresentationState);
+    }
+
+private:
+    jobject mTrustedPresentationCallback;
+    JavaVM* mVm;
+    sp<SurfaceComposerClient::PresentationCallbackRAII> mCallbackRef;
+
+    JNIEnv* getenv() {
+        JNIEnv* env;
+        mVm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6);
+        return env;
+    }
+};
+
 // ----------------------------------------------------------------------------
 
 static jlong nativeCreateTransaction(JNIEnv* env, jclass clazz) {
@@ -372,7 +427,7 @@ static jlong nativeCreate(JNIEnv* env, jclass clazz, jobject sessionObj,
         jniThrowException(env, "java/lang/IllegalArgumentException", NULL);
         return 0;
     } else if (err != NO_ERROR) {
-        jniThrowException(env, OutOfResourcesException, NULL);
+        jniThrowException(env, OutOfResourcesException, statusToString(err).c_str());
         return 0;
     }
 
@@ -554,7 +609,7 @@ static void nativeSetBuffer(JNIEnv* env, jclass clazz, jlong transactionObj, jlo
     if (fencePtr != 0) {
         optFence = sp<Fence>{reinterpret_cast<Fence*>(fencePtr)};
     }
-    transaction->setBuffer(ctrl, graphicBuffer, optFence, std::nullopt,
+    transaction->setBuffer(ctrl, graphicBuffer, optFence, std::nullopt, 0 /* producerId */,
                            genReleaseCallback(env, releaseCallback));
 }
 
@@ -574,6 +629,21 @@ static void nativeSetDataSpace(JNIEnv* env, jclass clazz, jlong transactionObj, 
     SurfaceControl* const ctrl = reinterpret_cast<SurfaceControl*>(nativeObject);
     ui::Dataspace dataspace = static_cast<ui::Dataspace>(dataSpace);
     transaction->setDataspace(ctrl, dataspace);
+}
+
+static void nativeSetExtendedRangeBrightness(JNIEnv* env, jclass clazz, jlong transactionObj,
+                                             jlong nativeObject, float currentBufferRatio,
+                                             float desiredRatio) {
+    auto transaction = reinterpret_cast<SurfaceComposerClient::Transaction*>(transactionObj);
+    SurfaceControl* const ctrl = reinterpret_cast<SurfaceControl*>(nativeObject);
+    transaction->setExtendedRangeBrightness(ctrl, currentBufferRatio, desiredRatio);
+}
+
+static void nativeSetCachingHint(JNIEnv* env, jclass clazz, jlong transactionObj,
+                                 jlong nativeObject, jint cachingHint) {
+    auto transaction = reinterpret_cast<SurfaceComposerClient::Transaction*>(transactionObj);
+    SurfaceControl* const ctrl = reinterpret_cast<SurfaceControl*>(nativeObject);
+    transaction->setCachingHint(ctrl, static_cast<gui::CachingHint>(cachingHint));
 }
 
 static void nativeSetBlurRegions(JNIEnv* env, jclass clazz, jlong transactionObj,
@@ -888,6 +958,11 @@ static void nativeSetDropInputMode(JNIEnv* env, jclass clazz, jlong transactionO
     transaction->setDropInputMode(ctrl, static_cast<gui::DropInputMode>(mode));
 }
 
+static void nativeSurfaceFlushJankData(JNIEnv* env, jclass clazz, jlong nativeObject) {
+    SurfaceControl* const ctrl = reinterpret_cast<SurfaceControl*>(nativeObject);
+    SurfaceComposerClient::Transaction::sendSurfaceFlushJankDataTransaction(ctrl);
+}
+
 static void nativeSanitize(JNIEnv* env, jclass clazz, jlong transactionObj) {
     auto transaction = reinterpret_cast<SurfaceComposerClient::Transaction*>(transactionObj);
     transaction->sanitize();
@@ -1096,10 +1171,9 @@ static jobject convertDeviceProductInfoToJavaObject(
                           connectionToSinkType);
 }
 
-static jobject nativeGetStaticDisplayInfo(JNIEnv* env, jclass clazz, jobject tokenObj) {
+static jobject nativeGetStaticDisplayInfo(JNIEnv* env, jclass clazz, jlong id) {
     ui::StaticDisplayInfo info;
-    if (const auto token = ibinderForJavaObject(env, tokenObj);
-        !token || SurfaceComposerClient::getStaticDisplayInfo(token, &info) != NO_ERROR) {
+    if (SurfaceComposerClient::getStaticDisplayInfo(id, &info) != NO_ERROR) {
         return nullptr;
     }
 
@@ -1129,6 +1203,16 @@ static jobject convertDisplayModeToJavaObject(JNIEnv* env, const ui::DisplayMode
     env->SetLongField(object, gDisplayModeClassInfo.presentationDeadlineNanos,
                       config.presentationDeadline);
     env->SetIntField(object, gDisplayModeClassInfo.group, config.group);
+
+    const auto& types = config.supportedHdrTypes;
+    std::vector<jint> intTypes;
+    for (auto type : types) {
+        intTypes.push_back(static_cast<jint>(type));
+    }
+    auto typesArray = env->NewIntArray(types.size());
+    env->SetIntArrayRegion(typesArray, 0, intTypes.size(), intTypes.data());
+    env->SetObjectField(object, gDisplayModeClassInfo.supportedHdrTypes, typesArray);
+
     return object;
 }
 
@@ -1147,10 +1231,9 @@ jobject convertHdrCapabilitiesToJavaObject(JNIEnv* env, const HdrCapabilities& c
                           capabilities.getDesiredMinLuminance());
 }
 
-static jobject nativeGetDynamicDisplayInfo(JNIEnv* env, jclass clazz, jobject tokenObj) {
+static jobject nativeGetDynamicDisplayInfo(JNIEnv* env, jclass clazz, jlong displayId) {
     ui::DynamicDisplayInfo info;
-    if (const auto token = ibinderForJavaObject(env, tokenObj);
-        !token || SurfaceComposerClient::getDynamicDisplayInfo(token, &info) != NO_ERROR) {
+    if (SurfaceComposerClient::getDynamicDisplayInfoFromId(displayId, &info) != NO_ERROR) {
         return nullptr;
     }
 
@@ -1172,6 +1255,7 @@ static jobject nativeGetDynamicDisplayInfo(JNIEnv* env, jclass clazz, jobject to
     env->SetObjectField(object, gDynamicDisplayInfoClassInfo.supportedDisplayModes, modesArray);
     env->SetIntField(object, gDynamicDisplayInfoClassInfo.activeDisplayModeId,
                      info.activeDisplayModeId);
+    env->SetFloatField(object, gDynamicDisplayInfoClassInfo.renderFrameRate, info.renderFrameRate);
 
     jintArray colorModesArray = env->NewIntArray(info.supportedColorModes.size());
     if (colorModesArray == NULL) {
@@ -1344,6 +1428,15 @@ static jintArray nativeGetCompositionDataspaces(JNIEnv* env, jclass) {
     arrayValues[1] = static_cast<jint>(wcgDataspace);
     env->ReleaseIntArrayElements(array, arrayValues, 0);
     return array;
+}
+
+static jobject nativeGetOverlaySupport(JNIEnv* env, jclass) {
+    gui::OverlayProperties* overlayProperties = new gui::OverlayProperties;
+    if (SurfaceComposerClient::getOverlaySupport(overlayProperties) != NO_ERROR) {
+        delete overlayProperties;
+        return nullptr;
+    }
+    return android_hardware_OverlayProperties_convertToJavaObject(env, overlayProperties);
 }
 
 static jboolean nativeSetActiveColorMode(JNIEnv* env, jclass,
@@ -1777,6 +1870,42 @@ static void nativeAddTransactionCommittedListener(JNIEnv* env, jclass clazz, jlo
                                                  context);
 }
 
+static void nativeSetTrustedPresentationCallback(JNIEnv* env, jclass clazz, jlong transactionObj,
+                                                 jlong nativeObject,
+                                                 jlong trustedPresentationCallbackObject,
+                                                 jobject trustedPresentationThresholds) {
+    auto transaction = reinterpret_cast<SurfaceComposerClient::Transaction*>(transactionObj);
+    auto ctrl = reinterpret_cast<SurfaceControl*>(nativeObject);
+
+    TrustedPresentationThresholds thresholds;
+    thresholds.minAlpha = env->GetFloatField(trustedPresentationThresholds,
+                                             gTrustedPresentationThresholdsClassInfo.mMinAlpha);
+    thresholds.minFractionRendered =
+            env->GetFloatField(trustedPresentationThresholds,
+                               gTrustedPresentationThresholdsClassInfo.mMinFractionRendered);
+    thresholds.stabilityRequirementMs =
+            env->GetIntField(trustedPresentationThresholds,
+                             gTrustedPresentationThresholdsClassInfo.mStabilityRequirementMs);
+
+    sp<SurfaceComposerClient::PresentationCallbackRAII> callbackRef;
+    TrustedPresentationCallbackWrapper* wrapper =
+            reinterpret_cast<TrustedPresentationCallbackWrapper*>(
+                    trustedPresentationCallbackObject);
+    transaction->setTrustedPresentationCallback(ctrl,
+                                                TrustedPresentationCallbackWrapper::
+                                                        onTrustedPresentationChangedThunk,
+                                                thresholds, wrapper, callbackRef);
+    wrapper->addCallbackRef(callbackRef);
+}
+
+static void nativeClearTrustedPresentationCallback(JNIEnv* env, jclass clazz, jlong transactionObj,
+                                                   jlong nativeObject) {
+    auto transaction = reinterpret_cast<SurfaceComposerClient::Transaction*>(transactionObj);
+    auto ctrl = reinterpret_cast<SurfaceControl*>(nativeObject);
+
+    transaction->clearTrustedPresentationCallback(ctrl);
+}
+
 class JankDataListenerWrapper : public JankDataListener {
 public:
     JankDataListenerWrapper(JNIEnv* env, jobject onJankDataListenerObject) {
@@ -1883,6 +2012,26 @@ static void nativeSetDefaultApplyToken(JNIEnv* env, jclass clazz, jobject applyT
 static jobject nativeGetDefaultApplyToken(JNIEnv* env, jclass clazz) {
     sp<IBinder> token = SurfaceComposerClient::Transaction::getDefaultApplyToken();
     return javaObjectForIBinder(env, token);
+}
+
+static jboolean nativeBootFinished(JNIEnv* env, jclass clazz) {
+    status_t error = SurfaceComposerClient::bootFinished();
+    return error == OK ? JNI_TRUE : JNI_FALSE;
+}
+
+jlong nativeCreateTpc(JNIEnv* env, jclass clazz, jobject trustedPresentationCallback) {
+    return reinterpret_cast<jlong>(
+            new TrustedPresentationCallbackWrapper(env, trustedPresentationCallback));
+}
+
+void destroyNativeTpc(void* ptr) {
+    TrustedPresentationCallbackWrapper* callback =
+            reinterpret_cast<TrustedPresentationCallbackWrapper*>(ptr);
+    delete callback;
+}
+
+static jlong getNativeTrustedPresentationCallbackFinalizer(JNIEnv* env, jclass clazz) {
+    return static_cast<jlong>(reinterpret_cast<uintptr_t>(&destroyNativeTpc));
 }
 
 // ----------------------------------------------------------------------------
@@ -1997,10 +2146,10 @@ static const JNINativeMethod sSurfaceControlMethods[] = {
     {"nativeSetDisplaySize", "(JLandroid/os/IBinder;II)V",
             (void*)nativeSetDisplaySize },
     {"nativeGetStaticDisplayInfo",
-            "(Landroid/os/IBinder;)Landroid/view/SurfaceControl$StaticDisplayInfo;",
+            "(J)Landroid/view/SurfaceControl$StaticDisplayInfo;",
             (void*)nativeGetStaticDisplayInfo },
     {"nativeGetDynamicDisplayInfo",
-            "(Landroid/os/IBinder;)Landroid/view/SurfaceControl$DynamicDisplayInfo;",
+            "(J)Landroid/view/SurfaceControl$DynamicDisplayInfo;",
             (void*)nativeGetDynamicDisplayInfo },
     {"nativeSetDesiredDisplayModeSpecs",
             "(Landroid/os/IBinder;Landroid/view/SurfaceControl$DesiredDisplayModeSpecs;)Z",
@@ -2025,6 +2174,8 @@ static const JNINativeMethod sSurfaceControlMethods[] = {
             (void*)nativeSetGameContentType },
     {"nativeGetCompositionDataspaces", "()[I",
             (void*)nativeGetCompositionDataspaces},
+    {"nativeGetOverlaySupport", "()Landroid/hardware/OverlayProperties;",
+            (void*) nativeGetOverlaySupport},
     {"nativeClearContentFrameStats", "(J)Z",
             (void*)nativeClearContentFrameStats },
     {"nativeGetContentFrameStats", "(JLandroid/view/WindowContentFrameStats;)Z",
@@ -2058,6 +2209,10 @@ static const JNINativeMethod sSurfaceControlMethods[] = {
     {"nativeSetBufferTransform", "(JJI)V", (void*) nativeSetBufferTransform},
     {"nativeSetDataSpace", "(JJI)V",
             (void*)nativeSetDataSpace },
+    {"nativeSetExtendedRangeBrightness", "(JJFF)V",
+            (void*)nativeSetExtendedRangeBrightness },
+            {"nativeSetCachingHint", "(JJI)V",
+            (void*)nativeSetCachingHint },
     {"nativeAddWindowInfosReportedListener", "(JLjava/lang/Runnable;)V",
             (void*)nativeAddWindowInfosReportedListener },
     {"nativeGetDisplayBrightnessSupport", "(Landroid/os/IBinder;)Z",
@@ -2105,8 +2260,14 @@ static const JNINativeMethod sSurfaceControlMethods[] = {
             (void*)nativeGetLayerId },
     {"nativeSetDropInputMode", "(JJI)V",
              (void*)nativeSetDropInputMode },
+    {"nativeSurfaceFlushJankData", "(J)V",
+            (void*)nativeSurfaceFlushJankData },
     {"nativeAddTransactionCommittedListener", "(JLandroid/view/SurfaceControl$TransactionCommittedListener;)V",
             (void*) nativeAddTransactionCommittedListener },
+    {"nativeSetTrustedPresentationCallback", "(JJJLandroid/view/SurfaceControl$TrustedPresentationThresholds;)V",
+            (void*) nativeSetTrustedPresentationCallback },
+    {"nativeClearTrustedPresentationCallback", "(JJ)V",
+            (void*) nativeClearTrustedPresentationCallback },
     {"nativeSanitize", "(J)V",
             (void*) nativeSanitize },
     {"nativeSetDestinationFrame", "(JJIIII)V",
@@ -2115,6 +2276,11 @@ static const JNINativeMethod sSurfaceControlMethods[] = {
                 (void*)nativeSetDefaultApplyToken },
     {"nativeGetDefaultApplyToken", "()Landroid/os/IBinder;",
                 (void*)nativeGetDefaultApplyToken },
+    {"nativeBootFinished", "()Z",
+            (void*)nativeBootFinished },
+    {"nativeCreateTpc", "(Landroid/view/SurfaceControl$TrustedPresentationCallback;)J",
+            (void*)nativeCreateTpc},
+    {"getNativeTrustedPresentationCallbackFinalizer", "()J", (void*)getNativeTrustedPresentationCallbackFinalizer },
         // clang-format on
 };
 
@@ -2151,6 +2317,8 @@ int register_android_view_SurfaceControl(JNIEnv* env)
                             "[Landroid/view/SurfaceControl$DisplayMode;");
     gDynamicDisplayInfoClassInfo.activeDisplayModeId =
             GetFieldIDOrDie(env, dynamicInfoClazz, "activeDisplayModeId", "I");
+    gDynamicDisplayInfoClassInfo.renderFrameRate =
+            GetFieldIDOrDie(env, dynamicInfoClazz, "renderFrameRate", "F");
     gDynamicDisplayInfoClassInfo.supportedColorModes =
             GetFieldIDOrDie(env, dynamicInfoClazz, "supportedColorModes", "[I");
     gDynamicDisplayInfoClassInfo.activeColorMode =
@@ -2179,6 +2347,8 @@ int register_android_view_SurfaceControl(JNIEnv* env)
     gDisplayModeClassInfo.presentationDeadlineNanos =
             GetFieldIDOrDie(env, modeClazz, "presentationDeadlineNanos", "J");
     gDisplayModeClassInfo.group = GetFieldIDOrDie(env, modeClazz, "group", "I");
+    gDisplayModeClassInfo.supportedHdrTypes =
+            GetFieldIDOrDie(env, modeClazz, "supportedHdrTypes", "[I");
 
     jclass frameStatsClazz = FindClassOrDie(env, "android/view/FrameStats");
     jfieldID undefined_time_nano_field = GetStaticFieldIDOrDie(env,
@@ -2337,6 +2507,23 @@ int register_android_view_SurfaceControl(JNIEnv* env)
     gTransactionClassInfo.mNativeObject =
             GetFieldIDOrDie(env, gTransactionClassInfo.clazz, "mNativeObject", "J");
 
+    jclass trustedPresentationThresholdsClazz =
+            FindClassOrDie(env, "android/view/SurfaceControl$TrustedPresentationThresholds");
+    gTrustedPresentationThresholdsClassInfo.clazz =
+            MakeGlobalRefOrDie(env, trustedPresentationThresholdsClazz);
+    gTrustedPresentationThresholdsClassInfo.mMinAlpha =
+            GetFieldIDOrDie(env, trustedPresentationThresholdsClazz, "mMinAlpha", "F");
+    gTrustedPresentationThresholdsClassInfo.mMinFractionRendered =
+            GetFieldIDOrDie(env, trustedPresentationThresholdsClazz, "mMinFractionRendered", "F");
+    gTrustedPresentationThresholdsClassInfo.mStabilityRequirementMs =
+            GetFieldIDOrDie(env, trustedPresentationThresholdsClazz, "mStabilityRequirementMs",
+                            "I");
+
+    jclass trustedPresentationCallbackClazz =
+            FindClassOrDie(env, "android/view/SurfaceControl$TrustedPresentationCallback");
+    gTrustedPresentationCallbackClassInfo.onTrustedPresentationChanged =
+            GetMethodIDOrDie(env, trustedPresentationCallbackClazz, "onTrustedPresentationChanged",
+                             "(Z)V");
     return err;
 }
 

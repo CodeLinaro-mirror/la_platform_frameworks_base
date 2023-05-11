@@ -680,8 +680,6 @@ public class BubbleStackView extends FrameLayout
 
                     // Re-show the expanded view if we hid it.
                     showExpandedViewIfNeeded();
-                } else if (mPositioner.showingInTaskbar()) {
-                    mStackAnimationController.snapStackBack();
                 } else {
                     // Fling the stack to the edge, and save whether or not it's going to end up on
                     // the left side of the screen.
@@ -1361,16 +1359,6 @@ public class BubbleStackView extends FrameLayout
         updateOverflowVisibility();
     }
 
-    void updateOverflowButtonDot() {
-        for (Bubble b : mBubbleData.getOverflowBubbles()) {
-            if (b.showDot()) {
-                mBubbleOverflow.setShowDot(true);
-                return;
-            }
-        }
-        mBubbleOverflow.setShowDot(false);
-    }
-
     /**
      * Handle theme changes.
      */
@@ -1955,6 +1943,7 @@ public class BubbleStackView extends FrameLayout
         if (wasExpanded) {
             stopMonitoringSwipeUpGesture();
             animateCollapse();
+            showManageMenu(false);
             logBubbleEvent(mExpandedBubble, FrameworkStatsLog.BUBBLE_UICHANGED__ACTION__COLLAPSED);
         } else {
             animateExpansion();
@@ -2921,8 +2910,10 @@ public class BubbleStackView extends FrameLayout
                     .withEndActions(() -> {
                         View child = mManageMenu.getChildAt(0);
                         child.requestAccessibilityFocus();
-                        // Update the AV's obscured touchable region for the new visibility state.
-                        mExpandedBubble.getExpandedView().updateObscuredTouchableRegion();
+                        if (mExpandedBubble != null && mExpandedBubble.getExpandedView() != null) {
+                            // Update the AV's obscured touchable region for the new state.
+                            mExpandedBubble.getExpandedView().updateObscuredTouchableRegion();
+                        }
                     })
                     .start();
 

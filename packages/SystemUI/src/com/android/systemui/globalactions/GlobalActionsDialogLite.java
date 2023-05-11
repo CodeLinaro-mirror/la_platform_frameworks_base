@@ -21,7 +21,6 @@ import static android.view.ViewGroup.LayoutParams.WRAP_CONTENT;
 import static android.view.WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM;
 import static android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
 import static android.view.WindowManager.ScreenshotSource.SCREENSHOT_GLOBAL_ACTIONS;
-import static android.view.WindowManager.TAKE_SCREENSHOT_FULLSCREEN;
 import static android.view.WindowManagerPolicyConstants.NAV_BAR_MODE_2BUTTON;
 
 import static com.android.internal.widget.LockPatternUtils.StrongAuthTracker.SOME_AUTH_REQUIRED_AFTER_USER_REQUEST;
@@ -125,6 +124,7 @@ import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.plugins.GlobalActions.GlobalActionsManager;
 import com.android.systemui.plugins.GlobalActionsPanelPlugin;
 import com.android.systemui.scrim.ScrimDrawable;
+import com.android.systemui.settings.UserTracker;
 import com.android.systemui.statusbar.NotificationShadeWindowController;
 import com.android.systemui.statusbar.VibratorHelper;
 import com.android.systemui.statusbar.phone.CentralSurfaces;
@@ -201,6 +201,7 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
     protected final SecureSettings mSecureSettings;
     protected final Resources mResources;
     private final ConfigurationController mConfigurationController;
+    private final UserTracker mUserTracker;
     private final UserManager mUserManager;
     private final TrustManager mTrustManager;
     private final IActivityManager mIActivityManager;
@@ -339,6 +340,7 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
             @NonNull VibratorHelper vibrator,
             @Main Resources resources,
             ConfigurationController configurationController,
+            UserTracker userTracker,
             KeyguardStateController keyguardStateController,
             UserManager userManager,
             TrustManager trustManager,
@@ -370,6 +372,7 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
         mSecureSettings = secureSettings;
         mResources = resources;
         mConfigurationController = configurationController;
+        mUserTracker = userTracker;
         mUserManager = userManager;
         mTrustManager = trustManager;
         mIActivityManager = iActivityManager;
@@ -727,9 +730,10 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
     }
 
     @VisibleForTesting
-    boolean shouldDisplayBugReport(UserInfo currentUser) {
-        return mGlobalSettings.getInt(Settings.Global.BUGREPORT_IN_POWER_MENU, 0) != 0
-                && (currentUser == null || currentUser.isPrimary());
+    boolean shouldDisplayBugReport(@Nullable UserInfo user) {
+        return user != null && user.isAdmin()
+                && mGlobalSettings.getIntForUser(Settings.Secure.BUGREPORT_IN_POWER_MENU, 0,
+                user.id) != 0;
     }
 
     @Override
@@ -784,6 +788,11 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
 
         @Override
         public boolean onLongPress() {
+            // don't actually trigger the reboot if we are running stability
+            // tests via monkey
+            if (ActivityManager.isUserAMonkey()) {
+                return false;
+            }
             mUiEventLogger.log(GlobalActionsEvent.GA_SHUTDOWN_LONG_PRESS);
             if (!mUserManager.hasUserRestriction(UserManager.DISALLOW_SAFE_BOOT)) {
                 mWindowManagerFuncs.reboot(true);
@@ -804,6 +813,11 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
 
         @Override
         public void onPress() {
+            // don't actually trigger the shutdown if we are running stability
+            // tests via monkey
+            if (ActivityManager.isUserAMonkey()) {
+                return;
+            }
             mUiEventLogger.log(GlobalActionsEvent.GA_SHUTDOWN_PRESS);
             // shutdown by making sure radio and power are handled accordingly.
             mWindowManagerFuncs.shutdown();
@@ -897,7 +911,7 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
                         | Intent.FLAG_ACTIVITY_CLEAR_TOP);
                 intent.putExtra(EmergencyDialerConstants.EXTRA_ENTRY_TYPE,
                         EmergencyDialerConstants.ENTRY_TYPE_POWER_MENU);
-                mContext.startActivityAsUser(intent, UserHandle.CURRENT);
+                mContext.startActivityAsUser(intent, mUserTracker.getUserHandle());
             }
         }
     }
@@ -915,6 +929,11 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
 
         @Override
         public boolean onLongPress() {
+            // don't actually trigger the reboot if we are running stability
+            // tests via monkey
+            if (ActivityManager.isUserAMonkey()) {
+                return false;
+            }
             mUiEventLogger.log(GlobalActionsEvent.GA_REBOOT_LONG_PRESS);
             if (!mUserManager.hasUserRestriction(UserManager.DISALLOW_SAFE_BOOT)) {
                 mWindowManagerFuncs.reboot(true);
@@ -935,6 +954,11 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
 
         @Override
         public void onPress() {
+            // don't actually trigger the reboot if we are running stability
+            // tests via monkey
+            if (ActivityManager.isUserAMonkey()) {
+                return;
+            }
             mUiEventLogger.log(GlobalActionsEvent.GA_REBOOT_PRESS);
             mWindowManagerFuncs.reboot(false);
         }
@@ -955,8 +979,7 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
             mHandler.postDelayed(new Runnable() {
                 @Override
                 public void run() {
-                    mScreenshotHelper.takeScreenshot(TAKE_SCREENSHOT_FULLSCREEN,
-                            SCREENSHOT_GLOBAL_ACTIONS, mHandler, null);
+                    mScreenshotHelper.takeScreenshot(SCREENSHOT_GLOBAL_ACTIONS, mHandler, null);
                     mMetricsLogger.action(MetricsEvent.ACTION_SCREENSHOT_POWER_MENU);
                     mUiEventLogger.log(GlobalActionsEvent.GA_SCREENSHOT_PRESS);
                 }
@@ -1054,8 +1077,9 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
 
         @Override
         public boolean showBeforeProvisioning() {
-            return Build.isDebuggable() && mGlobalSettings.getInt(
-                    Settings.Global.BUGREPORT_IN_POWER_MENU, 0) != 0;
+            return Build.isDebuggable() && mGlobalSettings.getIntForUser(
+                    Settings.Secure.BUGREPORT_IN_POWER_MENU, 0, getCurrentUser().id) != 0
+                    && getCurrentUser().isAdmin();
         }
     }
 
@@ -1198,11 +1222,7 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
     }
 
     protected UserInfo getCurrentUser() {
-        try {
-            return mIActivityManager.getCurrentUser();
-        } catch (RemoteException re) {
-            return null;
-        }
+        return mUserTracker.getUserInfo();
     }
 
     /**
@@ -2056,6 +2076,10 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
                     || Intent.ACTION_SCREEN_OFF.equals(action)) {
                 String reason = intent.getStringExtra(SYSTEM_DIALOG_REASON_KEY);
                 if (!SYSTEM_DIALOG_REASON_GLOBAL_ACTIONS.equals(reason)) {
+                    // These broadcasts are usually received when locking the device, swiping up to
+                    // home (which collapses the shade), etc. In those cases, we usually don't want
+                    // to animate this dialog back into the view, so we disable the exit animations.
+                    mDialogLaunchAnimator.disableAllCurrentDialogsExitAnimations();
                     mHandler.sendMessage(mHandler.obtainMessage(MESSAGE_DISMISS, reason));
                 }
             } else if (TelephonyManager.ACTION_EMERGENCY_CALLBACK_MODE_CHANGED.equals(action)) {

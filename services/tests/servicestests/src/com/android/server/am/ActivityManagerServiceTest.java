@@ -69,6 +69,7 @@ import android.content.pm.PackageManagerInternal;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.IBinder;
+import android.os.IProgressListener;
 import android.os.Looper;
 import android.os.Message;
 import android.os.Process;
@@ -527,7 +528,7 @@ public class ActivityManagerServiceTest {
             ActivityManager.PROCESS_CAPABILITY_NONE,
             ActivityManager.PROCESS_CAPABILITY_NONE,
             ActivityManager.PROCESS_CAPABILITY_NONE,
-            ActivityManager.PROCESS_CAPABILITY_NETWORK,
+            ActivityManager.PROCESS_CAPABILITY_POWER_RESTRICTED_NETWORK,
         };
         final Map<Integer, ChangeRecord> changeItems = new HashMap<>();
         for (int i = 0; i < changesForPendingUidRecords.length; ++i) {
@@ -834,35 +835,37 @@ public class ActivityManagerServiceTest {
     }
 
     @Test
-    public void testGetSecondaryDisplayIdsForStartingBackgroundUsers() {
+    public void testGetDisplayIdsForStartingBackgroundUsers() {
         mInjector.secondaryDisplayIdsForStartingBackgroundUsers = new int[]{4, 8, 15, 16, 23, 42};
 
-        int [] displayIds = mAms.getSecondaryDisplayIdsForStartingBackgroundUsers();
+        int [] displayIds = mAms.getDisplayIdsForStartingVisibleBackgroundUsers();
 
-        assertWithMessage("mAms.getSecondaryDisplayIdsForStartingBackgroundUsers()")
+        assertWithMessage("mAms.getDisplayIdsForStartingVisibleBackgroundUsers()")
                 .that(displayIds).asList().containsExactly(4, 8, 15, 16, 23, 42);
     }
 
     @Test
-    public void testStartUserInBackgroundOnSecondaryDisplay_invalidDisplay() {
+    public void testStartUserInBackgroundVisibleOnDisplay_invalidDisplay() {
         mInjector.secondaryDisplayIdsForStartingBackgroundUsers = new int[]{4, 8, 15, 16, 23, 42};
 
         assertThrows(IllegalArgumentException.class,
-                () -> mAms.startUserInBackgroundOnSecondaryDisplay(USER_ID, 666));
+                () -> mAms.startUserInBackgroundVisibleOnDisplay(USER_ID, 666,
+                        /* unlockProgressListener= */ null));
 
         assertWithMessage("UserController.startUserOnSecondaryDisplay() calls")
                 .that(mInjector.usersStartedOnSecondaryDisplays).isEmpty();
     }
 
     @Test
-    public void testStartUserInBackgroundOnSecondaryDisplay_validDisplay_failed() {
+    public void testStartUserInBackgroundVisibleOnDisplay_validDisplay_failed() {
         mInjector.secondaryDisplayIdsForStartingBackgroundUsers = new int[]{ 4, 8, 15, 16, 23, 42 };
         mInjector.returnValueForstartUserOnSecondaryDisplay = false;
 
-        boolean started = mAms.startUserInBackgroundOnSecondaryDisplay(USER_ID, 42);
+        boolean started = mAms.startUserInBackgroundVisibleOnDisplay(USER_ID, 42,
+                /* unlockProgressListener= */ null);
         Log.v(TAG, "Started: " + started);
 
-        assertWithMessage("mAms.startUserInBackgroundOnSecondaryDisplay(%s, 42)", USER_ID)
+        assertWithMessage("mAms.startUserInBackgroundOnDisplay(%s, 42)", USER_ID)
                 .that(started).isFalse();
         assertWithMessage("UserController.startUserOnSecondaryDisplay() calls")
                 .that(mInjector.usersStartedOnSecondaryDisplays)
@@ -870,16 +873,17 @@ public class ActivityManagerServiceTest {
     }
 
     @Test
-    public void testStartUserInBackgroundOnSecondaryDisplay_validDisplay_success() {
+    public void testStartUserInBackgroundVisibleOnDisplay_validDisplay_success() {
         mInjector.secondaryDisplayIdsForStartingBackgroundUsers = new int[]{ 4, 8, 15, 16, 23, 42 };
         mInjector.returnValueForstartUserOnSecondaryDisplay = true;
 
-        boolean started = mAms.startUserInBackgroundOnSecondaryDisplay(USER_ID, 42);
+        boolean started = mAms.startUserInBackgroundVisibleOnDisplay(USER_ID, 42,
+                /* unlockProgressListener= */ null);
         Log.v(TAG, "Started: " + started);
 
-        assertWithMessage("mAms.startUserInBackgroundOnSecondaryDisplay(%s, 42)", USER_ID)
+        assertWithMessage("mAms.startUserInBackgroundOnDisplay(%s, 42)", USER_ID)
                 .that(started).isTrue();
-        assertWithMessage("UserController.startUserOnSecondaryDisplay() calls")
+        assertWithMessage("UserController.startUserOnDisplay() calls")
                 .that(mInjector.usersStartedOnSecondaryDisplays)
                 .containsExactly(new Pair<>(USER_ID, 42));
     }
@@ -989,7 +993,8 @@ public class ActivityManagerServiceTest {
         }
 
         @Override
-        public AppOpsService getAppOpsService(File file, Handler handler) {
+        public AppOpsService getAppOpsService(File recentAccessesFile, File storageFile,
+                Handler handler) {
             return mAppOpsService;
         }
 
@@ -1004,12 +1009,13 @@ public class ActivityManagerServiceTest {
         }
 
         @Override
-        public int[] getSecondaryDisplayIdsForStartingBackgroundUsers() {
+        public int[] getDisplayIdsForStartingVisibleBackgroundUsers() {
             return secondaryDisplayIdsForStartingBackgroundUsers;
         }
 
         @Override
-        public boolean startUserOnSecondaryDisplay(int userId, int displayId) {
+        public boolean startUserInBackgroundVisibleOnDisplay(int userId, int displayId,
+                IProgressListener unlockProgressListener) {
             usersStartedOnSecondaryDisplays.add(new Pair<>(userId, displayId));
             return returnValueForstartUserOnSecondaryDisplay;
         }

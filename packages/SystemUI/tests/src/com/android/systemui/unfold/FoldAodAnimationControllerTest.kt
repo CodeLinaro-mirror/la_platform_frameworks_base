@@ -25,10 +25,14 @@ import android.view.ViewTreeObserver
 import androidx.test.filters.SmallTest
 import com.android.internal.util.LatencyTracker
 import com.android.systemui.SysuiTestCase
+import com.android.systemui.flags.FakeFeatureFlags
+import com.android.systemui.flags.Flags.FACE_AUTH_REFACTOR
 import com.android.systemui.keyguard.WakefulnessLifecycle
+import com.android.systemui.keyguard.data.repository.FakeKeyguardBouncerRepository
 import com.android.systemui.keyguard.data.repository.FakeKeyguardRepository
 import com.android.systemui.keyguard.domain.interactor.KeyguardInteractor
 import com.android.systemui.shade.NotificationPanelViewController
+import com.android.systemui.statusbar.CommandQueue
 import com.android.systemui.statusbar.LightRevealScrim
 import com.android.systemui.statusbar.phone.CentralSurfaces
 import com.android.systemui.unfold.util.FoldableDeviceStates
@@ -73,6 +77,8 @@ class FoldAodAnimationControllerTest : SysuiTestCase() {
 
     @Mock lateinit var viewTreeObserver: ViewTreeObserver
 
+    @Mock private lateinit var commandQueue: CommandQueue
+
     @Captor private lateinit var foldStateListenerCaptor: ArgumentCaptor<FoldStateListener>
 
     private lateinit var deviceStates: FoldableDeviceStates
@@ -88,6 +94,7 @@ class FoldAodAnimationControllerTest : SysuiTestCase() {
 
         deviceStates = FoldableTestUtils.findDeviceStates(context)
 
+        // TODO(b/254878364): remove this call to NPVC.getView()
         whenever(notificationPanelViewController.view).thenReturn(viewGroup)
         whenever(viewGroup.viewTreeObserver).thenReturn(viewTreeObserver)
         whenever(wakefulnessLifecycle.lastSleepReason)
@@ -101,7 +108,14 @@ class FoldAodAnimationControllerTest : SysuiTestCase() {
             }
 
         keyguardRepository = FakeKeyguardRepository()
-        val keyguardInteractor = KeyguardInteractor(repository = keyguardRepository)
+        val featureFlags = FakeFeatureFlags().apply { set(FACE_AUTH_REFACTOR, true) }
+        val keyguardInteractor =
+            KeyguardInteractor(
+                repository = keyguardRepository,
+                commandQueue = commandQueue,
+                featureFlags = featureFlags,
+                bouncerRepository = FakeKeyguardBouncerRepository(),
+            )
 
         // Needs to be run on the main thread
         runBlocking(IMMEDIATE) {
@@ -170,8 +184,10 @@ class FoldAodAnimationControllerTest : SysuiTestCase() {
 
             fold()
             underTest.onScreenTurningOn({})
-            underTest.onStartedWakingUp()
+            // The body of onScreenTurningOn is executed on fakeExecutor,
+            // run all pending tasks before calling the next method
             fakeExecutor.runAllReady()
+            underTest.onStartedWakingUp()
 
             verify(latencyTracker).onActionStart(any())
             verify(latencyTracker).onActionCancel(any())

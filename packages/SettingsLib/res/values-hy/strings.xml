@@ -173,7 +173,7 @@
     <string name="running_process_item_user_label" msgid="3988506293099805796">"Օգտատեր՝ <xliff:g id="USER_NAME">%1$s</xliff:g>"</string>
     <string name="launch_defaults_some" msgid="3631650616557252926">"Որոշ կանխադրված կարգավորումներ կան"</string>
     <string name="launch_defaults_none" msgid="8049374306261262709">"Կանխադրված կարգավորումներ չկան"</string>
-    <string name="tts_settings" msgid="8130616705989351312">"Տեքստի հնչեցման կարգավորումներ"</string>
+    <string name="tts_settings" msgid="8130616705989351312">"Տեքստի հնչեցման կարգա­վորումներ"</string>
     <string name="tts_settings_title" msgid="7602210956640483039">"Տեքստի հնչեցում"</string>
     <string name="tts_default_rate_title" msgid="3964187817364304022">"Խոսքի արագությունը"</string>
     <string name="tts_default_rate_summary" msgid="3781937042151716987">"Տեքստի արտասանման արագությունը"</string>
@@ -467,7 +467,8 @@
     <string name="power_charging" msgid="6727132649743436802">"<xliff:g id="LEVEL">%1$s</xliff:g> - <xliff:g id="STATE">%2$s</xliff:g>"</string>
     <string name="power_remaining_charging_duration_only" msgid="8085099012811384899">"<xliff:g id="TIME">%1$s</xliff:g> մինչև լրիվ լիցքավորումը"</string>
     <string name="power_charging_duration" msgid="6127154952524919719">"<xliff:g id="LEVEL">%1$s</xliff:g> – <xliff:g id="TIME">%2$s</xliff:g> մինչև լրիվ լիցքավորումը"</string>
-    <string name="power_charging_limited" msgid="6971664137170239141">"<xliff:g id="LEVEL">%1$s</xliff:g> – Լիցքավորումը դադարեցված է"</string>
+    <string name="power_charging_limited" msgid="8202147604844938236">"<xliff:g id="LEVEL">%1$s</xliff:g> – Լիցքավորումն օպտիմալացված է"</string>
+    <string name="power_charging_future_paused" msgid="4730177778538118032">"<xliff:g id="LEVEL">%1$s</xliff:g> – Լիցքավորումն օպտիմալացված է"</string>
     <string name="battery_info_status_unknown" msgid="268625384868401114">"Անհայտ"</string>
     <string name="battery_info_status_charging" msgid="4279958015430387405">"Լիցքավորում"</string>
     <string name="battery_info_status_charging_fast" msgid="8027559755902954885">"Արագ լիցքավորում"</string>
@@ -539,6 +540,13 @@
     <string name="media_transfer_this_device_name" product="default" msgid="2357329267148436433">"Այս հեռախոսը"</string>
     <string name="media_transfer_this_device_name" product="tablet" msgid="3714653244000242800">"Այս պլանշետը"</string>
     <string name="media_transfer_this_phone" msgid="7194341457812151531">"Այս հեռախոսը"</string>
+    <string name="media_output_status_unknown_error" msgid="5098565887497902222">"Հնարավոր չէ նվագարկել այս սարքում"</string>
+    <string name="media_output_status_require_premium" msgid="8411255800047014822">"Փոխելու համար անցեք հաշվի պրեմիում տարբերակին"</string>
+    <string name="media_output_status_not_support_downloads" msgid="4523828729240373315">"Հնարավոր չէ նվագարկել ներբեռնումներն այստեղ"</string>
+    <string name="media_output_status_try_after_ad" msgid="8312579066856015441">"Նորից փորձեք գովազդից հետո"</string>
+    <string name="media_output_status_device_in_low_power_mode" msgid="8184631698321758451">"Արթնացրեք սարքը՝ այստեղ նվագարկելու համար"</string>
+    <string name="media_output_status_unauthorized" msgid="5880222828273853838">"Նվագարկելու համար հաստատեք սարքը"</string>
+    <string name="media_output_status_track_unsupported" msgid="5576313219317709664">"Չհաջողվեց նվագարկել մեդիա ֆայլն այստեղ"</string>
     <string name="profile_connect_timeout_subtext" msgid="4043408193005851761">"Կապի խնդիր կա: Սարքն անջատեք և նորից միացրեք:"</string>
     <string name="media_transfer_wired_device_name" msgid="4447880899964056007">"Լարով աուդիո սարք"</string>
     <string name="help_label" msgid="3528360748637781274">"Օգնություն և հետադարձ կապ"</string>
@@ -563,6 +571,8 @@
     <string name="user_add_user_title" msgid="5457079143694924885">"Ավելացնե՞լ նոր օգտատեր"</string>
     <string name="user_add_user_message_long" msgid="1527434966294733380">"Այս սարքից կարող եք օգտվել մի քանի հոգով: Դրա համար անհրաժեշտ է ստեղծել լրացուցիչ պրոֆիլներ: Յուրաքանչյուր օգտատեր կարող է կարգավորել իր պրոֆիլը ըստ իր հայեցողության և ճաշակի (օր.՝ ընտրել իր ուզած պաստառը, տեղադրել անհրաժեշտ հավելվածները և այլն): Բացի այդ, օգտատերերը կարող են կարգավորել սարքի որոշ պարամետրեր (օր.՝ Wi-Fi-ը), որոնք կգործեն նաև մյուս պրոֆիլների համար:\n\nԵրբ նոր պրոֆիլ ավելացնեք, տվյալ օգտատերը պետք է կարգավորի այն:\n\nՅուրաքանչյուր օգտատեր կարող է թարմացնել մյուս օգտատերերի հավելվածները: Հատուկ գործառույթների և ծառայությունների կարգավորումները կարող են չփոխանցվել նոր օգտատերերին:"</string>
     <string name="user_add_user_message_short" msgid="3295959985795716166">"Երբ նոր օգտատեր եք ավելացնում, նա պետք է կարգավորի իր պրոֆիլը:\n\nՑանկացած օգտատեր կարող է թարմացնել հավելվածները բոլոր օգտատերերի համար:"</string>
+    <string name="user_grant_admin_title" msgid="5565796912475193314">"Տրամադրե՞լ արտոնություններ"</string>
+    <string name="user_grant_admin_message" msgid="7925257971286380976">"Որպես ադմինիստրատոր՝ նա կկարողանա կառավարել այլ օգտատերերի, փոխել սարքի կարգավորումները և վերականգնել սարքի գործարանային կարգավորումները։"</string>
     <string name="user_setup_dialog_title" msgid="8037342066381939995">"Կարգավորե՞լ պրոֆիլը"</string>
     <string name="user_setup_dialog_message" msgid="269931619868102841">"Համոզվեք, որ անձը կարող է վերցնել սարքը և կարգավորել իր տարածքը"</string>
     <string name="user_setup_profile_dialog_message" msgid="4788197052296962620">"Կարգավորե՞լ պրոֆիլը հիմա:"</string>
@@ -594,6 +604,8 @@
     <string name="guest_reset_and_restart_dialog_message" msgid="2764425635305200790">"Կսկսվի հյուրի նոր աշխատաշրջան, իսկ նախորդ աշխատաշրջանի բոլոր հավելվածներն ու տվյալները կջնջվեն"</string>
     <string name="guest_exit_dialog_title" msgid="1846494656849381804">"Դուրս գա՞լ հյուրի ռեժիմից"</string>
     <string name="guest_exit_dialog_message" msgid="1743218864242719783">"Հյուրի ընթացիկ աշխատաշրջանի բոլոր հավելվածներն ու տվյալները կջնջվեն"</string>
+    <string name="grant_admin" msgid="4273077214151417783">"Օգտատիրոջը տրամադրել ադմինիստրատորի արտոնություններ"</string>
+    <string name="not_grant_admin" msgid="6985027675930546850">"Օգտատիրոջը չտրամադրել ադմինիստրատորի արտոնություններ"</string>
     <string name="guest_exit_dialog_button" msgid="1736401897067442044">"Դուրս գալ"</string>
     <string name="guest_exit_dialog_title_non_ephemeral" msgid="7675327443743162986">"Պահե՞լ հյուրի ռեժիմի պատմությունը"</string>
     <string name="guest_exit_dialog_message_non_ephemeral" msgid="223385323235719442">"Պահեք ընթացիկ աշխատաշրջանի պատմությունը կամ ջնջեք հավելվածներն ու տվյալները"</string>
@@ -661,4 +673,10 @@
     <string name="back_navigation_animation" msgid="8105467568421689484">"«Հետ» ժեստի հուշման շարժանկարներ"</string>
     <string name="back_navigation_animation_summary" msgid="741292224121599456">"Միացնել համակարգի անիմացիաները «Հետ» ժեստի հուշման համար"</string>
     <string name="back_navigation_animation_dialog" msgid="8696966520944625596">"Այս կարգավորման միջոցով կարելի է միացնել համակարգային շարժանկարները ժեստի հուշման համար։ Կարգավորումը պահանջում է մանիֆեստի ֆայլում սահմանել true արժեքը per-app enableOnBackInvokedCallback հատկության համար։"</string>
+  <string-array name="udfps_accessibility_touch_hints">
+    <item msgid="1737722959616802157">"Տեղափոխել ձախ"</item>
+    <item msgid="5425394847942513942">"Տեղափոխել ներքև"</item>
+    <item msgid="7728484337962740316">"Տեղափոխել աջ"</item>
+    <item msgid="324200556467459329">"Տեղափոխել վերև"</item>
+  </string-array>
 </resources>

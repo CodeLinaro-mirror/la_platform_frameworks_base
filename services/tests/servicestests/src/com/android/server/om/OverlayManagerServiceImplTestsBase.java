@@ -24,6 +24,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import android.annotation.NonNull;
+import android.content.Intent;
 import android.content.om.OverlayIdentifier;
 import android.content.om.OverlayInfo;
 import android.content.om.OverlayInfo.State;
@@ -39,6 +40,8 @@ import androidx.annotation.Nullable;
 
 import com.android.internal.content.om.OverlayConfig;
 import com.android.server.pm.pkg.AndroidPackage;
+import com.android.server.pm.pkg.AndroidPackageSplit;
+import com.android.server.pm.pkg.PackageState;
 
 import org.junit.Assert;
 import org.junit.Before;
@@ -160,7 +163,7 @@ class OverlayManagerServiceImplTestsBase {
      * Adds the package to the device.
      *
      * This corresponds to when the OMS receives the
-     * {@link android.content.Intent#ACTION_PACKAGE_ADDED} broadcast.
+     * {@link Intent#ACTION_PACKAGE_ADDED} broadcast.
      *
      * @throws IllegalStateException if the package is currently installed
      */
@@ -178,10 +181,10 @@ class OverlayManagerServiceImplTestsBase {
      * Begins upgrading the package.
      *
      * This corresponds to when the OMS receives the
-     * {@link android.content.Intent#ACTION_PACKAGE_REMOVED} broadcast with the
-     * {@link android.content.Intent#EXTRA_REPLACING} extra and then receives the
-     * {@link android.content.Intent#ACTION_PACKAGE_ADDED} broadcast with the
-     * {@link android.content.Intent#EXTRA_REPLACING} extra.
+     * {@link Intent#ACTION_PACKAGE_REMOVED} broadcast with the
+     * {@link Intent#EXTRA_REPLACING} extra and then receives the
+     * {@link Intent#ACTION_PACKAGE_ADDED} broadcast with the
+     * {@link Intent#EXTRA_REPLACING} extra.
      *
      * @throws IllegalStateException if the package is not currently installed
      */
@@ -194,7 +197,35 @@ class OverlayManagerServiceImplTestsBase {
             throw new IllegalStateException("package " + pkg.packageName + " not installed");
         }
 
-        assertEquals(onReplacingUpdatedPackages, mImpl.onPackageReplacing(pkg.packageName, userId));
+        assertEquals(onReplacingUpdatedPackages, mImpl.onPackageReplacing(pkg.packageName,
+                /* systemUpdateUninstall */ false, userId));
+        mState.add(pkg, userId);
+        assertEquals(onReplacedUpdatedPackages, mImpl.onPackageReplaced(pkg.packageName, userId));
+    }
+
+    /**
+     * Begins downgrading the package. Usually used simulating a system uninstall of its /data
+     * variant.
+     *
+     * This corresponds to when the OMS receives the
+     * {@link Intent#ACTION_PACKAGE_REMOVED} broadcast with the
+     * {@link Intent#EXTRA_REPLACING} and {@link Intent#EXTRA_SYSTEM_UPDATE_UNINSTALL} extras
+     * and then receives the {@link Intent#ACTION_PACKAGE_ADDED} broadcast with the
+     * {@link Intent#EXTRA_REPLACING} extra.
+     *
+     * @throws IllegalStateException if the package is not currently installed
+     */
+    void downgradeAndAssert(FakeDeviceState.PackageBuilder pkg, int userId,
+            @NonNull Set<UserPackage> onReplacingUpdatedPackages,
+            @NonNull Set<UserPackage> onReplacedUpdatedPackages)
+            throws OperationFailedException {
+        final FakeDeviceState.Package replacedPackage = mState.select(pkg.packageName, userId);
+        if (replacedPackage == null) {
+            throw new IllegalStateException("package " + pkg.packageName + " not installed");
+        }
+
+        assertEquals(onReplacingUpdatedPackages, mImpl.onPackageReplacing(pkg.packageName,
+                /* systemUpdateUninstall */ true, userId));
         mState.add(pkg, userId);
         assertEquals(onReplacedUpdatedPackages, mImpl.onPackageReplaced(pkg.packageName, userId));
     }
@@ -203,7 +234,7 @@ class OverlayManagerServiceImplTestsBase {
      * Removes the package from the device.
      *
      * This corresponds to when the OMS receives the
-     * {@link android.content.Intent#ACTION_PACKAGE_REMOVED} broadcast.
+     * {@link Intent#ACTION_PACKAGE_REMOVED} broadcast.
      *
      * @throws IllegalStateException if the package is not currently installed
      */
@@ -328,18 +359,24 @@ class OverlayManagerServiceImplTestsBase {
             }
 
             @Nullable
-            private AndroidPackage getPackageForUser(int user) {
+            private PackageState getPackageForUser(int user) {
                 if (!installedUserIds.contains(user)) {
                     return null;
                 }
                 final AndroidPackage pkg = Mockito.mock(AndroidPackage.class);
                 when(pkg.getPackageName()).thenReturn(packageName);
-                when(pkg.getBaseApkPath()).thenReturn(apkPath);
                 when(pkg.getLongVersionCode()).thenReturn((long) versionCode);
                 when(pkg.getOverlayTarget()).thenReturn(targetPackageName);
                 when(pkg.getOverlayTargetOverlayableName()).thenReturn(targetOverlayableName);
                 when(pkg.getOverlayCategory()).thenReturn("Fake-category-" + targetPackageName);
-                return pkg;
+                var baseSplit = mock(AndroidPackageSplit.class);
+                when(baseSplit.getPath()).thenReturn(apkPath);
+                when(pkg.getSplits()).thenReturn(List.of(baseSplit));
+
+                var pkgState = Mockito.mock(PackageState.class);
+                when(pkgState.getPackageName()).thenReturn(packageName);
+                when(pkgState.getAndroidPackage()).thenReturn(pkg);
+                return pkgState;
             }
         }
     }
@@ -353,10 +390,10 @@ class OverlayManagerServiceImplTestsBase {
 
         @NonNull
         @Override
-        public ArrayMap<String, AndroidPackage> initializeForUser(int userId) {
-            final ArrayMap<String, AndroidPackage> packages = new ArrayMap<>();
+        public ArrayMap<String, PackageState> initializeForUser(int userId) {
+            final ArrayMap<String, PackageState> packages = new ArrayMap<>();
             mState.mPackages.forEach((key, value) -> {
-                final AndroidPackage pkg = value.getPackageForUser(userId);
+                final PackageState pkg = value.getPackageForUser(userId);
                 if (pkg != null) {
                     packages.put(key, pkg);
                 }
@@ -366,7 +403,7 @@ class OverlayManagerServiceImplTestsBase {
 
         @Nullable
         @Override
-        public AndroidPackage getPackageForUser(@NonNull String packageName, int userId) {
+        public PackageState getPackageStateForUser(@NonNull String packageName, int userId) {
             final FakeDeviceState.Package pkgState = mState.select(packageName, userId);
             return pkgState == null ? null : pkgState.getPackageForUser(userId);
         }
@@ -437,7 +474,7 @@ class OverlayManagerServiceImplTestsBase {
 
         private int getCrc(@NonNull final String path) {
             final FakeDeviceState.Package pkg = mState.selectFromPath(path);
-            Assert.assertNotNull(pkg);
+            Assert.assertNotNull("path = " + path, pkg);
             return pkg.versionCode;
         }
 

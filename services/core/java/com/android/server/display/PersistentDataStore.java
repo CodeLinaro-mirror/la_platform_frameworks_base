@@ -94,6 +94,7 @@ import java.util.Objects;
  *          &lt;/brightness-curve>
  *      &lt;/brightness-configuration>
  *  &lt;/brightness-configurations>
+ *  &lt;brightness-nits-for-default-display>600&lt;/brightness-nits-for-default-display>
  * &lt;/display-manager-state>
  * </code>
  *
@@ -130,12 +131,17 @@ final class PersistentDataStore {
     private static final String TAG_RESOLUTION_HEIGHT = "resolution-height";
     private static final String TAG_REFRESH_RATE = "refresh-rate";
 
+    private static final String TAG_BRIGHTNESS_NITS_FOR_DEFAULT_DISPLAY =
+            "brightness-nits-for-default-display";
+
     // Remembered Wifi display devices.
     private ArrayList<WifiDisplay> mRememberedWifiDisplays = new ArrayList<WifiDisplay>();
 
     // Display state by unique id.
     private final HashMap<String, DisplayState> mDisplayStates =
             new HashMap<String, DisplayState>();
+
+    private float mBrightnessNitsForDefaultDisplay = -1;
 
     // Display values which should be stable across the device's lifetime.
     private final StableDeviceValues mStableDeviceValues = new StableDeviceValues();
@@ -306,6 +312,19 @@ final class PersistentDataStore {
         }
         final DisplayState state = getDisplayState(displayDeviceUniqueId, true);
         if (state.setBrightness(brightness)) {
+            setDirty();
+            return true;
+        }
+        return false;
+    }
+
+    public float getBrightnessNitsForDefaultDisplay() {
+        return mBrightnessNitsForDefaultDisplay;
+    }
+
+    public boolean setBrightnessNitsForDefaultDisplay(float nits) {
+        if (nits != mBrightnessNitsForDefaultDisplay) {
+            mBrightnessNitsForDefaultDisplay = nits;
             setDirty();
             return true;
         }
@@ -513,6 +532,10 @@ final class PersistentDataStore {
             if (parser.getName().equals(TAG_BRIGHTNESS_CONFIGURATIONS)) {
                 mGlobalBrightnessConfigurations.loadFromXml(parser);
             }
+            if (parser.getName().equals(TAG_BRIGHTNESS_NITS_FOR_DEFAULT_DISPLAY)) {
+                String value = parser.nextText();
+                mBrightnessNitsForDefaultDisplay = Float.parseFloat(value);
+            }
         }
     }
 
@@ -592,6 +615,9 @@ final class PersistentDataStore {
         serializer.startTag(null, TAG_BRIGHTNESS_CONFIGURATIONS);
         mGlobalBrightnessConfigurations.saveToXml(serializer);
         serializer.endTag(null, TAG_BRIGHTNESS_CONFIGURATIONS);
+        serializer.startTag(null, TAG_BRIGHTNESS_NITS_FOR_DEFAULT_DISPLAY);
+        serializer.text(Float.toString(mBrightnessNitsForDefaultDisplay));
+        serializer.endTag(null, TAG_BRIGHTNESS_NITS_FOR_DEFAULT_DISPLAY);
         serializer.endTag(null, TAG_DISPLAY_MANAGER_STATE);
         serializer.endDocument();
     }
@@ -615,11 +641,12 @@ final class PersistentDataStore {
         mStableDeviceValues.dump(pw, "      ");
         pw.println("  GlobalBrightnessConfigurations:");
         mGlobalBrightnessConfigurations.dump(pw, "      ");
+        pw.println("  mBrightnessNitsForDefaultDisplay=" + mBrightnessNitsForDefaultDisplay);
     }
 
     private static final class DisplayState {
         private int mColorMode;
-        private float mBrightness;
+        private float mBrightness = Float.NaN;
         private int mWidth;
         private int mHeight;
         private float mRefreshRate;
@@ -700,7 +727,11 @@ final class PersistentDataStore {
                         break;
                     case TAG_BRIGHTNESS_VALUE:
                         String brightness = parser.nextText();
-                        mBrightness = Float.parseFloat(brightness);
+                        try {
+                            mBrightness = Float.parseFloat(brightness);
+                        } catch (NumberFormatException e) {
+                            mBrightness = Float.NaN;
+                        }
                         break;
                     case TAG_BRIGHTNESS_CONFIGURATIONS:
                         mDisplayBrightnessConfigurations.loadFromXml(parser);
@@ -727,7 +758,9 @@ final class PersistentDataStore {
             serializer.endTag(null, TAG_COLOR_MODE);
 
             serializer.startTag(null, TAG_BRIGHTNESS_VALUE);
-            serializer.text(Float.toString(mBrightness));
+            if (!Float.isNaN(mBrightness)) {
+                serializer.text(Float.toString(mBrightness));
+            }
             serializer.endTag(null, TAG_BRIGHTNESS_VALUE);
 
             serializer.startTag(null, TAG_BRIGHTNESS_CONFIGURATIONS);

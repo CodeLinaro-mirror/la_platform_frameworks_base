@@ -41,6 +41,7 @@ import android.content.res.XmlResourceParser;
 import android.graphics.drawable.Drawable;
 import android.hardware.fingerprint.FingerprintManager;
 import android.os.Build;
+import android.os.IBinder;
 import android.os.Parcel;
 import android.os.Parcelable;
 import android.os.RemoteException;
@@ -48,6 +49,7 @@ import android.util.AttributeSet;
 import android.util.SparseArray;
 import android.util.TypedValue;
 import android.util.Xml;
+import android.view.InputDevice;
 import android.view.View;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
@@ -612,6 +614,32 @@ public class AccessibilityServiceInfo implements Parcelable {
     private boolean mIsAccessibilityTool = false;
 
     /**
+     * {@link InputDevice} sources which may send {@link android.view.MotionEvent}s.
+     * @see #setMotionEventSources(int)
+     * @hide
+     */
+    @IntDef(flag = true, prefix = { "SOURCE_" }, value = {
+            InputDevice.SOURCE_MOUSE,
+            InputDevice.SOURCE_STYLUS,
+            InputDevice.SOURCE_BLUETOOTH_STYLUS,
+            InputDevice.SOURCE_TRACKBALL,
+            InputDevice.SOURCE_MOUSE_RELATIVE,
+            InputDevice.SOURCE_TOUCHPAD,
+            InputDevice.SOURCE_TOUCH_NAVIGATION,
+            InputDevice.SOURCE_ROTARY_ENCODER,
+            InputDevice.SOURCE_JOYSTICK,
+            InputDevice.SOURCE_SENSOR
+    })
+    public @interface MotionEventSources {}
+
+    /**
+     * The bit mask of {@link android.view.InputDevice} sources that the accessibility
+     * service wants to listen to for generic {@link android.view.MotionEvent}s.
+     */
+    @MotionEventSources
+    private int mMotionEventSources = 0;
+
+    /**
      * Creates a new instance.
      */
     public AccessibilityServiceInfo() {
@@ -785,6 +813,7 @@ public class AccessibilityServiceInfo implements Parcelable {
         mNonInteractiveUiTimeout = other.mNonInteractiveUiTimeout;
         mInteractiveUiTimeout = other.mInteractiveUiTimeout;
         flags = other.flags;
+        mMotionEventSources = other.mMotionEventSources;
         // NOTE: Ensure that only properties that are safe to be modified by the service itself
         // are included here (regardless of hidden setters, etc.).
     }
@@ -953,6 +982,46 @@ public class AccessibilityServiceInfo implements Parcelable {
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     public void setCapabilities(int capabilities) {
         mCapabilities = capabilities;
+    }
+
+    /**
+     * Returns the bit mask of {@link android.view.InputDevice} sources that the accessibility
+     * service wants to listen to for generic {@link android.view.MotionEvent}s.
+     */
+    @MotionEventSources
+    public int getMotionEventSources() {
+        return mMotionEventSources;
+    }
+
+    /**
+     * Sets the bit mask of {@link android.view.InputDevice} sources that the accessibility
+     * service wants to listen to for generic {@link android.view.MotionEvent}s.
+     *
+     * <p>
+     * Including an {@link android.view.InputDevice} source that does not send
+     * {@link android.view.MotionEvent}s is effectively a no-op for that source, since you will
+     * not receive any events from that source.
+     * </p>
+     *
+     * <p>
+     * See {@link android.view.InputDevice} for complete source definitions.
+     * Many input devices send {@link android.view.InputEvent}s from more than one type of source so
+     * you may need to include multiple {@link android.view.MotionEvent} sources here, in addition
+     * to using {@link AccessibilityService#onKeyEvent} to listen to {@link android.view.KeyEvent}s.
+     * </p>
+     *
+     * <p>
+     * <strong>Note:</strong> {@link android.view.InputDevice} sources contain source class bits
+     * that complicate bitwise flag removal operations. To remove a specific source you should
+     * rebuild the entire value using bitwise OR operations on the individual source constants.
+     * </p>
+     *
+     * @param motionEventSources A bit mask of {@link android.view.InputDevice} sources.
+     * @see AccessibilityService#onMotionEvent
+     * @see MotionEventSources
+     */
+    public void setMotionEventSources(@MotionEventSources int motionEventSources) {
+        mMotionEventSources = motionEventSources;
     }
 
     /**
@@ -1157,6 +1226,15 @@ public class AccessibilityServiceInfo implements Parcelable {
         return 0;
     }
 
+    /** @hide */
+    public final boolean isWithinParcelableSize() {
+        final Parcel parcel = Parcel.obtain();
+        writeToParcel(parcel, 0);
+        final boolean result = parcel.dataSize() <= IBinder.MAX_IPC_SIZE;
+        parcel.recycle();
+        return result;
+    }
+
     public void writeToParcel(Parcel parcel, int flagz) {
         parcel.writeInt(eventTypes);
         parcel.writeStringArray(packageNames);
@@ -1179,6 +1257,7 @@ public class AccessibilityServiceInfo implements Parcelable {
         parcel.writeBoolean(mIsAccessibilityTool);
         parcel.writeString(mTileServiceName);
         parcel.writeInt(mIntroResId);
+        parcel.writeInt(mMotionEventSources);
     }
 
     private void initFromParcel(Parcel parcel) {
@@ -1203,6 +1282,7 @@ public class AccessibilityServiceInfo implements Parcelable {
         mIsAccessibilityTool = parcel.readBoolean();
         mTileServiceName = parcel.readString();
         mIntroResId = parcel.readInt();
+        mMotionEventSources = parcel.readInt();
     }
 
     @Override

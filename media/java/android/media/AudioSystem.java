@@ -273,10 +273,11 @@ public class AudioSystem
     /** @hide */
     @IntDef(flag = false, prefix = "DEVICE_", value = {
             DEVICE_OUT_BLUETOOTH_A2DP,
-            DEVICE_OUT_BLE_HEADSET}
+            DEVICE_OUT_BLE_HEADSET,
+            DEVICE_OUT_BLE_BROADCAST}
     )
     @Retention(RetentionPolicy.SOURCE)
-    public @interface DeviceType {}
+    public @interface BtOffloadDeviceType {}
 
     /**
      * @hide
@@ -438,6 +439,22 @@ public class AudioSystem
                 return "AUDIO_FORMAT_APTX_TWSP";
             case /* AUDIO_FORMAT_LC3             */ 0x2B000000:
                 return "AUDIO_FORMAT_LC3";
+            case /* AUDIO_FORMAT_MPEGH           */ 0x2C000000:
+                return "AUDIO_FORMAT_MPEGH";
+            case /* AUDIO_FORMAT_IEC60958        */ 0x2D000000:
+                return "AUDIO_FORMAT_IEC60958";
+            case /* AUDIO_FORMAT_DTS_UHD         */ 0x2E000000:
+                return "AUDIO_FORMAT_DTS_UHD";
+            case /* AUDIO_FORMAT_DRA             */ 0x2F000000:
+                return "AUDIO_FORMAT_DRA";
+            case /* AUDIO_FORMAT_APTX_ADAPTIVE_QLEA */ 0x30000000:
+                return "AUDIO_FORMAT_APTX_ADAPTIVE_QLEA";
+            case /* AUDIO_FORMAT_APTX_ADAPTIVE_R4   */ 0x31000000:
+                return "AUDIO_FORMAT_APTX_ADAPTIVE_R4";
+            case /* AUDIO_FORMAT_DTS_HD_MA       */ 0x32000000:
+                return "AUDIO_FORMAT_DTS_HD_MA";
+            case /* AUDIO_FORMAT_DTS_UHD_P2      */ 0x33000000:
+                return "AUDIO_FORMAT_DTS_UHD_P2";
 
             /* Aliases */
             case /* AUDIO_FORMAT_PCM_16_BIT        */ 0x1:
@@ -510,10 +527,14 @@ public class AudioSystem
                 return "AUDIO_FORMAT_MAT_2_0"; // (MAT | MAT_SUB_2_0)
             case /* AUDIO_FORMAT_MAT_2_1           */ 0x24000003:
                 return "AUDIO_FORMAT_MAT_2_1"; // (MAT | MAT_SUB_2_1)
-            case /* AUDIO_FORMAT_DTS_UHD */           0x2E000000:
-                return "AUDIO_FORMAT_DTS_UHD";
-            case /* AUDIO_FORMAT_DRA */           0x2F000000:
-                return "AUDIO_FORMAT_DRA";
+            case /* AUDIO_FORMAT_MPEGH_SUB_BL_L3   */ 0x2C000013:
+                return "AUDIO_FORMAT_MPEGH_SUB_BL_L3";
+            case /* AUDIO_FORMAT_MPEGH_SUB_BL_L4   */ 0x2C000014:
+                return "AUDIO_FORMAT_MPEGH_SUB_BL_L4";
+            case /* AUDIO_FORMAT_MPEGH_SUB_LC_L3   */ 0x2C000023:
+                return "AUDIO_FORMAT_MPEGH_SUB_LC_L3";
+            case /* AUDIO_FORMAT_MPEGH_SUB_LC_L4   */ 0x2C000024:
+                return "AUDIO_FORMAT_MPEGH_SUB_LC_L4";
             default:
                 return "AUDIO_FORMAT_(" + audioFormat + ")";
         }
@@ -1950,7 +1971,7 @@ public class AudioSystem
      * Returns a list of audio formats (codec) supported on the A2DP and LE audio offload path.
      */
     public static native int getHwOffloadFormatsSupportedForBluetoothMedia(
-            @DeviceType int deviceType, ArrayList<Integer> formatList);
+            @BtOffloadDeviceType int deviceType, ArrayList<Integer> formatList);
 
     /** @hide */
     public static native int setSurroundFormatEnabled(int audioFormat, boolean enabled);
@@ -2043,12 +2064,46 @@ public class AudioSystem
 
     /**
      * @hide
+     * Remove device as role for product strategy.
+     * @param strategy the id of the strategy to configure
+     * @param role the role of the devices
+     * @param devices the list of devices to be removed as role for the given strategy
+     * @return {@link #SUCCESS} if successfully set
+     */
+    public static int removeDevicesRoleForStrategy(
+            int strategy, int role, @NonNull List<AudioDeviceAttributes> devices) {
+        if (devices.isEmpty()) {
+            return BAD_VALUE;
+        }
+        int[] types = new int[devices.size()];
+        String[] addresses = new String[devices.size()];
+        for (int i = 0; i < devices.size(); ++i) {
+            types[i] = devices.get(i).getInternalType();
+            addresses[i] = devices.get(i).getAddress();
+        }
+        return removeDevicesRoleForStrategy(strategy, role, types, addresses);
+    }
+
+    /**
+     * @hide
      * Remove devices as role for the strategy
+     * @param strategy the id of the strategy to configure
+     * @param role the role of the devices
+     * @param types all device types
+     * @param addresses all device addresses
+     * @return {@link #SUCCESS} if successfully removed
+     */
+    public static native int removeDevicesRoleForStrategy(
+            int strategy, int role, @NonNull int[] types, @NonNull String[] addresses);
+
+    /**
+     * @hide
+     * Remove all devices as role for the strategy
      * @param strategy the id of the strategy to configure
      * @param role the role of the devices
      * @return {@link #SUCCESS} if successfully removed
      */
-    public static native int removeDevicesRoleForStrategy(int strategy, int role);
+    public static native int clearDevicesRoleForStrategy(int strategy, int role);
 
     /**
      * @hide
@@ -2240,6 +2295,20 @@ public class AudioSystem
 
     /**
      * @hide
+     * Register the sound dose callback with the audio server and returns the binder to the
+     * ISoundDose interface.
+     *
+     * @return ISoundDose interface with registered callback.
+     */
+    @Nullable
+    public static ISoundDose getSoundDoseInterface(ISoundDoseCallback callback) {
+        return ISoundDose.Stub.asInterface(nativeGetSoundDose(callback));
+    }
+
+    private static native IBinder nativeGetSoundDose(ISoundDoseCallback callback);
+
+    /**
+     * @hide
      * @param attributes audio attributes describing the playback use case
      * @param audioProfilesList the list of AudioProfiles that can be played as direct output
      * @return {@link #SUCCESS} if the list of AudioProfiles was successfully created (can be empty)
@@ -2406,5 +2475,66 @@ public class AudioSystem
      * Keep in sync with core/jni/android_media_DeviceCallback.h.
      */
     final static int NATIVE_EVENT_ROUTING_CHANGE = 1000;
-}
 
+    /**
+     * @hide
+     * Query the mixer attributes that can be set as preferred mixer attributes for the given
+     * device.
+     */
+    public static native int getSupportedMixerAttributes(
+            int deviceId, @NonNull List<AudioMixerAttributes> mixerAttrs);
+
+    /**
+     * @hide
+     * Set preferred mixer attributes for a given device when playing particular
+     * audio attributes.
+     */
+    public static native int setPreferredMixerAttributes(
+            @NonNull AudioAttributes attributes,
+            int portId,
+            int uid,
+            @NonNull AudioMixerAttributes mixerAttributes);
+
+    /**
+     * @hide
+     * Get preferred mixer attributes that is previously set via
+     * {link #setPreferredMixerAttributes}.
+     */
+    public static native int getPreferredMixerAttributes(
+            @NonNull AudioAttributes attributes, int portId,
+            List<AudioMixerAttributes> mixerAttributesList);
+
+    /**
+     * @hide
+     * Clear preferred mixer attributes that is previously set via
+     * {@link #setPreferredMixerAttributes}
+     */
+    public static native int clearPreferredMixerAttributes(
+            @NonNull AudioAttributes attributes, int portId, int uid);
+
+
+    /**
+     * Requests if the implementation supports controlling the latency modes
+     * over the Bluetooth A2DP or LE Audio links.
+     *
+     * @return true if supported, false otherwise
+     *
+     * @hide
+     */
+    public static native boolean supportsBluetoothVariableLatency();
+
+    /**
+     * Enables or disables the variable Bluetooth latency control mechanism in the
+     * audio framework and the audio HAL. This does not apply to the latency mode control
+     * on the spatializer output as this is a built-in feature.
+     *
+     * @hide
+     */
+    public static native int setBluetoothVariableLatencyEnabled(boolean enabled);
+
+    /**
+     * Indicates if the variable Bluetooth latency control mechanism is enabled or disabled.
+     * @hide
+     */
+    public static native boolean isBluetoothVariableLatencyEnabled();
+}

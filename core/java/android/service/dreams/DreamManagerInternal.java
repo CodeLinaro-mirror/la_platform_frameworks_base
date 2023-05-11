@@ -16,7 +16,6 @@
 
 package android.service.dreams;
 
-import android.content.ComponentName;
 
 /**
  * Dream manager local system service interface.
@@ -61,17 +60,30 @@ public abstract class DreamManagerInternal {
     public abstract boolean canStartDreaming(boolean isScreenOn);
 
     /**
-     * Called by the ActivityTaskManagerService to verify that the startDreamActivity
-     * request comes from the current active dream component.
+     * Register a {@link DreamManagerStateListener}, which will be called when there are changes to
+     * dream state.
      *
-     * This function and its call path should not acquire the DreamManagerService lock
-     * to avoid deadlock with the ActivityTaskManager lock.
-     *
-     * TODO: Make this interaction push-based - the DreamManager should inform the
-     * ActivityTaskManager whenever the active dream component changes.
-     *
-     * @param doze If true returns the current active doze component. Otherwise, returns the
-     *             active dream component.
+     * @param listener The listener to register.
      */
-    public abstract ComponentName getActiveDreamComponent(boolean doze);
+    public abstract void registerDreamManagerStateListener(DreamManagerStateListener listener);
+
+    /**
+     * Unregister a {@link DreamManagerStateListener}, which will be called when there are changes
+     * to dream state.
+     *
+     * @param listener The listener to unregister.
+     */
+    public abstract void unregisterDreamManagerStateListener(DreamManagerStateListener listener);
+
+    /**
+     * Called when there are changes to dream state.
+     */
+    public interface DreamManagerStateListener {
+        /**
+         * Called when keep dreaming when undocked has changed.
+         *
+         * @param keepDreaming True if the current dream should continue when undocking.
+         */
+        void onKeepDreamingWhenUndockedChanged(boolean keepDreaming);
+    }
 }

@@ -17,18 +17,15 @@
 package com.android.server.wm.flicker.helpers
 
 import android.app.Instrumentation
-import android.support.test.launcherhelper.ILauncherStrategy
-import android.support.test.launcherhelper.LauncherStrategyFactory
+import android.tools.common.datatypes.component.ComponentNameMatcher
+import android.tools.device.apphelpers.StandardAppHelper
+import android.tools.device.traces.parsers.toFlickerComponent
 import com.android.server.wm.flicker.testapp.ActivityOptions
-import com.android.server.wm.traces.common.ComponentNameMatcher
-import com.android.server.wm.traces.parser.toFlickerComponent
 
 class SimpleAppHelper
 @JvmOverloads
 constructor(
     instr: Instrumentation,
     launcherName: String = ActivityOptions.SimpleActivity.LABEL,
-    component: ComponentNameMatcher = ActivityOptions.SimpleActivity.COMPONENT.toFlickerComponent(),
-    launcherStrategy: ILauncherStrategy =
-        LauncherStrategyFactory.getInstance(instr).launcherStrategy
-) : StandardAppHelper(instr, launcherName, component, launcherStrategy)
+    component: ComponentNameMatcher = ActivityOptions.SimpleActivity.COMPONENT.toFlickerComponent()
+) : StandardAppHelper(instr, launcherName, component)

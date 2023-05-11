@@ -14,7 +14,13 @@ android_app {
     srcs: ["src/**/*.kt"],
     resource_dirs: ["res"],
 
+    dex_preopt: {
+        profile_guided: true,
+        profile: "profile.txt.prof",
+    },
+
     static_libs: [
+        "PlatformComposeCore",
         "androidx.activity_activity-compose",
         "androidx.appcompat_appcompat",
         "androidx.compose.animation_animation-core",
@@ -26,6 +32,7 @@ android_app {
         "androidx.compose.ui_ui",
         "androidx.compose.ui_ui-tooling",
         "androidx.core_core-ktx",
+        "androidx.credentials_credentials",
         "androidx.lifecycle_lifecycle-extensions",
         "androidx.lifecycle_lifecycle-livedata",
         "androidx.lifecycle_lifecycle-runtime-ktx",
@@ -35,6 +42,7 @@ android_app {
     ],
 
     platform_apis: true,
+    privileged: true,
 
     kotlincflags: ["-Xjvm-default=enable"],
 

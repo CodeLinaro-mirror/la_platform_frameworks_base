@@ -105,10 +105,24 @@
         1.777778
     </item>
 
+    <!-- The aspect ratio that by which optimizations to large screen sizes are made.
+         Needs to be less that or equal to 1. -->
+    <item name="config_pipLargeScreenOptimizedAspectRatio" format="float" type="dimen">0.5625</item>
+
     <!-- The default gravity for the picture-in-picture window.
          Currently, this maps to Gravity.BOTTOM | Gravity.RIGHT -->
     <integer name="config_defaultPictureInPictureGravity">0x55</integer>
 
     <!-- Whether to dim a split-screen task when the other is the IME target -->
     <bool name="config_dimNonImeAttachedSide">true</bool>
+
+    <!-- Components support to launch multiple instances into split-screen -->
+    <string-array name="config_appsSupportMultiInstancesSplit">
+    </string-array>
+
+    <!-- Whether the extended restart dialog is enabled -->
+    <bool name="config_letterboxIsRestartDialogEnabled">false</bool>
+
+    <!-- Whether the additional education about reachability is enabled -->
+    <bool name="config_letterboxIsReachabilityEducationEnabled">false</bool>
 </resources>

@@ -25,8 +25,6 @@ import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.graphics.Rect;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.Message;
 import android.util.ArrayMap;
 import android.util.AttributeSet;
 import android.util.Log;
@@ -43,6 +41,7 @@ import com.android.internal.logging.UiEventLogger;
 import com.android.internal.widget.RemeasuringLinearLayout;
 import com.android.systemui.R;
 import com.android.systemui.plugins.qs.QSTile;
+import com.android.systemui.qs.logging.QSLogger;
 import com.android.systemui.settings.brightness.BrightnessSliderController;
 import com.android.systemui.tuner.TunerService;
 import com.android.systemui.tuner.TunerService.Tunable;
@@ -80,7 +79,6 @@ public class QSPanel extends LinearLayout implements Tunable {
     protected boolean mExpanded;
     protected boolean mListening;
 
-    @Nullable protected QSTileHost mHost;
     private final List<OnConfigurationChangedListener> mOnConfigurationChangedListeners =
             new ArrayList<>();
 
@@ -105,7 +103,12 @@ public class QSPanel extends LinearLayout implements Tunable {
     private final Rect mClippingRect = new Rect();
     private ViewGroup mMediaHostView;
     private boolean mShouldMoveMediaOnExpansion = true;
-    private boolean mUsingCombinedHeaders = false;
+    private QSLogger mQsLogger;
+    /**
+     * Specifies if we can collapse to QQS in current state. In split shade that should be always
+     * false. It influences available accessibility actions.
+     */
+    private boolean mCanCollapse = true;
 
     public QSPanel(Context context, AttributeSet attrs) {
         super(context, attrs);
@@ -122,7 +125,8 @@ public class QSPanel extends LinearLayout implements Tunable {
 
     }
 
-    void initialize() {
+    void initialize(QSLogger qsLogger) {
+        mQsLogger = qsLogger;
         mTileLayout = getOrCreateTileLayout();
 
         if (mUsingMediaPlayer) {
@@ -147,10 +151,6 @@ public class QSPanel extends LinearLayout implements Tunable {
             lp = new LayoutParams(LayoutParams.MATCH_PARENT, 0, 1);
             addView(mHorizontalLinearLayout, lp);
         }
-    }
-
-    void setUsingCombinedHeaders(boolean usingCombinedHeaders) {
-        mUsingCombinedHeaders = usingCombinedHeaders;
     }
 
     protected void setHorizontalContentContainerClipping() {
@@ -206,6 +206,7 @@ public class QSPanel extends LinearLayout implements Tunable {
         if (mTileLayout == null) {
             mTileLayout = (QSTileLayout) LayoutInflater.from(mContext)
                     .inflate(R.layout.qs_paged_tile_layout, this, false);
+            mTileLayout.setLogger(mQsLogger);
             mTileLayout.setSquishinessFraction(mSquishinessFraction);
         }
         return mTileLayout;
@@ -357,11 +358,6 @@ public class QSPanel extends LinearLayout implements Tunable {
         }
     }
 
-    @Nullable
-    public QSTileHost getHost() {
-        return mHost;
-    }
-
     public void updateResources() {
         updatePadding();
 
@@ -376,9 +372,7 @@ public class QSPanel extends LinearLayout implements Tunable {
 
     protected void updatePadding() {
         final Resources res = mContext.getResources();
-        int paddingTop = res.getDimensionPixelSize(
-                mUsingCombinedHeaders ? R.dimen.qs_panel_padding_top_combined_headers
-                        : R.dimen.qs_panel_padding_top);
+        int paddingTop = res.getDimensionPixelSize(R.dimen.qs_panel_padding_top);
         int paddingBottom = res.getDimensionPixelSize(R.dimen.qs_panel_padding_bottom);
         setPaddingRelative(getPaddingStart(),
                 paddingTop,
@@ -646,7 +640,9 @@ public class QSPanel extends LinearLayout implements Tunable {
     @Override
     public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
         super.onInitializeAccessibilityNodeInfo(info);
-        info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_COLLAPSE);
+        if (mCanCollapse) {
+            info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_COLLAPSE);
+        }
     }
 
     @Override
@@ -665,15 +661,11 @@ public class QSPanel extends LinearLayout implements Tunable {
         mCollapseExpandAction = action;
     }
 
-    private class H extends Handler {
-        private static final int ANNOUNCE_FOR_ACCESSIBILITY = 1;
-
-        @Override
-        public void handleMessage(Message msg) {
-            if (msg.what == ANNOUNCE_FOR_ACCESSIBILITY) {
-                announceForAccessibility((CharSequence) msg.obj);
-            }
-        }
+    /**
+     * Specifies if these expanded QS can collapse to QQS.
+     */
+    public void setCanCollapse(boolean canCollapse) {
+        mCanCollapse = canCollapse;
     }
 
     public interface QSTileLayout {
@@ -735,6 +727,8 @@ public class QSPanel extends LinearLayout implements Tunable {
         default void setExpansion(float expansion, float proposedTranslation) {}
 
         int getNumVisibleTiles();
+
+        default void setLogger(QSLogger qsLogger) { }
     }
 
     interface OnConfigurationChangedListener {

@@ -68,7 +68,7 @@ public class HdmiCecPowerStatusControllerTest {
                 Collections.singletonList(HdmiDeviceInfo.DEVICE_PLAYBACK),
                 new FakeAudioDeviceVolumeManagerWrapper()) {
             @Override
-            boolean isControlEnabled() {
+            boolean isCecControlEnabled() {
                 return true;
             }
 
@@ -91,6 +91,7 @@ public class HdmiCecPowerStatusControllerTest {
 
         mHdmiControlService.setIoLooper(myLooper);
         mHdmiControlService.setHdmiCecConfig(new FakeHdmiCecConfig(contextSpy));
+        mHdmiControlService.setDeviceConfig(new FakeDeviceConfigWrapper());
         mNativeWrapper = new FakeNativeWrapper();
         HdmiCecController hdmiCecController = HdmiCecController.createWithNativeWrapper(
                 mHdmiControlService, mNativeWrapper, mHdmiControlService.getAtomWriter());
@@ -98,7 +99,11 @@ public class HdmiCecPowerStatusControllerTest {
         mHdmiControlService.setHdmiMhlController(HdmiMhlControllerStub.create(mHdmiControlService));
         HdmiPortInfo[] hdmiPortInfos = new HdmiPortInfo[1];
         hdmiPortInfos[0] =
-                new HdmiPortInfo(1, HdmiPortInfo.PORT_OUTPUT, 0x0000, true, false, false);
+                new HdmiPortInfo.Builder(1, HdmiPortInfo.PORT_OUTPUT, 0x0000)
+                        .setCecSupported(true)
+                        .setMhlSupported(false)
+                        .setArcSupported(false)
+                        .build();
         mNativeWrapper.setPortInfo(hdmiPortInfos);
         mNativeWrapper.setPortConnectionStatus(1, true);
         mHdmiControlService.initService();

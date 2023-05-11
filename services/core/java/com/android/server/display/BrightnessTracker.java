@@ -35,7 +35,6 @@ import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.hardware.display.AmbientBrightnessDayStats;
 import android.hardware.display.BrightnessChangeEvent;
-import android.hardware.display.BrightnessConfiguration;
 import android.hardware.display.ColorDisplayManager;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.DisplayManagerInternal;
@@ -79,10 +78,8 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.text.SimpleDateFormat;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Date;
-import java.util.Deque;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -101,8 +98,6 @@ public class BrightnessTracker {
     private static final int MAX_EVENTS = 100;
     // Discard events when reading or writing that are older than this.
     private static final long MAX_EVENT_AGE = TimeUnit.DAYS.toMillis(30);
-    // Time over which we keep lux sensor readings.
-    private static final long LUX_EVENT_HORIZON = TimeUnit.SECONDS.toNanos(10);
 
     private static final String TAG_EVENTS = "events";
     private static final String TAG_EVENT = "event";
@@ -130,7 +125,7 @@ public class BrightnessTracker {
     private static final int MSG_BRIGHTNESS_CHANGED = 1;
     private static final int MSG_STOP_SENSOR_LISTENER = 2;
     private static final int MSG_START_SENSOR_LISTENER = 3;
-    private static final int MSG_BRIGHTNESS_CONFIG_CHANGED = 4;
+    private static final int MSG_SHOULD_COLLECT_COLOR_SAMPLE_CHANGED = 4;
     private static final int MSG_SENSOR_CHANGED = 5;
 
     private static final SimpleDateFormat FORMAT = new SimpleDateFormat("MM-dd HH:mm:ss.SSS");
@@ -166,15 +161,13 @@ public class BrightnessTracker {
     private boolean mColorSamplingEnabled;
     private int mNoFramesToSample;
     private float mFrameRate;
-    private BrightnessConfiguration mBrightnessConfiguration;
+    private boolean mShouldCollectColorSample = false;
     // End of block of members that should only be accessed on the mBgHandler thread.
 
     private @UserIdInt int mCurrentUserId = UserHandle.USER_NULL;
 
     // Lock held while collecting data related to brightness changes.
     private final Object mDataCollectionLock = new Object();
-    @GuardedBy("mDataCollectionLock")
-    private Deque<LightData> mLastSensorReadings = new ArrayDeque<>();
     @GuardedBy("mDataCollectionLock")
     private float mLastBatteryLevel = Float.NaN;
     @GuardedBy("mDataCollectionLock")
@@ -214,9 +207,9 @@ public class BrightnessTracker {
     /**
      * Update tracker with new brightness configuration.
      */
-    public void setBrightnessConfiguration(BrightnessConfiguration brightnessConfiguration) {
-        mBgHandler.obtainMessage(MSG_BRIGHTNESS_CONFIG_CHANGED,
-                brightnessConfiguration).sendToTarget();
+    public void setShouldCollectColorSample(boolean shouldCollectColorSample) {
+        mBgHandler.obtainMessage(MSG_SHOULD_COLLECT_COLOR_SAMPLE_CHANGED,
+                shouldCollectColorSample).sendToTarget();
     }
 
     private void backgroundStart(float initialBrightness) {
@@ -326,16 +319,17 @@ public class BrightnessTracker {
      * Notify the BrightnessTracker that the user has changed the brightness of the display.
      */
     public void notifyBrightnessChanged(float brightness, boolean userInitiated,
-            float powerBrightnessFactor, boolean isUserSetBrightness,
-            boolean isDefaultBrightnessConfig, String uniqueDisplayId) {
+            float powerBrightnessFactor, boolean wasShortTermModelActive,
+            boolean isDefaultBrightnessConfig, String uniqueDisplayId, float[] luxValues,
+            long[] luxTimestamps) {
         if (DEBUG) {
             Slog.d(TAG, String.format("notifyBrightnessChanged(brightness=%f, userInitiated=%b)",
                         brightness, userInitiated));
         }
         Message m = mBgHandler.obtainMessage(MSG_BRIGHTNESS_CHANGED,
                 userInitiated ? 1 : 0, 0 /*unused*/, new BrightnessChangeValues(brightness,
-                        powerBrightnessFactor, isUserSetBrightness, isDefaultBrightnessConfig,
-                        mInjector.currentTimeMillis(), uniqueDisplayId));
+                        powerBrightnessFactor, wasShortTermModelActive, isDefaultBrightnessConfig,
+                        mInjector.currentTimeMillis(), uniqueDisplayId, luxValues, luxTimestamps));
         m.sendToTarget();
     }
 
@@ -348,8 +342,9 @@ public class BrightnessTracker {
     }
 
     private void handleBrightnessChanged(float brightness, boolean userInitiated,
-            float powerBrightnessFactor, boolean isUserSetBrightness,
-            boolean isDefaultBrightnessConfig, long timestamp, String uniqueDisplayId) {
+            float powerBrightnessFactor, boolean wasShortTermModelActive,
+            boolean isDefaultBrightnessConfig, long timestamp, String uniqueDisplayId,
+            float[] luxValues, long[] luxTimestamps) {
         BrightnessChangeEvent.Builder builder;
 
         synchronized (mDataCollectionLock) {
@@ -372,32 +367,26 @@ public class BrightnessTracker {
             builder.setBrightness(brightness);
             builder.setTimeStamp(timestamp);
             builder.setPowerBrightnessFactor(powerBrightnessFactor);
-            builder.setUserBrightnessPoint(isUserSetBrightness);
+            builder.setUserBrightnessPoint(wasShortTermModelActive);
             builder.setIsDefaultBrightnessConfig(isDefaultBrightnessConfig);
             builder.setUniqueDisplayId(uniqueDisplayId);
 
-            final int readingCount = mLastSensorReadings.size();
-            if (readingCount == 0) {
+            if (luxValues.length == 0) {
                 // No sensor data so ignore this.
                 return;
             }
 
-            float[] luxValues = new float[readingCount];
-            long[] luxTimestamps = new long[readingCount];
+            long[] luxTimestampsMillis = new long[luxTimestamps.length];
 
-            int pos = 0;
-
-            // Convert sensor timestamp in elapsed time nanos to current time millis.
+            // Convert lux timestamp in elapsed time to current time.
             long currentTimeMillis = mInjector.currentTimeMillis();
             long elapsedTimeNanos = mInjector.elapsedRealtimeNanos();
-            for (LightData reading : mLastSensorReadings) {
-                luxValues[pos] = reading.lux;
-                luxTimestamps[pos] = currentTimeMillis -
-                        TimeUnit.NANOSECONDS.toMillis(elapsedTimeNanos - reading.timestamp);
-                ++pos;
+            for (int i = 0; i < luxTimestamps.length; i++) {
+                luxTimestampsMillis[i] = currentTimeMillis - (TimeUnit.NANOSECONDS.toMillis(
+                        elapsedTimeNanos) - luxTimestamps[i]);
             }
             builder.setLuxValues(luxValues);
-            builder.setLuxTimestamps(luxTimestamps);
+            builder.setLuxTimestamps(luxTimestampsMillis);
 
             builder.setBatteryLevel(mLastBatteryLevel);
             builder.setLastBrightness(previousBrightness);
@@ -452,9 +441,6 @@ public class BrightnessTracker {
         if (mLightSensor != lightSensor) {
             mLightSensor = lightSensor;
             stopSensorListener();
-            synchronized (mDataCollectionLock) {
-                mLastSensorReadings.clear();
-            }
             // Attempt to restart the sensor listener. It will check to see if it should be running
             // so there is no need to also check here.
             startSensorListener();
@@ -798,12 +784,6 @@ public class BrightnessTracker {
             pw.println("  mLightSensor=" + mLightSensor);
             pw.println("  mLastBatteryLevel=" + mLastBatteryLevel);
             pw.println("  mLastBrightness=" + mLastBrightness);
-            pw.println("  mLastSensorReadings.size=" + mLastSensorReadings.size());
-            if (!mLastSensorReadings.isEmpty()) {
-                pw.println("  mLastSensorReadings time span "
-                        + mLastSensorReadings.peekFirst().timestamp + "->"
-                        + mLastSensorReadings.peekLast().timestamp);
-            }
         }
         synchronized (mEventsLock) {
             pw.println("  mEventsDirty=" + mEventsDirty);
@@ -846,8 +826,7 @@ public class BrightnessTracker {
         if (!mInjector.isBrightnessModeAutomatic(mContentResolver)
                 || !mInjector.isInteractive(mContext)
                 || mColorSamplingEnabled
-                || mBrightnessConfiguration == null
-                || !mBrightnessConfiguration.shouldCollectColorSamples()) {
+                || !mShouldCollectColorSample) {
             return;
         }
 
@@ -919,43 +898,6 @@ public class BrightnessTracker {
         return ParceledListSlice.emptyList();
     }
 
-    // Not allowed to keep the SensorEvent so used to copy the data we care about.
-    private static class LightData {
-        public float lux;
-        // Time in elapsedRealtimeNanos
-        public long timestamp;
-    }
-
-    private void recordSensorEvent(SensorEvent event) {
-        long horizon = mInjector.elapsedRealtimeNanos() - LUX_EVENT_HORIZON;
-        synchronized (mDataCollectionLock) {
-            if (DEBUG) {
-                Slog.v(TAG, "Sensor event " + event);
-            }
-            if (!mLastSensorReadings.isEmpty()
-                    && event.timestamp < mLastSensorReadings.getLast().timestamp) {
-                // Ignore event that came out of order.
-                return;
-            }
-            LightData data = null;
-            while (!mLastSensorReadings.isEmpty()
-                    && mLastSensorReadings.getFirst().timestamp < horizon) {
-                // Remove data that has fallen out of the window.
-                data = mLastSensorReadings.removeFirst();
-            }
-            // We put back the last one we removed so we know how long
-            // the first sensor reading was valid for.
-            if (data != null) {
-                mLastSensorReadings.addFirst(data);
-            }
-
-            data = new LightData();
-            data.timestamp = event.timestamp;
-            data.lux = event.values[0];
-            mLastSensorReadings.addLast(data);
-        }
-    }
-
     private void recordAmbientBrightnessStats(SensorEvent event) {
         mAmbientBrightnessStatsTracker.add(mCurrentUserId, event.values[0]);
     }
@@ -969,7 +911,6 @@ public class BrightnessTracker {
     private final class SensorListener implements SensorEventListener {
         @Override
         public void onSensorChanged(SensorEvent event) {
-            recordSensorEvent(event);
             recordAmbientBrightnessStats(event);
         }
 
@@ -1054,9 +995,9 @@ public class BrightnessTracker {
                     BrightnessChangeValues values = (BrightnessChangeValues) msg.obj;
                     boolean userInitiatedChange = (msg.arg1 == 1);
                     handleBrightnessChanged(values.brightness, userInitiatedChange,
-                            values.powerBrightnessFactor, values.isUserSetBrightness,
+                            values.powerBrightnessFactor, values.wasShortTermModelActive,
                             values.isDefaultBrightnessConfig, values.timestamp,
-                            values.uniqueDisplayId);
+                            values.uniqueDisplayId, values.luxValues, values.luxTimestamps);
                     break;
                 case MSG_START_SENSOR_LISTENER:
                     startSensorListener();
@@ -1066,14 +1007,11 @@ public class BrightnessTracker {
                     stopSensorListener();
                     disableColorSampling();
                     break;
-                case MSG_BRIGHTNESS_CONFIG_CHANGED:
-                    mBrightnessConfiguration = (BrightnessConfiguration) msg.obj;
-                    boolean shouldCollectColorSamples =
-                            mBrightnessConfiguration != null
-                                    && mBrightnessConfiguration.shouldCollectColorSamples();
-                    if (shouldCollectColorSamples && !mColorSamplingEnabled) {
+                case MSG_SHOULD_COLLECT_COLOR_SAMPLE_CHANGED:
+                    mShouldCollectColorSample = (boolean) msg.obj;
+                    if (mShouldCollectColorSample && !mColorSamplingEnabled) {
                         enableColorSampling();
-                    } else if (!shouldCollectColorSamples && mColorSamplingEnabled) {
+                    } else if (!mShouldCollectColorSample && mColorSamplingEnabled) {
                         disableColorSampling();
                     }
                     break;
@@ -1088,20 +1026,24 @@ public class BrightnessTracker {
     private static class BrightnessChangeValues {
         public final float brightness;
         public final float powerBrightnessFactor;
-        public final boolean isUserSetBrightness;
+        public final boolean wasShortTermModelActive;
         public final boolean isDefaultBrightnessConfig;
         public final long timestamp;
         public final String uniqueDisplayId;
+        public final float[] luxValues;
+        public final long[] luxTimestamps;
 
         BrightnessChangeValues(float brightness, float powerBrightnessFactor,
-                boolean isUserSetBrightness, boolean isDefaultBrightnessConfig,
-                long timestamp, String uniqueDisplayId) {
+                boolean wasShortTermModelActive, boolean isDefaultBrightnessConfig,
+                long timestamp, String uniqueDisplayId, float[] luxValues, long[] luxTimestamps) {
             this.brightness = brightness;
             this.powerBrightnessFactor = powerBrightnessFactor;
-            this.isUserSetBrightness = isUserSetBrightness;
+            this.wasShortTermModelActive = wasShortTermModelActive;
             this.isDefaultBrightnessConfig = isDefaultBrightnessConfig;
             this.timestamp = timestamp;
             this.uniqueDisplayId = uniqueDisplayId;
+            this.luxValues = luxValues;
+            this.luxTimestamps = luxTimestamps;
         }
     }
 

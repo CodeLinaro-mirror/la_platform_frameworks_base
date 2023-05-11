@@ -16,18 +16,17 @@
 
 package com.android.server.wm.flicker.launch
 
-import android.platform.test.annotations.FlakyTest
 import android.platform.test.annotations.Presubmit
+import android.tools.common.datatypes.component.ComponentNameMatcher
+import android.tools.device.flicker.junit.FlickerParametersRunnerFactory
+import android.tools.device.flicker.legacy.FlickerBuilder
+import android.tools.device.flicker.legacy.FlickerTest
+import android.tools.device.flicker.legacy.FlickerTestFactory
+import android.tools.device.traces.parsers.toFlickerComponent
 import androidx.test.filters.RequiresDevice
 import com.android.server.wm.flicker.BaseTest
-import com.android.server.wm.flicker.FlickerParametersRunnerFactory
-import com.android.server.wm.flicker.FlickerTestParameter
-import com.android.server.wm.flicker.FlickerTestParameterFactory
-import com.android.server.wm.flicker.dsl.FlickerBuilder
 import com.android.server.wm.flicker.helpers.TwoActivitiesAppHelper
 import com.android.server.wm.flicker.testapp.ActivityOptions
-import com.android.server.wm.traces.common.ComponentNameMatcher
-import com.android.server.wm.traces.parser.toFlickerComponent
 import org.junit.FixMethodOrder
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -57,13 +56,13 @@ import org.junit.runners.Parameterized
 @RunWith(Parameterized::class)
 @Parameterized.UseParametersRunnerFactory(FlickerParametersRunnerFactory::class)
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
-class ActivitiesTransitionTest(testSpec: FlickerTestParameter) : BaseTest(testSpec) {
+open class ActivitiesTransitionTest(flicker: FlickerTest) : BaseTest(flicker) {
     private val testApp: TwoActivitiesAppHelper = TwoActivitiesAppHelper(instrumentation)
 
     /** {@inheritDoc} */
     override val transition: FlickerBuilder.() -> Unit = {
         setup {
-            tapl.setExpectedRotation(testSpec.startRotation)
+            tapl.setExpectedRotation(flicker.scenario.startRotation.value)
             testApp.launchViaIntent(wmHelper)
         }
         teardown { testApp.exit(wmHelper) }
@@ -73,11 +72,6 @@ class ActivitiesTransitionTest(testSpec: FlickerTestParameter) : BaseTest(testSp
             wmHelper.StateSyncBuilder().withFullScreenApp(testApp).waitForAndVerify()
         }
     }
-
-    /** {@inheritDoc} */
-    @FlakyTest(bugId = 206753786)
-    @Test
-    override fun navBarLayerPositionAtStartAndEnd() = super.navBarLayerPositionAtStartAndEnd()
 
     /**
      * Checks that the [ActivityOptions.LaunchNewActivity] activity is visible at the start of the
@@ -91,7 +85,7 @@ class ActivitiesTransitionTest(testSpec: FlickerTestParameter) : BaseTest(testSp
             ActivityOptions.LaunchNewActivity.COMPONENT.toFlickerComponent()
         val imeAutoFocusActivityComponent =
             ActivityOptions.SimpleActivity.COMPONENT.toFlickerComponent()
-        testSpec.assertWm {
+        flicker.assertWm {
             this.isAppWindowOnTop(buttonActivityComponent)
                 .then()
                 .isAppWindowOnTop(imeAutoFocusActivityComponent)
@@ -108,7 +102,7 @@ class ActivitiesTransitionTest(testSpec: FlickerTestParameter) : BaseTest(testSp
     @Presubmit
     @Test
     fun launcherWindowNotOnTop() {
-        testSpec.assertWm { this.isAppWindowNotOnTop(ComponentNameMatcher.LAUNCHER) }
+        flicker.assertWm { this.isAppWindowNotOnTop(ComponentNameMatcher.LAUNCHER) }
     }
 
     /**
@@ -117,20 +111,20 @@ class ActivitiesTransitionTest(testSpec: FlickerTestParameter) : BaseTest(testSp
     @Presubmit
     @Test
     fun launcherLayerNotVisible() {
-        testSpec.assertLayers { this.isInvisible(ComponentNameMatcher.LAUNCHER) }
+        flicker.assertLayers { this.isInvisible(ComponentNameMatcher.LAUNCHER) }
     }
 
     companion object {
         /**
          * Creates the test configurations.
          *
-         * See [FlickerTestParameterFactory.getConfigNonRotationTests] for configuring repetitions,
-         * screen orientation and navigation modes.
+         * See [FlickerTestFactory.nonRotationTests] for configuring screen orientation and
+         * navigation modes.
          */
         @Parameterized.Parameters(name = "{0}")
         @JvmStatic
-        fun getParams(): Collection<FlickerTestParameter> {
-            return FlickerTestParameterFactory.getInstance().getConfigNonRotationTests()
+        fun getParams(): Collection<FlickerTest> {
+            return FlickerTestFactory.nonRotationTests()
         }
     }
 }

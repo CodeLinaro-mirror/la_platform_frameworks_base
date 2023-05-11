@@ -1,5 +1,5 @@
 {
-  "presubmit-large": [
+  "presubmit": [
     {
       "name": "CtsVoiceInteractionTestCases",
       "options": [
@@ -26,6 +26,14 @@
     },
     {
       "name": "CtsLocalVoiceInteraction",
+      "options": [
+        {
+          "exclude-annotation": "androidx.test.filters.FlakyTest"
+        }
+      ]
+    },
+    {
+      "name": "FrameworksVoiceInteractionTests",
       "options": [
         {
           "exclude-annotation": "androidx.test.filters.FlakyTest"

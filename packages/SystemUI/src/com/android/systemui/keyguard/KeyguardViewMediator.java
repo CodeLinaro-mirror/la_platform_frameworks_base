@@ -25,6 +25,7 @@ import static com.android.internal.config.sysui.SystemUiDeviceConfigFlags.NAV_BA
 import static com.android.internal.jank.InteractionJankMonitor.CUJ_LOCKSCREEN_OCCLUSION;
 import static com.android.internal.jank.InteractionJankMonitor.CUJ_LOCKSCREEN_TRANSITION_FROM_AOD;
 import static com.android.internal.jank.InteractionJankMonitor.CUJ_LOCKSCREEN_UNLOCK_ANIMATION;
+import static com.android.internal.widget.LockPatternUtils.StrongAuthTracker.SOME_AUTH_REQUIRED_AFTER_TRUSTAGENT_EXPIRED;
 import static com.android.internal.widget.LockPatternUtils.StrongAuthTracker.SOME_AUTH_REQUIRED_AFTER_USER_REQUEST;
 import static com.android.internal.widget.LockPatternUtils.StrongAuthTracker.STRONG_AUTH_REQUIRED_AFTER_DPM_LOCK_NOW;
 import static com.android.internal.widget.LockPatternUtils.StrongAuthTracker.STRONG_AUTH_REQUIRED_AFTER_LOCKOUT;
@@ -32,13 +33,15 @@ import static com.android.internal.widget.LockPatternUtils.StrongAuthTracker.STR
 import static com.android.internal.widget.LockPatternUtils.StrongAuthTracker.STRONG_AUTH_REQUIRED_AFTER_TIMEOUT;
 import static com.android.internal.widget.LockPatternUtils.StrongAuthTracker.STRONG_AUTH_REQUIRED_FOR_UNATTENDED_UPDATE;
 import static com.android.systemui.DejankUtils.whitelistIpcs;
+import static com.android.systemui.keyguard.ui.viewmodel.DreamingToLockscreenTransitionViewModel.LOCKSCREEN_ANIMATION_DURATION_MS;
+import static com.android.systemui.keyguard.ui.viewmodel.LockscreenToDreamingTransitionViewModel.DREAMING_ANIMATION_DURATION_MS;
 
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.animation.ValueAnimator;
-import android.app.ActivityManager;
 import android.app.ActivityTaskManager;
 import android.app.AlarmManager;
+import android.app.BroadcastOptions;
 import android.app.PendingIntent;
 import android.app.StatusBarManager;
 import android.app.WindowConfiguration;
@@ -56,6 +59,7 @@ import android.hardware.biometrics.BiometricSourceType;
 import android.media.AudioAttributes;
 import android.media.AudioManager;
 import android.media.SoundPool;
+import android.os.Binder;
 import android.os.Bundle;
 import android.os.DeadObjectException;
 import android.os.Handler;
@@ -64,6 +68,7 @@ import android.os.Looper;
 import android.os.Message;
 import android.os.PowerManager;
 import android.os.RemoteException;
+import android.os.ServiceManager;
 import android.os.SystemClock;
 import android.os.SystemProperties;
 import android.os.Trace;
@@ -99,6 +104,7 @@ import com.android.internal.policy.IKeyguardDismissCallback;
 import com.android.internal.policy.IKeyguardExitCallback;
 import com.android.internal.policy.IKeyguardStateCallback;
 import com.android.internal.policy.ScreenDecorationsUtils;
+import com.android.internal.statusbar.IStatusBarService;
 import com.android.internal.util.LatencyTracker;
 import com.android.internal.widget.LockPatternUtils;
 import com.android.keyguard.KeyguardConstants;
@@ -124,6 +130,7 @@ import com.android.systemui.dump.DumpManager;
 import com.android.systemui.keyguard.dagger.KeyguardModule;
 import com.android.systemui.navigationbar.NavigationModeController;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
+import com.android.systemui.settings.UserTracker;
 import com.android.systemui.shade.NotificationPanelViewController;
 import com.android.systemui.shade.ShadeController;
 import com.android.systemui.shade.ShadeExpansionStateManager;
@@ -137,15 +144,16 @@ import com.android.systemui.statusbar.phone.CentralSurfaces;
 import com.android.systemui.statusbar.phone.DozeParameters;
 import com.android.systemui.statusbar.phone.KeyguardBypassController;
 import com.android.systemui.statusbar.phone.ScreenOffAnimationController;
+import com.android.systemui.statusbar.phone.ScrimController;
 import com.android.systemui.statusbar.policy.KeyguardStateController;
 import com.android.systemui.statusbar.policy.UserSwitcherController;
 import com.android.systemui.util.DeviceConfigProxy;
 
+import dagger.Lazy;
+
 import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.concurrent.Executor;
-
-import dagger.Lazy;
 
 /**
  * Mediates requests related to the keyguard.  This includes queries about the
@@ -263,6 +271,9 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
     private AlarmManager mAlarmManager;
     private AudioManager mAudioManager;
     private StatusBarManager mStatusBarManager;
+    private final IStatusBarService mStatusBarService;
+    private final IBinder mStatusBarDisableToken = new Binder();
+    private final UserTracker mUserTracker;
     private final SysuiStatusBarStateController mStatusBarStateController;
     private final Executor mUiBgExecutor;
     private final ScreenOffAnimationController mScreenOffAnimationController;
@@ -384,6 +395,12 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
                     | Intent.FLAG_RECEIVER_REGISTERED_ONLY_BEFORE_BOOT
                     | Intent.FLAG_RECEIVER_VISIBLE_TO_INSTANT_APPS);
 
+    private static final Bundle USER_PRESENT_INTENT_OPTIONS =
+            BroadcastOptions.makeBasic()
+                    .setDeferUntilActive(true)
+                    .setDeliveryGroupPolicy(BroadcastOptions.DELIVERY_GROUP_POLICY_MOST_RECENT)
+                    .toBundle();
+
     /**
      * {@link #setKeyguardEnabled} waits on this condition when it re-enables
      * the keyguard.
@@ -407,6 +424,11 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
      * The duration in milliseconds of the dream open animation.
      */
     private final int mDreamOpenAnimationDuration;
+
+    /**
+     * The duration in milliseconds of the dream close animation.
+     */
+    private final int mDreamCloseAnimationDuration;
 
     /**
      * The animation used for hiding keyguard. This is used to fetch the animation timings if
@@ -568,12 +590,6 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
         @Override
         public void onDeviceProvisioned() {
             sendUserPresentBroadcast();
-            synchronized (KeyguardViewMediator.this) {
-                // If system user is provisioned, we might want to lock now to avoid showing launcher
-                if (mustNotUnlockCurrentUser()) {
-                    doKeyguardLocked(null);
-                }
-            }
         }
 
         @Override
@@ -715,7 +731,7 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
 
         @Override
         public void keyguardDone(boolean strongAuth, int targetUserId) {
-            if (targetUserId != ActivityManager.getCurrentUser()) {
+            if (targetUserId != KeyguardUpdateMonitor.getCurrentUser()) {
                 return;
             }
             if (DEBUG) Log.d(TAG, "keyguardDone");
@@ -738,7 +754,7 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
         public void keyguardDonePending(boolean strongAuth, int targetUserId) {
             Trace.beginSection("KeyguardViewMediator.mViewMediatorCallback#keyguardDonePending");
             if (DEBUG) Log.d(TAG, "keyguardDonePending");
-            if (targetUserId != ActivityManager.getCurrentUser()) {
+            if (targetUserId != KeyguardUpdateMonitor.getCurrentUser()) {
                 Trace.endSection();
                 return;
             }
@@ -815,6 +831,9 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
             } else if (trustAgentsEnabled
                     && (strongAuth & SOME_AUTH_REQUIRED_AFTER_USER_REQUEST) != 0) {
                 return KeyguardSecurityView.PROMPT_REASON_USER_REQUEST;
+            } else if (trustAgentsEnabled
+                    && (strongAuth & SOME_AUTH_REQUIRED_AFTER_TRUSTAGENT_EXPIRED) != 0) {
+                return KeyguardSecurityView.PROMPT_REASON_TRUSTAGENT_EXPIRED;
             } else if (any && ((strongAuth & STRONG_AUTH_REQUIRED_AFTER_LOCKOUT) != 0
                     || mUpdateMonitor.isFingerprintLockedOut())) {
                 return KeyguardSecurityView.PROMPT_REASON_AFTER_LOCKOUT;
@@ -846,6 +865,7 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
                 @Override
                 public void onLaunchAnimationStart(boolean isExpandingFullyAbove) {
                     mOccludeAnimationPlaying = true;
+                    mScrimControllerLazy.get().setOccludeAnimationPlaying(true);
                 }
 
                 @Override
@@ -856,12 +876,13 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
 
                     // Ensure keyguard state is set correctly if we're cancelled.
                     mCentralSurfaces.updateIsKeyguard();
+                    mScrimControllerLazy.get().setOccludeAnimationPlaying(false);
                 }
 
                 @Override
                 public void onLaunchAnimationEnd(boolean launchIsFullScreen) {
                     if (launchIsFullScreen) {
-                        mCentralSurfaces.instantCollapseNotificationPanel();
+                        mShadeController.get().instantCollapseShade();
                     }
 
                     mOccludeAnimationPlaying = false;
@@ -869,6 +890,7 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
                     // Hide the keyguard now that we're done launching the occluding activity over
                     // it.
                     mCentralSurfaces.updateIsKeyguard();
+                    mScrimControllerLazy.get().setOccludeAnimationPlaying(false);
 
                     mInteractionJankMonitor.end(CUJ_LOCKSCREEN_OCCLUSION);
                 }
@@ -890,25 +912,32 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
                 @NonNull
                 @Override
                 public LaunchAnimator.State createAnimatorState() {
-                    final int width = getLaunchContainer().getWidth();
-                    final int height = getLaunchContainer().getHeight();
-
-                    final float initialHeight = height / 3f;
-                    final float initialWidth = width / 3f;
+                    final int fullWidth = getLaunchContainer().getWidth();
+                    final int fullHeight = getLaunchContainer().getHeight();
 
                     if (mUpdateMonitor.isSecureCameraLaunchedOverKeyguard()) {
+                        final float initialHeight = fullHeight / 3f;
+                        final float initialWidth = fullWidth / 3f;
+
                         // Start the animation near the power button, at one-third size, since the
                         // camera was launched from the power button.
                         return new LaunchAnimator.State(
                                 (int) (mPowerButtonY - initialHeight / 2f) /* top */,
                                 (int) (mPowerButtonY + initialHeight / 2f) /* bottom */,
-                                (int) (width - initialWidth) /* left */,
-                                width /* right */,
+                                (int) (fullWidth - initialWidth) /* left */,
+                                fullWidth /* right */,
                                 mWindowCornerRadius, mWindowCornerRadius);
                     } else {
-                        // Start the animation in the center of the screen, scaled down.
+                        final float initialHeight = fullHeight / 2f;
+                        final float initialWidth = fullWidth / 2f;
+
+                        // Start the animation in the center of the screen, scaled down to half
+                        // size.
                         return new LaunchAnimator.State(
-                                height / 2, height / 2, width / 2, width / 2,
+                                (int) (fullHeight - initialHeight) / 2,
+                                (int) (initialHeight + (fullHeight - initialHeight) / 2),
+                                (int) (fullWidth - initialWidth) / 2,
+                                (int) (initialWidth + (fullWidth - initialWidth) / 2),
                                 mWindowCornerRadius, mWindowCornerRadius);
                     }
                 }
@@ -937,15 +966,24 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
                 public void onAnimationStart(int transit, RemoteAnimationTarget[] apps,
                         RemoteAnimationTarget[] wallpapers, RemoteAnimationTarget[] nonApps,
                         IRemoteAnimationFinishedCallback finishedCallback) throws RemoteException {
-                    setOccluded(true /* isOccluded */, true /* animate */);
+                    if (!handleOnAnimationStart(
+                                transit, apps, wallpapers, nonApps, finishedCallback)) {
+                        // Usually we rely on animation completion to synchronize occluded status,
+                        // but there was no animation to play, so just update it now.
+                        setOccluded(true /* isOccluded */, false /* animate */);
+                    }
+                }
 
+                private boolean handleOnAnimationStart(int transit, RemoteAnimationTarget[] apps,
+                        RemoteAnimationTarget[] wallpapers, RemoteAnimationTarget[] nonApps,
+                        IRemoteAnimationFinishedCallback finishedCallback) throws RemoteException {
                     if (apps == null || apps.length == 0 || apps[0] == null) {
                         if (DEBUG) {
                             Log.d(TAG, "No apps provided to the OccludeByDream runner; "
                                     + "skipping occluding animation.");
                         }
                         finishedCallback.onAnimationFinished();
-                        return;
+                        return false;
                     }
 
                     final RemoteAnimationTarget primary = apps[0];
@@ -955,7 +993,7 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
                         Log.w(TAG, "The occluding app isn't Dream; "
                                 + "finishing up. Please check that the config is correct.");
                         finishedCallback.onAnimationFinished();
-                        return;
+                        return false;
                     }
 
                     final SyncRtSurfaceTransactionApplier applier =
@@ -980,9 +1018,20 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
                                     applier.scheduleApply(paramsBuilder.build());
                                 });
                         mOccludeByDreamAnimator.addListener(new AnimatorListenerAdapter() {
+                            private boolean mIsCancelled = false;
+                            @Override
+                            public void onAnimationCancel(Animator animation) {
+                                mIsCancelled = true;
+                            }
+
                             @Override
                             public void onAnimationEnd(Animator animation) {
                                 try {
+                                    if (!mIsCancelled) {
+                                        // We're already on the main thread, don't queue this call
+                                        handleSetOccluded(true /* isOccluded */,
+                                                false /* animate */);
+                                    }
                                     finishedCallback.onAnimationFinished();
                                     mOccludeByDreamAnimator = null;
                                 } catch (RemoteException e) {
@@ -993,6 +1042,7 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
 
                         mOccludeByDreamAnimator.start();
                     });
+                    return true;
                 }
             };
 
@@ -1055,7 +1105,8 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
                         }
 
                         mUnoccludeAnimator = ValueAnimator.ofFloat(1f, 0f);
-                        mUnoccludeAnimator.setDuration(UNOCCLUDE_ANIMATION_DURATION);
+                        mUnoccludeAnimator.setDuration(isDream ? mDreamCloseAnimationDuration
+                                : UNOCCLUDE_ANIMATION_DURATION);
                         mUnoccludeAnimator.setInterpolator(Interpolators.TOUCH_RESPONSE);
                         mUnoccludeAnimator.addUpdateListener(
                                 animation -> {
@@ -1109,12 +1160,12 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
     private final KeyguardStateController.Callback mKeyguardStateControllerCallback =
             new KeyguardStateController.Callback() {
         @Override
-        public void onBouncerShowingChanged() {
+        public void onPrimaryBouncerShowingChanged() {
             synchronized (KeyguardViewMediator.this) {
-                if (mKeyguardStateController.isBouncerShowing()) {
+                if (mKeyguardStateController.isPrimaryBouncerShowing()) {
                     mPendingPinLock = false;
                 }
-                adjustStatusBarLocked(mKeyguardStateController.isBouncerShowing(), false);
+                adjustStatusBarLocked(mKeyguardStateController.isPrimaryBouncerShowing(), false);
             }
         }
     };
@@ -1125,12 +1176,14 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
     private ScreenOnCoordinator mScreenOnCoordinator;
 
     private Lazy<ActivityLaunchAnimator> mActivityLaunchAnimator;
+    private Lazy<ScrimController> mScrimControllerLazy;
 
     /**
      * Injected constructor. See {@link KeyguardModule}.
      */
     public KeyguardViewMediator(
             Context context,
+            UserTracker userTracker,
             FalsingCollector falsingCollector,
             LockPatternUtils lockPatternUtils,
             BroadcastDispatcher broadcastDispatcher,
@@ -1154,8 +1207,10 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
             DreamOverlayStateController dreamOverlayStateController,
             Lazy<ShadeController> shadeControllerLazy,
             Lazy<NotificationShadeWindowController> notificationShadeWindowControllerLazy,
-            Lazy<ActivityLaunchAnimator> activityLaunchAnimator) {
+            Lazy<ActivityLaunchAnimator> activityLaunchAnimator,
+            Lazy<ScrimController> scrimControllerLazy) {
         mContext = context;
+        mUserTracker = userTracker;
         mFalsingCollector = falsingCollector;
         mLockPatternUtils = lockPatternUtils;
         mBroadcastDispatcher = broadcastDispatcher;
@@ -1167,6 +1222,8 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
         mPM = powerManager;
         mTrustManager = trustManager;
         mUserSwitcherController = userSwitcherController;
+        mStatusBarService = IStatusBarService.Stub.asInterface(
+                ServiceManager.getService(Context.STATUS_BAR_SERVICE));
         mKeyguardDisplayManager = keyguardDisplayManager;
         mShadeController = shadeControllerLazy;
         dumpManager.registerDumpable(getClass().getName(), this);
@@ -1198,22 +1255,18 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
         mDreamOverlayStateController = dreamOverlayStateController;
 
         mActivityLaunchAnimator = activityLaunchAnimator;
+        mScrimControllerLazy = scrimControllerLazy;
 
         mPowerButtonY = context.getResources().getDimensionPixelSize(
                 R.dimen.physical_power_button_center_screen_location_y);
         mWindowCornerRadius = ScreenDecorationsUtils.getWindowCornerRadius(context);
 
-        mDreamOpenAnimationDuration = context.getResources().getInteger(
-                com.android.internal.R.integer.config_dreamOpenAnimationDuration);
+        mDreamOpenAnimationDuration = (int) DREAMING_ANIMATION_DURATION_MS;
+        mDreamCloseAnimationDuration = (int) LOCKSCREEN_ANIMATION_DURATION_MS;
     }
 
     public void userActivity() {
         mPM.userActivity(SystemClock.uptimeMillis(), false);
-    }
-
-    boolean mustNotUnlockCurrentUser() {
-        return UserManager.isSplitSystemUser()
-                && KeyguardUpdateMonitor.getCurrentUser() == UserHandle.USER_SYSTEM;
     }
 
     private void setupLocked() {
@@ -1234,7 +1287,7 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
 
         mAlarmManager = (AlarmManager) mContext.getSystemService(Context.ALARM_SERVICE);
 
-        KeyguardUpdateMonitor.setCurrentUser(ActivityManager.getCurrentUser());
+        KeyguardUpdateMonitor.setCurrentUser(mUserTracker.getUserId());
 
         // Assume keyguard is showing (unless it's disabled) until we know for sure, unless Keyguard
         // is disabled.
@@ -1288,7 +1341,7 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
         mHideAnimation = AnimationUtils.loadAnimation(mContext,
                 com.android.internal.R.anim.lock_screen_behind_enter);
 
-        mWorkLockController = new WorkLockActivityController(mContext);
+        mWorkLockController = new WorkLockActivityController(mContext, mUserTracker);
     }
 
     @Override
@@ -1430,16 +1483,16 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
     public void maybeHandlePendingLock() {
         if (mPendingLock) {
 
-            // The screen off animation is playing, so if we lock now, the foreground app will
-            // vanish and the keyguard will jump-cut in. Delay it, until either:
+            // The screen off animation is playing or is about to be, so if we lock now, the
+            // foreground app will vanish and the keyguard will jump-cut in. Delay it, until either:
             //   - The screen off animation ends. We will call maybeHandlePendingLock from
             //     the end action in UnlockedScreenOffAnimationController#animateInKeyguard.
             //   - The screen off animation is cancelled by the device waking back up. We will call
             //     maybeHandlePendingLock from KeyguardViewMediator#onStartedWakingUp.
-            if (mScreenOffAnimationController.isKeyguardShowDelayed()) {
+            if (mScreenOffAnimationController.shouldDelayKeyguardShow()) {
                 if (DEBUG) {
                     Log.d(TAG, "#maybeHandlePendingLock: not handling because the screen off "
-                            + "animation's isKeyguardShowDelayed() returned true. This should be "
+                            + "animation's shouldDelayKeyguardShow() returned true. This should be "
                             + "handled soon by #onStartedWakingUp, or by the end actions of the "
                             + "screen off animation.");
                 }
@@ -1589,7 +1642,7 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
         // TODO: Rename all screen off/on references to interactive/sleeping
         synchronized (this) {
             mDeviceInteractive = true;
-            if (mPendingLock && !cameraGestureTriggered) {
+            if (mPendingLock && !cameraGestureTriggered && !mWakeAndUnlocking) {
                 doKeyguardLocked(null);
             }
             mAnimatingScreenOff = false;
@@ -1729,7 +1782,7 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
                 try {
                     callback.onKeyguardExitResult(true);
                 } catch (RemoteException e) {
-                    Slog.w(TAG, "Failed to call onKeyguardExitResult(false)", e);
+                    Slog.w(TAG, "Failed to call onKeyguardExitResult(true)", e);
                 }
             } else {
 
@@ -1764,7 +1817,6 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
 
         Trace.beginSection("KeyguardViewMediator#setOccluded");
         if (DEBUG) Log.d(TAG, "setOccluded " + isOccluded);
-        mInteractionJankMonitor.cancel(CUJ_LOCKSCREEN_TRANSITION_FROM_AOD);
         mHandler.removeMessages(SET_OCCLUDED);
         Message msg = mHandler.obtainMessage(SET_OCCLUDED, isOccluded ? 1 : 0, animate ? 1 : 0);
         mHandler.sendMessage(msg);
@@ -1797,6 +1849,8 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
     private void handleSetOccluded(boolean isOccluded, boolean animate) {
         Trace.beginSection("KeyguardViewMediator#handleSetOccluded");
         Log.d(TAG, "handleSetOccluded(" + isOccluded + ")");
+        mInteractionJankMonitor.cancel(CUJ_LOCKSCREEN_TRANSITION_FROM_AOD);
+
         synchronized (KeyguardViewMediator.this) {
             if (mHiding && isOccluded) {
                 // We're in the process of going away but WindowManager wants to show a
@@ -1873,40 +1927,51 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
             return;
         }
 
-        // if the keyguard is already showing, don't bother. check flags in both files
-        // to account for the hiding animation which results in a delay and discrepancy
-        // between flags
+        // If the keyguard is already showing, see if we don't need to bother re-showing it. Check
+        // flags in both files to account for the hiding animation which results in a delay and
+        // discrepancy between flags. If we're in the middle of hiding, do not short circuit so that
+        // we explicitly re-set state.
         if (mShowing && mKeyguardStateController.isShowing()) {
-            if (DEBUG) Log.d(TAG, "doKeyguard: not showing because it is already showing");
-            resetStateLocked();
+            if (mPM.isInteractive() && !mHiding) {
+                // It's already showing, and we're not trying to show it while the screen is off.
+                // We can simply reset all of the views.
+                if (DEBUG) Log.d(TAG, "doKeyguard: not showing (instead, resetting) because it is "
+                        + "already showing, we're interactive, and we were not previously hiding. "
+                        + "It should be safe to short-circuit here.");
+                resetStateLocked();
+                return;
+            } else {
+                // We are trying to show the keyguard while the screen is off or while we were in
+                // the middle of hiding - this results from race conditions involving locking while
+                // unlocking. Don't short-circuit here and ensure the keyguard is fully re-shown.
+                Log.e(TAG,
+                        "doKeyguard: already showing, but re-showing because we're interactive or "
+                                + "were in the middle of hiding.");
+            }
+        }
+
+        // if the setup wizard hasn't run yet, don't show
+        final boolean requireSim = !SystemProperties.getBoolean("keyguard.no_require_sim", false);
+        final boolean absent = SubscriptionManager.isValidSubscriptionId(
+                mUpdateMonitor.getNextSubIdForState(TelephonyManager.SIM_STATE_ABSENT));
+        final boolean disabled = SubscriptionManager.isValidSubscriptionId(
+                mUpdateMonitor.getNextSubIdForState(TelephonyManager.SIM_STATE_PERM_DISABLED));
+        final boolean lockedOrMissing = mUpdateMonitor.isSimPinSecure()
+                || ((absent || disabled) && requireSim);
+
+        if (!lockedOrMissing && shouldWaitForProvisioning()) {
+            if (DEBUG) {
+                Log.d(TAG, "doKeyguard: not showing because device isn't provisioned and the sim is"
+                        + " not locked or missing");
+            }
             return;
         }
 
-        // In split system user mode, we never unlock system user.
-        if (!mustNotUnlockCurrentUser()
-                || !mUpdateMonitor.isDeviceProvisioned()) {
-
-            // if the setup wizard hasn't run yet, don't show
-            final boolean requireSim = !SystemProperties.getBoolean("keyguard.no_require_sim", false);
-            final boolean absent = SubscriptionManager.isValidSubscriptionId(
-                    mUpdateMonitor.getNextSubIdForState(TelephonyManager.SIM_STATE_ABSENT));
-            final boolean disabled = SubscriptionManager.isValidSubscriptionId(
-                    mUpdateMonitor.getNextSubIdForState(TelephonyManager.SIM_STATE_PERM_DISABLED));
-            final boolean lockedOrMissing = mUpdateMonitor.isSimPinSecure()
-                    || ((absent || disabled) && requireSim);
-
-            if (!lockedOrMissing && shouldWaitForProvisioning()) {
-                if (DEBUG) Log.d(TAG, "doKeyguard: not showing because device isn't provisioned"
-                        + " and the sim is not locked or missing");
-                return;
-            }
-
-            boolean forceShow = options != null && options.getBoolean(OPTION_FORCE_SHOW, false);
-            if (mLockPatternUtils.isLockScreenDisabled(KeyguardUpdateMonitor.getCurrentUser())
-                    && !lockedOrMissing && !forceShow) {
-                if (DEBUG) Log.d(TAG, "doKeyguard: not showing because lockscreen is off");
-                return;
-            }
+        boolean forceShow = options != null && options.getBoolean(OPTION_FORCE_SHOW, false);
+        if (mLockPatternUtils.isLockScreenDisabled(KeyguardUpdateMonitor.getCurrentUser())
+                && !lockedOrMissing && !forceShow) {
+            if (DEBUG) Log.d(TAG, "doKeyguard: not showing because lockscreen is off");
+            return;
         }
 
         if (DEBUG) Log.d(TAG, "doKeyguard: showing the lock screen");
@@ -2184,6 +2249,9 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
                 case START_KEYGUARD_EXIT_ANIM:
                     Trace.beginSection(
                             "KeyguardViewMediator#handleMessage START_KEYGUARD_EXIT_ANIM");
+                    synchronized (KeyguardViewMediator.this) {
+                        mHiding = true;
+                    }
                     StartKeyguardExitAnimParams params = (StartKeyguardExitAnimParams) msg.obj;
                     mNotificationShadeWindowControllerLazy.get().batchApplyWindowLayoutParams(
                             () -> {
@@ -2221,6 +2289,10 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
         }
         if (!mKeyguardDonePending && mHideAnimationRun && !mHideAnimationRunning) {
             handleKeyguardDone();
+        } else if (mSurfaceBehindRemoteAnimationRunning) {
+            // We're already running the keyguard exit animation, likely due to an in-progress swipe
+            // to unlock.
+           exitKeyguardAndFinishSurfaceBehindRemoteAnimation(false /* cancelled */);
         } else if (!mHideAnimationRun) {
             if (DEBUG) Log.d(TAG, "tryKeyguardDone: starting pre-hide animation");
             mHideAnimationRun = true;
@@ -2268,7 +2340,10 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
                         Context.USER_SERVICE);
                 mUiBgExecutor.execute(() -> {
                     for (int profileId : um.getProfileIdsWithDisabled(currentUser.getIdentifier())) {
-                        mContext.sendBroadcastAsUser(USER_PRESENT_INTENT, UserHandle.of(profileId));
+                        mContext.sendBroadcastAsUser(USER_PRESENT_INTENT,
+                                UserHandle.of(profileId),
+                                null,
+                                USER_PRESENT_INTENT_OPTIONS);
                     }
                     mLockPatternUtils.userPresent(currentUserId);
                 });
@@ -2365,11 +2440,19 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
                 if (DEBUG) Log.d(TAG, "handleShow");
             }
 
-            mHiding = false;
             mKeyguardExitAnimationRunner = null;
             mWakeAndUnlocking = false;
             setPendingLock(false);
-            setShowingLocked(true);
+
+            // Force if we we're showing in the middle of hiding, to ensure we end up in the correct
+            // state.
+            setShowingLocked(true, mHiding /* force */);
+            if (mHiding) {
+                Log.d(TAG, "Forcing setShowingLocked because mHiding=true, which means we're "
+                        + "showing in the middle of hiding.");
+            }
+            mHiding = false;
+
             mKeyguardViewControllerLazy.get().show(options);
             resetKeyguardDonePendingLocked();
             mHideAnimationRun = false;
@@ -2381,13 +2464,26 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
         }
         mKeyguardDisplayManager.show();
 
-        // schedule 4hr idle timeout after which non-strong biometrics (i.e. weak or convenience
-        // biometric) can't be used to unlock device until unlocking with strong biometric or
-        // primary auth (i.e. PIN/pattern/password)
-        mLockPatternUtils.scheduleNonStrongBiometricIdleTimeout(
-                KeyguardUpdateMonitor.getCurrentUser());
+        scheduleNonStrongBiometricIdleTimeout();
 
         Trace.endSection();
+    }
+
+    /**
+     * Schedule 4-hour idle timeout for non-strong biometrics when the device is locked
+     */
+    private void scheduleNonStrongBiometricIdleTimeout() {
+        final int currentUser = KeyguardUpdateMonitor.getCurrentUser();
+        // If unlocking with non-strong (i.e. weak or convenience) biometrics is possible, schedule
+        // 4hr idle timeout after which non-strong biometrics can't be used to unlock device until
+        // unlocking with strong biometric or primary auth (i.e. PIN/pattern/password)
+        if (mUpdateMonitor.isUnlockingWithNonStrongBiometricsPossible(currentUser)) {
+            if (DEBUG) {
+                Log.d(TAG, "scheduleNonStrongBiometricIdleTimeout: schedule an alarm for "
+                        + "currentUser=" + currentUser);
+            }
+            mLockPatternUtils.scheduleNonStrongBiometricIdleTimeout(currentUser);
+        }
     }
 
     private final Runnable mKeyguardGoingAwayRunnable = new Runnable() {
@@ -2468,15 +2564,6 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
         synchronized (KeyguardViewMediator.this) {
             if (DEBUG) Log.d(TAG, "handleHide");
 
-            if (mustNotUnlockCurrentUser()) {
-                // In split system user mode, we never unlock system user. The end user has to
-                // switch to another user.
-                // TODO: We should stop it early by disabling the swipe up flow. Right now swipe up
-                // still completes and makes the screen blank.
-                if (DEBUG) Log.d(TAG, "Split system user, quit unlocking.");
-                mKeyguardExitAnimationRunner = null;
-                return;
-            }
             mHiding = true;
 
             if (mShowing && !mOccluded) {
@@ -2687,27 +2774,42 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
     }
 
     /**
-     * Called if the keyguard exit animation has been cancelled, and we should dismiss to the
-     * keyguard.
+     * Called if the keyguard exit animation has been cancelled.
      *
      * This can happen due to the system cancelling the RemoteAnimation (due to a timeout, a new
-     * app transition before finishing the current RemoteAnimation).
+     * app transition before finishing the current RemoteAnimation, or the keyguard being re-shown).
      */
     private void handleCancelKeyguardExitAnimation() {
-        showSurfaceBehindKeyguard();
-        onKeyguardExitRemoteAnimationFinished(true /* cancelled */);
+        if (mPendingLock) {
+            Log.d(TAG, "#handleCancelKeyguardExitAnimation: keyguard exit animation cancelled. "
+                    + "There's a pending lock, so we were cancelled because the device was locked "
+                    + "again during the unlock sequence. We should end up locked.");
+
+            // A lock is pending, meaning the keyguard exit animation was cancelled because we're
+            // re-locking. We should just end the surface-behind animation without exiting the
+            // keyguard. The pending lock will be handled by onFinishedGoingToSleep().
+            finishSurfaceBehindRemoteAnimation(true);
+        } else {
+            Log.d(TAG, "#handleCancelKeyguardExitAnimation: keyguard exit animation cancelled. "
+                    + "No pending lock, we should end up unlocked with the app/launcher visible.");
+
+            // No lock is pending, so the animation was cancelled during the unlock sequence, but
+            // we should end up unlocked. Show the surface and exit the keyguard.
+            showSurfaceBehindKeyguard();
+            exitKeyguardAndFinishSurfaceBehindRemoteAnimation(true /* cancelled */);
+        }
     }
 
     /**
-     * Called when we're done running the keyguard exit animation.
+     * Called when we're done running the keyguard exit animation, we should now end up unlocked.
      *
-     * This will call {@link #mSurfaceBehindRemoteAnimationFinishedCallback} to let WM know that
-     * we're done with the RemoteAnimation, actually hide the keyguard, and clean up state related
-     * to the keyguard exit animation.
+     * This will call {@link #handleCancelKeyguardExitAnimation()} to let WM know that we're done
+     * with the RemoteAnimation, actually hide the keyguard, and clean up state related to the
+     * keyguard exit animation.
      *
      * @param cancelled {@code true} if the animation was cancelled before it finishes.
      */
-    public void onKeyguardExitRemoteAnimationFinished(boolean cancelled) {
+    public void exitKeyguardAndFinishSurfaceBehindRemoteAnimation(boolean cancelled) {
         Log.d(TAG, "onKeyguardExitRemoteAnimationFinished");
         if (!mSurfaceBehindRemoteAnimationRunning && !mSurfaceBehindRemoteAnimationRequested) {
             Log.d(TAG, "skip onKeyguardExitRemoteAnimationFinished cancelled=" + cancelled
@@ -2736,10 +2838,6 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
             }
 
             finishSurfaceBehindRemoteAnimation(cancelled);
-            mSurfaceBehindRemoteAnimationRequested = false;
-
-            // The remote animation is over, so we're not going away anymore.
-            mKeyguardStateController.notifyKeyguardGoingAway(false);
 
             // Dispatch the callback on animation finishes.
             mUpdateMonitor.dispatchKeyguardDismissAnimationFinished();
@@ -2798,13 +2896,17 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
         return mSurfaceBehindRemoteAnimationRunning;
     }
 
-    /** If it's running, finishes the RemoteAnimation on the surface behind the keyguard. */
+    /**
+     * If it's running, finishes the RemoteAnimation on the surface behind the keyguard and resets
+     * related state.
+     *
+     * This does not set keyguard state to either locked or unlocked, it simply ends the remote
+     * animation on the surface behind the keyguard. This can be called by
+     */
     void finishSurfaceBehindRemoteAnimation(boolean cancelled) {
-        if (!mSurfaceBehindRemoteAnimationRunning) {
-            return;
-        }
-
+        mSurfaceBehindRemoteAnimationRequested = false;
         mSurfaceBehindRemoteAnimationRunning = false;
+        mKeyguardStateController.notifyKeyguardGoingAway(false);
 
         if (mSurfaceBehindRemoteAnimationFinishedCallback != null) {
             try {
@@ -2838,7 +2940,12 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
             // TODO (b/155663717) After restart, status bar will not properly hide home button
             //  unless disable is called to show un-hide it once first
             if (forceClearFlags) {
-                mStatusBarManager.disable(flags);
+                try {
+                    mStatusBarService.disableForUser(flags, mStatusBarDisableToken,
+                            mContext.getPackageName(), mUserTracker.getUserId());
+                } catch (RemoteException e) {
+                    Log.d(TAG, "Failed to force clear flags", e);
+                }
             }
 
             if (forceHideHomeRecentsButtons || isShowingAndNotOccluded()) {
@@ -2854,7 +2961,12 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
                         +  " --> flags=0x" + Integer.toHexString(flags));
             }
 
-            mStatusBarManager.disable(flags);
+            try {
+                mStatusBarService.disableForUser(flags, mStatusBarDisableToken,
+                        mContext.getPackageName(), mUserTracker.getUserId());
+            } catch (RemoteException e) {
+                Log.d(TAG, "Failed to set disable flags: " + flags, e);
+            }
         }
     }
 
@@ -2867,6 +2979,8 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
             if (DEBUG) Log.d(TAG, "handleReset");
             mKeyguardViewControllerLazy.get().reset(true /* hideBouncerWhenShowing */);
         }
+
+        scheduleNonStrongBiometricIdleTimeout();
     }
 
     /**

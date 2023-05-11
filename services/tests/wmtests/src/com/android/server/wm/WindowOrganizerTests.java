@@ -42,7 +42,6 @@ import static com.android.dx.mockito.inline.extended.ExtendedMockito.times;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.verify;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.when;
 import static com.android.server.wm.ActivityRecord.State.RESUMED;
-import static com.android.server.wm.BLASTSyncEngine.METHOD_BLAST;
 import static com.android.server.wm.WindowContainer.POSITION_TOP;
 import static com.android.server.wm.WindowContainer.SYNC_STATE_READY;
 import static com.android.server.wm.WindowState.BLAST_TIMEOUT_DURATION;
@@ -736,11 +735,12 @@ public class WindowOrganizerTests extends WindowTestsBase {
         mWm.mAtmService.mWindowOrganizerController.applyTransaction(wct);
         assertEquals(dc.getDefaultTaskDisplayArea().mLaunchAdjacentFlagRootTask, task1);
 
-        task1.setAdjacentTaskFragment(null);
-        task2.setAdjacentTaskFragment(null);
         wct = new WindowContainerTransaction();
+        wct.clearAdjacentRoots(info1.token);
         wct.clearLaunchAdjacentFlagRoot(info1.token);
         mWm.mAtmService.mWindowOrganizerController.applyTransaction(wct);
+        assertEquals(task1.getAdjacentTaskFragment(), null);
+        assertEquals(task2.getAdjacentTaskFragment(), null);
         assertEquals(dc.getDefaultTaskDisplayArea().mLaunchAdjacentFlagRootTask, null);
     }
 
@@ -801,7 +801,7 @@ public class WindowOrganizerTests extends WindowTestsBase {
         mWm.mAtmService.mWindowOrganizerController.applyTransaction(wct);
 
         assertThat(navigationBarInsetsReceiverTask.mLocalInsetsSourceProviders
-                .valueAt(0).getSource().getType()).isEqualTo(ITYPE_TOP_GENERIC_OVERLAY);
+                .valueAt(0).getSource().getId()).isEqualTo(ITYPE_TOP_GENERIC_OVERLAY);
     }
 
     @Test
@@ -870,6 +870,7 @@ public class WindowOrganizerTests extends WindowTestsBase {
         lastReportedTiles.clear();
         called[0] = false;
         task1.positionChildAt(POSITION_TOP, rootTask, false /* includingParents */);
+        mAtm.mTaskOrganizerController.dispatchPendingEvents();
         assertTrue(called[0]);
         assertEquals(ACTIVITY_TYPE_STANDARD, lastReportedTiles.get(0).topActivityType);
 
@@ -991,7 +992,7 @@ public class WindowOrganizerTests extends WindowTestsBase {
         final Task task = createTask(rootTaskController1);
         final WindowState w = createAppWindow(task, TYPE_APPLICATION, "Enlightened Window");
 
-        w.mActivityRecord.mVisibleRequested = true;
+        w.mActivityRecord.setVisibleRequested(true);
         w.mActivityRecord.setVisible(true);
 
         BLASTSyncEngine bse = new BLASTSyncEngine(mWm);
@@ -999,7 +1000,7 @@ public class WindowOrganizerTests extends WindowTestsBase {
         BLASTSyncEngine.TransactionReadyListener transactionListener =
                 mock(BLASTSyncEngine.TransactionReadyListener.class);
 
-        int id = bse.startSyncSet(transactionListener, BLAST_TIMEOUT_DURATION, "", METHOD_BLAST);
+        final int id = bse.startSyncSet(transactionListener, BLAST_TIMEOUT_DURATION, "Test");
         bse.addToSyncSet(id, task);
         bse.setReady(id);
         bse.onSurfacePlacement();
@@ -1021,7 +1022,7 @@ public class WindowOrganizerTests extends WindowTestsBase {
         RunningTaskInfo mInfo;
 
         @Override
-        public void addStartingWindow(StartingWindowInfo info, IBinder appToken) { }
+        public void addStartingWindow(StartingWindowInfo info) { }
         @Override
         public void removeStartingWindow(StartingWindowRemovalInfo removalInfo) { }
         @Override
@@ -1123,11 +1124,11 @@ public class WindowOrganizerTests extends WindowTestsBase {
 
         final Task rootTask = createRootTask();
         final Task task = createTask(rootTask);
-        final ActivityRecord record = createActivityRecord(rootTask.mDisplayContent, task);
+        final ActivityRecord record = createActivityRecordAndDispatchPendingEvents(task);
 
         rootTask.setWindowingMode(WINDOWING_MODE_MULTI_WINDOW);
         record.setTaskDescription(new ActivityManager.TaskDescription("TestDescription"));
-        waitUntilHandlersIdle();
+        mAtm.mTaskOrganizerController.dispatchPendingEvents();
         assertEquals("TestDescription", o.mChangedInfo.taskDescription.getLabel());
     }
 
@@ -1176,7 +1177,7 @@ public class WindowOrganizerTests extends WindowTestsBase {
         assertTrue(rootTask2.isOrganized());
 
         // Verify a back pressed does not call the organizer
-        mWm.mAtmService.mActivityClientController.onBackPressedOnTaskRoot(activity.token,
+        mWm.mAtmService.mActivityClientController.onBackPressed(activity.token,
                 new IRequestFinishCallback.Default());
         // Ensure events dispatch to organizer.
         mWm.mAtmService.mTaskOrganizerController.dispatchPendingEvents();
@@ -1187,7 +1188,7 @@ public class WindowOrganizerTests extends WindowTestsBase {
                 rootTask.mRemoteToken.toWindowContainerToken(), true);
 
         // Verify now that the back press does call the organizer
-        mWm.mAtmService.mActivityClientController.onBackPressedOnTaskRoot(activity.token,
+        mWm.mAtmService.mActivityClientController.onBackPressed(activity.token,
                 new IRequestFinishCallback.Default());
         // Ensure events dispatch to organizer.
         mWm.mAtmService.mTaskOrganizerController.dispatchPendingEvents();
@@ -1198,7 +1199,7 @@ public class WindowOrganizerTests extends WindowTestsBase {
                 rootTask.mRemoteToken.toWindowContainerToken(), false);
 
         // Verify now that the back press no longer calls the organizer
-        mWm.mAtmService.mActivityClientController.onBackPressedOnTaskRoot(activity.token,
+        mWm.mAtmService.mActivityClientController.onBackPressed(activity.token,
                 new IRequestFinishCallback.Default());
         // Ensure events dispatch to organizer.
         mWm.mAtmService.mTaskOrganizerController.dispatchPendingEvents();
@@ -1237,7 +1238,8 @@ public class WindowOrganizerTests extends WindowTestsBase {
         assertTrue(w1.useBLASTSync());
         assertTrue(w2.useBLASTSync());
 
-        w1.immediatelyNotifyBlastSync();
+        // A drawn window can complete the sync state automatically.
+        w1.mWinAnimator.mDrawState = WindowStateAnimator.HAS_DRAWN;
         mWm.mSyncEngine.onSurfacePlacement();
         verify(mockCallback).onTransactionReady(anyInt(), any());
         assertFalse(w1.useBLASTSync());
@@ -1286,6 +1288,8 @@ public class WindowOrganizerTests extends WindowTestsBase {
     public void testAppearDeferThenInfoChange() {
         final ITaskOrganizer organizer = registerMockOrganizer();
         final Task rootTask = createRootTask();
+        // Flush EVENT_APPEARED.
+        mAtm.mTaskOrganizerController.dispatchPendingEvents();
 
         // Assume layout defer
         mWm.mWindowPlacerLocked.deferLayout();
@@ -1308,6 +1312,8 @@ public class WindowOrganizerTests extends WindowTestsBase {
     public void testAppearDeferThenVanish() {
         final ITaskOrganizer organizer = registerMockOrganizer();
         final Task rootTask = createRootTask();
+        // Flush EVENT_APPEARED.
+        mAtm.mTaskOrganizerController.dispatchPendingEvents();
 
         // Assume layout defer
         mWm.mWindowPlacerLocked.deferLayout();
@@ -1326,7 +1332,7 @@ public class WindowOrganizerTests extends WindowTestsBase {
         final ITaskOrganizer organizer = registerMockOrganizer();
         final Task rootTask = createRootTask();
         final Task task = createTask(rootTask);
-        final ActivityRecord record = createActivityRecord(rootTask.mDisplayContent, task);
+        final ActivityRecord record = createActivityRecordAndDispatchPendingEvents(task);
 
         // Assume layout defer
         mWm.mWindowPlacerLocked.deferLayout();
@@ -1356,7 +1362,7 @@ public class WindowOrganizerTests extends WindowTestsBase {
         final ITaskOrganizer organizer = registerMockOrganizer();
         final Task rootTask = createRootTask();
         final Task task = createTask(rootTask);
-        final ActivityRecord record = createActivityRecord(rootTask.mDisplayContent, task);
+        final ActivityRecord record = createActivityRecordAndDispatchPendingEvents(task);
 
         // Assume layout defer
         mWm.mWindowPlacerLocked.deferLayout();
@@ -1379,7 +1385,7 @@ public class WindowOrganizerTests extends WindowTestsBase {
         final ITaskOrganizer organizer = registerMockOrganizer();
         final Task rootTask = createRootTask();
         final Task task = createTask(rootTask);
-        final ActivityRecord record = createActivityRecord(rootTask.mDisplayContent, task);
+        createActivityRecordAndDispatchPendingEvents(task);
 
         // Assume layout defer
         mWm.mWindowPlacerLocked.deferLayout();
@@ -1398,13 +1404,13 @@ public class WindowOrganizerTests extends WindowTestsBase {
         final ITaskOrganizer organizer = registerMockOrganizer();
         final Task rootTask = createRootTask();
         final Task task = createTask(rootTask);
-        final ActivityRecord record = createActivityRecord(rootTask.mDisplayContent, task);
+        final ActivityRecord record = createActivityRecordAndDispatchPendingEvents(task);
 
         // Assume layout defer
         mWm.mWindowPlacerLocked.deferLayout();
 
         rootTask.removeImmediately();
-        mWm.mAtmService.mActivityClientController.onBackPressedOnTaskRoot(record.token,
+        mWm.mAtmService.mActivityClientController.onBackPressed(record.token,
                 new IRequestFinishCallback.Default());
         waitUntilHandlersIdle();
 
@@ -1463,13 +1469,12 @@ public class WindowOrganizerTests extends WindowTestsBase {
         final ITaskOrganizer organizer = registerMockOrganizer();
         final Task rootTask = createRootTask();
         final Task task = createTask(rootTask);
-        final ActivityRecord activity = createActivityRecord(rootTask.mDisplayContent, task);
+        final ActivityRecord activity = createActivityRecordAndDispatchPendingEvents(task);
         final ArgumentCaptor<RunningTaskInfo> infoCaptor =
                 ArgumentCaptor.forClass(RunningTaskInfo.class);
 
         assertTrue(rootTask.isOrganized());
 
-        spyOn(activity);
         doReturn(true).when(activity).inSizeCompatMode();
         doReturn(true).when(activity).isState(RESUMED);
 
@@ -1546,6 +1551,13 @@ public class WindowOrganizerTests extends WindowTestsBase {
         t.setWindowingMode(newToken, WINDOWING_MODE_FULLSCREEN);
         mWm.mAtmService.mWindowOrganizerController.applyTransaction(t);
         verify(mWm.mAtmService.mRootWindowContainer).resumeFocusedTasksTopActivities();
+    }
+
+    private ActivityRecord createActivityRecordAndDispatchPendingEvents(Task task) {
+        final ActivityRecord record = createActivityRecord(task);
+        // Flush EVENT_APPEARED.
+        mAtm.mTaskOrganizerController.dispatchPendingEvents();
+        return record;
     }
 
     /**

@@ -33,6 +33,7 @@ import android.view.View;
 import android.view.ViewRootImpl;
 import android.view.WindowManager;
 import android.view.WindowlessWindowManager;
+import android.window.TaskConstants;
 import android.window.WindowContainerTransaction;
 
 import com.android.wm.shell.ShellTaskOrganizer;
@@ -195,7 +196,9 @@ public abstract class WindowDecoration<T extends View & TaskFocusStateConsumer>
                     .setParent(mTaskSurface)
                     .build();
 
-            startT.setTrustedOverlay(mDecorationContainerSurface, true);
+            startT.setTrustedOverlay(mDecorationContainerSurface, true)
+                    .setLayer(mDecorationContainerSurface,
+                            TaskConstants.TASK_CHILD_LAYER_WINDOW_DECORATIONS);
         }
 
         final Rect taskBounds = taskConfig.windowConfiguration.getBounds();
@@ -213,8 +216,6 @@ public abstract class WindowDecoration<T extends View & TaskFocusStateConsumer>
                         outResult.mDecorContainerOffsetX, outResult.mDecorContainerOffsetY)
                 .setWindowCrop(mDecorationContainerSurface,
                         outResult.mWidth, outResult.mHeight)
-                // TODO(b/244455401): Change the z-order when it's better organized
-                .setLayer(mDecorationContainerSurface, mTaskInfo.numActivities + 1)
                 .show(mDecorationContainerSurface);
 
         // TaskBackgroundSurface
@@ -225,6 +226,8 @@ public abstract class WindowDecoration<T extends View & TaskFocusStateConsumer>
                     .setEffectLayer()
                     .setParent(mTaskSurface)
                     .build();
+
+            startT.setLayer(mTaskBackgroundSurface, TaskConstants.TASK_CHILD_LAYER_TASK_BACKGROUND);
         }
 
         float shadowRadius = loadDimension(resources, params.mShadowRadiusId);
@@ -236,8 +239,6 @@ public abstract class WindowDecoration<T extends View & TaskFocusStateConsumer>
                         taskBounds.height())
                 .setShadowRadius(mTaskBackgroundSurface, shadowRadius)
                 .setColor(mTaskBackgroundSurface, mTmpColor)
-                // TODO(b/244455401): Change the z-order when it's better organized
-                .setLayer(mTaskBackgroundSurface, -1)
                 .show(mTaskBackgroundSurface);
 
         // CaptionContainerSurface, CaptionWindowManager
@@ -251,7 +252,7 @@ public abstract class WindowDecoration<T extends View & TaskFocusStateConsumer>
         }
 
         final int captionHeight = loadDimensionPixelSize(resources, params.mCaptionHeightId);
-        final int captionWidth = loadDimensionPixelSize(resources, params.mCaptionWidthId);
+        final int captionWidth = taskBounds.width();
 
         startT.setPosition(
                         mCaptionContainerSurface,
@@ -390,10 +391,12 @@ public abstract class WindowDecoration<T extends View & TaskFocusStateConsumer>
      * @param yPos y position of new window
      * @param width width of new window
      * @param height height of new window
-     * @return
+     * @param shadowRadius radius of the shadow of the new window
+     * @param cornerRadius radius of the corners of the new window
+     * @return the {@link AdditionalWindow} that was added.
      */
-    AdditionalWindow addWindow(int layoutId, String namePrefix,
-            SurfaceControl.Transaction t, int xPos, int yPos, int width, int height) {
+    AdditionalWindow addWindow(int layoutId, String namePrefix, SurfaceControl.Transaction t,
+            int xPos, int yPos, int width, int height, int shadowRadius, int cornerRadius) {
         final SurfaceControl.Builder builder = mSurfaceControlBuilderSupplier.get();
         SurfaceControl windowSurfaceControl = builder
                 .setName(namePrefix + " of Task=" + mTaskInfo.taskId)
@@ -402,9 +405,10 @@ public abstract class WindowDecoration<T extends View & TaskFocusStateConsumer>
                 .build();
         View v = LayoutInflater.from(mDecorWindowContext).inflate(layoutId, null);
 
-        t.setPosition(
-                windowSurfaceControl, xPos, yPos)
+        t.setPosition(windowSurfaceControl, xPos, yPos)
                 .setWindowCrop(windowSurfaceControl, width, height)
+                .setShadowRadius(windowSurfaceControl, shadowRadius)
+                .setCornerRadius(windowSurfaceControl, cornerRadius)
                 .show(windowSurfaceControl);
         final WindowManager.LayoutParams lp =
                 new WindowManager.LayoutParams(width, height,
@@ -482,7 +486,7 @@ public abstract class WindowDecoration<T extends View & TaskFocusStateConsumer>
 
     interface SurfaceControlViewHostFactory {
         default SurfaceControlViewHost create(Context c, Display d, WindowlessWindowManager wmm) {
-            return new SurfaceControlViewHost(c, d, wmm);
+            return new SurfaceControlViewHost(c, d, wmm, "WindowDecoration");
         }
     }
 

@@ -19,6 +19,7 @@ package com.android.server.dreams;
 import static android.app.WindowConfiguration.ACTIVITY_TYPE_DREAM;
 
 import android.app.ActivityTaskManager;
+import android.app.BroadcastOptions;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
@@ -45,6 +46,8 @@ import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
+import java.util.Objects;
+import java.util.UUID;
 
 /**
  * Internal controller for starting and stopping the current dream and managing related state.
@@ -69,6 +72,9 @@ final class DreamController {
             .addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY);
     private final Intent mDreamingStoppedIntent = new Intent(Intent.ACTION_DREAMING_STOPPED)
             .addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY);
+    private static final String DREAMING_DELIVERY_GROUP_NAMESPACE = UUID.randomUUID().toString();
+    private static final String DREAMING_DELIVERY_GROUP_KEY = UUID.randomUUID().toString();
+    private final Bundle mDreamingStartedStoppedOptions = createDreamingStartedStoppedOptions();
 
     private final Intent mCloseNotificationShadeIntent;
 
@@ -91,6 +97,31 @@ final class DreamController {
         mActivityTaskManager = mContext.getSystemService(ActivityTaskManager.class);
         mCloseNotificationShadeIntent = new Intent(Intent.ACTION_CLOSE_SYSTEM_DIALOGS);
         mCloseNotificationShadeIntent.putExtra("reason", "dream");
+    }
+
+    /**
+     * Create the {@link BroadcastOptions} bundle that will be used with sending the
+     * {@link Intent#ACTION_DREAMING_STARTED} and {@link Intent#ACTION_DREAMING_STOPPED}
+     * broadcasts.
+     */
+    private Bundle createDreamingStartedStoppedOptions() {
+        final BroadcastOptions options = BroadcastOptions.makeBasic();
+        // This allows the broadcasting system to discard any older broadcasts
+        // waiting to be delivered to a process.
+        options.setDeliveryGroupPolicy(BroadcastOptions.DELIVERY_GROUP_POLICY_MOST_RECENT);
+        // Set namespace and key to identify which older broadcasts can be discarded.
+        // We could use any strings here with the following requirements:
+        // - namespace needs to be unlikely to be reused with in
+        //   the system_server process, as that could result in potentially discarding some
+        //   non-dreaming_started/stopped related broadcast.
+        // - key needs to be the same for both DREAMING_STARTED and DREAMING_STOPPED broadcasts
+        //   so that dreaming_stopped can also clear any older dreaming_started broadcasts that
+        //   are yet to be delivered.
+        options.setDeliveryGroupMatchingKey(
+                DREAMING_DELIVERY_GROUP_NAMESPACE, DREAMING_DELIVERY_GROUP_KEY);
+        // This allows the broadcast delivery to be delayed to apps in the Cached state.
+        options.setDeferUntilActive(true);
+        return options.toBundle();
     }
 
     public void dump(PrintWriter pw) {
@@ -124,10 +155,19 @@ final class DreamController {
                     + ", isPreviewMode=" + isPreviewMode + ", canDoze=" + canDoze
                     + ", userId=" + userId + ", reason='" + reason + "'");
 
-            if (mCurrentDream != null) {
-                mPreviousDreams.add(mCurrentDream);
-            }
+            final DreamRecord oldDream = mCurrentDream;
             mCurrentDream = new DreamRecord(token, name, isPreviewMode, canDoze, userId, wakeLock);
+            if (oldDream != null) {
+                if (Objects.equals(oldDream.mName, mCurrentDream.mName)) {
+                    // We are attempting to start a dream that is currently waking up gently.
+                    // Let's silently stop the old instance here to clear the dream state.
+                    // This should happen after the new mCurrentDream is set to avoid announcing
+                    // a "dream stopped" state.
+                    stopDreamInstance(/* immediately */ true, "restarting same dream", oldDream);
+                } else {
+                    mPreviousDreams.add(oldDream);
+                }
+            }
 
             mCurrentDream.mDreamStartTime = SystemClock.elapsedRealtime();
             MetricsLogger.visible(mContext,
@@ -244,7 +284,8 @@ final class DreamController {
                 mCurrentDream = null;
 
                 if (mSentStartBroadcast) {
-                    mContext.sendBroadcastAsUser(mDreamingStoppedIntent, UserHandle.ALL);
+                    mContext.sendBroadcastAsUser(mDreamingStoppedIntent, UserHandle.ALL,
+                            null /* receiverPermission */, mDreamingStartedStoppedOptions);
                     mSentStartBroadcast = false;
                 }
 
@@ -253,6 +294,7 @@ final class DreamController {
 
                 mListener.onDreamStopped(dream.mToken);
             }
+
         } finally {
             Trace.traceEnd(Trace.TRACE_TAG_POWER);
         }
@@ -277,7 +319,7 @@ final class DreamController {
         try {
             service.asBinder().linkToDeath(mCurrentDream, 0);
             service.attach(mCurrentDream.mToken, mCurrentDream.mCanDoze,
-                    mCurrentDream.mDreamingStartedCallback);
+                    mCurrentDream.mIsPreviewMode, mCurrentDream.mDreamingStartedCallback);
         } catch (RemoteException ex) {
             Slog.e(TAG, "The dream service died unexpectedly.", ex);
             stopDream(true /*immediate*/, "attach failed");
@@ -287,7 +329,8 @@ final class DreamController {
         mCurrentDream.mService = service;
 
         if (!mCurrentDream.mIsPreviewMode && !mSentStartBroadcast) {
-            mContext.sendBroadcastAsUser(mDreamingStartedIntent, UserHandle.ALL);
+            mContext.sendBroadcastAsUser(mDreamingStartedIntent, UserHandle.ALL,
+                    null /* receiverPermission */, mDreamingStartedStoppedOptions);
             mSentStartBroadcast = true;
         }
     }

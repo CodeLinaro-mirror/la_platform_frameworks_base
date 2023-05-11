@@ -20,6 +20,7 @@ import android.annotation.SuppressLint
 import android.annotation.UiThread
 import android.content.Context
 import android.graphics.PixelFormat
+import android.graphics.Point
 import android.graphics.Rect
 import android.hardware.biometrics.BiometricOverlayConstants.REASON_AUTH_BP
 import android.hardware.biometrics.BiometricOverlayConstants.REASON_AUTH_KEYGUARD
@@ -45,11 +46,15 @@ import android.view.accessibility.AccessibilityManager.TouchExplorationStateChan
 import androidx.annotation.LayoutRes
 import androidx.annotation.VisibleForTesting
 import com.android.keyguard.KeyguardUpdateMonitor
+import com.android.settingslib.udfps.UdfpsUtils
+import com.android.settingslib.udfps.UdfpsOverlayParams
 import com.android.systemui.R
 import com.android.systemui.animation.ActivityLaunchAnimator
 import com.android.systemui.dump.DumpManager
 import com.android.systemui.flags.FeatureFlags
-import com.android.systemui.keyguard.domain.interactor.BouncerInteractor
+import com.android.systemui.flags.Flags
+import com.android.systemui.keyguard.domain.interactor.AlternateBouncerInteractor
+import com.android.systemui.keyguard.domain.interactor.PrimaryBouncerInteractor
 import com.android.systemui.plugins.statusbar.StatusBarStateController
 import com.android.systemui.shade.ShadeExpansionStateManager
 import com.android.systemui.statusbar.LockscreenShadeTransitionController
@@ -58,7 +63,7 @@ import com.android.systemui.statusbar.phone.SystemUIDialogManager
 import com.android.systemui.statusbar.phone.UnlockedScreenOffAnimationController
 import com.android.systemui.statusbar.policy.ConfigurationController
 import com.android.systemui.statusbar.policy.KeyguardStateController
-import com.android.systemui.util.time.SystemClock
+import com.android.systemui.util.settings.SecureSettings
 
 private const val TAG = "UdfpsControllerOverlay"
 
@@ -85,24 +90,27 @@ class UdfpsControllerOverlay @JvmOverloads constructor(
         private val dumpManager: DumpManager,
         private val transitionController: LockscreenShadeTransitionController,
         private val configurationController: ConfigurationController,
-        private val systemClock: SystemClock,
         private val keyguardStateController: KeyguardStateController,
         private val unlockedScreenOffAnimationController: UnlockedScreenOffAnimationController,
         private var udfpsDisplayModeProvider: UdfpsDisplayModeProvider,
+        private val secureSettings: SecureSettings,
         val requestId: Long,
         @ShowReason val requestReason: Int,
         private val controllerCallback: IUdfpsOverlayControllerCallback,
         private val onTouch: (View, MotionEvent, Boolean) -> Boolean,
         private val activityLaunchAnimator: ActivityLaunchAnimator,
         private val featureFlags: FeatureFlags,
-        private val bouncerInteractor: BouncerInteractor,
-        private val isDebuggable: Boolean = Build.IS_DEBUGGABLE
+        private val primaryBouncerInteractor: PrimaryBouncerInteractor,
+        private val alternateBouncerInteractor: AlternateBouncerInteractor,
+        private val isDebuggable: Boolean = Build.IS_DEBUGGABLE,
+        private val udfpsUtils: UdfpsUtils
 ) {
     /** The view, when [isShowing], or null. */
     var overlayView: UdfpsView? = null
         private set
 
     private var overlayParams: UdfpsOverlayParams = UdfpsOverlayParams()
+    private var sensorBounds: Rect = Rect()
 
     private var overlayTouchListener: TouchExplorationStateChangeListener? = null
 
@@ -120,15 +128,11 @@ class UdfpsControllerOverlay @JvmOverloads constructor(
         privateFlags = WindowManager.LayoutParams.PRIVATE_FLAG_TRUSTED_OVERLAY
         // Avoid announcing window title.
         accessibilityTitle = " "
-    }
 
-    /** A helper if the [requestReason] was due to enrollment. */
-    val enrollHelper: UdfpsEnrollHelper? =
-        if (requestReason.isEnrollmentReason() && !shouldRemoveEnrollmentUi()) {
-            UdfpsEnrollHelper(context, fingerprintManager, requestReason)
-        } else {
-            null
+        if (featureFlags.isEnabled(Flags.UDFPS_NEW_TOUCH_DETECTION)) {
+            inputFeatures = WindowManager.LayoutParams.INPUT_FEATURE_SPY
         }
+    }
 
     /** If the overlay is currently showing. */
     val isShowing: Boolean
@@ -160,6 +164,7 @@ class UdfpsControllerOverlay @JvmOverloads constructor(
     fun show(controller: UdfpsController, params: UdfpsOverlayParams): Boolean {
         if (overlayView == null) {
             overlayParams = params
+            sensorBounds = Rect(params.sensorBounds)
             try {
                 overlayView = (inflater.inflate(
                     R.layout.udfps_view, null, false
@@ -178,6 +183,7 @@ class UdfpsControllerOverlay @JvmOverloads constructor(
                     }
 
                     windowManager.addView(this, coreLayoutParams.updateDimensions(animation))
+                    sensorRect = sensorBounds
                     touchExplorationEnabled = accessibilityManager.isTouchExplorationEnabled
                     overlayTouchListener = TouchExplorationStateChangeListener {
                         if (accessibilityManager.isTouchExplorationEnabled) {
@@ -194,6 +200,7 @@ class UdfpsControllerOverlay @JvmOverloads constructor(
                         overlayTouchListener!!
                     )
                     overlayTouchListener?.onTouchExplorationStateChanged(true)
+                    useExpandedOverlay = featureFlags.isEnabled(Flags.UDFPS_NEW_TOUCH_DETECTION)
                 }
             } catch (e: RuntimeException) {
                 Log.e(TAG, "showUdfpsOverlay | failed to add window", e)
@@ -223,21 +230,22 @@ class UdfpsControllerOverlay @JvmOverloads constructor(
         return when (filteredRequestReason) {
             REASON_ENROLL_FIND_SENSOR,
             REASON_ENROLL_ENROLLING -> {
-                UdfpsEnrollViewController(
-                    view.addUdfpsView(R.layout.udfps_enroll_view) {
-                        updateSensorLocation(overlayParams.sensorBounds)
+                // Enroll udfps UI is handled by settings, so use empty view here
+                UdfpsFpmEmptyViewController(
+                    view.addUdfpsView(R.layout.udfps_fpm_empty_view){
+                        updateAccessibilityViewLocation(sensorBounds)
                     },
-                    enrollHelper ?: throw IllegalStateException("no enrollment helper"),
                     statusBarStateController,
                     shadeExpansionStateManager,
                     dialogManager,
-                    dumpManager,
-                    overlayParams.scaleFactor
+                    dumpManager
                 )
             }
             REASON_AUTH_KEYGUARD -> {
                 UdfpsKeyguardViewController(
-                    view.addUdfpsView(R.layout.udfps_keyguard_view),
+                    view.addUdfpsView(R.layout.udfps_keyguard_view) {
+                        updateSensorLocation(sensorBounds)
+                    },
                     statusBarStateController,
                     shadeExpansionStateManager,
                     statusBarKeyguardViewManager,
@@ -245,14 +253,14 @@ class UdfpsControllerOverlay @JvmOverloads constructor(
                     dumpManager,
                     transitionController,
                     configurationController,
-                    systemClock,
                     keyguardStateController,
                     unlockedScreenOffAnimationController,
                     dialogManager,
                     controller,
                     activityLaunchAnimator,
                     featureFlags,
-                    bouncerInteractor
+                    primaryBouncerInteractor,
+                    alternateBouncerInteractor,
                 )
             }
             REASON_AUTH_BP -> {
@@ -267,8 +275,8 @@ class UdfpsControllerOverlay @JvmOverloads constructor(
             }
             REASON_AUTH_OTHER,
             REASON_AUTH_SETTINGS -> {
-                UdfpsFpmOtherViewController(
-                    view.addUdfpsView(R.layout.udfps_fpm_other_view),
+                UdfpsFpmEmptyViewController(
+                    view.addUdfpsView(R.layout.udfps_fpm_empty_view),
                     statusBarStateController,
                     shadeExpansionStateManager,
                     dialogManager,
@@ -304,98 +312,23 @@ class UdfpsControllerOverlay @JvmOverloads constructor(
         return wasShowing
     }
 
-    fun onEnrollmentProgress(remaining: Int) {
-        enrollHelper?.onEnrollmentProgress(remaining)
-    }
-
-    fun onAcquiredGood() {
-        enrollHelper?.animateIfLastStep()
-    }
-
-    fun onEnrollmentHelp() {
-        enrollHelper?.onEnrollmentHelp()
-    }
-
     /**
      * This function computes the angle of touch relative to the sensor and maps
      * the angle to a list of help messages which are announced if accessibility is enabled.
      *
      */
-    fun onTouchOutsideOfSensorArea(
-        touchX: Float,
-        touchY: Float,
-        sensorX: Float,
-        sensorY: Float,
-        rotation: Int
-    ) {
-
-        if (!touchExplorationEnabled) {
-            return
+    fun onTouchOutsideOfSensorArea(scaledTouch: Point) {
+        val theStr =
+            udfpsUtils.onTouchOutsideOfSensorArea(
+                touchExplorationEnabled,
+                context,
+                scaledTouch.x,
+                scaledTouch.y,
+                overlayParams
+            )
+        if (theStr != null) {
+            animationViewController?.doAnnounceForAccessibility(theStr)
         }
-        val touchHints =
-            context.resources.getStringArray(R.array.udfps_accessibility_touch_hints)
-        if (touchHints.size != 4) {
-            Log.e(TAG, "expected exactly 4 touch hints, got $touchHints.size?")
-            return
-        }
-        val theStr = onTouchOutsideOfSensorAreaImpl(touchX, touchY, sensorX, sensorY, rotation)
-        Log.v(TAG, "Announcing touch outside : " + theStr)
-        animationViewController?.doAnnounceForAccessibility(theStr)
-    }
-
-    /**
-     * This function computes the angle of touch relative to the sensor and maps
-     * the angle to a list of help messages which are announced if accessibility is enabled.
-     *
-     * There are 4 quadrants of the circle (90 degree arcs)
-     *
-     * [315, 360] && [0, 45) -> touchHints[0] = "Move Fingerprint to the left"
-     * [45,  135)            -> touchHints[1] = "Move Fingerprint down"
-     * And so on.
-     */
-    fun onTouchOutsideOfSensorAreaImpl(
-        touchX: Float,
-        touchY: Float,
-        sensorX: Float,
-        sensorY: Float,
-        rotation: Int
-    ): String {
-        val touchHints =
-            context.resources.getStringArray(R.array.udfps_accessibility_touch_hints)
-
-        val xRelativeToSensor = touchX - sensorX
-        // Touch coordinates are with respect to the upper left corner, so reverse
-        // this calculation
-        val yRelativeToSensor = sensorY - touchY
-
-        var angleInRad =
-            Math.atan2(yRelativeToSensor.toDouble(), xRelativeToSensor.toDouble())
-        // If the radians are negative, that means we are counting clockwise.
-        // So we need to add 360 degrees
-        if (angleInRad < 0.0) {
-            angleInRad += 2.0 * Math.PI
-        }
-        // rad to deg conversion
-        val degrees = Math.toDegrees(angleInRad)
-
-        val degreesPerBucket = 360.0 / touchHints.size
-        val halfBucketDegrees = degreesPerBucket / 2.0
-        // The mapping should be as follows
-        // [315, 360] && [0, 45] -> 0
-        // [45, 135]             -> 1
-        var index = (((degrees + halfBucketDegrees) % 360) / degreesPerBucket).toInt()
-        index %= touchHints.size
-
-        // A rotation of 90 degrees corresponds to increasing the index by 1.
-        if (rotation == Surface.ROTATION_90) {
-            index = (index + 1) % touchHints.size
-        }
-
-        if (rotation == Surface.ROTATION_270) {
-            index = (index + 3) % touchHints.size
-        }
-
-        return touchHints[index]
     }
 
     /** Cancel this request. */
@@ -415,12 +348,18 @@ class UdfpsControllerOverlay @JvmOverloads constructor(
     ): WindowManager.LayoutParams {
         val paddingX = animation?.paddingX ?: 0
         val paddingY = animation?.paddingY ?: 0
-        if (animation != null && animation.listenForTouchesOutsideView()) {
+        if (!featureFlags.isEnabled(Flags.UDFPS_NEW_TOUCH_DETECTION) && animation != null &&
+                animation.listenForTouchesOutsideView()) {
             flags = flags or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
         }
 
         // Original sensorBounds assume portrait mode.
-        val rotatedSensorBounds = Rect(overlayParams.sensorBounds)
+        var rotatedBounds =
+            if (featureFlags.isEnabled(Flags.UDFPS_NEW_TOUCH_DETECTION)) {
+                Rect(overlayParams.overlayBounds)
+            } else {
+                Rect(overlayParams.sensorBounds)
+            }
 
         val rot = overlayParams.rotation
         if (rot == Surface.ROTATION_90 || rot == Surface.ROTATION_270) {
@@ -434,18 +373,27 @@ class UdfpsControllerOverlay @JvmOverloads constructor(
             } else {
                 Log.v(TAG, "Rotate UDFPS bounds " + Surface.rotationToString(rot))
                 RotationUtils.rotateBounds(
-                    rotatedSensorBounds,
+                    rotatedBounds,
                     overlayParams.naturalDisplayWidth,
                     overlayParams.naturalDisplayHeight,
                     rot
                 )
+
+                if (featureFlags.isEnabled(Flags.UDFPS_NEW_TOUCH_DETECTION)) {
+                    RotationUtils.rotateBounds(
+                            sensorBounds,
+                            overlayParams.naturalDisplayWidth,
+                            overlayParams.naturalDisplayHeight,
+                            rot
+                    )
+                }
             }
         }
 
-        x = rotatedSensorBounds.left - paddingX
-        y = rotatedSensorBounds.top - paddingY
-        height = rotatedSensorBounds.height() + 2 * paddingX
-        width = rotatedSensorBounds.width() + 2 * paddingY
+        x = rotatedBounds.left - paddingX
+        y = rotatedBounds.top - paddingY
+        height = rotatedBounds.height() + 2 * paddingX
+        width = rotatedBounds.width() + 2 * paddingY
 
         return this
     }
@@ -470,10 +418,6 @@ class UdfpsControllerOverlay @JvmOverloads constructor(
         return subView
     }
 }
-
-@ShowReason
-private fun Int.isEnrollmentReason() =
-    this == REASON_ENROLL_FIND_SENSOR || this == REASON_ENROLL_ENROLLING
 
 @ShowReason
 private fun Int.isImportantForAccessibility() =

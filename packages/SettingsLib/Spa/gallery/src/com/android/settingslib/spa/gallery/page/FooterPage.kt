@@ -20,10 +20,11 @@ import android.os.Bundle
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.tooling.preview.Preview
+import com.android.settingslib.spa.framework.common.EntrySearchData
 import com.android.settingslib.spa.framework.common.SettingsEntry
 import com.android.settingslib.spa.framework.common.SettingsEntryBuilder
-import com.android.settingslib.spa.framework.common.SettingsPage
 import com.android.settingslib.spa.framework.common.SettingsPageProvider
+import com.android.settingslib.spa.framework.common.createSettingsPage
 import com.android.settingslib.spa.framework.compose.navigator
 import com.android.settingslib.spa.framework.compose.stateOf
 import com.android.settingslib.spa.framework.theme.SettingsTheme
@@ -36,13 +37,13 @@ private const val TITLE = "Sample Footer"
 
 object FooterPageProvider : SettingsPageProvider {
     override val name = "Footer"
+    private val owner = createSettingsPage()
 
     override fun buildEntry(arguments: Bundle?): List<SettingsEntry> {
-        val owner = SettingsPage.create(name)
         val entryList = mutableListOf<SettingsEntry>()
         entryList.add(
             SettingsEntryBuilder.create( "Some Preference", owner)
-                .setIsAllowSearch(true)
+                .setSearchDataFn { EntrySearchData(title = "Some Preference") }
                 .setUiLayoutFn {
                     Preference(remember {
                         object : PreferenceModel {
@@ -57,8 +58,7 @@ object FooterPageProvider : SettingsPageProvider {
     }
 
     fun buildInjectEntry(): SettingsEntryBuilder {
-        return SettingsEntryBuilder.createInject(owner = SettingsPage.create(name))
-            .setIsAllowSearch(true)
+        return SettingsEntryBuilder.createInject(owner)
             .setUiLayoutFn {
                 Preference(object : PreferenceModel {
                     override val title = TITLE

@@ -37,6 +37,7 @@ import android.provider.DeviceConfig.Properties;
 import android.provider.Settings;
 import android.text.TextUtils;
 import android.util.EventLog;
+import android.util.IntArray;
 import android.util.Pair;
 import android.util.Slog;
 import android.util.SparseArray;
@@ -89,6 +90,8 @@ public final class CachedAppOptimizer {
             "compact_proc_state_throttle";
     @VisibleForTesting static final String KEY_FREEZER_DEBOUNCE_TIMEOUT =
             "freeze_debounce_timeout";
+    @VisibleForTesting static final String KEY_FREEZER_EXEMPT_INST_PKG =
+            "freeze_exempt_inst_pkg";
 
     // RSS Indices
     private static final int RSS_TOTAL_INDEX = 0;
@@ -115,7 +118,7 @@ public final class CachedAppOptimizer {
     private static final int FREEZE_BINDER_TIMEOUT_MS = 100;
 
     // Defaults for phenotype flags.
-    @VisibleForTesting static final Boolean DEFAULT_USE_COMPACTION = false;
+    @VisibleForTesting static final Boolean DEFAULT_USE_COMPACTION = true;
     @VisibleForTesting static final Boolean DEFAULT_USE_FREEZER = true;
     @VisibleForTesting static final int DEFAULT_COMPACT_ACTION_2 = COMPACT_ACTION_ALL;
     @VisibleForTesting static final int DEFAULT_COMPACT_ACTION_1 = COMPACT_ACTION_FILE;
@@ -137,6 +140,7 @@ public final class CachedAppOptimizer {
     @VisibleForTesting static final String DEFAULT_COMPACT_PROC_STATE_THROTTLE =
             String.valueOf(ActivityManager.PROCESS_STATE_RECEIVER);
     @VisibleForTesting static final long DEFAULT_FREEZER_DEBOUNCE_TIMEOUT = 600_000L;
+    @VisibleForTesting static final Boolean DEFAULT_FREEZER_EXEMPT_INST_PKG = true;
 
     @VisibleForTesting static final Uri CACHED_APP_FREEZER_ENABLED_URI = Settings.Global.getUriFor(
                 Settings.Global.CACHED_APPS_FREEZER_ENABLED);
@@ -277,6 +281,8 @@ public final class CachedAppOptimizer {
                         for (String name : properties.getKeyset()) {
                             if (KEY_FREEZER_DEBOUNCE_TIMEOUT.equals(name)) {
                                 updateFreezerDebounceTimeout();
+                            } else if (KEY_FREEZER_EXEMPT_INST_PKG.equals(name)) {
+                                updateFreezerExemptInstPkg();
                             }
                         }
                     }
@@ -357,6 +363,7 @@ public final class CachedAppOptimizer {
     private boolean mFreezerOverride = false;
 
     @VisibleForTesting volatile long mFreezerDebounceTimeout = DEFAULT_FREEZER_DEBOUNCE_TIMEOUT;
+    @VisibleForTesting volatile boolean mFreezerExemptInstPkg = DEFAULT_FREEZER_EXEMPT_INST_PKG;
 
     // Maps process ID to last compaction statistics for processes that we've fully compacted. Used
     // when evaluating throttles that we only consider for "full" compaction, so we don't store
@@ -566,6 +573,15 @@ public final class CachedAppOptimizer {
         }
     }
 
+    /**
+     * Returns whether freezer exempts INSTALL_PACKAGES.
+     */
+    public boolean freezerExemptInstPkg() {
+        synchronized (mPhenotypeFlagLock) {
+            return mUseFreezer && mFreezerExemptInstPkg;
+        }
+    }
+
     @GuardedBy("mProcLock")
     void dump(PrintWriter pw) {
         pw.println("CachedAppOptimizer settings");
@@ -647,6 +663,7 @@ public final class CachedAppOptimizer {
             pw.println("  " + KEY_USE_FREEZER + "=" + mUseFreezer);
             pw.println("  " + KEY_FREEZER_STATSD_SAMPLE_RATE + "=" + mFreezerStatsdSampleRate);
             pw.println("  " + KEY_FREEZER_DEBOUNCE_TIMEOUT + "=" + mFreezerDebounceTimeout);
+            pw.println("  " + KEY_FREEZER_EXEMPT_INST_PKG + "=" + mFreezerExemptInstPkg);
             synchronized (mProcLock) {
                 int size = mFrozenProcesses.size();
                 pw.println("  Apps frozen: " + size);
@@ -725,9 +742,6 @@ public final class CachedAppOptimizer {
                         "compactApp " + app.mOptRecord.getReqCompactSource().name() + " "
                                 + app.mOptRecord.getReqCompactProfile().name() + " " + processName);
             }
-            Trace.instantForTrack(Trace.TRACE_TAG_ACTIVITY_MANAGER, ATRACE_COMPACTION_TRACK,
-                    "compactApp " + app.mOptRecord.getReqCompactSource().name() + " "
-                            + app.mOptRecord.getReqCompactProfile().name() + " " + processName);
             app.mOptRecord.setHasPendingCompact(true);
             app.mOptRecord.setForceCompact(force);
             mPendingCompactionProcesses.add(app);
@@ -829,7 +843,7 @@ public final class CachedAppOptimizer {
     /**
      * Retrieves the free swap percentage.
      */
-    static private native double getFreeSwapPercent();
+    static native double getFreeSwapPercent();
 
     /**
      * Retrieves the total used physical ZRAM
@@ -1007,6 +1021,7 @@ public final class CachedAppOptimizer {
                     KEY_USE_FREEZER, DEFAULT_USE_FREEZER)) {
             mUseFreezer = isFreezerSupported();
             updateFreezerDebounceTimeout();
+            updateFreezerExemptInstPkg();
         } else {
             mUseFreezer = false;
         }
@@ -1194,6 +1209,15 @@ public final class CachedAppOptimizer {
         if (mFreezerDebounceTimeout < 0) {
             mFreezerDebounceTimeout = DEFAULT_FREEZER_DEBOUNCE_TIMEOUT;
         }
+        Slog.d(TAG_AM, "Freezer timeout set to " + mFreezerDebounceTimeout);
+    }
+
+    @GuardedBy("mPhenotypeFlagLock")
+    private void updateFreezerExemptInstPkg() {
+        mFreezerExemptInstPkg = DeviceConfig.getBoolean(
+                DeviceConfig.NAMESPACE_ACTIVITY_MANAGER_NATIVE_BOOT,
+                KEY_FREEZER_EXEMPT_INST_PKG, DEFAULT_FREEZER_EXEMPT_INST_PKG);
+        Slog.d(TAG_AM, "Freezer exemption set to " + mFreezerExemptInstPkg);
     }
 
     private boolean parseProcStateThrottle(String procStateThrottleString) {
@@ -1480,6 +1504,12 @@ public final class CachedAppOptimizer {
         }
 
         return profile;
+    }
+
+    boolean isProcessFrozen(int pid) {
+        synchronized (mProcLock) {
+            return mFrozenProcesses.contains(pid);
+        }
     }
 
     @VisibleForTesting
@@ -1787,7 +1817,8 @@ public final class CachedAppOptimizer {
                     try {
                         Trace.traceBegin(Trace.TRACE_TAG_ACTIVITY_MANAGER,
                                 "Compact " + resolvedAction.name() + ": " + name
-                                        + " lastOomAdjReason: " + oomAdjReason);
+                                        + " lastOomAdjReason: " + oomAdjReason
+                                        + " source: " + compactSource.name());
                         long zramUsedKbBefore = getUsedZramMemory();
                         long startCpuTime = threadCpuTimeNs();
                         mProcessDependencies.performCompaction(resolvedAction, pid);
@@ -1833,7 +1864,10 @@ public final class CachedAppOptimizer {
                                 mLastCompactionStats.remove(pid);
                                 mLastCompactionStats.put(pid, memStats);
                                 mCompactionStatsHistory.add(memStats);
-                                memStats.sendStat();
+                                if (!forceCompaction) {
+                                    // Avoid polluting field metrics with forced compactions.
+                                    memStats.sendStat();
+                                }
                                 break;
                             default:
                                 // We likely missed adding this category, it needs to be added
@@ -1887,9 +1921,26 @@ public final class CachedAppOptimizer {
         public void handleMessage(Message msg) {
             switch (msg.what) {
                 case SET_FROZEN_PROCESS_MSG:
+                {
+                    ProcessRecord proc = (ProcessRecord) msg.obj;
+                    int pid = proc.getPid();
+                    final String name = proc.processName;
                     synchronized (mAm) {
-                        freezeProcess((ProcessRecord) msg.obj);
+                        freezeProcess(proc);
                     }
+                    try {
+                        // post-check to prevent deadlock
+                        mProcLocksReader.handleBlockingFileLocks(this);
+                    } catch (Exception e) {
+                        Slog.e(TAG_AM, "Unable to check file locks for "
+                                + name + "(" + pid + "): " + e);
+                        synchronized (mAm) {
+                            synchronized (mProcLock) {
+                                unfreezeAppLSP(proc, OomAdjuster.OOM_ADJ_REASON_NONE);
+                            }
+                        }
+                    }
+                }
                     break;
                 case REPORT_UNFREEZE_MSG:
                     int pid = msg.arg1;
@@ -1977,6 +2028,7 @@ public final class CachedAppOptimizer {
 
                     opt.setFreezeUnfreezeTime(SystemClock.uptimeMillis());
                     opt.setFrozen(true);
+                    opt.setHasCollectedFrozenPSS(false);
                     mFrozenProcesses.put(pid, proc);
                 } catch (Exception e) {
                     Slog.w(TAG_AM, "Unable to freeze " + pid + " " + name);
@@ -2021,16 +2073,6 @@ public final class CachedAppOptimizer {
                                 ApplicationExitInfo.SUBREASON_FREEZER_BINDER_IOCTL, true);
                     }
                 });
-            }
-
-            try {
-                // post-check to prevent deadlock
-                mProcLocksReader.handleBlockingFileLocks(this);
-            } catch (Exception e) {
-                Slog.e(TAG_AM, "Unable to check file locks for " + name + "(" + pid + "): " + e);
-                synchronized (mProcLock) {
-                    unfreezeAppLSP(proc, OomAdjuster.OOM_ADJ_REASON_NONE);
-                }
             }
         }
 
@@ -2084,15 +2126,31 @@ public final class CachedAppOptimizer {
 
         @GuardedBy({"mAm"})
         @Override
-        public void onBlockingFileLock(int pid) {
+        public void onBlockingFileLock(IntArray pids) {
             if (DEBUG_FREEZER) {
-                Slog.d(TAG_AM, "Process (pid=" + pid + ") holds blocking file lock");
+                Slog.d(TAG_AM, "Blocking file lock found: " + pids);
             }
-            synchronized (mProcLock) {
-                ProcessRecord app = mFrozenProcesses.get(pid);
-                if (app != null) {
-                    Slog.i(TAG_AM, app.processName + " (" + pid + ") holds blocking file lock");
-                    unfreezeAppLSP(app, OomAdjuster.OOM_ADJ_REASON_NONE);
+            synchronized (mAm) {
+                synchronized (mProcLock) {
+                    int pid = pids.get(0);
+                    ProcessRecord app = mFrozenProcesses.get(pid);
+                    ProcessRecord pr;
+                    if (app != null) {
+                        for (int i = 1; i < pids.size(); i++) {
+                            int blocked = pids.get(i);
+                            synchronized (mAm.mPidsSelfLocked) {
+                                pr = mAm.mPidsSelfLocked.get(blocked);
+                            }
+                            if (pr != null
+                                    && pr.mState.getCurAdj() < ProcessList.CACHED_APP_MIN_ADJ) {
+                                Slog.d(TAG_AM, app.processName + " (" + pid + ") blocks "
+                                        + pr.processName + " (" + blocked + ")");
+                                // Found at least one blocked non-cached process
+                                unfreezeAppLSP(app, OomAdjuster.OOM_ADJ_REASON_NONE);
+                                break;
+                            }
+                        }
+                    }
                 }
             }
         }

@@ -21,59 +21,91 @@ import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
-import kotlinx.coroutines.Dispatchers
+import com.android.internal.R
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.flow.map
-
-/**
- * The config used to load the App List.
- */
-internal data class AppListConfig(
-    val userId: Int,
-    val showInstantApps: Boolean,
-)
+import kotlinx.coroutines.runBlocking
 
 /**
  * The repository to load the App List data.
  */
-internal class AppListRepository(context: Context) {
+internal interface AppListRepository {
+    /** Loads the list of [ApplicationInfo]. */
+    suspend fun loadApps(userId: Int, showInstantApps: Boolean): List<ApplicationInfo>
+
+    /** Gets the flow of predicate that could used to filter system app. */
+    fun showSystemPredicate(
+        userIdFlow: Flow<Int>,
+        showSystemFlow: Flow<Boolean>,
+    ): Flow<(app: ApplicationInfo) -> Boolean>
+
+    /** Gets the system app package names. */
+    fun getSystemPackageNamesBlocking(userId: Int, showInstantApps: Boolean): Set<String>
+}
+
+/**
+ * Util for app list repository.
+ */
+object AppListRepositoryUtil {
+    /** Gets the system app package names. */
+    @JvmStatic
+    fun getSystemPackageNames(
+        context: Context,
+        userId: Int,
+        showInstantApps: Boolean,
+    ): Set<String> =
+        AppListRepositoryImpl(context).getSystemPackageNamesBlocking(userId, showInstantApps)
+}
+
+internal class AppListRepositoryImpl(private val context: Context) : AppListRepository {
     private val packageManager = context.packageManager
 
-    fun loadApps(configFlow: Flow<AppListConfig>): Flow<List<ApplicationInfo>> = configFlow
-        .map { loadApps(it) }
-        .flowOn(Dispatchers.Default)
+    override suspend fun loadApps(
+        userId: Int,
+        showInstantApps: Boolean,
+    ): List<ApplicationInfo> = coroutineScope {
+        val hiddenSystemModulesDeferred = async {
+            packageManager.getInstalledModules(0)
+                .filter { it.isHidden }
+                .map { it.packageName }
+                .toSet()
+        }
+        val hideWhenDisabledPackagesDeferred = async {
+            context.resources.getStringArray(R.array.config_hideWhenDisabled_packageNames)
+        }
+        val flags = PackageManager.ApplicationInfoFlags.of(
+            (PackageManager.MATCH_DISABLED_COMPONENTS or
+                PackageManager.MATCH_DISABLED_UNTIL_USED_COMPONENTS).toLong()
+        )
+        val installedApplicationsAsUser =
+            packageManager.getInstalledApplicationsAsUser(flags, userId)
 
-    private suspend fun loadApps(config: AppListConfig): List<ApplicationInfo> {
-        return coroutineScope {
-            val hiddenSystemModulesDeferred = async {
-                packageManager.getInstalledModules(0)
-                    .filter { it.isHidden }
-                    .map { it.packageName }
-                    .toSet()
-            }
-            val flags = PackageManager.ApplicationInfoFlags.of(
-                (PackageManager.MATCH_DISABLED_COMPONENTS or
-                    PackageManager.MATCH_DISABLED_UNTIL_USED_COMPONENTS).toLong()
-            )
-            val installedApplicationsAsUser =
-                packageManager.getInstalledApplicationsAsUser(flags, config.userId)
-
-            val hiddenSystemModules = hiddenSystemModulesDeferred.await()
-            installedApplicationsAsUser.filter { app ->
-                app.isInAppList(config.showInstantApps, hiddenSystemModules)
-            }
+        val hiddenSystemModules = hiddenSystemModulesDeferred.await()
+        val hideWhenDisabledPackages = hideWhenDisabledPackagesDeferred.await()
+        installedApplicationsAsUser.filter { app ->
+            app.isInAppList(showInstantApps, hiddenSystemModules, hideWhenDisabledPackages)
         }
     }
 
-    fun showSystemPredicate(
+    override fun showSystemPredicate(
         userIdFlow: Flow<Int>,
         showSystemFlow: Flow<Boolean>,
     ): Flow<(app: ApplicationInfo) -> Boolean> =
         userIdFlow.combine(showSystemFlow, ::showSystemPredicate)
+
+    override fun getSystemPackageNamesBlocking(userId: Int, showInstantApps: Boolean) =
+        runBlocking { getSystemPackageNames(userId, showInstantApps) }
+
+    private suspend fun getSystemPackageNames(userId: Int, showInstantApps: Boolean): Set<String> =
+        coroutineScope {
+            val loadAppsDeferred = async { loadApps(userId, showInstantApps) }
+            val homeOrLauncherPackages = loadHomeOrLauncherPackages(userId)
+            val showSystemPredicate =
+                { app: ApplicationInfo -> isSystemApp(app, homeOrLauncherPackages) }
+            loadAppsDeferred.await().filter(showSystemPredicate).map { it.packageName }.toSet()
+        }
 
     private suspend fun showSystemPredicate(
         userId: Int,
@@ -81,9 +113,7 @@ internal class AppListRepository(context: Context) {
     ): (app: ApplicationInfo) -> Boolean {
         if (showSystem) return { true }
         val homeOrLauncherPackages = loadHomeOrLauncherPackages(userId)
-        return { app ->
-            app.isUpdatedSystemApp || !app.isSystemApp || app.packageName in homeOrLauncherPackages
-        }
+        return { app -> !isSystemApp(app, homeOrLauncherPackages) }
     }
 
     private suspend fun loadHomeOrLauncherPackages(userId: Int): Set<String> {
@@ -109,16 +139,22 @@ internal class AppListRepository(context: Context) {
         }
     }
 
+    private fun isSystemApp(app: ApplicationInfo, homeOrLauncherPackages: Set<String>): Boolean {
+        return !app.isUpdatedSystemApp && app.isSystemApp &&
+            !(app.packageName in homeOrLauncherPackages)
+    }
+
     companion object {
         private fun ApplicationInfo.isInAppList(
             showInstantApps: Boolean,
             hiddenSystemModules: Set<String>,
+            hideWhenDisabledPackages: Array<String>,
         ) = when {
             !showInstantApps && isInstantApp -> false
             packageName in hiddenSystemModules -> false
+            packageName in hideWhenDisabledPackages -> enabled && !isDisabledUntilUsed
             enabled -> true
-            isDisabledUntilUsed -> true
-            else -> false
+            else -> enabledSetting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER
         }
     }
 }

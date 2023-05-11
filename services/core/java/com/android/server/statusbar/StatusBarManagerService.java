@@ -16,6 +16,7 @@
 
 package com.android.server.statusbar;
 
+import static android.Manifest.permission.CONTROL_DEVICE_STATE;
 import static android.Manifest.permission.INTERACT_ACROSS_USERS;
 import static android.Manifest.permission.INTERACT_ACROSS_USERS_FULL;
 import static android.app.StatusBarManager.DISABLE2_GLOBAL_ACTIONS;
@@ -31,6 +32,7 @@ import static android.view.WindowManagerPolicyConstants.NAV_BAR_MODE_3BUTTON_OVE
 import android.Manifest;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.annotation.RequiresPermission;
 import android.app.ActivityManager;
 import android.app.ActivityManagerInternal;
 import android.app.ActivityThread;
@@ -77,12 +79,10 @@ import android.service.notification.NotificationStats;
 import android.service.quicksettings.TileService;
 import android.text.TextUtils;
 import android.util.ArrayMap;
-import android.util.ArraySet;
 import android.util.IndentingPrintWriter;
 import android.util.Pair;
 import android.util.Slog;
 import android.util.SparseArray;
-import android.view.InsetsState.InternalInsetsType;
 import android.view.WindowInsets;
 import android.view.WindowInsets.Type.InsetsType;
 import android.view.WindowInsetsController.Appearance;
@@ -150,6 +150,13 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
     @ChangeId
     @EnabledAfter(targetSdkVersion = Build.VERSION_CODES.S_V2)
     static final long REQUEST_LISTENING_MUST_MATCH_PACKAGE = 172251878L;
+
+    /**
+     * @hide
+     */
+    @ChangeId
+    @EnabledAfter(targetSdkVersion = Build.VERSION_CODES.TIRAMISU)
+    static final long REQUEST_LISTENING_OTHER_USER_NOOP = 242194868L;
 
     private final Context mContext;
 
@@ -272,7 +279,6 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
         mContext = context;
 
         LocalServices.addService(StatusBarManagerInternal.class, mInternalService);
-        LocalServices.addService(GlobalActionsProvider.class, mGlobalActionsProvider);
 
         // We always have a default display.
         final UiState state = new UiState();
@@ -287,6 +293,17 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
 
         mTileRequestTracker = new TileRequestTracker(mContext);
         mSessionMonitor = new SessionMonitor(mContext);
+    }
+
+    /**
+     * Publish the {@link GlobalActionsProvider}.
+     */
+    // TODO(b/259420401): investigate if we can extract GlobalActionsProvider to its own system
+    // service.
+    public void publishGlobalActionsProvider() {
+        if (LocalServices.getService(GlobalActionsProvider.class) == null) {
+            LocalServices.addService(GlobalActionsProvider.class, mGlobalActionsProvider);
+        }
     }
 
     private IOverlayManager getOverlayManager() {
@@ -403,6 +420,15 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
             if (mBar != null) {
                 try {
                     mBar.appTransitionFinished(displayId);
+                } catch (RemoteException ex) {}
+            }
+        }
+
+        @Override
+        public void toggleTaskbar() {
+            if (mBar != null) {
+                try {
+                    mBar.toggleTaskbar();
                 } catch (RemoteException ex) {}
             }
         }
@@ -633,7 +659,7 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
         }
 
         @Override
-        public void showTransient(int displayId, @InternalInsetsType int[] types,
+        public void showTransient(int displayId, @InsetsType int types,
                 boolean isGestureOnSystemBar) {
             getUiState(displayId).showTransient(types);
             if (mBar != null) {
@@ -644,7 +670,7 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
         }
 
         @Override
-        public void abortTransient(int displayId, @InternalInsetsType int[] types) {
+        public void abortTransient(int displayId, @InsetsType int types) {
             getUiState(displayId).clearTransient(types);
             if (mBar != null) {
                 try {
@@ -703,6 +729,43 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
                 try {
                     mBar.setUdfpsRefreshRateCallback(callback);
                 } catch (RemoteException ex) { }
+            }
+        }
+
+        @Override
+        public void showRearDisplayDialog(int currentBaseState) {
+            if (mBar != null) {
+                try {
+                    mBar.showRearDisplayDialog(currentBaseState);
+                } catch (RemoteException ex) { }
+            }
+        }
+
+        @Override
+        public void goToFullscreenFromSplit() {
+            if (mBar != null) {
+                try {
+                    mBar.goToFullscreenFromSplit();
+                } catch (RemoteException ex) { }
+            }
+        }
+
+        @Override
+        public void enterStageSplitFromRunningApp(boolean leftOrTop) {
+            if (mBar != null) {
+                try {
+                    mBar.enterStageSplitFromRunningApp(leftOrTop);
+                } catch (RemoteException ex) { }
+            }
+        }
+
+        @Override
+        public void showMediaOutputSwitcher(String packageName) {
+            if (mBar != null) {
+                try {
+                    mBar.showMediaOutputSwitcher(packageName);
+                } catch (RemoteException ex) {
+                }
             }
         }
     };
@@ -1209,7 +1272,7 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
     private static class UiState {
         private @Appearance int mAppearance = 0;
         private AppearanceRegion[] mAppearanceRegions = new AppearanceRegion[0];
-        private final ArraySet<Integer> mTransientBarTypes = new ArraySet<>();
+        private @InsetsType int mTransientBarTypes;
         private boolean mNavbarColorManagedByIme = false;
         private @Behavior int mBehavior;
         private @InsetsType int mRequestedVisibleTypes = WindowInsets.Type.defaultVisible();
@@ -1236,16 +1299,12 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
             mLetterboxDetails = letterboxDetails;
         }
 
-        private void showTransient(@InternalInsetsType int[] types) {
-            for (int type : types) {
-                mTransientBarTypes.add(type);
-            }
+        private void showTransient(@InsetsType int types) {
+            mTransientBarTypes |= types;
         }
 
-        private void clearTransient(@InternalInsetsType int[] types) {
-            for (int type : types) {
-                mTransientBarTypes.remove(type);
-            }
+        private void clearTransient(@InsetsType int types) {
+            mTransientBarTypes &= ~types;
         }
 
         private int getDisabled1() {
@@ -1308,6 +1367,11 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
                 "StatusBarManagerService");
     }
 
+    @RequiresPermission(android.Manifest.permission.CONTROL_DEVICE_STATE)
+    private void enforceControlDeviceStatePermission() {
+        mContext.enforceCallingOrSelfPermission(CONTROL_DEVICE_STATE, "StatusBarManagerService");
+    }
+
     private boolean doesCallerHoldInteractAcrossUserPermission() {
         return mContext.checkCallingPermission(INTERACT_ACROSS_USERS_FULL) == PERMISSION_GRANTED
                 || mContext.checkCallingPermission(INTERACT_ACROSS_USERS) == PERMISSION_GRANTED;
@@ -1356,16 +1420,12 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
             // TODO(b/118592525): Currently, status bar only works on the default display.
             // Make it aware of multi-display if needed.
             final UiState state = mDisplayUiState.get(DEFAULT_DISPLAY);
-            final int[] transientBarTypes = new int[state.mTransientBarTypes.size()];
-            for (int i = 0; i < transientBarTypes.length; i++) {
-                transientBarTypes[i] = state.mTransientBarTypes.valueAt(i);
-            }
             return new RegisterStatusBarResult(icons, gatherDisableActionsLocked(mCurrentUserId, 1),
                     state.mAppearance, state.mAppearanceRegions, state.mImeWindowVis,
                     state.mImeBackDisposition, state.mShowImeSwitcher,
                     gatherDisableActionsLocked(mCurrentUserId, 2), state.mImeToken,
                     state.mNavbarColorManagedByIme, state.mBehavior, state.mRequestedVisibleTypes,
-                    state.mPackageName, transientBarTypes, state.mLetterboxDetails);
+                    state.mPackageName, state.mTransientBarTypes, state.mLetterboxDetails);
         }
     }
 
@@ -1835,7 +1895,12 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
 
             // Check current user
             if (userId != currentUser) {
-                throw new IllegalArgumentException("User " + userId + " is not the current user.");
+                if (CompatChanges.isChangeEnabled(REQUEST_LISTENING_OTHER_USER_NOOP, callingUid)) {
+                    return;
+                } else {
+                    throw new IllegalArgumentException(
+                            "User " + userId + " is not the current user.");
+                }
             }
         }
         if (mBar != null) {
@@ -2187,6 +2252,19 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
                 mBar.unregisterNearbyMediaDevicesProvider(provider);
             } catch (RemoteException e) {
                 Slog.e(TAG, "unregisterNearbyMediaDevicesProvider", e);
+            }
+        }
+    }
+
+    @RequiresPermission(android.Manifest.permission.CONTROL_DEVICE_STATE)
+    @Override
+    public void showRearDisplayDialog(int currentState) {
+        enforceControlDeviceStatePermission();
+        if (mBar != null) {
+            try {
+                mBar.showRearDisplayDialog(currentState);
+            } catch (RemoteException e) {
+                Slog.e(TAG, "showRearDisplayDialog", e);
             }
         }
     }

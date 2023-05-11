@@ -16,11 +16,10 @@
 package com.android.systemui.notetask
 
 import android.test.suitebuilder.annotation.SmallTest
+import android.view.KeyEvent
 import androidx.test.runner.AndroidJUnit4
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.statusbar.CommandQueue
-import com.android.systemui.util.mockito.mock
-import com.android.systemui.util.mockito.whenever
 import com.android.wm.shell.bubbles.Bubbles
 import java.util.Optional
 import org.junit.Before
@@ -30,6 +29,7 @@ import org.mockito.ArgumentMatchers.any
 import org.mockito.Mock
 import org.mockito.Mockito.never
 import org.mockito.Mockito.verify
+import org.mockito.Mockito.verifyZeroInteractions
 import org.mockito.MockitoAnnotations
 
 /**
@@ -44,25 +44,26 @@ internal class NoteTaskInitializerTest : SysuiTestCase() {
 
     @Mock lateinit var commandQueue: CommandQueue
     @Mock lateinit var bubbles: Bubbles
-    @Mock lateinit var optionalBubbles: Optional<Bubbles>
+    @Mock lateinit var noteTaskController: NoteTaskController
 
     @Before
     fun setUp() {
         MockitoAnnotations.initMocks(this)
-
-        whenever(optionalBubbles.isPresent).thenReturn(true)
-        whenever(optionalBubbles.orElse(null)).thenReturn(bubbles)
     }
 
-    private fun createNoteTaskInitializer(isEnabled: Boolean = true): NoteTaskInitializer {
+    private fun createNoteTaskInitializer(
+        isEnabled: Boolean = true,
+        bubbles: Bubbles? = this.bubbles,
+    ): NoteTaskInitializer {
         return NoteTaskInitializer(
-            optionalBubbles = optionalBubbles,
-            lazyNoteTaskController = mock(),
+            controller = noteTaskController,
             commandQueue = commandQueue,
+            optionalBubbles = Optional.ofNullable(bubbles),
             isEnabled = isEnabled,
         )
     }
 
+    // region initializer
     @Test
     fun initialize_shouldAddCallbacks() {
         createNoteTaskInitializer().initialize()
@@ -79,10 +80,39 @@ internal class NoteTaskInitializerTest : SysuiTestCase() {
 
     @Test
     fun initialize_bubblesNotPresent_shouldDoNothing() {
-        whenever(optionalBubbles.isPresent).thenReturn(false)
-
-        createNoteTaskInitializer().initialize()
+        createNoteTaskInitializer(bubbles = null).initialize()
 
         verify(commandQueue, never()).addCallback(any())
     }
+
+    @Test
+    fun initialize_flagEnabled_shouldEnableShortcut() {
+        createNoteTaskInitializer().initialize()
+
+        verify(noteTaskController).setNoteTaskShortcutEnabled(true)
+    }
+
+    @Test
+    fun initialize_flagDisabled_shouldDisableShortcut() {
+        createNoteTaskInitializer(isEnabled = false).initialize()
+
+        verify(noteTaskController).setNoteTaskShortcutEnabled(false)
+    }
+    // endregion
+
+    // region handleSystemKey
+    @Test
+    fun handleSystemKey_receiveValidSystemKey_shouldShowNoteTask() {
+        createNoteTaskInitializer().callbacks.handleSystemKey(KeyEvent.KEYCODE_STYLUS_BUTTON_TAIL)
+
+        verify(noteTaskController).showNoteTask(entryPoint = NoteTaskEntryPoint.TAIL_BUTTON)
+    }
+
+    @Test
+    fun handleSystemKey_receiveInvalidSystemKey_shouldDoNothing() {
+        createNoteTaskInitializer().callbacks.handleSystemKey(KeyEvent.KEYCODE_UNKNOWN)
+
+        verifyZeroInteractions(noteTaskController)
+    }
+    // endregion
 }

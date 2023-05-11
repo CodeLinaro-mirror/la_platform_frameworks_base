@@ -30,6 +30,7 @@ import android.util.Slog;
 
 import com.android.internal.backup.IBackupTransport;
 import com.android.internal.infra.AndroidFuture;
+import com.android.server.backup.BackupAndRestoreFeatureFlags;
 
 import java.util.ArrayDeque;
 import java.util.HashSet;
@@ -179,11 +180,11 @@ public class BackupTransportClient {
     /**
      * See {@link IBackupTransport#getAvailableRestoreSets()}
      */
-    public RestoreSet[] getAvailableRestoreSets() throws RemoteException {
+    public List<RestoreSet> getAvailableRestoreSets() throws RemoteException {
         AndroidFuture<List<RestoreSet>> resultFuture = mTransportFutures.newFuture();
         mTransportBinder.getAvailableRestoreSets(resultFuture);
         List<RestoreSet> result = getFutureResult(resultFuture);
-        return result == null ? null : result.toArray(new RestoreSet[] {});
+        return result;
     }
 
     /**
@@ -385,7 +386,8 @@ public class BackupTransportClient {
 
     private <T> T getFutureResult(AndroidFuture<T> future) {
         try {
-            return future.get(600, TimeUnit.SECONDS);
+            return future.get(BackupAndRestoreFeatureFlags.getBackupTransportFutureTimeoutMillis(),
+                    TimeUnit.MILLISECONDS);
         } catch (InterruptedException | ExecutionException | TimeoutException
                  | CancellationException e) {
             Slog.w(TAG, "Failed to get result from transport:", e);

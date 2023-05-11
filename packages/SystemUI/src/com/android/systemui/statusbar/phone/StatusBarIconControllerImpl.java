@@ -28,6 +28,8 @@ import android.util.ArraySet;
 import android.util.Log;
 import android.view.ViewGroup;
 
+import androidx.annotation.VisibleForTesting;
+
 import com.android.internal.statusbar.StatusBarIcon;
 import com.android.systemui.Dumpable;
 import com.android.systemui.R;
@@ -63,6 +65,10 @@ public class StatusBarIconControllerImpl implements Tunable,
         ConfigurationListener, Dumpable, CommandQueue.Callbacks, StatusBarIconController, DemoMode {
 
     private static final String TAG = "StatusBarIconController";
+    // Use this suffix to prevent external icon slot names from unintentionally overriding our
+    // internal, system-level slot names. See b/255428281.
+    @VisibleForTesting
+    protected static final String EXTERNAL_SLOT_SUFFIX = "__external";
 
     private final StatusBarIconList mStatusBarIconList;
     private final ArrayList<IconManager> mIconGroups = new ArrayList<>();
@@ -157,7 +163,7 @@ public class StatusBarIconControllerImpl implements Tunable,
         for (int i = currentSlots.size() - 1; i >= 0; i--) {
             Slot s = currentSlots.get(i);
             slotsToReAdd.put(s, s.getHolderList());
-            removeAllIconsForSlot(s.getName());
+            removeAllIconsForSlot(s.getName(), /* fromNewPipeline */ false);
         }
 
         // Add them all back
@@ -276,6 +282,11 @@ public class StatusBarIconControllerImpl implements Tunable,
         String slotName = mContext.getString(com.android.internal.R.string.status_bar_mobile);
         Slot mobileSlot = mStatusBarIconList.getSlot(slotName);
 
+        // Because of the way we cache the icon holders, we need to remove everything any time
+        // we get a new set of subscriptions. This might change in the future, but is required
+        // to support demo mode for now
+        removeAllIconsForSlot(slotName, /* fromNewPipeline */ true);
+
         Collections.reverse(subIds);
 
         for (Integer subId : subIds) {
@@ -341,21 +352,26 @@ public class StatusBarIconControllerImpl implements Tunable,
 
     @Override
     public void setExternalIcon(String slot) {
-        int viewIndex = mStatusBarIconList.getViewIndex(slot, 0);
+        String slotName = createExternalSlotName(slot);
+        int viewIndex = mStatusBarIconList.getViewIndex(slotName, 0);
         int height = mContext.getResources().getDimensionPixelSize(
                 R.dimen.status_bar_icon_drawing_size);
         mIconGroups.forEach(l -> l.onIconExternal(viewIndex, height));
     }
 
-    //TODO: remove this (used in command queue and for 3rd party tiles?)
+    // Override for *both* CommandQueue.Callbacks AND StatusBarIconController.
+    // TODO(b/265307726): Pull out the CommandQueue callbacks into a member variable to
+    //  differentiate between those callback methods and StatusBarIconController methods.
+    @Override
     public void setIcon(String slot, StatusBarIcon icon) {
+        String slotName = createExternalSlotName(slot);
         if (icon == null) {
-            removeAllIconsForSlot(slot);
+            removeAllIconsForSlot(slotName);
             return;
         }
 
         StatusBarIconHolder holder = StatusBarIconHolder.fromIcon(icon);
-        setIcon(slot, holder);
+        setIcon(slotName, holder);
     }
 
     private void setIcon(String slot, @NonNull StatusBarIconHolder holder) {
@@ -401,15 +417,25 @@ public class StatusBarIconControllerImpl implements Tunable,
         }
     }
 
-    /** */
+    // CommandQueue.Callbacks override
+    // TODO(b/265307726): Pull out the CommandQueue callbacks into a member variable to
+    //  differentiate between those callback methods and StatusBarIconController methods.
     @Override
     public void removeIcon(String slot) {
-        removeAllIconsForSlot(slot);
+        removeAllIconsForExternalSlot(slot);
     }
 
     /** */
     @Override
     public void removeIcon(String slot, int tag) {
+        // If the new pipeline is on for this icon, don't allow removal, since the new pipeline
+        // will never call this method
+        if (mStatusBarPipelineFlags.isIconControlledByFlags(slot)) {
+            Log.i(TAG, "Ignoring removal of (" + slot + "). "
+                    + "It should be controlled elsewhere");
+            return;
+        }
+
         if (mStatusBarIconList.getIconHolder(slot, tag) == null) {
             return;
         }
@@ -418,9 +444,26 @@ public class StatusBarIconControllerImpl implements Tunable,
         mIconGroups.forEach(l -> l.onRemoveIcon(viewIndex));
     }
 
+    @Override
+    public void removeAllIconsForExternalSlot(String slotName) {
+        removeAllIconsForSlot(createExternalSlotName(slotName));
+    }
+
     /** */
     @Override
     public void removeAllIconsForSlot(String slotName) {
+        removeAllIconsForSlot(slotName, /* fromNewPipeline */ false);
+    }
+
+    private void removeAllIconsForSlot(String slotName, boolean fromNewPipeline) {
+        // If the new pipeline is on for this icon, don't allow removal, since the new pipeline
+        // will never call this method
+        if (!fromNewPipeline && mStatusBarPipelineFlags.isIconControlledByFlags(slotName)) {
+            Log.i(TAG, "Ignoring removal of (" + slotName + "). "
+                    + "It should be controlled elsewhere");
+            return;
+        }
+
         Slot slot = mStatusBarIconList.getSlot(slotName);
         if (!slot.hasIconsInSlot()) {
             return;
@@ -500,5 +543,13 @@ public class StatusBarIconControllerImpl implements Tunable,
     @Override
     public void onDensityOrFontScaleChanged() {
         refreshIconGroups();
+    }
+
+    private String createExternalSlotName(String slot) {
+        if (slot.endsWith(EXTERNAL_SLOT_SUFFIX)) {
+            return slot;
+        } else {
+            return slot + EXTERNAL_SLOT_SUFFIX;
+        }
     }
 }

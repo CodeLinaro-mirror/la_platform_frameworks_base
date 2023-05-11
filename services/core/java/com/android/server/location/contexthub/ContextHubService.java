@@ -73,6 +73,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
@@ -146,7 +147,6 @@ public class ContextHubService extends IContextHubService.Stub {
     // An executor and the future object for scheduling timeout timers
     private final ScheduledThreadPoolExecutor mDailyMetricTimer =
             new ScheduledThreadPoolExecutor(1);
-
 
     // The period of the recurring time
     private static final int PERIOD_METRIC_QUERY_DAYS = 1;
@@ -363,15 +363,12 @@ public class ContextHubService extends IContextHubService.Stub {
      */
     private void initDefaultClientMap() {
         HashMap<Integer, IContextHubClient> defaultClientMap = new HashMap<>();
-        for (int contextHubId : mContextHubIdToInfoMap.keySet()) {
+        for (Map.Entry<Integer, ContextHubInfo> entry: mContextHubIdToInfoMap.entrySet()) {
+            int contextHubId = entry.getKey();
+            ContextHubInfo contextHubInfo = entry.getValue();
+
             mLastRestartTimestampMap.put(contextHubId,
                     new AtomicLong(SystemClock.elapsedRealtimeNanos()));
-
-            ContextHubInfo contextHubInfo = mContextHubIdToInfoMap.get(contextHubId);
-            IContextHubClient client = mClientManager.registerClient(
-                    contextHubInfo, createDefaultClientCallback(contextHubId),
-                    /* attributionTag= */ null, mTransactionManager, mContext.getPackageName());
-            defaultClientMap.put(contextHubId, client);
 
             try {
                 mContextHubWrapper.registerCallback(contextHubId,
@@ -380,6 +377,11 @@ public class ContextHubService extends IContextHubService.Stub {
                 Log.e(TAG, "RemoteException while registering service callback for hub (ID = "
                         + contextHubId + ")", e);
             }
+
+            IContextHubClient client = mClientManager.registerClient(
+                    contextHubInfo, createDefaultClientCallback(contextHubId),
+                    /* attributionTag= */ null, mTransactionManager, mContext.getPackageName());
+            defaultClientMap.put(contextHubId, client);
 
             // Do a query to initialize the service cache list of nanoapps
             // TODO(b/194289715): Remove this when old API is deprecated
@@ -1133,6 +1135,54 @@ public class ContextHubService extends IContextHubService.Stub {
         mTransactionManager.addTransaction(transaction);
     }
 
+    @android.annotation.EnforcePermission(android.Manifest.permission.ACCESS_CONTEXT_HUB)
+    /**
+     * Queries for a list of preloaded nanoapp IDs from the specified Context Hub.
+     *
+     * @param hubInfo The Context Hub to query a list of nanoapps from.
+     * @return The list of 64-bit IDs of the preloaded nanoapps.
+     * @throws NullPointerException if hubInfo is null
+     */
+    @Override
+    public long[] getPreloadedNanoAppIds(ContextHubInfo hubInfo) throws RemoteException {
+        super.getPreloadedNanoAppIds_enforcePermission();
+        Objects.requireNonNull(hubInfo, "hubInfo cannot be null");
+
+        long[] nanoappIds = mContextHubWrapper.getPreloadedNanoappIds(hubInfo.getId());
+        if (nanoappIds == null) {
+            return new long[0];
+        }
+        return nanoappIds;
+    }
+
+    @android.annotation.EnforcePermission(android.Manifest.permission.ACCESS_CONTEXT_HUB)
+    /**
+     * Puts the context hub in and out of test mode. Test mode is a clean state
+     * where tests can be executed in the same environment. If enable is true,
+     * this will enable test mode by unloading all nanoapps. If enable is false,
+     * this will disable test mode and reverse the actions of enabling test mode
+     * by loading all preloaded nanoapps. This puts CHRE in a normal state.
+     *
+     * This should only be used for a test environment, either through a
+     * @TestApi or development tools. This should not be used in a production
+     * environment.
+     *
+     * @param enable If true, put the context hub in test mode. If false, disable
+     *               test mode.
+     * @return       If true, the operation was successful; false otherwise.
+     */
+    @Override
+    public boolean setTestMode(boolean enable) {
+        super.setTestMode_enforcePermission();
+        boolean status = mContextHubWrapper.setTestMode(enable);
+
+        // Query nanoapps to update service state after test mode state change.
+        for (int contextHubId: mDefaultClientMap.keySet()) {
+            queryNanoAppsInternal(contextHubId);
+        }
+        return status;
+    }
+
     @Override
     protected void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
         if (!DumpUtils.checkDumpPermission(mContext, TAG, pw)) return;
@@ -1157,7 +1207,11 @@ public class ContextHubService extends IContextHubService.Stub {
         pw.println("");
         pw.println("=================== NANOAPPS ====================");
         // Dump nanoAppHash
-        mNanoAppStateManager.foreachNanoAppInstanceInfo((info) -> pw.println(info));
+        mNanoAppStateManager.foreachNanoAppInstanceInfo(pw::println);
+
+        pw.println("");
+        pw.println("=================== PRELOADED NANOAPPS ====================");
+        dumpPreloadedNanoapps(pw);
 
         pw.println("");
         pw.println("=================== CLIENTS ====================");
@@ -1199,6 +1253,28 @@ public class ContextHubService extends IContextHubService.Stub {
         proto.end(token);
 
         proto.flush();
+    }
+
+    /** Dumps preloaded nanoapps to the console */
+    private void dumpPreloadedNanoapps(PrintWriter pw) {
+        if (mContextHubWrapper == null) {
+            return;
+        }
+
+        for (int contextHubId: mContextHubIdToInfoMap.keySet()) {
+            long[] preloadedNanoappIds = mContextHubWrapper.getPreloadedNanoappIds(contextHubId);
+            if (preloadedNanoappIds == null) {
+                return;
+            }
+
+            pw.print("Context Hub (id=");
+            pw.print(contextHubId);
+            pw.println("):");
+            for (long preloadedNanoappId : preloadedNanoappIds) {
+                pw.print("  ID: 0x");
+                pw.println(Long.toHexString(preloadedNanoappId));
+            }
+        }
     }
 
     private void checkPermissions() {

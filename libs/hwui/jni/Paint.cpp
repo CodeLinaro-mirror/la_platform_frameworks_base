@@ -33,10 +33,10 @@
 #include "SkMaskFilter.h"
 #include "SkPath.h"
 #include "SkPathEffect.h"
+#include "SkPathUtils.h"
 #include "SkShader.h"
 #include "SkBlendMode.h"
 #include "unicode/uloc.h"
-#include "unicode/ushape.h"
 #include "utils/Blur.h"
 
 #include <hwui/BlurDrawLooper.h>
@@ -809,7 +809,7 @@ namespace PaintGlue {
         Paint* obj = reinterpret_cast<Paint*>(objHandle);
         SkPath* src = reinterpret_cast<SkPath*>(srcHandle);
         SkPath* dst = reinterpret_cast<SkPath*>(dstHandle);
-        return obj->getFillPath(*src, dst) ? JNI_TRUE : JNI_FALSE;
+        return skpathutils::FillPathWithPaint(*src, *obj, dst) ? JNI_TRUE : JNI_FALSE;
     }
 
     static jlong setShader(CRITICAL_JNI_PARAMS_COMMA jlong objHandle, jlong shaderHandle) {

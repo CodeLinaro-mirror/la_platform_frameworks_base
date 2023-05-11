@@ -24,7 +24,6 @@ import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -46,6 +45,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.android.settingslib.spa.framework.theme.SettingsDimension
@@ -64,7 +64,7 @@ data class ActionButton(
 fun ActionButtons(actionButtons: List<ActionButton>) {
     Row(
         Modifier
-            .padding(SettingsDimension.itemPaddingVertical)
+            .padding(SettingsDimension.buttonPadding)
             .clip(SettingsShape.CornerLarge)
             .height(IntrinsicSize.Min)
     ) {
@@ -94,19 +94,22 @@ private fun RowScope.ActionButton(actionButton: ActionButton) {
         ),
         contentPadding = PaddingValues(horizontal = 4.dp, vertical = 20.dp),
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Icon(
                 imageVector = actionButton.imageVector,
                 contentDescription = null,
                 modifier = Modifier.size(SettingsDimension.itemIconSize),
             )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = actionButton.text,
-                style = MaterialTheme.typography.labelLarge,
-            )
+            Box(
+                modifier = Modifier.padding(top = 4.dp).fillMaxHeight(),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = actionButton.text,
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
         }
     }
 }

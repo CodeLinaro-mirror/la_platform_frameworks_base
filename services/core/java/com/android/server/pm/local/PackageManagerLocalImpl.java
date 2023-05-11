@@ -22,6 +22,7 @@ import android.annotation.Nullable;
 import android.annotation.UserIdInt;
 import android.os.Binder;
 import android.os.UserHandle;
+import android.util.ArrayMap;
 
 import com.android.server.pm.Computer;
 import com.android.server.pm.PackageManagerLocal;
@@ -30,11 +31,9 @@ import com.android.server.pm.pkg.PackageState;
 import com.android.server.pm.snapshot.PackageDataSnapshot;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Consumer;
 
 /** @hide */
 public class PackageManagerLocalImpl implements PackageManagerLocal {
@@ -105,6 +104,9 @@ public class PackageManagerLocalImpl implements PackageManagerLocal {
         @Nullable
         private Map<String, PackageState> mCachedUnmodifiablePackageStates;
 
+        @Nullable
+        private Map<String, PackageState> mCachedUnmodifiableDisabledSystemPackageStates;
+
         private UnfilteredSnapshotImpl(@NonNull PackageDataSnapshot snapshot) {
             super(snapshot);
         }
@@ -127,10 +129,24 @@ public class PackageManagerLocalImpl implements PackageManagerLocal {
             return mCachedUnmodifiablePackageStates;
         }
 
+        @SuppressWarnings("RedundantSuppression")
+        @NonNull
+        @Override
+        public Map<String, PackageState> getDisabledSystemPackageStates() {
+            checkClosed();
+
+            if (mCachedUnmodifiableDisabledSystemPackageStates == null) {
+                mCachedUnmodifiableDisabledSystemPackageStates =
+                        Collections.unmodifiableMap(mSnapshot.getDisabledSystemPackageStates());
+            }
+            return mCachedUnmodifiableDisabledSystemPackageStates;
+        }
+
         @Override
         public void close() {
             super.close();
             mCachedUnmodifiablePackageStates = null;
+            mCachedUnmodifiableDisabledSystemPackageStates = null;
         }
     }
 
@@ -143,7 +159,7 @@ public class PackageManagerLocalImpl implements PackageManagerLocal {
         private final int mUserId;
 
         @Nullable
-        private ArrayList<PackageState> mFilteredPackageStates;
+        private Map<String, PackageState> mFilteredPackageStates;
 
         @Nullable
         private final UnfilteredSnapshotImpl mParentSnapshot;
@@ -179,26 +195,24 @@ public class PackageManagerLocalImpl implements PackageManagerLocal {
             return mSnapshot.getPackageStateFiltered(packageName, mCallingUid, mUserId);
         }
 
+        @NonNull
         @Override
-        public void forAllPackageStates(@NonNull Consumer<PackageState> consumer) {
+        public Map<String, PackageState> getPackageStates() {
             checkClosed();
 
             if (mFilteredPackageStates == null) {
                 var packageStates = mSnapshot.getPackageStates();
-                var filteredPackageStates = new ArrayList<PackageState>();
+                var filteredPackageStates = new ArrayMap<String, PackageState>();
                 for (int index = 0, size = packageStates.size(); index < size; index++) {
                     var packageState = packageStates.valueAt(index);
                     if (!mSnapshot.shouldFilterApplication(packageState, mCallingUid, mUserId)) {
-                        filteredPackageStates.add(packageState);
+                        filteredPackageStates.put(packageStates.keyAt(index), packageState);
                     }
                 }
-                mFilteredPackageStates = filteredPackageStates;
+                mFilteredPackageStates = Collections.unmodifiableMap(filteredPackageStates);
             }
 
-            for (int index = 0, size = mFilteredPackageStates.size(); index < size; index++) {
-                var packageState = mFilteredPackageStates.get(index);
-                consumer.accept(packageState);
-            }
+            return mFilteredPackageStates;
         }
     }
 }

@@ -20,6 +20,7 @@ import static android.view.WindowManagerPolicyConstants.APPLICATION_MEDIA_OVERLA
 import static android.view.WindowManagerPolicyConstants.APPLICATION_MEDIA_SUBLAYER;
 import static android.view.WindowManagerPolicyConstants.APPLICATION_PANEL_SUBLAYER;
 
+import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.compat.annotation.UnsupportedAppUsage;
@@ -51,6 +52,8 @@ import android.window.SurfaceSyncGroup;
 
 import com.android.internal.view.SurfaceCallbackHelper;
 
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.locks.ReentrantLock;
@@ -117,6 +120,36 @@ import java.util.function.Consumer;
  * may not blend properly as a consequence of not applying alpha to the surface content directly.
  */
 public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCallback {
+    /** @hide */
+    @Retention(RetentionPolicy.SOURCE)
+    @IntDef(prefix = {"SURFACE_LIFECYCLE_"},
+            value = {SURFACE_LIFECYCLE_DEFAULT,
+                     SURFACE_LIFECYCLE_FOLLOWS_VISIBILITY,
+                     SURFACE_LIFECYCLE_FOLLOWS_ATTACHMENT})
+    public @interface SurfaceLifecycleStrategy {}
+
+    /**
+     * Default lifecycle of the Surface owned by this SurfaceView.
+     *
+     * The default lifecycle matches {@link #SURFACE_LIFECYCLE_FOLLOWS_VISIBILITY}.
+     */
+    public static final int SURFACE_LIFECYCLE_DEFAULT = 0;
+
+    /**
+     * The Surface lifecycle is tied to SurfaceView visibility.
+     *
+     * The Surface is created when the SurfaceView becomes visible, and is destroyed when the
+     * SurfaceView is no longer visible.
+     */
+    public static final int SURFACE_LIFECYCLE_FOLLOWS_VISIBILITY = 1;
+
+    /**
+     * The Surface lifecycle is tied to SurfaceView attachment.
+     * The Surface is created when the SurfaceView first becomes attached, but is not destroyed
+     * until this SurfaceView has been detached from the current window.
+     */
+    public static final int SURFACE_LIFECYCLE_FOLLOWS_ATTACHMENT = 2;
+
     private static final String TAG = "SurfaceView";
     private static final boolean DEBUG = false;
     private static final boolean DEBUG_POSITION = false;
@@ -150,6 +183,11 @@ public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCall
     SurfaceControl mSurfaceControl;
     SurfaceControl mBackgroundControl;
     private boolean mDisableBackgroundLayer = false;
+
+    @SurfaceLifecycleStrategy
+    private int mRequestedSurfaceLifecycleStrategy = SURFACE_LIFECYCLE_DEFAULT;
+    @SurfaceLifecycleStrategy
+    private int mSurfaceLifecycleStrategy = SURFACE_LIFECYCLE_DEFAULT;
 
     /**
      * We use this lock to protect access to mSurfaceControl. Both are accessed on the UI
@@ -413,6 +451,7 @@ public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCall
             observer.removeOnPreDrawListener(mDrawListener);
             mGlobalListenersAdded = false;
         }
+        if (DEBUG) Log.i(TAG, System.identityHashCode(this) + " Detaching SV");
 
         mRequestedVisible = false;
 
@@ -699,6 +738,20 @@ public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCall
         }
     }
 
+    /**
+     * Controls the lifecycle of the Surface owned by this SurfaceView.
+     *
+     * <p>By default, the lifecycycle strategy employed by the SurfaceView is
+     * {@link #SURFACE_LIFECYCLE_DEFAULT}.
+     *
+     * @param lifecycleStrategy The strategy for the lifecycle of the Surface owned by this
+     * SurfaceView.
+     */
+    public void setSurfaceLifecycle(@SurfaceLifecycleStrategy int lifecycleStrategy) {
+        mRequestedSurfaceLifecycleStrategy = lifecycleStrategy;
+        updateSurface();
+    }
+
     private void updateOpaqueFlag() {
         if (!PixelFormat.formatHasAlpha(mRequestedFormat)) {
             mSurfaceFlags |= SurfaceControl.OPAQUE;
@@ -728,8 +781,8 @@ public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCall
 
     private void releaseSurfaces(boolean releaseSurfacePackage) {
         mAlpha = 1f;
+        mSurface.destroy();
         synchronized (mSurfaceControlLock) {
-            mSurface.destroy();
             if (mBlastBufferQueue != null) {
                 mBlastBufferQueue.destroy();
                 mBlastBufferQueue = null;
@@ -780,7 +833,7 @@ public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCall
 
         mSurfaceLock.lock();
         try {
-            mDrawingStopped = !mVisible;
+            mDrawingStopped = !surfaceShouldExist();
 
             if (DEBUG) Log.i(TAG, System.identityHashCode(this) + " "
                     + "Cur surface: " + mSurface);
@@ -887,6 +940,20 @@ public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCall
         return realSizeChanged;
     }
 
+    private boolean requiresSurfaceControlCreation(boolean formatChanged, boolean visibleChanged) {
+        if (mSurfaceLifecycleStrategy == SURFACE_LIFECYCLE_FOLLOWS_ATTACHMENT) {
+            return (mSurfaceControl == null || formatChanged) && mAttachedToWindow;
+        }
+
+        return (mSurfaceControl == null || formatChanged || visibleChanged) && mRequestedVisible;
+    }
+
+    private boolean surfaceShouldExist() {
+        final boolean respectVisibility =
+                mSurfaceLifecycleStrategy != SURFACE_LIFECYCLE_FOLLOWS_ATTACHMENT;
+        return mVisible || (!respectVisibility && mAttachedToWindow);
+    }
+
     /** @hide */
     protected void updateSurface() {
         if (!mHaveFrame) {
@@ -921,8 +988,7 @@ public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCall
         final boolean formatChanged = mFormat != mRequestedFormat;
         final boolean visibleChanged = mVisible != mRequestedVisible;
         final boolean alphaChanged = mAlpha != alpha;
-        final boolean creating = (mSurfaceControl == null || formatChanged || visibleChanged)
-                && mRequestedVisible;
+        final boolean creating = requiresSurfaceControlCreation(formatChanged, visibleChanged);
         final boolean sizeChanged = mSurfaceWidth != myWidth || mSurfaceHeight != myHeight;
         final boolean windowVisibleChanged = mWindowVisibility != mLastWindowVisibility;
         getLocationInWindow(mLocation);
@@ -933,10 +999,13 @@ public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCall
         final boolean hintChanged = (viewRoot.getBufferTransformHint() != mTransformHint)
                 && mRequestedVisible;
         final boolean relativeZChanged = mSubLayer != mRequestedSubLayer;
+        final boolean surfaceLifecycleStrategyChanged =
+                mSurfaceLifecycleStrategy != mRequestedSurfaceLifecycleStrategy;
 
         if (creating || formatChanged || sizeChanged || visibleChanged
                 || alphaChanged || windowVisibleChanged || positionChanged
-                || layoutSizeChanged || hintChanged || relativeZChanged) {
+                || layoutSizeChanged || hintChanged || relativeZChanged || !mAttachedToWindow
+                || surfaceLifecycleStrategyChanged) {
 
             if (DEBUG) Log.i(TAG, System.identityHashCode(this) + " "
                     + "Changes: creating=" + creating
@@ -945,7 +1014,10 @@ public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCall
                     + " hint=" + hintChanged
                     + " visible=" + visibleChanged
                     + " left=" + (mWindowSpaceLeft != mLocation[0])
-                    + " top=" + (mWindowSpaceTop != mLocation[1]));
+                    + " top=" + (mWindowSpaceTop != mLocation[1])
+                    + " z=" + relativeZChanged
+                    + " attached=" + mAttachedToWindow
+                    + " lifecycleStrategy=" + surfaceLifecycleStrategyChanged);
 
             try {
                 mVisible = mRequestedVisible;
@@ -958,6 +1030,9 @@ public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCall
                 mLastWindowVisibility = mWindowVisibility;
                 mTransformHint = viewRoot.getBufferTransformHint();
                 mSubLayer = mRequestedSubLayer;
+
+                final int previousSurfaceLifecycleStrategy = mSurfaceLifecycleStrategy;
+                mSurfaceLifecycleStrategy = mRequestedSurfaceLifecycleStrategy;
 
                 mScreenRect.left = mWindowSpaceLeft;
                 mScreenRect.top = mWindowSpaceTop;
@@ -982,8 +1057,8 @@ public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCall
 
                 final boolean redrawNeeded = sizeChanged || creating || hintChanged
                         || (mVisible && !mDrawFinished) || alphaChanged || relativeZChanged;
-                boolean shouldSyncBuffer =
-                        redrawNeeded && viewRoot.wasRelayoutRequested() && viewRoot.isInLocalSync();
+                boolean shouldSyncBuffer = redrawNeeded && viewRoot.wasRelayoutRequested()
+                        && viewRoot.isInWMSRequestedSync();
                 SyncBufferTransactionCallback syncBufferTransactionCallback = null;
                 if (shouldSyncBuffer) {
                     syncBufferTransactionCallback = new SyncBufferTransactionCallback();
@@ -1000,15 +1075,27 @@ public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCall
                     SurfaceHolder.Callback[] callbacks = null;
 
                     final boolean surfaceChanged = creating;
-                    if (mSurfaceCreated && (surfaceChanged || (!mVisible && visibleChanged))) {
-                        mSurfaceCreated = false;
-                        notifySurfaceDestroyed();
+                    final boolean respectVisibility =
+                            mSurfaceLifecycleStrategy != SURFACE_LIFECYCLE_FOLLOWS_ATTACHMENT;
+                    final boolean previouslyDidNotRespectVisibility =
+                            previousSurfaceLifecycleStrategy
+                                    == SURFACE_LIFECYCLE_FOLLOWS_ATTACHMENT;
+                    final boolean lifecycleNewlyRespectsVisibility = respectVisibility
+                            && previouslyDidNotRespectVisibility;
+                    if (mSurfaceCreated) {
+                        if (surfaceChanged || (!respectVisibility && !mAttachedToWindow)
+                                || (respectVisibility && !mVisible
+                                        && (visibleChanged || lifecycleNewlyRespectsVisibility))) {
+                            mSurfaceCreated = false;
+                            notifySurfaceDestroyed();
+                        }
                     }
 
                     copySurface(creating /* surfaceControlCreated */, sizeChanged);
 
-                    if (mVisible && mSurface.isValid()) {
-                        if (!mSurfaceCreated && (surfaceChanged || visibleChanged)) {
+                    if (surfaceShouldExist() && mSurface.isValid()) {
+                        if (!mSurfaceCreated
+                                && (surfaceChanged || (respectVisibility && visibleChanged))) {
                             mSurfaceCreated = true;
                             mIsCreating = true;
                             if (DEBUG) Log.i(TAG, System.identityHashCode(this) + " "
@@ -1019,7 +1106,7 @@ public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCall
                             }
                         }
                         if (creating || formatChanged || sizeChanged || hintChanged
-                                || visibleChanged || realSizeChanged) {
+                                || (respectVisibility && visibleChanged) || realSizeChanged) {
                             if (DEBUG) Log.i(TAG, System.identityHashCode(this) + " "
                                     + "surfaceChanged -- format=" + mFormat
                                     + " w=" + myWidth + " h=" + myHeight);
@@ -1062,6 +1149,15 @@ public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCall
     }
 
     /**
+     * @hide
+     */
+    public String getName() {
+        ViewRootImpl viewRoot = getViewRootImpl();
+        String viewRootName = viewRoot == null ? "detached" : viewRoot.getTitle().toString();
+        return "SurfaceView[" + viewRootName + "]";
+    }
+
+    /**
      * If SV is trying to be part of the VRI sync, we need to add SV to the VRI sync before
      * invoking the redrawNeeded call to the owner. This is to ensure we can set up the SV in
      * the sync before the SV owner knows it needs to draw a new frame.
@@ -1073,35 +1169,35 @@ public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCall
     private void handleSyncBufferCallback(SurfaceHolder.Callback[] callbacks,
             SyncBufferTransactionCallback syncBufferTransactionCallback) {
 
-        getViewRootImpl().addToSync(syncBufferCallback ->
-                redrawNeededAsync(callbacks, () -> {
-                    Transaction t = null;
-                    if (mBlastBufferQueue != null) {
-                        mBlastBufferQueue.stopContinuousSyncTransaction();
-                        t = syncBufferTransactionCallback.waitForTransaction();
-                    }
+        final SurfaceSyncGroup surfaceSyncGroup = new SurfaceSyncGroup(getName());
+        getViewRootImpl().addToSync(surfaceSyncGroup);
+        redrawNeededAsync(callbacks, () -> {
+            Transaction t = null;
+            if (mBlastBufferQueue != null) {
+                mBlastBufferQueue.stopContinuousSyncTransaction();
+                t = syncBufferTransactionCallback.waitForTransaction();
+            }
 
-                    syncBufferCallback.onBufferReady(t);
-                    onDrawFinished();
-                }));
+            surfaceSyncGroup.addTransaction(t);
+            surfaceSyncGroup.markSyncReady();
+            onDrawFinished();
+        });
     }
 
     private void handleSyncNoBuffer(SurfaceHolder.Callback[] callbacks) {
-        final SurfaceSyncGroup syncGroup = new SurfaceSyncGroup();
+        final SurfaceSyncGroup surfaceSyncGroup = new SurfaceSyncGroup(getName());
         synchronized (mSyncGroups) {
-            mSyncGroups.add(syncGroup);
+            mSyncGroups.add(surfaceSyncGroup);
         }
 
-        syncGroup.addToSync(syncBufferCallback -> redrawNeededAsync(callbacks,
-                () -> {
-                    syncBufferCallback.onBufferReady(null);
-                    onDrawFinished();
-                    synchronized (mSyncGroups) {
-                        mSyncGroups.remove(syncGroup);
-                    }
-                }));
+        redrawNeededAsync(callbacks, () -> {
+            synchronized (mSyncGroups) {
+                mSyncGroups.remove(surfaceSyncGroup);
+            }
+            surfaceSyncGroup.markSyncReady();
+            onDrawFinished();
+        });
 
-        syncGroup.markSyncReady();
     }
 
     private void redrawNeededAsync(SurfaceHolder.Callback[] callbacks,
@@ -1114,14 +1210,15 @@ public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCall
      * @hide
      */
     @Override
-    public void surfaceSyncStarted() {
+    public void vriDrawStarted(boolean isWmSync) {
         ViewRootImpl viewRoot = getViewRootImpl();
-        if (viewRoot != null) {
-            synchronized (mSyncGroups) {
+        synchronized (mSyncGroups) {
+            if (isWmSync && viewRoot != null) {
                 for (SurfaceSyncGroup syncGroup : mSyncGroups) {
-                    viewRoot.mergeSync(syncGroup);
+                    viewRoot.addToSync(syncGroup);
                 }
             }
+            mSyncGroups.clear();
         }
     }
 
@@ -1659,8 +1756,14 @@ public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCall
     };
 
     /**
-     * Return a SurfaceControl which can be used for parenting Surfaces to
-     * this SurfaceView.
+     * Return a SurfaceControl which can be used for parenting Surfaces to this SurfaceView.
+     *
+     * Note that this SurfaceControl is effectively read-only. Its only well-defined usage is in
+     * using the SurfaceControl as a parent for an application's hierarchy of SurfaceControls. All
+     * other properties of the SurfaceControl, such as its position, may be mutated by the
+     * SurfaceView at any time which will override what the application is requesting. Do not apply
+     * any {@link SurfaceControl.Transaction} to this SurfaceControl except for reparenting
+     * child SurfaceControls. See: {@link SurfaceControl.Transaction#reparent}.
      *
      * @return The SurfaceControl for this SurfaceView.
      */
@@ -1885,5 +1988,33 @@ public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCall
      */
     public void syncNextFrame(Consumer<Transaction> t) {
         mBlastBufferQueue.syncNextTransaction(t);
+    }
+
+    /**
+     * Adds a transaction that would be applied synchronously with displaying the SurfaceView's next
+     * frame.
+     *
+     * Note that the exact frame that the transaction is applied with is only well-defined when
+     * SurfaceView rendering is paused prior to calling applyTransactionToFrame(), so that the
+     * transaction is applied with the next frame rendered after applyTransactionToFrame() is
+     * called. If frames are continuously rendering to the SurfaceView when
+     * applyTransactionToFrame() is called, then it is undefined which frame the transaction is
+     * applied with. It is also possible for the transaction to not be applied if no new frames are
+     * rendered to the SurfaceView after this is called.
+     *
+     * @param transaction The transaction to apply. The system takes ownership of the transaction
+     *                    and promises to eventually apply the transaction.
+     * @throws IllegalStateException if the underlying Surface does not exist (and therefore
+     *         there is no next frame).
+     */
+    public void applyTransactionToFrame(@NonNull SurfaceControl.Transaction transaction) {
+        synchronized (mSurfaceControlLock) {
+            if (mBlastBufferQueue == null) {
+                throw new IllegalStateException("Surface does not exist!");
+            }
+
+            long frameNumber = mBlastBufferQueue.getLastAcquiredFrameNum() + 1;
+            mBlastBufferQueue.mergeWithNextTransaction(transaction, frameNumber);
+        }
     }
 }

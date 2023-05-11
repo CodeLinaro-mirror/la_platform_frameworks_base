@@ -17,14 +17,10 @@
 package com.android.wm.shell.flicker.pip
 
 import android.platform.test.annotations.Presubmit
-import android.view.Surface
+import android.tools.device.flicker.junit.FlickerParametersRunnerFactory
+import android.tools.device.flicker.legacy.FlickerBuilder
+import android.tools.device.flicker.legacy.FlickerTest
 import androidx.test.filters.RequiresDevice
-import com.android.server.wm.flicker.FlickerParametersRunnerFactory
-import com.android.server.wm.flicker.FlickerTestParameter
-import com.android.server.wm.flicker.dsl.FlickerBuilder
-import com.android.server.wm.flicker.helpers.setRotation
-import com.android.server.wm.flicker.helpers.wakeUpAndGoToHomeScreen
-import com.android.server.wm.flicker.rules.RemoveAllTasksButHomeRule
 import org.junit.Assume
 import org.junit.FixMethodOrder
 import org.junit.Test
@@ -43,33 +39,22 @@ import org.junit.runners.Parameterized
  *     Select "Via code behind" radio button
  *     Press Home button or swipe up to go Home and put [pipApp] in pip mode
  * ```
- * Notes:
- * ```
- *     1. All assertions are inherited from [EnterPipTest]
- *     2. Part of the test setup occurs automatically via
- *        [com.android.server.wm.flicker.TransitionRunnerWithRules],
- *        including configuring navigation mode, initial orientation and ensuring no
- *        apps are running before setup
- * ```
  */
 @RequiresDevice
 @RunWith(Parameterized::class)
 @Parameterized.UseParametersRunnerFactory(FlickerParametersRunnerFactory::class)
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
-class EnterPipOnUserLeaveHintTest(testSpec: FlickerTestParameter) : EnterPipTest(testSpec) {
+open class EnterPipOnUserLeaveHintTest(flicker: FlickerTest) : EnterPipTransition(flicker) {
     /** Defines the transition used to run the test */
     override val transition: FlickerBuilder.() -> Unit
         get() = {
             setup {
-                RemoveAllTasksButHomeRule.removeAllTasksButHome()
-                device.wakeUpAndGoToHomeScreen()
-                device.wakeUpAndGoToHomeScreen()
                 pipApp.launchViaIntent(wmHelper)
                 pipApp.enableEnterPipOnUserLeaveHint()
             }
             teardown {
-                setRotation(Surface.ROTATION_0)
-                RemoveAllTasksButHomeRule.removeAllTasksButHome()
+                // close gracefully so that onActivityUnpinned() can be called before force exit
+                pipApp.closePipWindow(wmHelper)
                 pipApp.exit(wmHelper)
             }
             transitions { tapl.goHome() }
@@ -77,13 +62,45 @@ class EnterPipOnUserLeaveHintTest(testSpec: FlickerTestParameter) : EnterPipTest
 
     @Presubmit
     @Test
-    override fun pipAppLayerAlwaysVisible() {
-        if (!testSpec.isGesturalNavigation) super.pipAppLayerAlwaysVisible()
-        else {
-            // pip layer in gesture nav will disappear during transition
-            testSpec.assertLayers {
-                this.isVisible(pipApp).then().isInvisible(pipApp).then().isVisible(pipApp)
-            }
+    override fun pipAppWindowAlwaysVisible() {
+        // In gestural nav the pip will first move behind home and then above home. The visual
+        // appearance visible->invisible->visible is asserted by pipAppLayerAlwaysVisible().
+        // But the internal states of activity don't need to follow that, such as a temporary
+        // visibility state can be changed quickly outside a transaction so the test doesn't
+        // detect that. Hence, skip the case to avoid restricting the internal implementation.
+        Assume.assumeFalse(flicker.scenario.isGesturalNavigation)
+        super.pipAppWindowAlwaysVisible()
+    }
+
+    @Presubmit
+    @Test
+    override fun pipAppLayerOrOverlayAlwaysVisible() {
+        // pip layer in gesture nav will disappear during transition
+        Assume.assumeFalse(flicker.scenario.isGesturalNavigation)
+        super.pipAppLayerOrOverlayAlwaysVisible()
+    }
+
+    @Presubmit
+    @Test
+    fun pipAppWindowVisibleChanges() {
+        // pip layer in gesture nav will disappear during transition
+        Assume.assumeTrue(flicker.scenario.isGesturalNavigation)
+        flicker.assertWm {
+            this.isAppWindowVisible(pipApp)
+                .then()
+                .isAppWindowInvisible(pipApp, isOptional = true)
+                .then()
+                .isAppWindowVisible(pipApp, isOptional = true)
+        }
+    }
+
+    @Presubmit
+    @Test
+    fun pipAppLayerVisibleChanges() {
+        Assume.assumeTrue(flicker.scenario.isGesturalNavigation)
+        // pip layer in gesture nav will disappear during transition
+        flicker.assertLayers {
+            this.isVisible(pipApp).then().isInvisible(pipApp).then().isVisible(pipApp)
         }
     }
 
@@ -91,7 +108,7 @@ class EnterPipOnUserLeaveHintTest(testSpec: FlickerTestParameter) : EnterPipTest
     @Test
     override fun pipLayerReduces() {
         // in gestural nav the pip enters through alpha animation
-        Assume.assumeFalse(testSpec.isGesturalNavigation)
+        Assume.assumeFalse(flicker.scenario.isGesturalNavigation)
         super.pipLayerReduces()
     }
 
@@ -99,7 +116,7 @@ class EnterPipOnUserLeaveHintTest(testSpec: FlickerTestParameter) : EnterPipTest
     @Test
     override fun focusChanges() {
         // in gestural nav the focus goes to different activity on swipe up
-        Assume.assumeFalse(testSpec.isGesturalNavigation)
+        Assume.assumeFalse(flicker.scenario.isGesturalNavigation)
         super.focusChanges()
     }
 
@@ -111,12 +128,19 @@ class EnterPipOnUserLeaveHintTest(testSpec: FlickerTestParameter) : EnterPipTest
 
     @Presubmit
     @Test
-    override fun pipLayerRemainInsideVisibleBounds() {
-        if (!testSpec.isGesturalNavigation) super.pipLayerRemainInsideVisibleBounds()
-        else {
-            // pip layer in gesture nav will disappear during transition
-            testSpec.assertLayersStart { this.visibleRegion(pipApp).coversAtMost(displayBounds) }
-            testSpec.assertLayersEnd { this.visibleRegion(pipApp).coversAtMost(displayBounds) }
-        }
+    override fun pipLayerOrOverlayRemainInsideVisibleBounds() {
+        // pip layer in gesture nav will disappear during transition
+        Assume.assumeFalse(flicker.scenario.isGesturalNavigation)
+        super.pipLayerOrOverlayRemainInsideVisibleBounds()
+    }
+
+    @Presubmit
+    @Test
+    fun pipLayerRemainInsideVisibleBounds() {
+        // pip layer in gesture nav will disappear during transition
+        Assume.assumeTrue(flicker.scenario.isGesturalNavigation)
+        // pip layer in gesture nav will disappear during transition
+        flicker.assertLayersStart { this.visibleRegion(pipApp).coversAtMost(displayBounds) }
+        flicker.assertLayersEnd { this.visibleRegion(pipApp).coversAtMost(displayBounds) }
     }
 }

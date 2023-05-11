@@ -25,6 +25,8 @@ import android.view.ViewConfiguration;
 import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.RecyclerView;
 
+import java.util.Optional;
+
 /**
  * Controls the all touch events of the accessibility target features view{@link RecyclerView} in
  * the {@link MenuView}. And then compute the gestures' velocity for fling and spring
@@ -39,6 +41,7 @@ class MenuListViewTouchHandler implements RecyclerView.OnItemTouchListener {
     private boolean mIsDragging = false;
     private float mTouchSlop;
     private final DismissAnimationController mDismissAnimationController;
+    private Optional<Runnable> mOnActionDownEnd = Optional.empty();
 
     MenuListViewTouchHandler(MenuAnimationController menuAnimationController,
             DismissAnimationController dismissAnimationController) {
@@ -65,6 +68,8 @@ class MenuListViewTouchHandler implements RecyclerView.OnItemTouchListener {
 
                 mMenuAnimationController.cancelAnimations();
                 mDismissAnimationController.maybeConsumeDownMotionEvent(motionEvent);
+
+                mOnActionDownEnd.ifPresent(Runnable::run);
                 break;
             case MotionEvent.ACTION_MOVE:
                 if (mIsDragging || Math.hypot(dx, dy) > mTouchSlop) {
@@ -106,6 +111,7 @@ class MenuListViewTouchHandler implements RecyclerView.OnItemTouchListener {
                     return true;
                 }
 
+                mMenuAnimationController.fadeOutIfEnabled();
                 break;
             default: // Do nothing
         }
@@ -123,6 +129,10 @@ class MenuListViewTouchHandler implements RecyclerView.OnItemTouchListener {
     @Override
     public void onRequestDisallowInterceptTouchEvent(boolean b) {
         // Do nothing
+    }
+
+    void setOnActionDownEndListener(Runnable onActionDownEndListener) {
+        mOnActionDownEnd = Optional.ofNullable(onActionDownEndListener);
     }
 
     /**

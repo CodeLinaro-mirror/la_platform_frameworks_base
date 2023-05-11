@@ -38,9 +38,11 @@ import com.android.wm.shell.TaskViewTransitions;
 import com.android.wm.shell.WindowManagerShellWrapper;
 import com.android.wm.shell.activityembedding.ActivityEmbeddingController;
 import com.android.wm.shell.back.BackAnimation;
+import com.android.wm.shell.back.BackAnimationBackground;
 import com.android.wm.shell.back.BackAnimationController;
 import com.android.wm.shell.bubbles.BubbleController;
 import com.android.wm.shell.bubbles.Bubbles;
+import com.android.wm.shell.common.DevicePostureController;
 import com.android.wm.shell.common.DisplayController;
 import com.android.wm.shell.common.DisplayImeController;
 import com.android.wm.shell.common.DisplayInsetsController;
@@ -50,17 +52,21 @@ import com.android.wm.shell.common.FloatingContentCoordinator;
 import com.android.wm.shell.common.ShellExecutor;
 import com.android.wm.shell.common.SyncTransactionQueue;
 import com.android.wm.shell.common.SystemWindows;
+import com.android.wm.shell.common.TabletopModeController;
 import com.android.wm.shell.common.TaskStackListenerImpl;
 import com.android.wm.shell.common.TransactionPool;
 import com.android.wm.shell.common.annotations.ShellAnimationThread;
 import com.android.wm.shell.common.annotations.ShellBackgroundThread;
 import com.android.wm.shell.common.annotations.ShellMainThread;
 import com.android.wm.shell.common.annotations.ShellSplashscreenThread;
+import com.android.wm.shell.compatui.CompatUIConfiguration;
 import com.android.wm.shell.compatui.CompatUIController;
+import com.android.wm.shell.compatui.CompatUIShellCommandHandler;
 import com.android.wm.shell.desktopmode.DesktopMode;
 import com.android.wm.shell.desktopmode.DesktopModeController;
 import com.android.wm.shell.desktopmode.DesktopModeStatus;
 import com.android.wm.shell.desktopmode.DesktopModeTaskRepository;
+import com.android.wm.shell.desktopmode.DesktopTasksController;
 import com.android.wm.shell.displayareahelper.DisplayAreaHelper;
 import com.android.wm.shell.displayareahelper.DisplayAreaHelperController;
 import com.android.wm.shell.draganddrop.DragAndDropController;
@@ -93,12 +99,12 @@ import com.android.wm.shell.unfold.UnfoldAnimationController;
 import com.android.wm.shell.unfold.UnfoldTransitionHandler;
 import com.android.wm.shell.windowdecor.WindowDecorViewModel;
 
-import java.util.Optional;
-
 import dagger.BindsOptionalOf;
 import dagger.Lazy;
 import dagger.Module;
 import dagger.Provides;
+
+import java.util.Optional;
 
 /**
  * Provides basic dependencies from {@link com.android.wm.shell}, these dependencies are only
@@ -157,6 +163,28 @@ public abstract class WMShellBaseModule {
 
     @WMSingleton
     @Provides
+    static DevicePostureController provideDevicePostureController(
+            Context context,
+            ShellInit shellInit,
+            @ShellMainThread ShellExecutor mainExecutor
+    ) {
+        return new DevicePostureController(context, shellInit, mainExecutor);
+    }
+
+    @WMSingleton
+    @Provides
+    static TabletopModeController provideTabletopModeController(
+            Context context,
+            ShellInit shellInit,
+            DevicePostureController postureController,
+            DisplayController displayController,
+            @ShellMainThread ShellExecutor mainExecutor) {
+        return new TabletopModeController(
+                context, shellInit, postureController, displayController, mainExecutor);
+    }
+
+    @WMSingleton
+    @Provides
     static DragAndDropController provideDragAndDropController(Context context,
             ShellInit shellInit,
             ShellController shellController,
@@ -195,10 +223,11 @@ public abstract class WMShellBaseModule {
             DisplayController displayController, DisplayInsetsController displayInsetsController,
             DisplayImeController imeController, SyncTransactionQueue syncQueue,
             @ShellMainThread ShellExecutor mainExecutor, Lazy<Transitions> transitionsLazy,
-            DockStateReader dockStateReader) {
+            DockStateReader dockStateReader, CompatUIConfiguration compatUIConfiguration,
+            CompatUIShellCommandHandler compatUIShellCommandHandler) {
         return new CompatUIController(context, shellInit, shellController, displayController,
                 displayInsetsController, imeController, syncQueue, mainExecutor, transitionsLazy,
-                dockStateReader);
+                dockStateReader, compatUIConfiguration, compatUIShellCommandHandler);
     }
 
     @WMSingleton
@@ -255,21 +284,29 @@ public abstract class WMShellBaseModule {
 
     @WMSingleton
     @Provides
+    static BackAnimationBackground provideBackAnimationBackground(
+            RootTaskDisplayAreaOrganizer rootTaskDisplayAreaOrganizer) {
+        return new BackAnimationBackground(rootTaskDisplayAreaOrganizer);
+    }
+
+    @WMSingleton
+    @Provides
     static Optional<BackAnimationController> provideBackAnimationController(
             Context context,
             ShellInit shellInit,
             ShellController shellController,
             @ShellMainThread ShellExecutor shellExecutor,
             @ShellBackgroundThread Handler backgroundHandler,
-            Transitions transitions
+            BackAnimationBackground backAnimationBackground
     ) {
         if (BackAnimationController.IS_ENABLED) {
             return Optional.of(
                     new BackAnimationController(shellInit, shellController, shellExecutor,
-                            backgroundHandler, context, transitions));
+                            backgroundHandler, context, backAnimationBackground));
         }
         return Optional.empty();
     }
+
 
     //
     // Bubbles (optional feature)
@@ -678,7 +715,11 @@ public abstract class WMShellBaseModule {
     @WMSingleton
     @Provides
     static Optional<DesktopMode> provideDesktopMode(
-            Optional<DesktopModeController> desktopModeController) {
+            Optional<DesktopModeController> desktopModeController,
+            Optional<DesktopTasksController> desktopTasksController) {
+        if (DesktopModeStatus.isProto2Enabled()) {
+            return desktopTasksController.map(DesktopTasksController::asDesktopMode);
+        }
         return desktopModeController.map(DesktopModeController::asDesktopMode);
     }
 
@@ -688,10 +729,30 @@ public abstract class WMShellBaseModule {
 
     @WMSingleton
     @Provides
-    static Optional<DesktopModeController> providesDesktopModeController(
-            @DynamicOverride Optional<DesktopModeController> desktopModeController) {
-        if (DesktopModeStatus.IS_SUPPORTED) {
-            return desktopModeController;
+    static Optional<DesktopModeController> provideDesktopModeController(
+            @DynamicOverride Optional<Lazy<DesktopModeController>> desktopModeController) {
+        // Use optional-of-lazy for the dependency that this provider relies on.
+        // Lazy ensures that this provider will not be the cause the dependency is created
+        // when it will not be returned due to the condition below.
+        if (DesktopModeStatus.isProto1Enabled()) {
+            return desktopModeController.map(Lazy::get);
+        }
+        return Optional.empty();
+    }
+
+    @BindsOptionalOf
+    @DynamicOverride
+    abstract DesktopTasksController optionalDesktopTasksController();
+
+    @WMSingleton
+    @Provides
+    static Optional<DesktopTasksController> providesDesktopTasksController(
+            @DynamicOverride Optional<Lazy<DesktopTasksController>> desktopTasksController) {
+        // Use optional-of-lazy for the dependency that this provider relies on.
+        // Lazy ensures that this provider will not be the cause the dependency is created
+        // when it will not be returned due to the condition below.
+        if (DesktopModeStatus.isProto2Enabled()) {
+            return desktopTasksController.map(Lazy::get);
         }
         return Optional.empty();
     }
@@ -702,10 +763,13 @@ public abstract class WMShellBaseModule {
 
     @WMSingleton
     @Provides
-    static Optional<DesktopModeTaskRepository> providesDesktopTaskRepository(
-            @DynamicOverride Optional<DesktopModeTaskRepository> desktopModeTaskRepository) {
-        if (DesktopModeStatus.IS_SUPPORTED) {
-            return desktopModeTaskRepository;
+    static Optional<DesktopModeTaskRepository> provideDesktopTaskRepository(
+            @DynamicOverride Optional<Lazy<DesktopModeTaskRepository>> desktopModeTaskRepository) {
+        // Use optional-of-lazy for the dependency that this provider relies on.
+        // Lazy ensures that this provider will not be the cause the dependency is created
+        // when it will not be returned due to the condition below.
+        if (DesktopModeStatus.isAnyEnabled()) {
+            return desktopModeTaskRepository.map(Lazy::get);
         }
         return Optional.empty();
     }

@@ -27,10 +27,15 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.WindowInsets.Type
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import com.android.systemui.R
 import com.android.systemui.broadcast.BroadcastDispatcher
 import com.android.systemui.controls.management.ControlsAnimations
+import com.android.systemui.controls.settings.ControlsSettingsDialogManager
+import com.android.systemui.flags.FeatureFlags
+import com.android.systemui.flags.Flags
+import com.android.systemui.statusbar.policy.KeyguardStateController
 import javax.inject.Inject
 
 /**
@@ -44,6 +49,9 @@ class ControlsActivity @Inject constructor(
     private val uiController: ControlsUiController,
     private val broadcastDispatcher: BroadcastDispatcher,
     private val dreamManager: IDreamManager,
+    private val featureFlags: FeatureFlags,
+    private val controlsSettingsDialogManager: ControlsSettingsDialogManager,
+    private val keyguardStateController: KeyguardStateController
 ) : ComponentActivity() {
 
     private lateinit var parent: ViewGroup
@@ -52,14 +60,18 @@ class ControlsActivity @Inject constructor(
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (featureFlags.isEnabled(Flags.USE_APP_PANELS)) {
+            window.addPrivateFlags(WindowManager.LayoutParams.PRIVATE_FLAG_TRUSTED_OVERLAY)
+        }
 
         setContentView(R.layout.controls_fullscreen)
 
         getLifecycle().addObserver(
             ControlsAnimations.observerForAnimations(
-                requireViewById<ViewGroup>(R.id.control_detail_root),
+                requireViewById(R.id.control_detail_root),
                 window,
-                intent
+                intent,
+                !featureFlags.isEnabled(Flags.USE_APP_PANELS)
             )
         )
 
@@ -83,9 +95,15 @@ class ControlsActivity @Inject constructor(
     override fun onStart() {
         super.onStart()
 
-        parent = requireViewById<ViewGroup>(R.id.global_actions_controls)
+        parent = requireViewById(R.id.control_detail_root)
         parent.alpha = 0f
-        uiController.show(parent, { finishOrReturnToDream() }, this)
+        if (featureFlags.isEnabled(Flags.USE_APP_PANELS) && !keyguardStateController.isUnlocked) {
+            controlsSettingsDialogManager.maybeShowDialog(this) {
+                uiController.show(parent, { finishOrReturnToDream() }, this)
+            }
+        } else {
+            uiController.show(parent, { finishOrReturnToDream() }, this)
+        }
 
         ControlsAnimations.enterAnimation(parent).start()
     }
@@ -116,7 +134,9 @@ class ControlsActivity @Inject constructor(
         super.onStop()
         mExitToDream = false
 
-        uiController.hide()
+        // parent is set in onStart, so the field is initialized when we get here
+        uiController.hide(parent)
+        controlsSettingsDialogManager.closeDialog()
     }
 
     override fun onDestroy() {

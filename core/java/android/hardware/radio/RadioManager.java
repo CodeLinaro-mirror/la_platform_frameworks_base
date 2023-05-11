@@ -82,6 +82,24 @@ public class RadioManager {
     /** Method return status: time out before operation completion */
     public static final int STATUS_TIMED_OUT = -110;
 
+    /**
+     *  Radio operation status types
+     *
+     * @hide
+     */
+    @IntDef(prefix = { "STATUS_" }, value = {
+            STATUS_OK,
+            STATUS_ERROR,
+            STATUS_PERMISSION_DENIED,
+            STATUS_NO_INIT,
+            STATUS_BAD_VALUE,
+            STATUS_DEAD_OBJECT,
+            STATUS_INVALID_OPERATION,
+            STATUS_TIMED_OUT,
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface RadioStatusType{}
+
 
     // keep in sync with radio_class_t in /system/core/incluse/system/radio.h
     /** Radio module class supporting FM (including HD radio) and AM */
@@ -330,6 +348,7 @@ public class RadioManager {
          * program list.
          * @return the number of audio sources available.
          */
+        @RadioStatusType
         public int getNumAudioSources() {
             return mNumAudioSources;
         }
@@ -921,7 +940,10 @@ public class RadioManager {
         @NonNull final BandDescriptor mDescriptor;
 
         BandConfig(BandDescriptor descriptor) {
-            mDescriptor = Objects.requireNonNull(descriptor);
+            Objects.requireNonNull(descriptor, "Descriptor cannot be null");
+            mDescriptor = new BandDescriptor(descriptor.getRegion(), descriptor.getType(),
+                    descriptor.getLowerLimit(), descriptor.getUpperLimit(),
+                    descriptor.getSpacing());
         }
 
         BandConfig(int region, int type, int lowerLimit, int upperLimit, int spacing) {
@@ -1721,6 +1743,7 @@ public class RadioManager {
      * </ul>
      */
     @RequiresPermission(Manifest.permission.ACCESS_BROADCAST_RADIO)
+    @RadioStatusType
     public int listModules(List<ModuleProperties> modules) {
         if (modules == null) {
             Log.e(TAG, "the output list must not be empty");
@@ -1773,7 +1796,7 @@ public class RadioManager {
         ITuner tuner;
         TunerCallbackAdapter halCallback = new TunerCallbackAdapter(callback, handler);
         try {
-            tuner = mService.openTuner(moduleId, config, withAudio, halCallback);
+            tuner = mService.openTuner(moduleId, config, withAudio, halCallback, mTargetSdkVersion);
         } catch (RemoteException | IllegalArgumentException | IllegalStateException ex) {
             Log.e(TAG, "Failed to open tuner", ex);
             return null;
@@ -1850,6 +1873,7 @@ public class RadioManager {
 
     @NonNull private final Context mContext;
     @NonNull private final IRadioService mService;
+    private final int mTargetSdkVersion;
 
     /**
      * @hide
@@ -1866,5 +1890,6 @@ public class RadioManager {
     public RadioManager(Context context, IRadioService service) {
         mContext = context;
         mService = service;
+        mTargetSdkVersion = mContext.getApplicationInfo().targetSdkVersion;
     }
 }

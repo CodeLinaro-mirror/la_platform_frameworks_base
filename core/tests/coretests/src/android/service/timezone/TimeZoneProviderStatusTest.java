@@ -16,95 +16,88 @@
 
 package android.service.timezone;
 
-import static android.app.timezonedetector.ParcelableTestSupport.assertRoundTripParcelable;
 import static android.service.timezone.TimeZoneProviderStatus.DEPENDENCY_STATUS_BLOCKED_BY_ENVIRONMENT;
-import static android.service.timezone.TimeZoneProviderStatus.DEPENDENCY_STATUS_WORKING;
+import static android.service.timezone.TimeZoneProviderStatus.DEPENDENCY_STATUS_BLOCKED_BY_SETTINGS;
+import static android.service.timezone.TimeZoneProviderStatus.DEPENDENCY_STATUS_OK;
+import static android.service.timezone.TimeZoneProviderStatus.DEPENDENCY_STATUS_UNKNOWN;
 import static android.service.timezone.TimeZoneProviderStatus.OPERATION_STATUS_FAILED;
-import static android.service.timezone.TimeZoneProviderStatus.OPERATION_STATUS_WORKING;
+import static android.service.timezone.TimeZoneProviderStatus.OPERATION_STATUS_OK;
+import static android.service.timezone.TimeZoneProviderStatus.OPERATION_STATUS_UNKNOWN;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotEquals;
-import static org.junit.Assert.assertNotSame;
-import static org.junit.Assert.assertThrows;
+
+import android.service.timezone.TimeZoneProviderStatus.DependencyStatus;
+import android.service.timezone.TimeZoneProviderStatus.OperationStatus;
 
 import org.junit.Test;
+import org.junit.runner.RunWith;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.stream.IntStream;
+
+import junitparams.JUnitParamsRunner;
+import junitparams.Parameters;
+
+/** Non-SDK tests. See CTS for SDK API tests. */
+@RunWith(JUnitParamsRunner.class)
 public class TimeZoneProviderStatusTest {
 
     @Test
-    public void testStatusValidation() {
+    public void parseProviderStatus() {
         TimeZoneProviderStatus status = new TimeZoneProviderStatus.Builder()
-                .setLocationDetectionStatus(DEPENDENCY_STATUS_WORKING)
-                .setConnectivityStatus(DEPENDENCY_STATUS_WORKING)
-                .setTimeZoneResolutionStatus(DEPENDENCY_STATUS_WORKING)
+                .setConnectivityDependencyStatus(DEPENDENCY_STATUS_OK)
+                .setLocationDetectionDependencyStatus(DEPENDENCY_STATUS_BLOCKED_BY_SETTINGS)
+                .setTimeZoneResolutionOperationStatus(OPERATION_STATUS_OK)
                 .build();
 
-        assertThrows(IllegalArgumentException.class,
-                () -> new TimeZoneProviderStatus.Builder(status)
-                        .setLocationDetectionStatus(-1)
-                        .build());
-        assertThrows(IllegalArgumentException.class,
-                () -> new TimeZoneProviderStatus.Builder(status)
-                        .setConnectivityStatus(-1)
-                        .build());
-        assertThrows(IllegalArgumentException.class,
-                () -> new TimeZoneProviderStatus.Builder(status)
-                        .setTimeZoneResolutionStatus(-1)
-                        .build());
+        assertEquals(status, TimeZoneProviderStatus.parseProviderStatus(status.toString()));
     }
 
     @Test
-    public void testEqualsAndHashcode() {
-        TimeZoneProviderStatus status1_1 = new TimeZoneProviderStatus.Builder()
-                .setLocationDetectionStatus(DEPENDENCY_STATUS_WORKING)
-                .setConnectivityStatus(DEPENDENCY_STATUS_WORKING)
-                .setTimeZoneResolutionStatus(OPERATION_STATUS_WORKING)
-                .build();
-        assertEqualsAndHashcode(status1_1, status1_1);
-        assertNotEquals(status1_1, null);
+    @Parameters(method = "couldEnableTelephonyFallbackParams")
+    public void couldEnableTelephonyFallback(@DependencyStatus int locationDetectionStatus,
+            @DependencyStatus int connectivityStatus, @OperationStatus int tzResolutionStatus) {
+        TimeZoneProviderStatus providerStatus =
+                new TimeZoneProviderStatus.Builder()
+                        .setLocationDetectionDependencyStatus(locationDetectionStatus)
+                        .setConnectivityDependencyStatus(connectivityStatus)
+                        .setTimeZoneResolutionOperationStatus(tzResolutionStatus)
+                        .build();
+        boolean locationDetectionStatusCouldEnableFallback =
+                (locationDetectionStatus == DEPENDENCY_STATUS_BLOCKED_BY_ENVIRONMENT
+                        || locationDetectionStatus == DEPENDENCY_STATUS_BLOCKED_BY_SETTINGS);
+        boolean connectivityStatusCouldEnableFallback =
+                (connectivityStatus == DEPENDENCY_STATUS_BLOCKED_BY_ENVIRONMENT
+                        || connectivityStatus == DEPENDENCY_STATUS_BLOCKED_BY_SETTINGS);
+        boolean tzResolutionStatusCouldEnableFallback = false;
 
-        {
-            TimeZoneProviderStatus status1_2 =
-                    new TimeZoneProviderStatus.Builder(status1_1).build();
-            assertEqualsAndHashcode(status1_1, status1_2);
-            assertNotSame(status1_1, status1_2);
-        }
-
-        {
-            TimeZoneProviderStatus status2 = new TimeZoneProviderStatus.Builder(status1_1)
-                    .setLocationDetectionStatus(DEPENDENCY_STATUS_BLOCKED_BY_ENVIRONMENT)
-                    .build();
-            assertNotEquals(status1_1, status2);
-        }
-
-        {
-            TimeZoneProviderStatus status2 = new TimeZoneProviderStatus.Builder(status1_1)
-                    .setConnectivityStatus(DEPENDENCY_STATUS_BLOCKED_BY_ENVIRONMENT)
-                    .build();
-            assertNotEquals(status1_1, status2);
-        }
-
-        {
-            TimeZoneProviderStatus status2 = new TimeZoneProviderStatus.Builder(status1_1)
-                    .setTimeZoneResolutionStatus(OPERATION_STATUS_FAILED)
-                    .build();
-            assertNotEquals(status1_1, status2);
-        }
+        assertEquals(locationDetectionStatusCouldEnableFallback
+                        || connectivityStatusCouldEnableFallback
+                        || tzResolutionStatusCouldEnableFallback,
+                providerStatus.couldEnableTelephonyFallback());
     }
 
-    private static void assertEqualsAndHashcode(Object one, Object two) {
-        assertEquals(one, two);
-        assertEquals(two, one);
-        assertEquals(one.hashCode(), two.hashCode());
-    }
+    public static Integer[][] couldEnableTelephonyFallbackParams() {
+        List<Integer[]> params = new ArrayList<>();
+        @DependencyStatus int[] dependencyStatuses =
+                IntStream.rangeClosed(
+                        DEPENDENCY_STATUS_UNKNOWN, DEPENDENCY_STATUS_BLOCKED_BY_SETTINGS).toArray();
+        @OperationStatus int[] operationStatuses =
+                IntStream.rangeClosed(OPERATION_STATUS_UNKNOWN, OPERATION_STATUS_FAILED).toArray();
 
-    @Test
-    public void testParcelable() {
-        TimeZoneProviderStatus status = new TimeZoneProviderStatus.Builder()
-                .setLocationDetectionStatus(DEPENDENCY_STATUS_WORKING)
-                .setConnectivityStatus(DEPENDENCY_STATUS_BLOCKED_BY_ENVIRONMENT)
-                .setTimeZoneResolutionStatus(OPERATION_STATUS_FAILED)
-                .build();
-        assertRoundTripParcelable(status);
+        // Cartesian product: dependencyStatus x dependencyStatus x operationStatus
+        for (@DependencyStatus int locationDetectionStatus : dependencyStatuses) {
+            for (@DependencyStatus int connectivityStatus : dependencyStatuses) {
+                for (@OperationStatus int tzResolutionStatus : operationStatuses) {
+                    params.add(new Integer[] {
+                            locationDetectionStatus,
+                            connectivityStatus,
+                            tzResolutionStatus
+                    });
+                }
+            }
+        }
+        return params.toArray(new Integer[0][0]);
     }
 }

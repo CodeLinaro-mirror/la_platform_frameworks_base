@@ -22,6 +22,7 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.content.pm.PackageManager;
 import android.content.pm.SharedLibraryInfo;
+import android.text.TextUtils;
 
 import com.android.internal.util.CollectionUtils;
 import com.android.internal.util.DataClass;
@@ -53,7 +54,6 @@ public class PackageStateUnserialized {
     private List<String> usesLibraryFiles = emptyList();
 
     private boolean updatedSystemApp;
-    private boolean apkInApex;
     private boolean apkInUpdatedApex;
 
     @NonNull
@@ -62,9 +62,15 @@ public class PackageStateUnserialized {
     @Nullable
     private String overrideSeInfo;
 
+    @NonNull
+    private String seInfo;
+
     // TODO: Remove in favor of finer grained change notification
     @NonNull
     private final PackageSetting mPackageSetting;
+
+    @Nullable
+    private String mApexModuleName;
 
     public PackageStateUnserialized(@NonNull PackageSetting packageSetting) {
         mPackageSetting = packageSetting;
@@ -134,10 +140,11 @@ public class PackageStateUnserialized {
         }
 
         this.updatedSystemApp = other.updatedSystemApp;
-        this.apkInApex = other.apkInApex;
         this.apkInUpdatedApex = other.apkInUpdatedApex;
         this.lastPackageUsageTimeInMills = other.lastPackageUsageTimeInMills;
         this.overrideSeInfo = other.overrideSeInfo;
+        this.seInfo = other.seInfo;
+        this.mApexModuleName = other.mApexModuleName;
         mPackageSetting.onChanged();
     }
 
@@ -182,12 +189,6 @@ public class PackageStateUnserialized {
         return this;
     }
 
-    public PackageStateUnserialized setApkInApex(boolean value) {
-        apkInApex = value;
-        mPackageSetting.onChanged();
-        return this;
-    }
-
     public PackageStateUnserialized setApkInUpdatedApex(boolean value) {
         apkInUpdatedApex = value;
         mPackageSetting.onChanged();
@@ -202,6 +203,20 @@ public class PackageStateUnserialized {
 
     public PackageStateUnserialized setOverrideSeInfo(@Nullable String value) {
         overrideSeInfo = value;
+        mPackageSetting.onChanged();
+        return this;
+    }
+
+    @NonNull
+    public PackageStateUnserialized setSeInfo(@NonNull String value) {
+        seInfo = TextUtils.safeIntern(value);
+        mPackageSetting.onChanged();
+        return this;
+    }
+
+    @NonNull
+    public PackageStateUnserialized setApexModuleName(@NonNull String value) {
+        mApexModuleName = value;
         mPackageSetting.onChanged();
         return this;
     }
@@ -242,11 +257,6 @@ public class PackageStateUnserialized {
     }
 
     @DataClass.Generated.Member
-    public boolean isApkInApex() {
-        return apkInApex;
-    }
-
-    @DataClass.Generated.Member
     public boolean isApkInUpdatedApex() {
         return apkInUpdatedApex;
     }
@@ -271,15 +281,25 @@ public class PackageStateUnserialized {
     }
 
     @DataClass.Generated.Member
+    public @NonNull String getSeInfo() {
+        return seInfo;
+    }
+
+    @DataClass.Generated.Member
     public @NonNull PackageSetting getPackageSetting() {
         return mPackageSetting;
     }
 
+    @DataClass.Generated.Member
+    public @Nullable String getApexModuleName() {
+        return mApexModuleName;
+    }
+
     @DataClass.Generated(
-            time = 1661373697219L,
+            time = 1671483772254L,
             codegenVersion = "1.0.23",
             sourceFile = "frameworks/base/services/core/java/com/android/server/pm/pkg/PackageStateUnserialized.java",
-            inputSignatures = "private  boolean hiddenUntilInstalled\nprivate @android.annotation.NonNull java.util.List<com.android.server.pm.pkg.SharedLibraryWrapper> usesLibraryInfos\nprivate @android.annotation.NonNull java.util.List<java.lang.String> usesLibraryFiles\nprivate  boolean updatedSystemApp\nprivate  boolean apkInApex\nprivate  boolean apkInUpdatedApex\nprivate volatile @android.annotation.NonNull long[] lastPackageUsageTimeInMills\nprivate @android.annotation.Nullable java.lang.String overrideSeInfo\nprivate final @android.annotation.NonNull com.android.server.pm.PackageSetting mPackageSetting\npublic @android.annotation.NonNull com.android.server.pm.pkg.PackageStateUnserialized addUsesLibraryInfo(com.android.server.pm.pkg.SharedLibraryWrapper)\npublic @android.annotation.NonNull com.android.server.pm.pkg.PackageStateUnserialized addUsesLibraryFile(java.lang.String)\nprivate  long[] lazyInitLastPackageUsageTimeInMills()\npublic  com.android.server.pm.pkg.PackageStateUnserialized setLastPackageUsageTimeInMills(int,long)\npublic  long getLatestPackageUseTimeInMills()\npublic  long getLatestForegroundPackageUseTimeInMills()\npublic  void updateFrom(com.android.server.pm.pkg.PackageStateUnserialized)\npublic @android.annotation.NonNull java.util.List<android.content.pm.SharedLibraryInfo> getNonNativeUsesLibraryInfos()\npublic  com.android.server.pm.pkg.PackageStateUnserialized setHiddenUntilInstalled(boolean)\npublic  com.android.server.pm.pkg.PackageStateUnserialized setUsesLibraryInfos(java.util.List<android.content.pm.SharedLibraryInfo>)\npublic  com.android.server.pm.pkg.PackageStateUnserialized setUsesLibraryFiles(java.util.List<java.lang.String>)\npublic  com.android.server.pm.pkg.PackageStateUnserialized setUpdatedSystemApp(boolean)\npublic  com.android.server.pm.pkg.PackageStateUnserialized setApkInApex(boolean)\npublic  com.android.server.pm.pkg.PackageStateUnserialized setApkInUpdatedApex(boolean)\npublic  com.android.server.pm.pkg.PackageStateUnserialized setLastPackageUsageTimeInMills(long)\npublic  com.android.server.pm.pkg.PackageStateUnserialized setOverrideSeInfo(java.lang.String)\nclass PackageStateUnserialized extends java.lang.Object implements []\n@com.android.internal.util.DataClass(genSetters=true, genConstructor=false, genBuilder=false)")
+            inputSignatures = "private  boolean hiddenUntilInstalled\nprivate @android.annotation.NonNull java.util.List<com.android.server.pm.pkg.SharedLibraryWrapper> usesLibraryInfos\nprivate @android.annotation.NonNull java.util.List<java.lang.String> usesLibraryFiles\nprivate  boolean updatedSystemApp\nprivate  boolean apkInUpdatedApex\nprivate volatile @android.annotation.NonNull long[] lastPackageUsageTimeInMills\nprivate @android.annotation.Nullable java.lang.String overrideSeInfo\nprivate @android.annotation.NonNull java.lang.String seInfo\nprivate final @android.annotation.NonNull com.android.server.pm.PackageSetting mPackageSetting\nprivate @android.annotation.Nullable java.lang.String mApexModuleName\npublic @android.annotation.NonNull com.android.server.pm.pkg.PackageStateUnserialized addUsesLibraryInfo(com.android.server.pm.pkg.SharedLibraryWrapper)\npublic @android.annotation.NonNull com.android.server.pm.pkg.PackageStateUnserialized addUsesLibraryFile(java.lang.String)\nprivate  long[] lazyInitLastPackageUsageTimeInMills()\npublic  com.android.server.pm.pkg.PackageStateUnserialized setLastPackageUsageTimeInMills(int,long)\npublic  long getLatestPackageUseTimeInMills()\npublic  long getLatestForegroundPackageUseTimeInMills()\npublic  void updateFrom(com.android.server.pm.pkg.PackageStateUnserialized)\npublic @android.annotation.NonNull java.util.List<android.content.pm.SharedLibraryInfo> getNonNativeUsesLibraryInfos()\npublic  com.android.server.pm.pkg.PackageStateUnserialized setHiddenUntilInstalled(boolean)\npublic  com.android.server.pm.pkg.PackageStateUnserialized setUsesLibraryInfos(java.util.List<android.content.pm.SharedLibraryInfo>)\npublic  com.android.server.pm.pkg.PackageStateUnserialized setUsesLibraryFiles(java.util.List<java.lang.String>)\npublic  com.android.server.pm.pkg.PackageStateUnserialized setUpdatedSystemApp(boolean)\npublic  com.android.server.pm.pkg.PackageStateUnserialized setApkInUpdatedApex(boolean)\npublic  com.android.server.pm.pkg.PackageStateUnserialized setLastPackageUsageTimeInMills(long)\npublic  com.android.server.pm.pkg.PackageStateUnserialized setOverrideSeInfo(java.lang.String)\npublic @android.annotation.NonNull com.android.server.pm.pkg.PackageStateUnserialized setSeInfo(java.lang.String)\npublic @android.annotation.NonNull com.android.server.pm.pkg.PackageStateUnserialized setApexModuleName(java.lang.String)\nclass PackageStateUnserialized extends java.lang.Object implements []\n@com.android.internal.util.DataClass(genSetters=true, genConstructor=false, genBuilder=false)")
     @Deprecated
     private void __metadata() {}
 

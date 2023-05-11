@@ -21,52 +21,77 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.PackageInfo
 import android.content.pm.PackageInfo.REQUESTED_PERMISSION_GRANTED
 import android.content.pm.PackageManager
-import android.util.Log
 import com.android.settingslib.spa.framework.util.asyncFilter
 
-private const val TAG = "PackageManagers"
-
-object PackageManagers {
-    private val iPackageManager by lazy { AppGlobals.getPackageManager() }
-
-    fun getPackageInfoAsUser(packageName: String, userId: Int): PackageInfo? =
-        getPackageInfoAsUser(packageName, 0, userId)
-
-    fun getApplicationInfoAsUser(packageName: String, userId: Int): ApplicationInfo? =
-        PackageManager.getApplicationInfoAsUserCached(packageName, 0, userId)
+interface IPackageManagers {
+    fun getPackageInfoAsUser(packageName: String, userId: Int): PackageInfo?
+    fun getApplicationInfoAsUser(packageName: String, userId: Int): ApplicationInfo?
 
     /** Checks whether a package is installed for a given user. */
-    fun isPackageInstalledAsUser(packageName: String, userId: Int): Boolean =
+    fun isPackageInstalledAsUser(packageName: String, userId: Int): Boolean
+    fun ApplicationInfo.hasRequestPermission(permission: String): Boolean
+
+    /** Checks whether a permission is currently granted to the application. */
+    fun ApplicationInfo.hasGrantPermission(permission: String): Boolean
+
+    suspend fun getAppOpPermissionPackages(userId: Int, permission: String): Set<String>
+    fun getPackageInfoAsUser(packageName: String, flags: Int, userId: Int): PackageInfo?
+}
+
+object PackageManagers : IPackageManagers by PackageManagersImpl(PackageManagerWrapperImpl)
+
+internal interface PackageManagerWrapper {
+    fun getPackageInfoAsUserCached(
+        packageName: String,
+        flags: Long,
+        userId: Int,
+    ): PackageInfo?
+}
+
+internal object PackageManagerWrapperImpl : PackageManagerWrapper {
+    override fun getPackageInfoAsUserCached(
+        packageName: String,
+        flags: Long,
+        userId: Int,
+    ): PackageInfo? = PackageManager.getPackageInfoAsUserCached(packageName, flags, userId)
+}
+
+internal class PackageManagersImpl(
+    private val packageManagerWrapper: PackageManagerWrapper,
+) : IPackageManagers {
+    private val iPackageManager by lazy { AppGlobals.getPackageManager() }
+
+    override fun getPackageInfoAsUser(packageName: String, userId: Int): PackageInfo? =
+        getPackageInfoAsUser(packageName, 0, userId)
+
+    override fun getApplicationInfoAsUser(packageName: String, userId: Int): ApplicationInfo? =
+        PackageManager.getApplicationInfoAsUserCached(packageName, 0, userId)
+
+    override fun isPackageInstalledAsUser(packageName: String, userId: Int): Boolean =
         getApplicationInfoAsUser(packageName, userId)?.hasFlag(ApplicationInfo.FLAG_INSTALLED)
             ?: false
 
-    fun ApplicationInfo.hasRequestPermission(permission: String): Boolean {
+    override fun ApplicationInfo.hasRequestPermission(permission: String): Boolean {
         val packageInfo = getPackageInfoAsUser(packageName, PackageManager.GET_PERMISSIONS, userId)
         return packageInfo?.requestedPermissions?.let {
             permission in it
         } ?: false
     }
 
-    fun ApplicationInfo.hasGrantPermission(permission: String): Boolean {
+    override fun ApplicationInfo.hasGrantPermission(permission: String): Boolean {
         val packageInfo = getPackageInfoAsUser(packageName, PackageManager.GET_PERMISSIONS, userId)
-            ?: return false
-        val index = packageInfo.requestedPermissions.indexOf(permission)
+        val index = packageInfo?.requestedPermissions?.indexOf(permission) ?: return false
         return index >= 0 &&
             packageInfo.requestedPermissionsFlags[index].hasFlag(REQUESTED_PERMISSION_GRANTED)
     }
 
-    suspend fun getAppOpPermissionPackages(userId: Int, permission: String): Set<String> =
+    override suspend fun getAppOpPermissionPackages(userId: Int, permission: String): Set<String> =
         iPackageManager.getAppOpPermissionPackages(permission, userId).asIterable().asyncFilter {
             iPackageManager.isPackageAvailable(it, userId)
         }.toSet()
 
-    fun getPackageInfoAsUser(packageName: String, flags: Int, userId: Int): PackageInfo? =
-        try {
-            PackageManager.getPackageInfoAsUserCached(packageName, flags.toLong(), userId)
-        } catch (e: PackageManager.NameNotFoundException) {
-            Log.w(TAG, "getPackageInfoAsUserCached() failed", e)
-            null
-        }
+    override fun getPackageInfoAsUser(packageName: String, flags: Int, userId: Int): PackageInfo? =
+        packageManagerWrapper.getPackageInfoAsUserCached(packageName, flags.toLong(), userId)
 
     private fun Int.hasFlag(flag: Int) = (this and flag) > 0
 }

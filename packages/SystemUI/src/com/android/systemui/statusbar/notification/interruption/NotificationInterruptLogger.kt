@@ -70,7 +70,15 @@ class NotificationInterruptLogger @Inject constructor(
         buffer.log(TAG, DEBUG, {
             str1 = entry.logKey
         }, {
-            "No alerting: snoozed package: $str1"
+            "No heads up: snoozed package: $str1"
+        })
+    }
+
+    fun logHeadsUpPackageSnoozeBypassedHasFsi(entry: NotificationEntry) {
+        buffer.log(TAG, DEBUG, {
+            str1 = entry.logKey
+        }, {
+            "Heads up: package snooze bypassed because notification has full-screen intent: $str1"
         })
     }
 
@@ -103,6 +111,36 @@ class NotificationInterruptLogger @Inject constructor(
             str1 = entry.logKey
         }, {
             "No heads up: not in use: $str1"
+        })
+    }
+
+    fun logNoHeadsUpOldWhen(
+        entry: NotificationEntry,
+        notifWhen: Long,
+        notifAge: Long
+    ) {
+        buffer.log(TAG, DEBUG, {
+            str1 = entry.logKey
+            long1 = notifWhen
+            long2 = notifAge
+        }, {
+            "No heads up: old when $long1 (age=$long2 ms): $str1"
+        })
+    }
+
+    fun logMaybeHeadsUpDespiteOldWhen(
+        entry: NotificationEntry,
+        notifWhen: Long,
+        notifAge: Long,
+        reason: String
+    ) {
+        buffer.log(TAG, DEBUG, {
+            str1 = entry.logKey
+            str2 = reason
+            long1 = notifWhen
+            long2 = notifAge
+        }, {
+            "Maybe heads up: old when $long1 (age=$long2 ms) but $str2: $str1"
         })
     }
 

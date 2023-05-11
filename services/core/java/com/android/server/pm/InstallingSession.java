@@ -18,7 +18,7 @@ package com.android.server.pm;
 
 import static android.app.AppOpsManager.MODE_DEFAULT;
 import static android.content.pm.PackageInstaller.SessionParams.MODE_INHERIT_EXISTING;
-import static android.content.pm.PackageManager.INSTALL_FAILED_INTERNAL_ERROR;
+import static android.content.pm.PackageInstaller.SessionParams.USER_ACTION_UNSPECIFIED;
 import static android.content.pm.PackageManager.INSTALL_STAGED;
 import static android.content.pm.PackageManager.INSTALL_SUCCEEDED;
 import static android.content.pm.PackageManager.PERMISSION_GRANTED;
@@ -43,6 +43,7 @@ import android.content.pm.parsing.PackageLite;
 import android.os.Environment;
 import android.os.Trace;
 import android.os.UserHandle;
+import android.util.ArrayMap;
 import android.util.ArraySet;
 import android.util.Pair;
 import android.util.Slog;
@@ -52,7 +53,6 @@ import com.android.internal.content.InstallLocationUtils;
 import com.android.internal.content.NativeLibraryHelper;
 import com.android.internal.util.Preconditions;
 import com.android.server.pm.parsing.PackageParser2;
-import com.android.server.pm.pkg.AndroidPackage;
 
 import libcore.io.IoUtils;
 
@@ -73,7 +73,8 @@ class InstallingSession {
     final String mVolumeUuid;
     int mRet;
     final String mPackageAbiOverride;
-    final String[] mGrantedRuntimePermissions;
+    @NonNull
+    final ArrayMap<String, Integer> mPermissionStates;
     final List<String> mAllowlistedRestrictedPermissions;
     final int mAutoRevokePermissionsMode;
     final SigningDetails mSigningDetails;
@@ -95,7 +96,11 @@ class InstallingSession {
     final InstallPackageHelper mInstallPackageHelper;
     final RemovePackageHelper mRemovePackageHelper;
     final boolean mIsInherit;
+    final int mSessionId;
+    final int mRequireUserAction;
+    final boolean mApplicationEnabledSettingPersistent;
 
+    // For move install
     InstallingSession(OriginInfo originInfo, MoveInfo moveInfo, IPackageInstallObserver2 observer,
             int installFlags, InstallSource installSource, String volumeUuid,
             UserHandle user, String packageAbiOverride, int packageSource,
@@ -112,7 +117,7 @@ class InstallingSession {
         mVolumeUuid = volumeUuid;
         mPackageAbiOverride = packageAbiOverride;
 
-        mGrantedRuntimePermissions = null;
+        mPermissionStates = new ArrayMap<>();
         mAllowlistedRestrictedPermissions = null;
         mAutoRevokePermissionsMode = MODE_DEFAULT;
         mSigningDetails = SigningDetails.UNKNOWN;
@@ -124,9 +129,12 @@ class InstallingSession {
         mPackageSource = packageSource;
         mPackageLite = packageLite;
         mIsInherit = false;
+        mSessionId = -1;
+        mRequireUserAction = USER_ACTION_UNSPECIFIED;
+        mApplicationEnabledSettingPersistent = false;
     }
 
-    InstallingSession(File stagedDir, IPackageInstallObserver2 observer,
+    InstallingSession(int sessionId, File stagedDir, IPackageInstallObserver2 observer,
             PackageInstaller.SessionParams sessionParams, InstallSource installSource,
             UserHandle user, SigningDetails signingDetails, int installerUid,
             PackageLite packageLite, PackageManagerService pm) {
@@ -137,14 +145,14 @@ class InstallingSession {
         mOriginInfo = OriginInfo.fromStagedFile(stagedDir);
         mMoveInfo = null;
         mInstallReason = fixUpInstallReason(
-                installSource.installerPackageName, installerUid, sessionParams.installReason);
+                installSource.mInstallerPackageName, installerUid, sessionParams.installReason);
         mInstallScenario = sessionParams.installScenario;
         mObserver = observer;
         mInstallFlags = sessionParams.installFlags;
         mInstallSource = installSource;
         mVolumeUuid = sessionParams.volumeUuid;
         mPackageAbiOverride = sessionParams.abiOverride;
-        mGrantedRuntimePermissions = sessionParams.grantedRuntimePermissions;
+        mPermissionStates = sessionParams.getPermissionStates();
         mAllowlistedRestrictedPermissions = sessionParams.whitelistedRestrictedPermissions;
         mAutoRevokePermissionsMode = sessionParams.autoRevokePermissionsMode;
         mSigningDetails = signingDetails;
@@ -155,6 +163,9 @@ class InstallingSession {
         mPackageSource = sessionParams.packageSource;
         mPackageLite = packageLite;
         mIsInherit = sessionParams.mode == MODE_INHERIT_EXISTING;
+        mSessionId = sessionId;
+        mRequireUserAction = sessionParams.requireUserAction;
+        mApplicationEnabledSettingPersistent = sessionParams.applicationEnabledSettingPersistent;
     }
 
     @Override
@@ -186,12 +197,13 @@ class InstallingSession {
         }
         // Override with defaults if needed.
         Computer snapshot = mPm.snapshotComputer();
-        AndroidPackage installedPkg = snapshot.getPackage(packageName);
+        var installedPkgState = snapshot.getPackageStateInternal(packageName);
+        var installedPkg = installedPkgState == null ? null : installedPkgState.getAndroidPackage();
         if (installedPkg != null) {
             // Currently installed package which the new package is attempting to replace
             recommendedInstallLocation = InstallLocationUtils.installLocationPolicy(
                     installLocation, recommendedInstallLocation, mInstallFlags,
-                    installedPkg.isSystem(), installedPkg.isExternalStorage());
+                    installedPkgState.isSystem(), installedPkg.isExternalStorage());
         }
 
         final boolean onInt = (mInstallFlags & PackageManager.INSTALL_INTERNAL) != 0;
@@ -215,7 +227,7 @@ class InstallingSession {
      * policy if needed and then create install arguments based
      * on the install location.
      */
-    private void handleStartCopy() {
+    private void handleStartCopy(InstallRequest request) {
         if ((mInstallFlags & PackageManager.INSTALL_APEX) != 0) {
             mRet = INSTALL_SUCCEEDED;
             return;
@@ -231,6 +243,7 @@ class InstallingSession {
                     pkgLite, mRequiredInstalledVersionCode, mInstallFlags);
             mRet = ret.first;
             if (mRet != INSTALL_SUCCEEDED) {
+                request.setError(mRet, "Failed to verify version code");
                 return;
             }
         }
@@ -250,14 +263,16 @@ class InstallingSession {
         }
         mRet = overrideInstallLocation(pkgLite.packageName, pkgLite.recommendedInstallLocation,
                 pkgLite.installLocation);
+        if (mRet != INSTALL_SUCCEEDED) {
+            request.setError(mRet, "Failed to override installation location");
+        }
     }
 
-    private void handleReturnCode() {
-        processPendingInstall();
+    private void handleReturnCode(InstallRequest installRequest) {
+        processPendingInstall(installRequest);
     }
 
-    private void processPendingInstall() {
-        InstallRequest installRequest = new InstallRequest(this);
+    private void processPendingInstall(InstallRequest installRequest) {
         if (mRet == PackageManager.INSTALL_SUCCEEDED) {
             mRet = copyApk(installRequest);
         }
@@ -294,21 +309,26 @@ class InstallingSession {
                 request.setCodeFile(mOriginInfo.mFile);
                 return PackageManager.INSTALL_SUCCEEDED;
             }
-
+            int ret;
             try {
                 final boolean isEphemeral =
                         (mInstallFlags & PackageManager.INSTALL_INSTANT_APP) != 0;
                 request.setCodeFile(
                         mPm.mInstallerService.allocateStageDirLegacy(mVolumeUuid, isEphemeral));
             } catch (IOException e) {
-                Slog.w(TAG, "Failed to create copy file: " + e);
-                return PackageManager.INSTALL_FAILED_INSUFFICIENT_STORAGE;
+                final String errorMessage = "Failed to create copy file";
+                Slog.w(TAG, errorMessage + ": " + e);
+                ret = PackageManager.INSTALL_FAILED_INSUFFICIENT_STORAGE;
+                request.setError(ret, errorMessage);
+                return ret;
             }
 
-            int ret = PackageManagerServiceUtils.copyPackage(
+            ret = PackageManagerServiceUtils.copyPackage(
                     mOriginInfo.mFile.getAbsolutePath(), request.getCodeFile());
             if (ret != PackageManager.INSTALL_SUCCEEDED) {
-                Slog.e(TAG, "Failed to copy package");
+                final String errorMessage = "Failed to copy package";
+                Slog.e(TAG, errorMessage);
+                request.setError(ret, errorMessage);
                 return ret;
             }
 
@@ -320,9 +340,15 @@ class InstallingSession {
                 handle = NativeLibraryHelper.Handle.create(request.getCodeFile());
                 ret = NativeLibraryHelper.copyNativeBinariesWithOverride(handle, libraryRoot,
                         request.getAbiOverride(), isIncremental);
+                if (ret != PackageManager.INSTALL_SUCCEEDED) {
+                    final String errorMessage = "Failed to copy native libraries";
+                    request.setError(ret, errorMessage);
+                }
             } catch (IOException e) {
-                Slog.e(TAG, "Copying native libraries failed", e);
-                ret = PackageManager.INSTALL_FAILED_INTERNAL_ERROR;
+                final String errorMessage = "Copying native libraries failed";
+                Slog.e(TAG, errorMessage, e);
+                request.setError(PackageManagerException.ofInternalError(errorMessage,
+                        PackageManagerException.INTERNAL_ERROR_NATIVE_LIBRARY_COPY));
             } finally {
                 IoUtils.closeQuietly(handle);
             }
@@ -344,7 +370,10 @@ class InstallingSession {
                         mMoveInfo.mPackageName, mMoveInfo.mAppId, mMoveInfo.mSeInfo,
                         mMoveInfo.mTargetSdkVersion, mMoveInfo.mFromCodePath);
             } catch (Installer.InstallerException e) {
-                Slog.w(TAG, "Failed to move app", e);
+                final String errorMessage = "Failed to move app";
+                request.setError(PackageManagerException.ofInternalError(errorMessage,
+                        PackageManagerException.INTERNAL_ERROR_MOVE));
+                Slog.w(TAG, errorMessage, e);
                 return PackageManager.INSTALL_FAILED_INTERNAL_ERROR;
             }
         }
@@ -448,8 +477,9 @@ class InstallingSession {
         Trace.asyncTraceEnd(TRACE_TAG_PACKAGE_MANAGER, "queueInstall",
                 System.identityHashCode(this));
         Trace.traceBegin(TRACE_TAG_PACKAGE_MANAGER, "startInstall");
-        handleStartCopy();
-        handleReturnCode();
+        InstallRequest installRequest = new InstallRequest(this);
+        handleStartCopy(installRequest);
+        handleReturnCode(installRequest);
         Trace.traceEnd(TRACE_TAG_PACKAGE_MANAGER);
     }
 
@@ -500,13 +530,13 @@ class InstallingSession {
     }
 
     private void processApkInstallRequests(boolean success, List<InstallRequest> installRequests) {
-        if (success) {
+        if (!success) {
             for (InstallRequest request : installRequests) {
                 if (request.getReturnCode() != PackageManager.INSTALL_SUCCEEDED) {
                     cleanUpForFailedInstall(request);
                 }
             }
-
+        } else {
             mInstallPackageHelper.installPackagesTraced(installRequests);
 
             for (InstallRequest request : installRequests) {
@@ -567,13 +597,15 @@ class InstallingSession {
             final File dir = request.getOriginInfo().mResolvedFile;
             final File[] apexes = dir.listFiles();
             if (apexes == null) {
-                throw new PackageManagerException(INSTALL_FAILED_INTERNAL_ERROR,
-                        dir.getAbsolutePath() + " is not a directory");
+                throw PackageManagerException.ofInternalError(
+                        dir.getAbsolutePath() + " is not a directory",
+                        PackageManagerException.INTERNAL_ERROR_APEX_NOT_DIRECTORY);
             }
             if (apexes.length != 1) {
-                throw new PackageManagerException(INSTALL_FAILED_INTERNAL_ERROR,
+                throw PackageManagerException.ofInternalError(
                         "Expected exactly one .apex file under " + dir.getAbsolutePath()
-                                + " got: " + apexes.length);
+                                + " got: " + apexes.length,
+                        PackageManagerException.INTERNAL_ERROR_APEX_MORE_THAN_ONE_FILE);
             }
             try (PackageParser2 packageParser = mPm.mInjector.getScanningPackageParser()) {
                 ApexInfo apexInfo = mPm.mApexManager.installPackage(apexes[0]);
@@ -584,6 +616,7 @@ class InstallingSession {
                 // processApkInstallRequests() fails. Need a way to keep info stored in apexd
                 // and PMS in sync in the face of install failures.
                 request.setApexInfo(apexInfo);
+                request.setApexModuleName(apexInfo.moduleName);
                 mPm.mHandler.post(() -> processApkInstallRequests(true, requests));
                 return;
             }
@@ -610,7 +643,8 @@ class InstallingSession {
                 PackageManagerService pm)
                 throws PackageManagerException {
             if (childInstallingSessions.size() == 0) {
-                throw new PackageManagerException("No child sessions found!");
+                throw PackageManagerException.ofInternalError("No child sessions found!",
+                        PackageManagerException.INTERNAL_ERROR_INSTALL_MISSING_CHILD_SESSIONS);
             }
             mPm = pm;
             mUser = user;
@@ -627,11 +661,18 @@ class InstallingSession {
             Trace.asyncTraceEnd(TRACE_TAG_PACKAGE_MANAGER, "queueInstall",
                     System.identityHashCode(this));
             Trace.traceBegin(TRACE_TAG_PACKAGE_MANAGER, "start");
-            for (InstallingSession childInstallingSession : mChildInstallingSessions) {
-                childInstallingSession.handleStartCopy();
+
+            final int numChildSessions = mChildInstallingSessions.size();
+            final ArrayList<InstallRequest> installRequests = new ArrayList<>(numChildSessions);
+
+            for (int i = 0; i < numChildSessions; i++) {
+                final InstallingSession childSession = mChildInstallingSessions.get(i);
+                final InstallRequest installRequest = new InstallRequest(childSession);
+                installRequests.add(installRequest);
+                childSession.handleStartCopy(installRequest);
             }
-            for (InstallingSession childInstallingSession : mChildInstallingSessions) {
-                childInstallingSession.handleReturnCode();
+            for (int i = 0; i < numChildSessions; i++) {
+                mChildInstallingSessions.get(i).handleReturnCode(installRequests.get(i));
             }
             Trace.traceEnd(TRACE_TAG_PACKAGE_MANAGER);
         }
@@ -639,6 +680,7 @@ class InstallingSession {
         public void tryProcessInstallRequest(InstallRequest request) {
             mCurrentInstallRequests.add(request);
             if (mCurrentInstallRequests.size() != mChildInstallingSessions.size()) {
+                // Wait until all the installRequests have finished copying
                 return;
             }
             int completeStatus = PackageManager.INSTALL_SUCCEEDED;

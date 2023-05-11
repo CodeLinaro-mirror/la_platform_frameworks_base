@@ -31,8 +31,10 @@ import android.app.KeyguardManager;
 import android.app.NotificationManager;
 import android.app.admin.DevicePolicyManager;
 import android.app.trust.TrustManager;
+import android.content.Context;
 import android.content.pm.PackageManager;
 import android.content.pm.UserInfo;
+import android.content.res.Resources;
 import android.database.sqlite.SQLiteDatabase;
 import android.hardware.face.FaceManager;
 import android.hardware.fingerprint.FingerprintManager;
@@ -49,11 +51,14 @@ import androidx.test.InstrumentationRegistry;
 import androidx.test.filters.SmallTest;
 import androidx.test.runner.AndroidJUnit4;
 
+import com.android.internal.util.test.FakeSettingsProvider;
+import com.android.internal.util.test.FakeSettingsProviderRule;
 import com.android.server.PersistentDataBlockManagerInternal;
 import com.android.server.locksettings.LockSettingsStorage.PersistentData;
 
 import org.junit.After;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
@@ -78,14 +83,17 @@ public class LockSettingsStorageTests {
 
     public static final byte[] PAYLOAD = new byte[] {1, 2, -1, -2, 33};
 
-    LockSettingsStorageTestable mStorage;
-    File mStorageDir;
-
+    private LockSettingsStorageTestable mStorage;
+    private File mStorageDir;
     private File mDb;
+    @Rule
+    public FakeSettingsProviderRule mSettingsRule = FakeSettingsProvider.rule();
 
     @Before
     public void setUp() throws Exception {
-        mStorageDir = new File(InstrumentationRegistry.getContext().getFilesDir(), "locksettings");
+        final Context origContext = InstrumentationRegistry.getContext();
+
+        mStorageDir = new File(origContext.getFilesDir(), "locksettings");
         mDb = InstrumentationRegistry.getContext().getDatabasePath("locksettings.db");
 
         assertTrue(mStorageDir.exists() || mStorageDir.mkdirs());
@@ -98,9 +106,9 @@ public class LockSettingsStorageTests {
         // User 3 is a profile of user 0.
         when(mockUserManager.getProfileParent(eq(3))).thenReturn(new UserInfo(0, "name", 0));
 
-        MockLockSettingsContext context = new MockLockSettingsContext(
-                InstrumentationRegistry.getContext(), mockUserManager,
-                mock(NotificationManager.class), mock(DevicePolicyManager.class),
+        MockLockSettingsContext context = new MockLockSettingsContext(origContext,
+                mock(Resources.class), mSettingsRule.mockContentResolver(origContext),
+                mockUserManager, mock(NotificationManager.class), mock(DevicePolicyManager.class),
                 mock(StorageManager.class), mock(TrustManager.class), mock(KeyguardManager.class),
                 mock(FingerprintManager.class), mock(FaceManager.class),
                 mock(PackageManager.class));
@@ -259,6 +267,20 @@ public class LockSettingsStorageTests {
     }
 
     @Test
+    public void testNullKey() {
+        mStorage.setString(null, "value", 0);
+
+        // Verify that this doesn't throw an exception.
+        assertEquals("value", mStorage.readKeyValue(null, null, 0));
+
+        // The read that happens as part of prefetchUser shouldn't throw an exception either.
+        mStorage.clearCache();
+        mStorage.prefetchUser(0);
+
+        assertEquals("value", mStorage.readKeyValue(null, null, 0));
+    }
+
+    @Test
     public void testRemoveUser() {
         mStorage.writeKeyValue("key", "value", 0);
         mStorage.writeKeyValue("key", "value", 1);
@@ -382,11 +404,11 @@ public class LockSettingsStorageTests {
 
     @Test
     public void testPersistentData_serializeUnserialize() {
-        byte[] serialized = PersistentData.toBytes(PersistentData.TYPE_SP, SOME_USER_ID,
+        byte[] serialized = PersistentData.toBytes(PersistentData.TYPE_SP_GATEKEEPER, SOME_USER_ID,
                 DevicePolicyManager.PASSWORD_QUALITY_COMPLEX, PAYLOAD);
         PersistentData deserialized = PersistentData.fromBytes(serialized);
 
-        assertEquals(PersistentData.TYPE_SP, deserialized.type);
+        assertEquals(PersistentData.TYPE_SP_GATEKEEPER, deserialized.type);
         assertEquals(DevicePolicyManager.PASSWORD_QUALITY_COMPLEX, deserialized.qualityForUi);
         assertArrayEquals(PAYLOAD, deserialized.payload);
     }
@@ -417,13 +439,13 @@ public class LockSettingsStorageTests {
         // the wire format in the future.
         byte[] serializedVersion1 = new byte[] {
                 1, /* PersistentData.VERSION_1 */
-                1, /* PersistentData.TYPE_SP */
+                1, /* PersistentData.TYPE_SP_GATEKEEPER */
                 0x00, 0x00, 0x04, 0x0A,  /* SOME_USER_ID */
                 0x00, 0x03, 0x00, 0x00,  /* PASSWORD_NUMERIC_COMPLEX */
                 1, 2, -1, -2, 33, /* PAYLOAD */
         };
         PersistentData deserialized = PersistentData.fromBytes(serializedVersion1);
-        assertEquals(PersistentData.TYPE_SP, deserialized.type);
+        assertEquals(PersistentData.TYPE_SP_GATEKEEPER, deserialized.type);
         assertEquals(SOME_USER_ID, deserialized.userId);
         assertEquals(DevicePolicyManager.PASSWORD_QUALITY_NUMERIC_COMPLEX,
                 deserialized.qualityForUi);
@@ -431,7 +453,7 @@ public class LockSettingsStorageTests {
 
         // Make sure the constants we use on the wire do not change.
         assertEquals(0, PersistentData.TYPE_NONE);
-        assertEquals(1, PersistentData.TYPE_SP);
+        assertEquals(1, PersistentData.TYPE_SP_GATEKEEPER);
         assertEquals(2, PersistentData.TYPE_SP_WEAVER);
     }
 

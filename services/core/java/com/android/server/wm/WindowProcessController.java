@@ -42,6 +42,7 @@ import static com.android.server.wm.ActivityTaskManagerDebugConfig.TAG_ATM;
 import static com.android.server.wm.ActivityTaskManagerDebugConfig.TAG_WITH_CLASS_NAME;
 import static com.android.server.wm.ActivityTaskManagerService.INSTRUMENTATION_KEY_DISPATCHING_TIMEOUT_MILLIS;
 import static com.android.server.wm.ActivityTaskManagerService.RELAUNCH_REASON_NONE;
+import static com.android.server.wm.BackgroundActivityStartController.BAL_BLOCK;
 import static com.android.server.wm.WindowManagerService.MY_PID;
 
 import android.Manifest;
@@ -49,9 +50,11 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.ActivityManager;
 import android.app.ActivityThread;
+import android.app.BackgroundStartPrivileges;
 import android.app.IApplicationThread;
 import android.app.ProfilerInfo;
 import android.app.servertransaction.ConfigurationChangeItem;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
@@ -60,17 +63,18 @@ import android.content.pm.ServiceInfo;
 import android.content.res.Configuration;
 import android.os.Binder;
 import android.os.Build;
-import android.os.IBinder;
+import android.os.FactoryTest;
 import android.os.LocaleList;
 import android.os.Message;
 import android.os.Process;
 import android.os.RemoteException;
-import android.util.ArraySet;
+import android.os.UserHandle;
 import android.util.Log;
 import android.util.Slog;
 import android.util.proto.ProtoOutputStream;
 import android.view.IRemoteAnimationRunner;
 
+import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.app.HeavyWeightSwitcherActivity;
 import com.android.internal.protolog.common.ProtoLog;
@@ -113,7 +117,8 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
     // communicate back to the activity manager side.
     public final Object mOwner;
     // List of packages running in the process
-    final ArraySet<String> mPkgList = new ArraySet<>();
+    @GuardedBy("itself")
+    private final ArrayList<String> mPkgList = new ArrayList<>(1);
     private final WindowProcessListener mListener;
     private final ActivityTaskManagerService mAtm;
     private final BackgroundLaunchProcessController mBgLaunchController;
@@ -205,6 +210,7 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
     /** Whether {@link #mLastReportedConfiguration} is deferred by the cached state. */
     private volatile boolean mHasCachedConfiguration;
 
+    private int mLastTopActivityDeviceId = Context.DEVICE_ID_DEFAULT;
     /**
      * Registered {@link DisplayArea} as a listener to override config changes. {@code null} if not
      * registered.
@@ -263,7 +269,7 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
 
         boolean isSysUiPackage = info.packageName.equals(
                 mAtm.getSysUiServiceComponentLocked().getPackageName());
-        if (isSysUiPackage || mUid == Process.SYSTEM_UID) {
+        if (isSysUiPackage || UserHandle.getAppId(mUid) == Process.SYSTEM_UID) {
             // This is a system owned process and should not use an activity config.
             // TODO(b/151161907): Remove after support for display-independent (raw) SysUi configs.
             mIsActivityConfigOverrideAllowed = false;
@@ -539,17 +545,18 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
     }
 
     /**
-     * @see BackgroundLaunchProcessController#addOrUpdateAllowBackgroundActivityStartsToken(Binder,
-     * IBinder)
+     * @see BackgroundLaunchProcessController#addOrUpdateAllowBackgroundStartPrivileges(Binder,
+     * BackgroundStartPrivileges)
      */
-    public void addOrUpdateAllowBackgroundActivityStartsToken(Binder entity,
-            @Nullable IBinder originatingToken) {
-        mBgLaunchController.addOrUpdateAllowBackgroundActivityStartsToken(entity, originatingToken);
+    public void addOrUpdateBackgroundStartPrivileges(Binder entity,
+            BackgroundStartPrivileges backgroundStartPrivileges) {
+        mBgLaunchController.addOrUpdateAllowBackgroundStartPrivileges(entity,
+                backgroundStartPrivileges);
     }
 
-    /** @see BackgroundLaunchProcessController#removeAllowBackgroundActivityStartsToken(Binder) */
-    public void removeAllowBackgroundActivityStartsToken(Binder entity) {
-        mBgLaunchController.removeAllowBackgroundActivityStartsToken(entity);
+    /** @see BackgroundLaunchProcessController#removeAllowBackgroundStartPrivileges(Binder) */
+    public void removeBackgroundStartPrivileges(Binder entity) {
+        mBgLaunchController.removeAllowBackgroundStartPrivileges(entity);
     }
 
     /**
@@ -558,15 +565,17 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
     @HotPath(caller = HotPath.START_SERVICE)
     public boolean areBackgroundFgsStartsAllowed() {
         return areBackgroundActivityStartsAllowed(mAtm.getBalAppSwitchesState(),
-                true /* isCheckingForFgsStart */);
+                true /* isCheckingForFgsStart */) != BAL_BLOCK;
     }
 
-    boolean areBackgroundActivityStartsAllowed(int appSwitchState) {
+    @BackgroundActivityStartController.BalCode
+    int areBackgroundActivityStartsAllowed(int appSwitchState) {
         return areBackgroundActivityStartsAllowed(appSwitchState,
                 false /* isCheckingForFgsStart */);
     }
 
-    private boolean areBackgroundActivityStartsAllowed(int appSwitchState,
+    @BackgroundActivityStartController.BalCode
+    private int areBackgroundActivityStartsAllowed(int appSwitchState,
             boolean isCheckingForFgsStart) {
         return mBgLaunchController.areBackgroundActivityStartsAllowed(mPid, mUid, mInfo.packageName,
                 appSwitchState, isCheckingForFgsStart, hasActivityInVisibleTask(),
@@ -583,8 +592,18 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
         return mBgLaunchController.canCloseSystemDialogsByToken(mUid);
     }
 
-    public void setBoundClientUids(ArraySet<Integer> boundClientUids) {
-        mBgLaunchController.setBoundClientUids(boundClientUids);
+    /**
+     * Clear all bound client Uids.
+     */
+    public void clearBoundClientUids() {
+        mBgLaunchController.clearBalOptInBoundClientUids();
+    }
+
+    /**
+     * Add bound client Uid.
+     */
+    public void addBoundClientUid(int clientUid, String clientPackageName, long bindFlags) {
+        mBgLaunchController.addBoundClientUid(clientUid, clientPackageName, bindFlags);
     }
 
     /**
@@ -637,15 +656,23 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
 
     @HotPath(caller = HotPath.PROCESS_CHANGE)
     public void addPackage(String packageName) {
-        synchronized (mAtm.mGlobalLockWithoutBoost) {
-            mPkgList.add(packageName);
+        synchronized (mPkgList) {
+            if (!mPkgList.contains(packageName)) {
+                mPkgList.add(packageName);
+            }
         }
     }
 
     @HotPath(caller = HotPath.PROCESS_CHANGE)
     public void clearPackageList() {
-        synchronized (mAtm.mGlobalLockWithoutBoost) {
+        synchronized (mPkgList) {
             mPkgList.clear();
+        }
+    }
+
+    boolean containsPackage(String packageName) {
+        synchronized (mPkgList) {
+            return mPkgList.contains(packageName);
         }
     }
 
@@ -765,7 +792,7 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
         // - no longer visible OR
         // - not focusable (in PiP mode for instance)
         if (topDisplay == null
-                || !mPreQTopResumedActivity.mVisibleRequested
+                || !mPreQTopResumedActivity.isVisibleRequested()
                 || !mPreQTopResumedActivity.isFocusable()) {
             canUpdate = true;
         }
@@ -867,14 +894,14 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
     // TODO(b/199277729): Consider whether we need to add special casing for edge cases like
     //  activity-embeddings etc.
     void updateAppSpecificSettingsForAllActivitiesInPackage(String packageName, Integer nightMode,
-            LocaleList localesOverride) {
+            LocaleList localesOverride, @Configuration.GrammaticalGender int gender) {
         for (int i = mActivities.size() - 1; i >= 0; --i) {
             final ActivityRecord r = mActivities.get(i);
             // Activities from other packages could be sharing this process. Only propagate updates
             // to those activities that are part of the package whose app-specific settings changed
             if (packageName.equals(r.packageName)
-                    && r.applyAppSpecificConfig(nightMode, localesOverride)
-                    && r.mVisibleRequested) {
+                    && r.applyAppSpecificConfig(nightMode, localesOverride, gender)
+                    && r.isVisibleRequested()) {
                 r.ensureActivityConfiguration(0 /* globalChanges */, true /* preserveWindow */);
             }
         }
@@ -903,7 +930,7 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
             if (launchedActivity == activity) {
                 continue;
             }
-            if (!activity.stopped) {
+            if (!activity.mAppStopped) {
                 return true;
             }
         }
@@ -926,7 +953,7 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
     boolean shouldKillProcessForRemovedTask(Task task) {
         for (int k = 0; k < mActivities.size(); k++) {
             final ActivityRecord activity = mActivities.get(k);
-            if (!activity.stopped) {
+            if (!activity.mAppStopped) {
                 // Don't kill process(es) that has an activity not stopped.
                 return false;
             }
@@ -956,7 +983,7 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
             }
             // Don't consider any activities that are currently not in a state where they
             // can be destroyed.
-            if (r.mVisibleRequested || !r.stopped || !r.hasSavedState() || !r.isDestroyable()
+            if (r.isVisibleRequested() || !r.mAppStopped || !r.hasSavedState() || !r.isDestroyable()
                     || r.isState(STARTED, RESUMED, PAUSING, PAUSED, STOPPING)) {
                 if (DEBUG_RELEASE) Slog.d(TAG_RELEASE, "Not releasing in-use activity: " + r);
                 continue;
@@ -987,7 +1014,7 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
 
     /**
      * Returns display UI context list which there is any app window shows or starting activities
-     * int this process.
+     * in this process.
      */
     public void getDisplayContextsWithErrorDialogs(List<Context> displayContexts) {
         if (displayContexts == null) {
@@ -1002,7 +1029,7 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
                 final int displayId = r.getDisplayId();
                 final Context c = root.getDisplayUiContext(displayId);
 
-                if (c != null && r.mVisibleRequested && !displayContexts.contains(c)) {
+                if (c != null && r.isVisibleRequested() && !displayContexts.contains(c)) {
                     displayContexts.add(c);
                 }
             }
@@ -1070,7 +1097,7 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
             if (task != null && task.mLayerRank != Task.LAYER_RANK_INVISIBLE) {
                 stateFlags |= ACTIVITY_STATE_FLAG_HAS_ACTIVITY_IN_VISIBLE_TASK;
             }
-            if (r.mVisibleRequested) {
+            if (r.isVisibleRequested()) {
                 if (r.isState(RESUMED)) {
                     stateFlags |= ACTIVITY_STATE_FLAG_HAS_RESUMED;
                 }
@@ -1282,7 +1309,7 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
         }
         for (int i = activities.size() - 1; i >= 0; i--) {
             final ActivityRecord r = activities.get(i);
-            if (r.mVisibleRequested || r.isVisible()) {
+            if (r.isVisibleRequested() || r.isVisible()) {
                 // While an activity launches a new activity, it's possible that the old activity
                 // is already requested to be hidden (mVisibleRequested=false), but this visibility
                 // is not yet committed, so isVisible()=true.
@@ -1380,8 +1407,17 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
     @Override
     public void onConfigurationChanged(Configuration newGlobalConfig) {
         super.onConfigurationChanged(newGlobalConfig);
+
+        // If deviceId for the top-activity changed, schedule passing it to the app process.
+        boolean topActivityDeviceChanged = false;
+        int deviceId = getTopActivityDeviceId();
+        if (deviceId != mLastTopActivityDeviceId) {
+            topActivityDeviceChanged = true;
+            mLastTopActivityDeviceId = deviceId;
+        }
+
         final Configuration config = getConfiguration();
-        if (mLastReportedConfiguration.equals(config)) {
+        if (mLastReportedConfiguration.equals(config) & !topActivityDeviceChanged) {
             // Nothing changed.
             if (Build.IS_DEBUGGABLE && mHasImeService) {
                 // TODO (b/135719017): Temporary log for debugging IME service.
@@ -1395,7 +1431,31 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
             mHasPendingConfigurationChange = true;
             return;
         }
+
         dispatchConfiguration(config);
+    }
+
+    private int getTopActivityDeviceId() {
+        ActivityRecord topActivity = getTopNonFinishingActivity();
+        int updatedDeviceId = Context.DEVICE_ID_DEFAULT;
+        if (topActivity != null && topActivity.mDisplayContent != null) {
+            updatedDeviceId = mAtm.mTaskSupervisor.getDeviceIdForDisplayId(
+                    topActivity.mDisplayContent.mDisplayId);
+        }
+        return updatedDeviceId;
+    }
+
+    @Nullable
+    private ActivityRecord getTopNonFinishingActivity() {
+        if (mActivities.isEmpty()) {
+            return null;
+        }
+        for (int i = mActivities.size() - 1; i >= 0; i--) {
+            if (!mActivities.get(i).finishing) {
+                return mActivities.get(i);
+            }
+        }
+        return null;
     }
 
     @Override
@@ -1461,7 +1521,7 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
         mHasCachedConfiguration = false;
         try {
             mAtm.getLifecycleManager().scheduleTransaction(thread,
-                    ConfigurationChangeItem.obtain(config));
+                    ConfigurationChangeItem.obtain(config, mLastTopActivityDeviceId));
         } catch (Exception e) {
             Slog.e(TAG_CONFIGURATION, "Failed to schedule configuration change: " + mOwner, e);
         }
@@ -1503,7 +1563,7 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
             Configuration overrideConfig = new Configuration(r.getRequestedOverrideConfiguration());
             overrideConfig.assetsSeq = assetSeq;
             r.onRequestedOverrideConfigurationChanged(overrideConfig);
-            if (r.mVisibleRequested) {
+            if (r.isVisibleRequested()) {
                 r.ensureActivityConfiguration(0, true);
             }
         }
@@ -1667,6 +1727,22 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
         return this == mAtm.mHeavyWeightProcess;
     }
 
+    @HotPath(caller = HotPath.PROCESS_CHANGE)
+    public boolean isFactoryTestProcess() {
+        final int factoryTestMode = mAtm.mFactoryTest;
+        if (factoryTestMode == FactoryTest.FACTORY_TEST_OFF) {
+            return false;
+        }
+        if (factoryTestMode == FactoryTest.FACTORY_TEST_LOW_LEVEL) {
+            final ComponentName topComponent = mAtm.mTopComponent;
+            if (topComponent != null && mName.equals(topComponent.getPackageName())) {
+                return true;
+            }
+        }
+        return factoryTestMode == FactoryTest.FACTORY_TEST_HIGH_LEVEL
+                && (mInfo.flags & ApplicationInfo.FLAG_FACTORY_TEST) != 0;
+    }
+
     void setRunningRecentsAnimation(boolean running) {
         if (mRunningRecentsAnimation == running) {
             return;
@@ -1749,6 +1825,9 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
                 if ((stateFlags & ACTIVITY_STATE_FLAG_IS_STOPPING_FINISHING) != 0) {
                     pw.print("F|");
                 }
+            }
+            if ((stateFlags & ACTIVITY_STATE_FLAG_HAS_ACTIVITY_IN_VISIBLE_TASK) != 0) {
+                pw.print("VT|");
             }
             final int taskLayer = stateFlags & ACTIVITY_STATE_FLAG_MASK_MIN_TASK_LAYER;
             if (taskLayer != ACTIVITY_STATE_FLAG_MASK_MIN_TASK_LAYER) {

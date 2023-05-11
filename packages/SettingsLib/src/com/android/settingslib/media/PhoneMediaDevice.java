@@ -51,11 +51,13 @@ public class PhoneMediaDevice extends MediaDevice {
 
     PhoneMediaDevice(Context context, MediaRouter2Manager routerManager, MediaRoute2Info info,
             String packageName) {
-        super(context, routerManager, info, packageName);
+        super(context, routerManager, info, packageName, null);
         mDeviceIconUtil = new DeviceIconUtil();
         initDeviceRecord();
     }
 
+    // MediaRoute2Info.getType was made public on API 34, but exists since API 30.
+    @SuppressWarnings("NewApi")
     @Override
     public String getName() {
         CharSequence name;
@@ -94,11 +96,15 @@ public class PhoneMediaDevice extends MediaDevice {
         return mContext.getDrawable(getDrawableResId());
     }
 
+    // MediaRoute2Info.getType was made public on API 34, but exists since API 30.
+    @SuppressWarnings("NewApi")
     @VisibleForTesting
     int getDrawableResId() {
         return mDeviceIconUtil.getIconResIdFromMediaRouteType(mRouteInfo.getType());
     }
 
+    // MediaRoute2Info.getType was made public on API 34, but exists since API 30.
+    @SuppressWarnings("NewApi")
     @Override
     public String getId() {
         String id;

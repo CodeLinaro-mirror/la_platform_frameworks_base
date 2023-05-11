@@ -20,6 +20,7 @@ import static android.app.ActivityManager.PROCESS_STATE_NONEXISTENT;
 import static android.os.IServiceManager.DUMP_FLAG_PRIORITY_CRITICAL;
 import static android.os.Process.FIRST_APPLICATION_UID;
 import static android.util.FeatureFlagUtils.SETTINGS_ENABLE_MONITOR_PHANTOM_PROCS;
+import static android.view.Display.INVALID_DISPLAY;
 
 import static com.android.internal.app.procstats.ProcessStats.ADJ_MEM_FACTOR_CRITICAL;
 import static com.android.internal.app.procstats.ProcessStats.ADJ_MEM_FACTOR_LOW;
@@ -506,10 +507,14 @@ public class AppProfiler {
             }
             if (profile != null) {
                 long startTime = SystemClock.currentThreadTimeMillis();
-                // skip background PSS calculation of apps that are capturing
-                // camera imagery
-                final boolean usingCamera = mService.isCameraActiveForUid(profile.mApp.uid);
-                long pss = usingCamera ? 0 : Debug.getPss(pid, tmp, null);
+                // skip background PSS calculation under the following situations:
+                //  - app is capturing camera imagery
+                //  - app is frozen and we have already collected PSS once.
+                final boolean skipPSSCollection =
+                        (profile.mApp.mOptRecord != null
+                         && profile.mApp.mOptRecord.skipPSSCollectionBecauseFrozen())
+                        || mService.isCameraActiveForUid(profile.mApp.uid);
+                long pss = skipPSSCollection ? 0 : Debug.getPss(pid, tmp, null);
                 long endTime = SystemClock.currentThreadTimeMillis();
                 synchronized (mProfilerLock) {
                     if (pss != 0 && profile.getThread() != null
@@ -524,7 +529,7 @@ public class AppProfiler {
                         if (DEBUG_PSS) {
                             Slog.d(TAG_PSS, "Skipped pss collection of " + pid
                                     + ": " + (profile.getThread() == null ? "NO_THREAD " : "")
-                                    + (usingCamera ? "CAMERA " : "")
+                                    + (skipPSSCollection ? "SKIP_PSS_COLLECTION " : "")
                                     + (profile.getPid() != pid ? "PID_CHANGED " : "")
                                     + " initState=" + procState + " curState="
                                     + profile.getSetProcState() + " "
@@ -1600,8 +1605,8 @@ public class AppProfiler {
             mService.mServices.newServiceDumperLocked(null, catPw, emptyArgs, 0,
                     false, null).dumpLocked();
             catPw.println();
-            mService.mAtmInternal.dump(
-                    DUMP_ACTIVITIES_CMD, null, catPw, emptyArgs, 0, false, false, null);
+            mService.mAtmInternal.dump(DUMP_ACTIVITIES_CMD, null, catPw, emptyArgs, 0, false, false,
+                    null, INVALID_DISPLAY);
             catPw.flush();
         }
         dropBuilder.append(catSw.toString());
@@ -1827,7 +1832,7 @@ public class AppProfiler {
             final BatteryStatsImpl bstats = mService.mBatteryStatsService.getActiveStatistics();
             synchronized (bstats) {
                 if (haveNewCpuStats) {
-                    if (bstats.startAddingCpuLocked()) {
+                    if (bstats.startAddingCpuStatsLocked()) {
                         int totalUTime = 0;
                         int totalSTime = 0;
                         final int statsCount = mProcessCpuTracker.countStats();
@@ -1873,9 +1878,10 @@ public class AppProfiler {
                         final int irqTime = mProcessCpuTracker.getLastIrqTime();
                         final int softIrqTime = mProcessCpuTracker.getLastSoftIrqTime();
                         final int idleTime = mProcessCpuTracker.getLastIdleTime();
-                        bstats.finishAddingCpuLocked(totalUTime, totalSTime, userTime,
+                        bstats.addCpuStatsLocked(totalUTime, totalSTime, userTime,
                                 systemTime, iowaitTime, irqTime, softIrqTime, idleTime);
                     }
+                    bstats.finishAddingCpuStatsLocked();
                 }
 
                 if (mLastWriteTime < (now - BATTERY_STATS_TIME)) {
@@ -1887,15 +1893,11 @@ public class AppProfiler {
     }
 
     long getCpuTimeForPid(int pid) {
-        synchronized (mProcessCpuTracker) {
-            return mProcessCpuTracker.getCpuTimeForPid(pid);
-        }
+        return mProcessCpuTracker.getCpuTimeForPid(pid);
     }
 
     long getCpuDelayTimeForPid(int pid) {
-        synchronized (mProcessCpuTracker) {
-            return mProcessCpuTracker.getCpuDelayTimeForPid(pid);
-        }
+        return mProcessCpuTracker.getCpuDelayTimeForPid(pid);
     }
 
     List<ProcessCpuTracker.Stats> getCpuStats(Predicate<ProcessCpuTracker.Stats> predicate) {
@@ -2050,7 +2052,7 @@ public class AppProfiler {
                 }
             } else if (instr != null && instr.mProfileFile != null) {
                 profilerInfo = new ProfilerInfo(instr.mProfileFile, null, 0, false, false,
-                        null, false);
+                        null, false, 0);
             }
             if (mAppAgentMap != null && mAppAgentMap.containsKey(processName)) {
                 // We need to do a debuggable check here. See setAgentApp for why the check is
@@ -2060,7 +2062,7 @@ public class AppProfiler {
                     // Do not overwrite already requested agent.
                     if (profilerInfo == null) {
                         profilerInfo = new ProfilerInfo(null, null, 0, false, false,
-                                mAppAgentMap.get(processName), true);
+                                mAppAgentMap.get(processName), true, 0);
                     } else if (profilerInfo.agent == null) {
                         profilerInfo = profilerInfo.setAgent(mAppAgentMap.get(processName), true);
                     }
@@ -2192,7 +2194,9 @@ public class AppProfiler {
                             + " mAutoStopProfiler="
                             + mProfileData.getProfilerInfo().autoStopProfiler
                             + " mStreamingOutput="
-                            + mProfileData.getProfilerInfo().streamingOutput);
+                            + mProfileData.getProfilerInfo().streamingOutput
+                            + " mClockType="
+                            + mProfileData.getProfilerInfo().clockType);
                     pw.println("  mProfileType=" + mProfileType);
                 }
             }
@@ -2310,7 +2314,8 @@ public class AppProfiler {
 
     void printCurrentCpuState(StringBuilder report, long time) {
         synchronized (mProcessCpuTracker) {
-            report.append(mProcessCpuTracker.printCurrentState(time));
+            // Only print the first 10 processes
+            report.append(mProcessCpuTracker.printCurrentState(time, /* maxProcesses= */10));
         }
     }
 

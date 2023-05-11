@@ -26,7 +26,6 @@ import android.annotation.RequiresPermission;
 import android.annotation.SystemApi;
 import android.annotation.TestApi;
 import android.content.Context;
-import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -111,6 +110,10 @@ public final class MediaRouter2 {
      */
     @GuardedBy("mLock")
     final Map<String, MediaRoute2Info> mRoutes = new ArrayMap<>();
+
+    @GuardedBy("mLock")
+    @Nullable
+    private RouteListingPreference mRouteListingPreference;
 
     final RoutingController mSystemController;
 
@@ -205,18 +208,14 @@ public final class MediaRouter2 {
                 IMediaRouterService.Stub.asInterface(
                         ServiceManager.getService(Context.MEDIA_ROUTER_SERVICE));
         try {
-            // SecurityException will be thrown if there's no permission.
-            serviceBinder.enforceMediaContentControlPermission();
+            // verifyPackageExists throws SecurityException if the caller doesn't hold
+            // MEDIA_CONTENT_CONTROL permission.
+            if (!serviceBinder.verifyPackageExists(clientPackageName)) {
+                Log.e(TAG, "Package " + clientPackageName + " not found. Ignoring.");
+                return null;
+            }
         } catch (RemoteException e) {
             e.rethrowFromSystemServer();
-        }
-
-        PackageManager pm = context.getPackageManager();
-        try {
-            pm.getPackageInfo(clientPackageName, 0);
-        } catch (PackageManager.NameNotFoundException ex) {
-            Log.e(TAG, "Package " + clientPackageName + " not found. Ignoring.");
-            return null;
         }
 
         synchronized (sSystemRouterLock) {
@@ -305,7 +304,7 @@ public final class MediaRouter2 {
             currentSystemRoutes = mMediaRouterService.getSystemRoutes();
             currentSystemSessionInfo = mMediaRouterService.getSystemSessionInfo();
         } catch (RemoteException ex) {
-            Log.e(TAG, "Unable to get current system's routes / session info", ex);
+            ex.rethrowFromSystemServer();
         }
 
         if (currentSystemRoutes == null || currentSystemRoutes.isEmpty()) {
@@ -407,14 +406,14 @@ public final class MediaRouter2 {
                     mMediaRouterService.registerRouter2(stub, mPackageName);
                     mStub = stub;
                 } catch (RemoteException ex) {
-                    Log.e(TAG, "registerRouteCallback: Unable to register MediaRouter2.", ex);
+                    ex.rethrowFromSystemServer();
                 }
             }
             if (mStub != null && updateDiscoveryPreferenceIfNeededLocked()) {
                 try {
                     mMediaRouterService.setDiscoveryRequestWithRouter2(mStub, mDiscoveryPreference);
                 } catch (RemoteException ex) {
-                    Log.e(TAG, "registerRouteCallback: Unable to set discovery request.", ex);
+                    ex.rethrowFromSystemServer();
                 }
             }
         }
@@ -454,9 +453,82 @@ public final class MediaRouter2 {
                 try {
                     mMediaRouterService.unregisterRouter2(mStub);
                 } catch (RemoteException ex) {
-                    Log.e(TAG, "Unable to unregister media router.", ex);
+                    ex.rethrowFromSystemServer();
                 }
                 mStub = null;
+            }
+        }
+    }
+
+    /**
+     * Shows the system output switcher dialog.
+     *
+     * <p>Should only be called when the context of MediaRouter2 is in the foreground and visible on
+     * the screen.
+     *
+     * <p>The appearance and precise behaviour of the system output switcher dialog may vary across
+     * different devices, OS versions, and form factors, but the basic functionality stays the same.
+     *
+     * <p>See <a
+     * href="https://developer.android.com/guide/topics/media/media-routing#output-switcher">Output
+     * Switcher documentation</a> for more details.
+     *
+     * @return {@code true} if the output switcher dialog is being shown, or {@code false} if the
+     * call is ignored because the app is in the background.
+     */
+    public boolean showSystemOutputSwitcher() {
+        synchronized (mLock) {
+            try {
+                return mMediaRouterService.showMediaOutputSwitcher(mPackageName);
+            } catch (RemoteException ex) {
+                ex.rethrowFromSystemServer();
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Sets the {@link RouteListingPreference} of the app associated to this media router.
+     *
+     * <p>Use this method to inform the system UI of the routes that you would like to list for
+     * media routing, via the Output Switcher.
+     *
+     * <p>You should call this method before {@link #registerRouteCallback registering any route
+     * callbacks} and immediately after receiving any {@link RouteCallback#onRoutesUpdated route
+     * updates} in order to keep the system UI in a consistent state. You can also call this method
+     * at any other point to update the listing preference dynamically.
+     *
+     * <p>Notes:
+     *
+     * <ol>
+     *   <li>You should not include the ids of two or more routes with a match in their {@link
+     *       MediaRoute2Info#getDeduplicationIds() deduplication ids}. If you do, the system will
+     *       deduplicate them using its own criteria.
+     *   <li>You can use this method to rank routes in the output switcher, placing the more
+     *       important routes first. The system might override the proposed ranking.
+     *   <li>You can use this method to avoid listing routes using dynamic criteria. For example,
+     *       you can limit access to a specific type of device according to runtime criteria.
+     * </ol>
+     *
+     * @param routeListingPreference The {@link RouteListingPreference} for the system to use for
+     *     route listing. When null, the system uses its default listing criteria.
+     */
+    public void setRouteListingPreference(@Nullable RouteListingPreference routeListingPreference) {
+        synchronized (mLock) {
+            if (Objects.equals(mRouteListingPreference, routeListingPreference)) {
+                // Nothing changed. We return early to save a call to the system server.
+                return;
+            }
+            mRouteListingPreference = routeListingPreference;
+            try {
+                if (mStub == null) {
+                    MediaRouter2Stub stub = new MediaRouter2Stub();
+                    mMediaRouterService.registerRouter2(stub, mPackageName);
+                    mStub = stub;
+                }
+                mMediaRouterService.setRouteListingPreference(mStub, mRouteListingPreference);
+            } catch (RemoteException ex) {
+                ex.rethrowFromSystemServer();
             }
         }
     }
@@ -603,7 +675,7 @@ public final class MediaRouter2 {
      */
     public void transferTo(@NonNull MediaRoute2Info route) {
         if (isSystemRouter()) {
-            sManager.selectRoute(mClientPackageName, route);
+            sManager.transfer(mClientPackageName, route);
             return;
         }
 
@@ -1470,6 +1542,16 @@ public final class MediaRouter2 {
         }
 
         /**
+         * Returns the current {@link RoutingSessionInfo} associated to this controller.
+         */
+        @NonNull
+        public RoutingSessionInfo getRoutingSessionInfo() {
+            synchronized (mControllerLock) {
+                return mSessionInfo;
+            }
+        }
+
+        /**
          * Gets the information about how volume is handled on the session.
          *
          * <p>Please note that you may not control the volume of the session even when you can
@@ -1769,7 +1851,7 @@ public final class MediaRouter2 {
                     try {
                         mMediaRouterService.releaseSessionWithRouter2(mStub, getId());
                     } catch (RemoteException ex) {
-                        Log.e(TAG, "Unable to release session", ex);
+                        ex.rethrowFromSystemServer();
                     }
                 }
 
@@ -1787,7 +1869,7 @@ public final class MediaRouter2 {
                     try {
                         mMediaRouterService.unregisterRouter2(mStub);
                     } catch (RemoteException ex) {
-                        Log.e(TAG, "releaseInternal: Unable to unregister media router.", ex);
+                        ex.rethrowFromSystemServer();
                     }
                     mStub = null;
                 }
@@ -1826,13 +1908,6 @@ public final class MediaRouter2 {
                             .append("}")
                             .append(" }");
             return result.toString();
-        }
-
-        @NonNull
-        RoutingSessionInfo getRoutingSessionInfo() {
-            synchronized (mControllerLock) {
-                return mSessionInfo;
-            }
         }
 
         void setRoutingSessionInfo(@NonNull RoutingSessionInfo info) {

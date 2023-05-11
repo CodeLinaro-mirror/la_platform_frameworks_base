@@ -174,7 +174,7 @@
     <string name="launch_defaults_some" msgid="3631650616557252926">"कुछ डिफ़ॉल्‍ट सेट हैं"</string>
     <string name="launch_defaults_none" msgid="8049374306261262709">"कोई डिफ़ॉल्‍ट सेट नहीं है"</string>
     <string name="tts_settings" msgid="8130616705989351312">"लेख से बोली सेटिंग"</string>
-    <string name="tts_settings_title" msgid="7602210956640483039">"लिखाई को बोली में बदलना"</string>
+    <string name="tts_settings_title" msgid="7602210956640483039">"लिखाई को बोली में बदलने की सुविधा"</string>
     <string name="tts_default_rate_title" msgid="3964187817364304022">"बोली दर"</string>
     <string name="tts_default_rate_summary" msgid="3781937042151716987">"बोलने की गति तय करें"</string>
     <string name="tts_default_pitch_title" msgid="6988592215554485479">"पिच"</string>
@@ -467,7 +467,8 @@
     <string name="power_charging" msgid="6727132649743436802">"<xliff:g id="LEVEL">%1$s</xliff:g> - <xliff:g id="STATE">%2$s</xliff:g>"</string>
     <string name="power_remaining_charging_duration_only" msgid="8085099012811384899">"<xliff:g id="TIME">%1$s</xliff:g> में बैटरी पूरी चार्ज हो जाएगी"</string>
     <string name="power_charging_duration" msgid="6127154952524919719">"<xliff:g id="LEVEL">%1$s</xliff:g> - <xliff:g id="TIME">%2$s</xliff:g> में बैटरी पूरी चार्ज हो जाएगी"</string>
-    <string name="power_charging_limited" msgid="6971664137170239141">"<xliff:g id="LEVEL">%1$s</xliff:g> - चार्जिंग को रोका गया है"</string>
+    <string name="power_charging_limited" msgid="8202147604844938236">"<xliff:g id="LEVEL">%1$s</xliff:g> - चार्जिंग को ऑप्टिमाइज़ किया गया"</string>
+    <string name="power_charging_future_paused" msgid="4730177778538118032">"<xliff:g id="LEVEL">%1$s</xliff:g> - चार्जिंग को ऑप्टिमाइज़ किया गया"</string>
     <string name="battery_info_status_unknown" msgid="268625384868401114">"अज्ञात"</string>
     <string name="battery_info_status_charging" msgid="4279958015430387405">"चार्ज हो रही है"</string>
     <string name="battery_info_status_charging_fast" msgid="8027559755902954885">"तेज़ चार्ज हो रही है"</string>
@@ -539,6 +540,13 @@
     <string name="media_transfer_this_device_name" product="default" msgid="2357329267148436433">"यह फ़ोन"</string>
     <string name="media_transfer_this_device_name" product="tablet" msgid="3714653244000242800">"यह टैबलेट"</string>
     <string name="media_transfer_this_phone" msgid="7194341457812151531">"यह फ़ोन"</string>
+    <string name="media_output_status_unknown_error" msgid="5098565887497902222">"इस डिवाइस पर मीडिया नहीं चलाया जा सकता"</string>
+    <string name="media_output_status_require_premium" msgid="8411255800047014822">"प्रीमियम खाते में स्विच करने के लिए, अपना खाता अपग्रेड करें"</string>
+    <string name="media_output_status_not_support_downloads" msgid="4523828729240373315">"डाउनलोड किए गए वीडियो यहां नहीं चलाए जा सकते"</string>
+    <string name="media_output_status_try_after_ad" msgid="8312579066856015441">"विज्ञापन खत्म होने के बाद फिर से कोशिश करें"</string>
+    <string name="media_output_status_device_in_low_power_mode" msgid="8184631698321758451">"मीडिया को यहां चलाने के लिए, डिवाइस को अनलॉक करें"</string>
+    <string name="media_output_status_unauthorized" msgid="5880222828273853838">"डिवाइस को मीडिया चलाने की अनुमति नहीं दी गई है"</string>
+    <string name="media_output_status_track_unsupported" msgid="5576313219317709664">"इस मीडिया को यहां नहीं चलाया जा सकता"</string>
     <string name="profile_connect_timeout_subtext" msgid="4043408193005851761">"कनेक्ट करने में समस्या हो रही है. डिवाइस को बंद करके चालू करें"</string>
     <string name="media_transfer_wired_device_name" msgid="4447880899964056007">"वायर वाला ऑडियो डिवाइस"</string>
     <string name="help_label" msgid="3528360748637781274">"सहायता और सुझाव"</string>
@@ -563,6 +571,8 @@
     <string name="user_add_user_title" msgid="5457079143694924885">"नया उपयोगकर्ता जोड़ें?"</string>
     <string name="user_add_user_message_long" msgid="1527434966294733380">"नए उपयोगकर्ता जोड़कर इस डिवाइस को दूसरे लोगों के साथ शेयर किया जा सकता है. हर उपयोगकर्ता के पास अपनी जगह होती है, जिसमें वे ऐप्लिकेशन, वॉलपेपर, और दूसरी चीज़ों में मनमुताबिक बदलाव कर सकते हैं. उपयोगकर्ता वाई-फ़ाई जैसी डिवाइस सेटिंग में भी बदलाव कर सकते हैं, जिसका असर हर किसी पर पड़ता है.\n\nजब किसी नए उपयोगकर्ता को जोड़ा जाता है, तो उसे अपनी जगह सेट करनी होती है.\n\nकोई भी उपयोगकर्ता, दूसरे सभी उपयोगकर्ताओं के लिए ऐप्लिकेशन अपडेट कर सकता है. ऐसा भी हो सकता है कि सुलभता सेटिंग और सेवाएं नए उपयोगकर्ता को ट्रांसफ़र न हो पाएं."</string>
     <string name="user_add_user_message_short" msgid="3295959985795716166">"कोई नया उपयोगकर्ता जोड़ने पर, उसे अपनी जगह सेट करनी होती है.\n\nकोई भी उपयोगकर्ता बाकी सभी उपयोगकर्ताओं के लिए ऐप्लिकेशन अपडेट कर सकता है."</string>
+    <string name="user_grant_admin_title" msgid="5565796912475193314">"इस व्यक्ति को एडमिन के खास अधिकार दें?"</string>
+    <string name="user_grant_admin_message" msgid="7925257971286380976">"एडमिन के तौर पर, उनके पास अन्य लोगों की अनुमतियां को मैनेज करने, डिवाइस की सेटिंग बदलने, और डिवाइस को फ़ैक्ट्री रीसेट करने का अधिकार होगा."</string>
     <string name="user_setup_dialog_title" msgid="8037342066381939995">"उपयोगकर्ता को अभी सेट करें?"</string>
     <string name="user_setup_dialog_message" msgid="269931619868102841">"पक्का करें कि व्यक्ति डिवाइस का इस्तेमाल करने और अपनी जगह सेट करने के लिए मौजूद है"</string>
     <string name="user_setup_profile_dialog_message" msgid="4788197052296962620">"प्रोफ़ाइल अभी सेट करें?"</string>
@@ -594,13 +604,15 @@
     <string name="guest_reset_and_restart_dialog_message" msgid="2764425635305200790">"ऐसा करने पर, मेहमान के तौर पर ब्राउज़ करने का एक नया सेशन शुरू हो जाएगा. साथ ही, पिछले सेशन में मौजूद डेटा और इस्तेमाल किए जा रहे ऐप्लिकेशन को मिटा दिया जाएगा"</string>
     <string name="guest_exit_dialog_title" msgid="1846494656849381804">"मेहमान मोड से बाहर निकलना है?"</string>
     <string name="guest_exit_dialog_message" msgid="1743218864242719783">"इससे, मेहमान मोड के मौजूदा सेशन का डेटा और इसमें इस्तेमाल हो रहे ऐप्लिकेशन मिट जाएंगे"</string>
+    <string name="grant_admin" msgid="4273077214151417783">"इस व्यक्ति को एडमिन के खास अधिकार दें"</string>
+    <string name="not_grant_admin" msgid="6985027675930546850">"इस व्यक्ति को एडमिन के खास अधिकार न दें"</string>
     <string name="guest_exit_dialog_button" msgid="1736401897067442044">"बाहर निकलें"</string>
     <string name="guest_exit_dialog_title_non_ephemeral" msgid="7675327443743162986">"मेहमान मोड की गतिविधि को सेव करना है?"</string>
     <string name="guest_exit_dialog_message_non_ephemeral" msgid="223385323235719442">"मौजूदा सेशन की गतिविधि को सेव किया जा सकता है या सभी ऐप और डेटा को मिटाया जा सकता है"</string>
     <string name="guest_exit_clear_data_button" msgid="3425812652180679014">"मिटाएं"</string>
     <string name="guest_exit_save_data_button" msgid="3690974510644963547">"सेव करें"</string>
     <string name="guest_exit_button" msgid="5774985819191803960">"मेहमान मोड से बाहर निकलें"</string>
-    <string name="guest_reset_button" msgid="2515069346223503479">"मेहमान मोड के सेशन को रीसेट करें?"</string>
+    <string name="guest_reset_button" msgid="2515069346223503479">"मेहमान मोड के सेशन को रीसेट करें"</string>
     <string name="guest_exit_quick_settings_button" msgid="1912362095913765471">"मेहमान मोड से बाहर निकलें"</string>
     <string name="guest_notification_ephemeral" msgid="7263252466950923871">"बाहर निकलने पर, सारी गतिविधि मिट जाएगी"</string>
     <string name="guest_notification_non_ephemeral" msgid="6843799963012259330">"बाहर निकलने पर, गतिविधि को मिटाया या सेव किया जा सकता है"</string>
@@ -661,4 +673,10 @@
     <string name="back_navigation_animation" msgid="8105467568421689484">"प्रिडिक्टिव बैक ऐनिमेशन"</string>
     <string name="back_navigation_animation_summary" msgid="741292224121599456">"प्रिडिक्टिव बैक के लिए सिस्टम ऐनिमेशन चालू करें."</string>
     <string name="back_navigation_animation_dialog" msgid="8696966520944625596">"यह सेटिंग, सिस्टम के ऐनिमेशन को प्रिडिक्टिव जेस्चर ऐनिमेशन के लिए चालू कर देती है. मेनिफ़ेस्ट फ़ाइल में enableOnBackInvokedCallback की सेटिंग को हर ऐप्लिकेशन के हिसाब से \'सही\' पर सेट होना चाहिए."</string>
+  <string-array name="udfps_accessibility_touch_hints">
+    <item msgid="1737722959616802157">"बाईं ओर ले जाएं"</item>
+    <item msgid="5425394847942513942">"नीचे ले जाएं"</item>
+    <item msgid="7728484337962740316">"दाईं ओर ले जाएं"</item>
+    <item msgid="324200556467459329">"ऊपर की ओर ले जाएं"</item>
+  </string-array>
 </resources>

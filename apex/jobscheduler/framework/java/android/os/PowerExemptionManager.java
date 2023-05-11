@@ -391,6 +391,19 @@ public class PowerExemptionManager {
      */
     public static final int REASON_MEDIA_NOTIFICATION_TRANSFER = 325;
 
+    /**
+     * Package installer.
+     * @hide
+     */
+    public static final int REASON_PACKAGE_INSTALLER = 326;
+
+    /**
+     * {@link android.app.AppOpsManager#OP_SYSTEM_EXEMPT_FROM_POWER_RESTRICTIONS}
+     * set to MODE_ALLOWED
+     * @hide
+     */
+    public static final int REASON_SYSTEM_EXEMPT_APP_OP = 327;
+
     /** @hide The app requests out-out. */
     public static final int REASON_OPT_OUT_REQUESTED = 1000;
 
@@ -472,6 +485,7 @@ public class PowerExemptionManager {
             REASON_DISALLOW_APPS_CONTROL,
             REASON_ACTIVE_DEVICE_ADMIN,
             REASON_MEDIA_NOTIFICATION_TRANSFER,
+            REASON_PACKAGE_INSTALLER,
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface ReasonCode {}
@@ -839,6 +853,8 @@ public class PowerExemptionManager {
                 return "REASON_OPT_OUT_REQUESTED";
             case REASON_MEDIA_NOTIFICATION_TRANSFER:
                 return "REASON_MEDIA_NOTIFICATION_TRANSFER";
+            case REASON_PACKAGE_INSTALLER:
+                return "REASON_PACKAGE_INSTALLER";
             default:
                 return "(unknown:" + reasonCode + ")";
         }

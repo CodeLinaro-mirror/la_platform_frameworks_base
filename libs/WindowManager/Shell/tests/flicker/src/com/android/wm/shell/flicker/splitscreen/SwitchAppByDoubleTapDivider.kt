@@ -19,14 +19,15 @@ package com.android.wm.shell.flicker.splitscreen
 import android.platform.test.annotations.IwTest
 import android.platform.test.annotations.Postsubmit
 import android.platform.test.annotations.Presubmit
-import android.view.WindowManagerPolicyConstants
+import android.tools.common.NavBar
+import android.tools.common.Rotation
+import android.tools.device.flicker.junit.FlickerParametersRunnerFactory
+import android.tools.device.flicker.legacy.FlickerBuilder
+import android.tools.device.flicker.legacy.FlickerTest
+import android.tools.device.flicker.legacy.FlickerTestFactory
+import android.tools.device.helpers.WindowUtils
+import android.tools.device.traces.parsers.WindowManagerStateHelper
 import androidx.test.filters.RequiresDevice
-import com.android.server.wm.flicker.FlickerParametersRunnerFactory
-import com.android.server.wm.flicker.FlickerTestParameter
-import com.android.server.wm.flicker.FlickerTestParameterFactory
-import com.android.server.wm.flicker.dsl.FlickerBuilder
-import com.android.server.wm.flicker.helpers.WindowUtils
-import com.android.server.wm.traces.parser.windowmanager.WindowManagerStateHelper
 import com.android.wm.shell.flicker.SPLIT_SCREEN_DIVIDER_COMPONENT
 import com.android.wm.shell.flicker.appWindowIsVisibleAtEnd
 import com.android.wm.shell.flicker.appWindowIsVisibleAtStart
@@ -50,19 +51,15 @@ import org.junit.runners.Parameterized
 @RunWith(Parameterized::class)
 @Parameterized.UseParametersRunnerFactory(FlickerParametersRunnerFactory::class)
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
-class SwitchAppByDoubleTapDivider(testSpec: FlickerTestParameter) : SplitScreenBase(testSpec) {
+class SwitchAppByDoubleTapDivider(flicker: FlickerTest) : SplitScreenBase(flicker) {
 
     override val transition: FlickerBuilder.() -> Unit
         get() = {
             super.transition(this)
-            setup {
-                SplitScreenUtils.enterSplit(wmHelper, tapl, device, primaryApp, secondaryApp)
-            }
+            setup { SplitScreenUtils.enterSplit(wmHelper, tapl, device, primaryApp, secondaryApp) }
             transitions {
                 SplitScreenUtils.doubleTapDividerToSwitch(device)
-                wmHelper.StateSyncBuilder()
-                    .withAppTransitionIdle()
-                    .waitForAndVerify()
+                wmHelper.StateSyncBuilder().withAppTransitionIdle().waitForAndVerify()
 
                 waitForLayersToSwitch(wmHelper)
                 waitForWindowsToSwitch(wmHelper)
@@ -70,61 +67,74 @@ class SwitchAppByDoubleTapDivider(testSpec: FlickerTestParameter) : SplitScreenB
         }
 
     private fun waitForWindowsToSwitch(wmHelper: WindowManagerStateHelper) {
-        wmHelper.StateSyncBuilder().add("appWindowsSwitched") {
-            val primaryAppWindow = it.wmState.visibleWindows.firstOrNull { window ->
-                primaryApp.windowMatchesAnyOf(window)
-            } ?: return@add false
-            val secondaryAppWindow = it.wmState.visibleWindows.firstOrNull { window ->
-                secondaryApp.windowMatchesAnyOf(window)
-            } ?: return@add false
+        wmHelper
+            .StateSyncBuilder()
+            .add("appWindowsSwitched") {
+                val primaryAppWindow =
+                    it.wmState.visibleWindows.firstOrNull { window ->
+                        primaryApp.windowMatchesAnyOf(window)
+                    }
+                        ?: return@add false
+                val secondaryAppWindow =
+                    it.wmState.visibleWindows.firstOrNull { window ->
+                        secondaryApp.windowMatchesAnyOf(window)
+                    }
+                        ?: return@add false
 
-            if (isLandscape(testSpec.endRotation)) {
-                return@add if (testSpec.isTablet) {
-                    secondaryAppWindow.frame.right <= primaryAppWindow.frame.left
+                if (isLandscape(flicker.scenario.endRotation)) {
+                    return@add if (flicker.scenario.isTablet) {
+                        secondaryAppWindow.frame.right <= primaryAppWindow.frame.left
+                    } else {
+                        primaryAppWindow.frame.right <= secondaryAppWindow.frame.left
+                    }
                 } else {
-                    primaryAppWindow.frame.right <= secondaryAppWindow.frame.left
-                }
-            } else {
-                return@add if (testSpec.isTablet) {
-                    primaryAppWindow.frame.bottom <= secondaryAppWindow.frame.top
-                } else {
-                    primaryAppWindow.frame.bottom <= secondaryAppWindow.frame.top
+                    return@add if (flicker.scenario.isTablet) {
+                        primaryAppWindow.frame.bottom <= secondaryAppWindow.frame.top
+                    } else {
+                        primaryAppWindow.frame.bottom <= secondaryAppWindow.frame.top
+                    }
                 }
             }
-        }.waitForAndVerify()
+            .waitForAndVerify()
     }
 
     private fun waitForLayersToSwitch(wmHelper: WindowManagerStateHelper) {
-        wmHelper.StateSyncBuilder().add("appLayersSwitched") {
-            val primaryAppLayer = it.layerState.visibleLayers.firstOrNull { window ->
-                primaryApp.layerMatchesAnyOf(window)
-            } ?: return@add false
-            val secondaryAppLayer = it.layerState.visibleLayers.firstOrNull { window ->
-                secondaryApp.layerMatchesAnyOf(window)
-            } ?: return@add false
+        wmHelper
+            .StateSyncBuilder()
+            .add("appLayersSwitched") {
+                val primaryAppLayer =
+                    it.layerState.visibleLayers.firstOrNull { window ->
+                        primaryApp.layerMatchesAnyOf(window)
+                    }
+                        ?: return@add false
+                val secondaryAppLayer =
+                    it.layerState.visibleLayers.firstOrNull { window ->
+                        secondaryApp.layerMatchesAnyOf(window)
+                    }
+                        ?: return@add false
 
-            val primaryVisibleRegion = primaryAppLayer.visibleRegion?.bounds
-                ?: return@add false
-            val secondaryVisibleRegion = secondaryAppLayer.visibleRegion?.bounds
-                ?: return@add false
+                val primaryVisibleRegion = primaryAppLayer.visibleRegion?.bounds ?: return@add false
+                val secondaryVisibleRegion =
+                    secondaryAppLayer.visibleRegion?.bounds ?: return@add false
 
-            if (isLandscape(testSpec.endRotation)) {
-                return@add if (testSpec.isTablet) {
-                    secondaryVisibleRegion.right <= primaryVisibleRegion.left
+                if (isLandscape(flicker.scenario.endRotation)) {
+                    return@add if (flicker.scenario.isTablet) {
+                        secondaryVisibleRegion.right <= primaryVisibleRegion.left
+                    } else {
+                        primaryVisibleRegion.right <= secondaryVisibleRegion.left
+                    }
                 } else {
-                    primaryVisibleRegion.right <= secondaryVisibleRegion.left
-                }
-            } else {
-                return@add if (testSpec.isTablet) {
-                    primaryVisibleRegion.bottom <= secondaryVisibleRegion.top
-                } else {
-                    primaryVisibleRegion.bottom <= secondaryVisibleRegion.top
+                    return@add if (flicker.scenario.isTablet) {
+                        primaryVisibleRegion.bottom <= secondaryVisibleRegion.top
+                    } else {
+                        primaryVisibleRegion.bottom <= secondaryVisibleRegion.top
+                    }
                 }
             }
-        }.waitForAndVerify()
+            .waitForAndVerify()
     }
 
-    private fun isLandscape(rotation: Int): Boolean {
+    private fun isLandscape(rotation: Rotation): Boolean {
         val displayBounds = WindowUtils.getDisplayBounds(rotation)
         return displayBounds.width > displayBounds.height
     }
@@ -133,13 +143,13 @@ class SwitchAppByDoubleTapDivider(testSpec: FlickerTestParameter) : SplitScreenB
     @Presubmit
     @Test
     fun cujCompleted() {
-        testSpec.appWindowIsVisibleAtStart(primaryApp)
-        testSpec.appWindowIsVisibleAtStart(secondaryApp)
-        testSpec.splitScreenDividerIsVisibleAtStart()
+        flicker.appWindowIsVisibleAtStart(primaryApp)
+        flicker.appWindowIsVisibleAtStart(secondaryApp)
+        flicker.splitScreenDividerIsVisibleAtStart()
 
-        testSpec.appWindowIsVisibleAtEnd(primaryApp)
-        testSpec.appWindowIsVisibleAtEnd(secondaryApp)
-        testSpec.splitScreenDividerIsVisibleAtEnd()
+        flicker.appWindowIsVisibleAtEnd(primaryApp)
+        flicker.appWindowIsVisibleAtEnd(secondaryApp)
+        flicker.splitScreenDividerIsVisibleAtEnd()
 
         // TODO(b/246490534): Add validation for switched app after withAppTransitionIdle is
         // robust enough to get the correct end state.
@@ -147,93 +157,42 @@ class SwitchAppByDoubleTapDivider(testSpec: FlickerTestParameter) : SplitScreenB
 
     @Presubmit
     @Test
-    fun splitScreenDividerKeepVisible() = testSpec.layerKeepVisible(SPLIT_SCREEN_DIVIDER_COMPONENT)
+    fun splitScreenDividerKeepVisible() = flicker.layerKeepVisible(SPLIT_SCREEN_DIVIDER_COMPONENT)
+
+    @Presubmit @Test fun primaryAppLayerIsVisibleAtEnd() = flicker.layerIsVisibleAtEnd(primaryApp)
 
     @Presubmit
     @Test
-    fun primaryAppLayerIsVisibleAtEnd() = testSpec.layerIsVisibleAtEnd(primaryApp)
+    fun secondaryAppLayerIsVisibleAtEnd() = flicker.layerIsVisibleAtEnd(secondaryApp)
 
     @Presubmit
     @Test
-    fun secondaryAppLayerIsVisibleAtEnd() = testSpec.layerIsVisibleAtEnd(secondaryApp)
+    fun primaryAppBoundsIsVisibleAtEnd() =
+        flicker.splitAppLayerBoundsIsVisibleAtEnd(
+            primaryApp,
+            landscapePosLeft = !tapl.isTablet,
+            portraitPosTop = true
+        )
 
     @Presubmit
     @Test
-    fun primaryAppBoundsIsVisibleAtEnd() = testSpec.splitAppLayerBoundsIsVisibleAtEnd(
-        primaryApp,
-        landscapePosLeft = !tapl.isTablet,
-        portraitPosTop = true
-    )
+    fun secondaryAppBoundsIsVisibleAtEnd() =
+        flicker.splitAppLayerBoundsIsVisibleAtEnd(
+            secondaryApp,
+            landscapePosLeft = tapl.isTablet,
+            portraitPosTop = false
+        )
 
     @Presubmit
     @Test
-    fun secondaryAppBoundsIsVisibleAtEnd() = testSpec.splitAppLayerBoundsIsVisibleAtEnd(
-        secondaryApp,
-        landscapePosLeft = tapl.isTablet,
-        portraitPosTop = false
-    )
+    fun primaryAppWindowIsVisibleAtEnd() = flicker.appWindowIsVisibleAtEnd(primaryApp)
 
     @Presubmit
     @Test
-    fun primaryAppWindowIsVisibleAtEnd() = testSpec.appWindowIsVisibleAtEnd(primaryApp)
-
-    @Presubmit
-    @Test
-    fun secondaryAppWindowIsVisibleAtEnd() = testSpec.appWindowIsVisibleAtEnd(secondaryApp)
+    fun secondaryAppWindowIsVisibleAtEnd() = flicker.appWindowIsVisibleAtEnd(secondaryApp)
 
     /** {@inheritDoc} */
-    @Postsubmit
-    @Test
-    override fun entireScreenCovered() =
-        super.entireScreenCovered()
-
-    /** {@inheritDoc} */
-    @Postsubmit
-    @Test
-    override fun navBarLayerIsVisibleAtStartAndEnd() =
-        super.navBarLayerIsVisibleAtStartAndEnd()
-
-    /** {@inheritDoc} */
-    @Postsubmit
-    @Test
-    override fun navBarLayerPositionAtStartAndEnd() =
-        super.navBarLayerPositionAtStartAndEnd()
-
-    /** {@inheritDoc} */
-    @Postsubmit
-    @Test
-    override fun navBarWindowIsAlwaysVisible() =
-        super.navBarWindowIsAlwaysVisible()
-
-    /** {@inheritDoc} */
-    @Postsubmit
-    @Test
-    override fun statusBarLayerIsVisibleAtStartAndEnd() =
-        super.statusBarLayerIsVisibleAtStartAndEnd()
-
-    /** {@inheritDoc} */
-    @Postsubmit
-    @Test
-    override fun statusBarLayerPositionAtStartAndEnd() =
-        super.statusBarLayerPositionAtStartAndEnd()
-
-    /** {@inheritDoc} */
-    @Postsubmit
-    @Test
-    override fun statusBarWindowIsAlwaysVisible() =
-        super.statusBarWindowIsAlwaysVisible()
-
-    /** {@inheritDoc} */
-    @Postsubmit
-    @Test
-    override fun taskBarLayerIsVisibleAtStartAndEnd() =
-        super.taskBarLayerIsVisibleAtStartAndEnd()
-
-    /** {@inheritDoc} */
-    @Postsubmit
-    @Test
-    override fun taskBarWindowIsAlwaysVisible() =
-        super.taskBarWindowIsAlwaysVisible()
+    @Postsubmit @Test override fun entireScreenCovered() = super.entireScreenCovered()
 
     /** {@inheritDoc} */
     @Postsubmit
@@ -241,20 +200,13 @@ class SwitchAppByDoubleTapDivider(testSpec: FlickerTestParameter) : SplitScreenB
     override fun visibleLayersShownMoreThanOneConsecutiveEntry() =
         super.visibleLayersShownMoreThanOneConsecutiveEntry()
 
-    /** {@inheritDoc} */
-    @Postsubmit
-    @Test
-    override fun visibleWindowsShownMoreThanOneConsecutiveEntry() =
-        super.visibleWindowsShownMoreThanOneConsecutiveEntry()
-
     companion object {
         @Parameterized.Parameters(name = "{0}")
         @JvmStatic
-        fun getParams(): List<FlickerTestParameter> {
-            return FlickerTestParameterFactory.getInstance().getConfigNonRotationTests(
+        fun getParams(): List<FlickerTest> {
+            return FlickerTestFactory.nonRotationTests(
                 // TODO(b/176061063):The 3 buttons of nav bar do not exist in the hierarchy.
-                supportedNavigationModes =
-                listOf(WindowManagerPolicyConstants.NAV_BAR_MODE_GESTURAL_OVERLAY)
+                supportedNavigationModes = listOf(NavBar.MODE_GESTURAL)
             )
         }
     }

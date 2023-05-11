@@ -335,7 +335,7 @@ public class SystemActionPerformer {
         KeyEvent event = KeyEvent.obtain(downTime, time, action, keyCode, 0, 0,
                 KeyCharacterMap.VIRTUAL_KEYBOARD, 0, KeyEvent.FLAG_FROM_SYSTEM,
                 InputDevice.SOURCE_KEYBOARD, null);
-        InputManager.getInstance()
+        mContext.getSystemService(InputManager.class)
                 .injectInputEvent(event, InputManager.INJECT_INPUT_EVENT_MODE_ASYNC);
         event.recycle();
     }
@@ -391,7 +391,7 @@ public class SystemActionPerformer {
     private boolean takeScreenshot() {
         ScreenshotHelper screenshotHelper = (mScreenshotHelperSupplier != null)
                 ? mScreenshotHelperSupplier.get() : new ScreenshotHelper(mContext);
-        screenshotHelper.takeScreenshot(WindowManager.TAKE_SCREENSHOT_FULLSCREEN,
+        screenshotHelper.takeScreenshot(
                 WindowManager.ScreenshotSource.SCREENSHOT_ACCESSIBILITY_ACTIONS,
                 new Handler(Looper.getMainLooper()), null);
         return true;

@@ -1310,6 +1310,22 @@ public final class CameraCharacteristics extends CameraMetadata<CameraCharacteri
             new Key<int[]>("android.control.availableSettingsOverrides", int[].class);
 
     /**
+     * <p>Whether the camera device supports {@link CaptureRequest#CONTROL_AUTOFRAMING android.control.autoframing}.</p>
+     * <p>Will be <code>false</code> if auto-framing is not available.</p>
+     * <p><b>Optional</b> - The value for this key may be {@code null} on some devices.</p>
+     * <p><b>Limited capability</b> -
+     * Present on all camera devices that report being at least {@link CameraCharacteristics#INFO_SUPPORTED_HARDWARE_LEVEL_LIMITED HARDWARE_LEVEL_LIMITED} devices in the
+     * {@link CameraCharacteristics#INFO_SUPPORTED_HARDWARE_LEVEL android.info.supportedHardwareLevel} key</p>
+     *
+     * @see CaptureRequest#CONTROL_AUTOFRAMING
+     * @see CameraCharacteristics#INFO_SUPPORTED_HARDWARE_LEVEL
+     */
+    @PublicKey
+    @NonNull
+    public static final Key<Boolean> CONTROL_AUTOFRAMING_AVAILABLE =
+            new Key<Boolean>("android.control.autoframingAvailable", boolean.class);
+
+    /**
      * <p>List of edge enhancement modes for {@link CaptureRequest#EDGE_MODE android.edge.mode} that are supported by this camera
      * device.</p>
      * <p>Full-capability camera devices must always support OFF; camera devices that support
@@ -3067,17 +3083,67 @@ public final class CameraCharacteristics extends CameraMetadata<CameraCharacteri
      * check if it limits the maximum size for image data.</p>
      * <p>For applications targeting SDK version older than 31, the following table
      * describes the minimum required output stream configurations based on the
-     * hardware level ({@link CameraCharacteristics#INFO_SUPPORTED_HARDWARE_LEVEL android.info.supportedHardwareLevel}):
-     * Format                                             | Size                                         | Hardware Level | Notes
-     * :-------------------------------------------------:|:--------------------------------------------:|:--------------:|:--------------:
-     * {@link android.graphics.ImageFormat#JPEG }          | {@link CameraCharacteristics#SENSOR_INFO_ACTIVE_ARRAY_SIZE android.sensor.info.activeArraySize} (*1)     | Any            |
-     * {@link android.graphics.ImageFormat#JPEG }          | 1920x1080 (1080p)                            | Any            | if 1080p &lt;= activeArraySize
-     * {@link android.graphics.ImageFormat#JPEG }          | 1280x720 (720p)                               | Any            | if 720p &lt;= activeArraySize
-     * {@link android.graphics.ImageFormat#JPEG }          | 640x480 (480p)                               | Any            | if 480p &lt;= activeArraySize
-     * {@link android.graphics.ImageFormat#JPEG }          | 320x240 (240p)                               | Any            | if 240p &lt;= activeArraySize
-     * {@link android.graphics.ImageFormat#YUV_420_888 }   | all output sizes available for JPEG          | FULL           |
-     * {@link android.graphics.ImageFormat#YUV_420_888 }   | all output sizes available for JPEG, up to the maximum video size | LIMITED        |
-     * {@link android.graphics.ImageFormat#PRIVATE }       | same as YUV_420_888                          | Any            |</p>
+     * hardware level ({@link CameraCharacteristics#INFO_SUPPORTED_HARDWARE_LEVEL android.info.supportedHardwareLevel}):</p>
+     * <table>
+     * <thead>
+     * <tr>
+     * <th style="text-align: center;">Format</th>
+     * <th style="text-align: center;">Size</th>
+     * <th style="text-align: center;">Hardware Level</th>
+     * <th style="text-align: center;">Notes</th>
+     * </tr>
+     * </thead>
+     * <tbody>
+     * <tr>
+     * <td style="text-align: center;">{@link android.graphics.ImageFormat#JPEG }</td>
+     * <td style="text-align: center;">{@link CameraCharacteristics#SENSOR_INFO_ACTIVE_ARRAY_SIZE android.sensor.info.activeArraySize} (*1)</td>
+     * <td style="text-align: center;">Any</td>
+     * <td style="text-align: center;"></td>
+     * </tr>
+     * <tr>
+     * <td style="text-align: center;">{@link android.graphics.ImageFormat#JPEG }</td>
+     * <td style="text-align: center;">1920x1080 (1080p)</td>
+     * <td style="text-align: center;">Any</td>
+     * <td style="text-align: center;">if 1080p &lt;= activeArraySize</td>
+     * </tr>
+     * <tr>
+     * <td style="text-align: center;">{@link android.graphics.ImageFormat#JPEG }</td>
+     * <td style="text-align: center;">1280x720 (720p)</td>
+     * <td style="text-align: center;">Any</td>
+     * <td style="text-align: center;">if 720p &lt;= activeArraySize</td>
+     * </tr>
+     * <tr>
+     * <td style="text-align: center;">{@link android.graphics.ImageFormat#JPEG }</td>
+     * <td style="text-align: center;">640x480 (480p)</td>
+     * <td style="text-align: center;">Any</td>
+     * <td style="text-align: center;">if 480p &lt;= activeArraySize</td>
+     * </tr>
+     * <tr>
+     * <td style="text-align: center;">{@link android.graphics.ImageFormat#JPEG }</td>
+     * <td style="text-align: center;">320x240 (240p)</td>
+     * <td style="text-align: center;">Any</td>
+     * <td style="text-align: center;">if 240p &lt;= activeArraySize</td>
+     * </tr>
+     * <tr>
+     * <td style="text-align: center;">{@link android.graphics.ImageFormat#YUV_420_888 }</td>
+     * <td style="text-align: center;">all output sizes available for JPEG</td>
+     * <td style="text-align: center;">FULL</td>
+     * <td style="text-align: center;"></td>
+     * </tr>
+     * <tr>
+     * <td style="text-align: center;">{@link android.graphics.ImageFormat#YUV_420_888 }</td>
+     * <td style="text-align: center;">all output sizes available for JPEG, up to the maximum video size</td>
+     * <td style="text-align: center;">LIMITED</td>
+     * <td style="text-align: center;"></td>
+     * </tr>
+     * <tr>
+     * <td style="text-align: center;">{@link android.graphics.ImageFormat#PRIVATE }</td>
+     * <td style="text-align: center;">same as YUV_420_888</td>
+     * <td style="text-align: center;">Any</td>
+     * <td style="text-align: center;"></td>
+     * </tr>
+     * </tbody>
+     * </table>
      * <p>For applications targeting SDK version 31 or newer, if the mobile device declares to be
      * media performance class 12 or higher by setting
      * {@link android.os.Build.VERSION#MEDIA_PERFORMANCE_CLASS } to be 31 or larger,
@@ -3569,7 +3635,7 @@ public final class CameraCharacteristics extends CameraMetadata<CameraCharacteri
      * <p>An array of mandatory stream combinations which are applicable when device support the
      * 10-bit output capability
      * {@link android.hardware.camera2.CameraCharacteristics#REQUEST_AVAILABLE_CAPABILITIES_DYNAMIC_RANGE_TEN_BIT }
-     * This is an app-readable conversion of the maximum resolution mandatory stream combination
+     * This is an app-readable conversion of the 10 bit output mandatory stream combination
      * {@link android.hardware.camera2.CameraDevice#createCaptureSession tables}.</p>
      * <p>The array of
      * {@link android.hardware.camera2.params.MandatoryStreamCombination combinations} is
@@ -3594,8 +3660,8 @@ public final class CameraCharacteristics extends CameraMetadata<CameraCharacteri
     /**
      * <p>An array of mandatory stream combinations which are applicable when device lists
      * {@code PREVIEW_STABILIZATION} in {@link CameraCharacteristics#CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES android.control.availableVideoStabilizationModes}.
-     * This is an app-readable conversion of the maximum resolution mandatory stream combination
-     * {@link android.hardware.camera2.CameraDevice#createCaptureSession tables}.</p>
+     * This is an app-readable conversion of the preview stabilization mandatory stream
+     * combination {@link android.hardware.camera2.CameraDevice#createCaptureSession tables}.</p>
      * <p>The array of
      * {@link android.hardware.camera2.params.MandatoryStreamCombination combinations} is
      * generated according to the documented
@@ -3690,6 +3756,7 @@ public final class CameraCharacteristics extends CameraMetadata<CameraCharacteri
      *   <li>{@link #SCALER_AVAILABLE_STREAM_USE_CASES_VIDEO_RECORD VIDEO_RECORD}</li>
      *   <li>{@link #SCALER_AVAILABLE_STREAM_USE_CASES_PREVIEW_VIDEO_STILL PREVIEW_VIDEO_STILL}</li>
      *   <li>{@link #SCALER_AVAILABLE_STREAM_USE_CASES_VIDEO_CALL VIDEO_CALL}</li>
+     *   <li>{@link #SCALER_AVAILABLE_STREAM_USE_CASES_CROPPED_RAW CROPPED_RAW}</li>
      * </ul>
      *
      * <p><b>Optional</b> - The value for this key may be {@code null} on some devices.</p>
@@ -3699,6 +3766,7 @@ public final class CameraCharacteristics extends CameraMetadata<CameraCharacteri
      * @see #SCALER_AVAILABLE_STREAM_USE_CASES_VIDEO_RECORD
      * @see #SCALER_AVAILABLE_STREAM_USE_CASES_PREVIEW_VIDEO_STILL
      * @see #SCALER_AVAILABLE_STREAM_USE_CASES_VIDEO_CALL
+     * @see #SCALER_AVAILABLE_STREAM_USE_CASES_CROPPED_RAW
      */
     @PublicKey
     @NonNull
@@ -4522,22 +4590,26 @@ public final class CameraCharacteristics extends CameraMetadata<CameraCharacteri
 
     /**
      * <p>Whether or not the camera device supports readout timestamp and
-     * onReadoutStarted callback.</p>
-     * <p>If this tag is HARDWARE, the camera device calls onReadoutStarted in addition to the
-     * onCaptureStarted callback for each capture. The timestamp passed into the callback
-     * is the start of camera image readout rather than the start of the exposure. In
-     * addition, the application can configure an
-     * {@link android.hardware.camera2.params.OutputConfiguration } with
-     * TIMESTAMP_BASE_READOUT_SENSOR timestamp base, in which case, the timestamp of the
-     * output surface matches the timestamp from the corresponding onReadoutStarted callback.</p>
+     * {@code onReadoutStarted} callback.</p>
+     * <p>If this tag is {@code HARDWARE}, the camera device calls
+     * {@link CameraCaptureSession.CaptureCallback#onReadoutStarted } in addition to the
+     * {@link CameraCaptureSession.CaptureCallback#onCaptureStarted } callback for each capture.
+     * The timestamp passed into the callback is the start of camera image readout rather than
+     * the start of the exposure. The timestamp source of
+     * {@link CameraCaptureSession.CaptureCallback#onReadoutStarted } is the same as that of
+     * {@link CameraCaptureSession.CaptureCallback#onCaptureStarted }.</p>
+     * <p>In addition, the application can switch an output surface's timestamp from start of
+     * exposure to start of readout by calling
+     * {@link android.hardware.camera2.params.OutputConfiguration#setReadoutTimestampEnabled }.</p>
      * <p>The readout timestamp is beneficial for video recording, because the encoder favors
      * uniform timestamps, and the readout timestamps better reflect the cadence camera sensors
      * output data.</p>
-     * <p>If this tag is HARDWARE, the camera device produces the start-of-exposure and
-     * start-of-readout together. As a result, the onReadoutStarted is called right after
-     * onCaptureStarted. The difference in start-of-readout and start-of-exposure is the sensor
-     * exposure time, plus certain constant offset. The offset is usually due to camera sensor
-     * level crop, and it remains constant for a given camera sensor mode.</p>
+     * <p>Note that the camera device produces the start-of-exposure and start-of-readout callbacks
+     * together. As a result, the {@link CameraCaptureSession.CaptureCallback#onReadoutStarted }
+     * is called right after {@link CameraCaptureSession.CaptureCallback#onCaptureStarted }. The
+     * difference in start-of-readout and start-of-exposure is the sensor exposure time, plus
+     * certain constant offset. The offset is usually due to camera sensor level crop, and it is
+     * generally constant over time for the same set of output resolutions and capture settings.</p>
      * <p><b>Possible values:</b></p>
      * <ul>
      *   <li>{@link #SENSOR_READOUT_TIMESTAMP_NOT_SUPPORTED NOT_SUPPORTED}</li>
@@ -4547,7 +4619,6 @@ public final class CameraCharacteristics extends CameraMetadata<CameraCharacteri
      * <p>This key is available on all devices.</p>
      * @see #SENSOR_READOUT_TIMESTAMP_NOT_SUPPORTED
      * @see #SENSOR_READOUT_TIMESTAMP_HARDWARE
-     * @hide
      */
     @PublicKey
     @NonNull
@@ -5497,9 +5568,121 @@ public final class CameraCharacteristics extends CameraMetadata<CameraCharacteri
     public static final Key<Integer> AUTOMOTIVE_LOCATION =
             new Key<Integer>("android.automotive.location", int.class);
 
+    /**
+     * <p>The available Jpeg/R stream
+     * configurations that this camera device supports
+     * (i.e. format, width, height, output/input stream).</p>
+     * <p>The configurations are listed as <code>(format, width, height, input?)</code> tuples.</p>
+     * <p>If the camera device supports Jpeg/R, it will support the same stream combinations with
+     * Jpeg/R as it does with P010. The stream combinations with Jpeg/R (or P010) supported
+     * by the device is determined by the device's hardware level and capabilities.</p>
+     * <p>All the static, control, and dynamic metadata tags related to JPEG apply to Jpeg/R formats.
+     * Configuring JPEG and Jpeg/R streams at the same time is not supported.</p>
+     * <p><b>Optional</b> - The value for this key may be {@code null} on some devices.</p>
+     * <p><b>Limited capability</b> -
+     * Present on all camera devices that report being at least {@link CameraCharacteristics#INFO_SUPPORTED_HARDWARE_LEVEL_LIMITED HARDWARE_LEVEL_LIMITED} devices in the
+     * {@link CameraCharacteristics#INFO_SUPPORTED_HARDWARE_LEVEL android.info.supportedHardwareLevel} key</p>
+     *
+     * @see CameraCharacteristics#INFO_SUPPORTED_HARDWARE_LEVEL
+     * @hide
+     */
+    public static final Key<android.hardware.camera2.params.StreamConfiguration[]> JPEGR_AVAILABLE_JPEG_R_STREAM_CONFIGURATIONS =
+            new Key<android.hardware.camera2.params.StreamConfiguration[]>("android.jpegr.availableJpegRStreamConfigurations", android.hardware.camera2.params.StreamConfiguration[].class);
+
+    /**
+     * <p>This lists the minimum frame duration for each
+     * format/size combination for Jpeg/R output formats.</p>
+     * <p>This should correspond to the frame duration when only that
+     * stream is active, with all processing (typically in android.*.mode)
+     * set to either OFF or FAST.</p>
+     * <p>When multiple streams are used in a request, the minimum frame
+     * duration will be max(individual stream min durations).</p>
+     * <p>See {@link CaptureRequest#SENSOR_FRAME_DURATION android.sensor.frameDuration} and
+     * android.scaler.availableStallDurations for more details about
+     * calculating the max frame rate.</p>
+     * <p><b>Units</b>: (format, width, height, ns) x n</p>
+     * <p><b>Optional</b> - The value for this key may be {@code null} on some devices.</p>
+     * <p><b>Limited capability</b> -
+     * Present on all camera devices that report being at least {@link CameraCharacteristics#INFO_SUPPORTED_HARDWARE_LEVEL_LIMITED HARDWARE_LEVEL_LIMITED} devices in the
+     * {@link CameraCharacteristics#INFO_SUPPORTED_HARDWARE_LEVEL android.info.supportedHardwareLevel} key</p>
+     *
+     * @see CameraCharacteristics#INFO_SUPPORTED_HARDWARE_LEVEL
+     * @see CaptureRequest#SENSOR_FRAME_DURATION
+     * @hide
+     */
+    public static final Key<android.hardware.camera2.params.StreamConfigurationDuration[]> JPEGR_AVAILABLE_JPEG_R_MIN_FRAME_DURATIONS =
+            new Key<android.hardware.camera2.params.StreamConfigurationDuration[]>("android.jpegr.availableJpegRMinFrameDurations", android.hardware.camera2.params.StreamConfigurationDuration[].class);
+
+    /**
+     * <p>This lists the maximum stall duration for each
+     * output format/size combination for Jpeg/R streams.</p>
+     * <p>A stall duration is how much extra time would get added
+     * to the normal minimum frame duration for a repeating request
+     * that has streams with non-zero stall.</p>
+     * <p>This functions similarly to
+     * android.scaler.availableStallDurations for Jpeg/R
+     * streams.</p>
+     * <p>All Jpeg/R output stream formats may have a nonzero stall
+     * duration.</p>
+     * <p><b>Units</b>: (format, width, height, ns) x n</p>
+     * <p><b>Optional</b> - The value for this key may be {@code null} on some devices.</p>
+     * <p><b>Limited capability</b> -
+     * Present on all camera devices that report being at least {@link CameraCharacteristics#INFO_SUPPORTED_HARDWARE_LEVEL_LIMITED HARDWARE_LEVEL_LIMITED} devices in the
+     * {@link CameraCharacteristics#INFO_SUPPORTED_HARDWARE_LEVEL android.info.supportedHardwareLevel} key</p>
+     *
+     * @see CameraCharacteristics#INFO_SUPPORTED_HARDWARE_LEVEL
+     * @hide
+     */
+    public static final Key<android.hardware.camera2.params.StreamConfigurationDuration[]> JPEGR_AVAILABLE_JPEG_R_STALL_DURATIONS =
+            new Key<android.hardware.camera2.params.StreamConfigurationDuration[]>("android.jpegr.availableJpegRStallDurations", android.hardware.camera2.params.StreamConfigurationDuration[].class);
+
+    /**
+     * <p>The available Jpeg/R stream
+     * configurations that this camera device supports
+     * (i.e. format, width, height, output/input stream).</p>
+     * <p>Refer to android.jpegr.availableJpegRStreamConfigurations for details.</p>
+     * <p><b>Optional</b> - The value for this key may be {@code null} on some devices.</p>
+     * @hide
+     */
+    public static final Key<android.hardware.camera2.params.StreamConfiguration[]> JPEGR_AVAILABLE_JPEG_R_STREAM_CONFIGURATIONS_MAXIMUM_RESOLUTION =
+            new Key<android.hardware.camera2.params.StreamConfiguration[]>("android.jpegr.availableJpegRStreamConfigurationsMaximumResolution", android.hardware.camera2.params.StreamConfiguration[].class);
+
+    /**
+     * <p>This lists the minimum frame duration for each
+     * format/size combination for Jpeg/R output formats for CaptureRequests where
+     * {@link CaptureRequest#SENSOR_PIXEL_MODE android.sensor.pixelMode} is set to
+     * {@link android.hardware.camera2.CameraMetadata#SENSOR_PIXEL_MODE_MAXIMUM_RESOLUTION }.</p>
+     * <p>Refer to android.jpegr.availableJpegRMinFrameDurations for details.</p>
+     * <p><b>Units</b>: (format, width, height, ns) x n</p>
+     * <p><b>Optional</b> - The value for this key may be {@code null} on some devices.</p>
+     *
+     * @see CaptureRequest#SENSOR_PIXEL_MODE
+     * @hide
+     */
+    public static final Key<android.hardware.camera2.params.StreamConfigurationDuration[]> JPEGR_AVAILABLE_JPEG_R_MIN_FRAME_DURATIONS_MAXIMUM_RESOLUTION =
+            new Key<android.hardware.camera2.params.StreamConfigurationDuration[]>("android.jpegr.availableJpegRMinFrameDurationsMaximumResolution", android.hardware.camera2.params.StreamConfigurationDuration[].class);
+
+    /**
+     * <p>This lists the maximum stall duration for each
+     * output format/size combination for Jpeg/R streams for CaptureRequests where
+     * {@link CaptureRequest#SENSOR_PIXEL_MODE android.sensor.pixelMode} is set to
+     * {@link android.hardware.camera2.CameraMetadata#SENSOR_PIXEL_MODE_MAXIMUM_RESOLUTION }.</p>
+     * <p>Refer to android.jpegr.availableJpegRStallDurations for details.</p>
+     * <p><b>Units</b>: (format, width, height, ns) x n</p>
+     * <p><b>Optional</b> - The value for this key may be {@code null} on some devices.</p>
+     *
+     * @see CaptureRequest#SENSOR_PIXEL_MODE
+     * @hide
+     */
+    public static final Key<android.hardware.camera2.params.StreamConfigurationDuration[]> JPEGR_AVAILABLE_JPEG_R_STALL_DURATIONS_MAXIMUM_RESOLUTION =
+            new Key<android.hardware.camera2.params.StreamConfigurationDuration[]>("android.jpegr.availableJpegRStallDurationsMaximumResolution", android.hardware.camera2.params.StreamConfigurationDuration[].class);
+
     /*~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~
      * End generated code
      *~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~@~O@*/
+
+
+
 
 
 

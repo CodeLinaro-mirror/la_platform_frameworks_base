@@ -16,8 +16,12 @@
 
 package com.android.server.accessibility;
 
+import static com.android.server.accessibility.ProxyManager.PROXY_COMPONENT_CLASS_NAME;
+import static com.android.server.accessibility.ProxyManager.PROXY_COMPONENT_PACKAGE_NAME;
+
 import android.accessibilityservice.AccessibilityServiceInfo;
 import android.accessibilityservice.AccessibilityTrace;
+import android.accessibilityservice.IAccessibilityServiceClient;
 import android.accessibilityservice.MagnificationConfig;
 import android.annotation.NonNull;
 import android.content.ComponentName;
@@ -31,15 +35,23 @@ import android.os.Binder;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.RemoteCallback;
+import android.os.RemoteException;
 import android.view.KeyEvent;
 import android.view.accessibility.AccessibilityDisplayProxy;
+import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
+import android.view.accessibility.AccessibilityWindowInfo;
 
 import androidx.annotation.Nullable;
 
+import com.android.internal.R;
+import com.android.internal.util.DumpUtils;
 import com.android.server.wm.WindowManagerInternal;
 
+import java.io.FileDescriptor;
+import java.io.PrintWriter;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -53,12 +65,15 @@ import java.util.Set;
  * TODO(241429275): Initialize this when a proxy is registered.
  */
 public class ProxyAccessibilityServiceConnection extends AccessibilityServiceConnection {
-    // Names used to populate ComponentName and ResolveInfo
-    private static final String PROXY_COMPONENT_PACKAGE_NAME = "ProxyPackage";
-    private static final String PROXY_COMPONENT_CLASS_NAME = "ProxyClass";
+    private static final String LOG_TAG = "ProxyAccessibilityServiceConnection";
 
     private int mDisplayId;
     private List<AccessibilityServiceInfo> mInstalledAndEnabledServices;
+
+    /** The stroke width of the focus rectangle in pixels */
+    private int mFocusStrokeWidth;
+    /** The color of the focus rectangle */
+    private int mFocusColor;
 
     ProxyAccessibilityServiceConnection(
             Context context,
@@ -73,6 +88,21 @@ public class ProxyAccessibilityServiceConnection extends AccessibilityServiceCon
                 mainHandler, lock, securityPolicy, systemSupport, trace, windowManagerInternal,
                 /* systemActionPerformer= */ null, awm, /* activityTaskManagerService= */ null);
         mDisplayId = displayId;
+        setDisplayTypes(DISPLAY_TYPE_PROXY);
+        mFocusStrokeWidth = mContext.getResources().getDimensionPixelSize(
+                R.dimen.accessibility_focus_highlight_stroke_width);
+        mFocusColor = mContext.getResources().getColor(
+                R.color.accessibility_focus_highlight_color);
+    }
+
+    /**
+     * Called when the proxy is registered.
+     */
+    void initializeServiceInterface(IAccessibilityServiceClient serviceInterface)
+            throws RemoteException {
+        mServiceInterface = serviceInterface;
+        mService = serviceInterface.asBinder();
+        mServiceInterface.init(this, mId, this.mOverlayWindowTokens.get(mDisplayId));
     }
 
     /**
@@ -89,7 +119,7 @@ public class ProxyAccessibilityServiceConnection extends AccessibilityServiceCon
             synchronized (mLock) {
                 mInstalledAndEnabledServices = infos;
                 final AccessibilityServiceInfo proxyInfo = mAccessibilityServiceInfo;
-                // Reset values.
+                // Reset values. mAccessibilityServiceInfo is not completely reset since it is final
                 proxyInfo.flags = 0;
                 proxyInfo.eventTypes = 0;
                 proxyInfo.notificationTimeout = 0;
@@ -175,6 +205,77 @@ public class ProxyAccessibilityServiceConnection extends AccessibilityServiceCon
         synchronized (mLock) {
             return mInstalledAndEnabledServices;
         }
+    }
+
+    @Override
+    public AccessibilityWindowInfo.WindowListSparseArray getWindows() {
+        final AccessibilityWindowInfo.WindowListSparseArray allWindows = super.getWindows();
+        AccessibilityWindowInfo.WindowListSparseArray displayWindows = new
+                AccessibilityWindowInfo.WindowListSparseArray();
+        // Filter here so A11yInteractionClient will not cache all the windows belonging to other
+        // proxy connections.
+        displayWindows.put(mDisplayId, allWindows.get(mDisplayId, Collections.emptyList()));
+        return displayWindows;
+    }
+
+    @Override
+    public void setFocusAppearance(int strokeWidth, int color) {
+        synchronized (mLock) {
+            if (!hasRightsToCurrentUserLocked()) {
+                return;
+            }
+
+            if (!mSecurityPolicy.checkAccessibilityAccess(this)) {
+                return;
+            }
+
+            if (getFocusStrokeWidthLocked() == strokeWidth && getFocusColorLocked() == color) {
+                return;
+            }
+
+            mFocusStrokeWidth = strokeWidth;
+            mFocusColor = color;
+            // Sets the appearance data in the A11yUserState for now, since the A11yManagers are not
+            // separated.
+            // TODO(254545943): Separate proxy and non-proxy states so the focus appearance on the
+            // phone is not affected by the appearance of a proxy-ed app.
+            mSystemSupport.setCurrentUserFocusAppearance(mFocusStrokeWidth, mFocusColor);
+            mSystemSupport.onClientChangeLocked(false);
+        }
+    }
+
+    /**
+     * Gets the stroke width of the focus rectangle.
+     * @return The stroke width.
+     */
+    public int getFocusStrokeWidthLocked() {
+        return mFocusStrokeWidth;
+    }
+
+    /**
+     * Gets the color of the focus rectangle.
+     * @return The color.
+     */
+    public int getFocusColorLocked() {
+        return mFocusColor;
+    }
+
+    @Override
+    int resolveAccessibilityWindowIdForFindFocusLocked(int windowId, int focusType) {
+        if (windowId == AccessibilityWindowInfo.ANY_WINDOW_ID) {
+            final int focusedWindowId = mA11yWindowManager.getFocusedWindowId(focusType,
+                    mDisplayId);
+            // If the caller is a proxy and the found window doesn't belong to a proxy display
+            // (or vice versa), then return null. This doesn't work if there are multiple active
+            // proxys, but in the future this code shouldn't be needed if input focus
+            // properly split. (so we will deal with the issues if we see them).
+            //TODO(254545943): Remove this when there is user and proxy separation of input
+            if (!mA11yWindowManager.windowIdBelongsToDisplayType(focusedWindowId, mDisplayTypes)) {
+                return AccessibilityWindowInfo.UNDEFINED_WINDOW_ID;
+            }
+            return focusedWindowId;
+        }
+        return windowId;
     }
 
     @Override
@@ -469,5 +570,26 @@ public class ProxyAccessibilityServiceConnection extends AccessibilityServiceCon
     @Override
     public void setAnimationScale(float scale) throws UnsupportedOperationException {
         throw new UnsupportedOperationException("setAnimationScale is not supported");
+    }
+
+    @Override
+    public void dump(FileDescriptor fd, final PrintWriter pw, String[] args) {
+        if (!DumpUtils.checkDumpPermission(mContext, LOG_TAG, pw)) return;
+        synchronized (mLock) {
+            pw.append("Proxy[displayId=" + mDisplayId);
+            pw.append(", feedbackType"
+                    + AccessibilityServiceInfo.feedbackTypeToString(mFeedbackType));
+            pw.append(", capabilities=" + mAccessibilityServiceInfo.getCapabilities());
+            pw.append(", eventTypes="
+                    + AccessibilityEvent.eventTypeToString(mEventTypes));
+            pw.append(", notificationTimeout=" + mNotificationTimeout);
+            pw.append(", focusStrokeWidth=").append(String.valueOf(mFocusStrokeWidth));
+            pw.append(", focusColor=").append(String.valueOf(mFocusColor));
+            pw.append(", installedAndEnabledServiceCount=").append(String.valueOf(
+                    mInstalledAndEnabledServices.size()));
+            pw.append(", installedAndEnabledServices=").append(
+                    mInstalledAndEnabledServices.toString());
+            pw.append("]");
+        }
     }
 }

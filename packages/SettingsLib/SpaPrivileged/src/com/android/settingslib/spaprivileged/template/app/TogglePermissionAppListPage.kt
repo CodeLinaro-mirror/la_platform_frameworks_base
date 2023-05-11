@@ -22,7 +22,6 @@ import android.os.Bundle
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
-import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -43,7 +42,8 @@ import com.android.settingslib.spaprivileged.model.app.AppListModel
 import com.android.settingslib.spaprivileged.model.app.AppRecord
 import com.android.settingslib.spaprivileged.model.app.userId
 import com.android.settingslib.spaprivileged.model.enterprise.Restrictions
-import com.android.settingslib.spaprivileged.model.enterprise.RestrictionsProvider
+import com.android.settingslib.spaprivileged.model.enterprise.RestrictionsProviderFactory
+import com.android.settingslib.spaprivileged.model.enterprise.RestrictionsProviderImpl
 import com.android.settingslib.spaprivileged.template.preference.RestrictedSwitchPreference
 import kotlinx.coroutines.flow.Flow
 
@@ -65,43 +65,18 @@ internal class TogglePermissionAppListPageProvider(
         val permissionType = parameter.getStringArg(PERMISSION, arguments)!!
         val appListPage = SettingsPage.create(name, parameter = parameter, arguments = arguments)
         val appInfoPage = TogglePermissionAppInfoPageProvider.buildPageData(permissionType)
-        val entryList = mutableListOf<SettingsEntry>()
         // TODO: add more categories, such as personal, work, cloned, etc.
-        for (category in listOf("personal")) {
-            entryList.add(
-                SettingsEntryBuilder.createLinkFrom("${ENTRY_NAME}_$category", appListPage)
-                    .setLink(toPage = appInfoPage)
-                    .setIsAllowSearch(false)
-                    .build()
-            )
+        return listOf("personal").map { category ->
+            SettingsEntryBuilder.createLinkFrom("${ENTRY_NAME}_$category", appListPage)
+                .setLink(toPage = appInfoPage)
+                .build()
         }
-        return entryList
     }
 
     @Composable
     override fun Page(arguments: Bundle?) {
-        TogglePermissionAppList(arguments?.getString(PERMISSION)!!)
-    }
-
-    @Composable
-    private fun TogglePermissionAppList(permissionType: String) {
-        val listModel = appListTemplate.rememberModel(permissionType)
-        val context = LocalContext.current
-        val internalListModel = remember {
-            TogglePermissionInternalAppListModel(context, listModel)
-        }
-        AppListPage(
-            title = stringResource(listModel.pageTitleResId),
-            listModel = internalListModel,
-        ) { itemModel ->
-            AppListItem(
-                itemModel = itemModel,
-                onClick = TogglePermissionAppInfoPageProvider.navigator(
-                    permissionType = permissionType,
-                    app = itemModel.record.app,
-                ),
-            )
-        }
+        val permissionType = arguments?.getString(PERMISSION)!!
+        appListTemplate.rememberModel(permissionType).TogglePermissionAppList(permissionType)
     }
 
     companion object {
@@ -121,7 +96,7 @@ internal class TogglePermissionAppListPageProvider(
                 parameter = PAGE_PARAMETER,
                 arguments = bundleOf(PERMISSION to permissionType)
             )
-            return SettingsEntryBuilder.createInject(owner = appListPage).setIsAllowSearch(false)
+            return SettingsEntryBuilder.createInject(owner = appListPage)
                 .setUiLayoutFn {
                     val listModel = rememberContext(listModelSupplier)
                     Preference(
@@ -135,9 +110,32 @@ internal class TogglePermissionAppListPageProvider(
     }
 }
 
+@Composable
+internal fun <T : AppRecord> TogglePermissionAppListModel<T>.TogglePermissionAppList(
+    permissionType: String,
+    restrictionsProviderFactory: RestrictionsProviderFactory = ::RestrictionsProviderImpl,
+    appList: @Composable AppListInput<T>.() -> Unit = { AppList() },
+) {
+    val context = LocalContext.current
+    AppListPage(
+        title = stringResource(pageTitleResId),
+        listModel = remember {
+            TogglePermissionInternalAppListModel(
+                context = context,
+                permissionType = permissionType,
+                listModel = this,
+                restrictionsProviderFactory = restrictionsProviderFactory,
+            )
+        },
+        appList = appList,
+    )
+}
+
 internal class TogglePermissionInternalAppListModel<T : AppRecord>(
     private val context: Context,
+    private val permissionType: String,
     private val listModel: TogglePermissionAppListModel<T>,
+    private val restrictionsProviderFactory: RestrictionsProviderFactory,
 ) : AppListModel<T> {
     override fun transform(userIdFlow: Flow<Int>, appListFlow: Flow<List<ApplicationInfo>>) =
         listModel.transform(userIdFlow, appListFlow)
@@ -146,38 +144,46 @@ internal class TogglePermissionInternalAppListModel<T : AppRecord>(
         listModel.filter(userIdFlow, recordListFlow)
 
     @Composable
-    override fun getSummary(option: Int, record: T): State<String> {
-        return getSummary(record)
-    }
+    override fun getSummary(option: Int, record: T) = getSummary(record)
 
     @Composable
     fun getSummary(record: T): State<String> {
-        val restrictionsProvider = remember {
+        val restrictionsProvider = remember(record.app.userId) {
             val restrictions = Restrictions(
                 userId = record.app.userId,
                 keys = listModel.switchRestrictionKeys,
             )
-            RestrictionsProvider(context, restrictions)
+            restrictionsProviderFactory(context, restrictions)
         }
-        val restrictedMode = restrictionsProvider.restrictedMode.observeAsState()
+        val restrictedMode = restrictionsProvider.restrictedModeState()
         val allowed = listModel.isAllowed(record)
         return remember {
             derivedStateOf {
                 RestrictedSwitchPreference.getSummary(
                     context = context,
                     restrictedMode = restrictedMode.value,
-                    noRestrictedSummary = getNoRestrictedSummary(allowed),
+                    summaryIfNoRestricted = getSummaryIfNoRestricted(allowed),
                     checked = allowed,
                 ).value
             }
         }
     }
 
-    private fun getNoRestrictedSummary(allowed: State<Boolean?>) = derivedStateOf {
+    private fun getSummaryIfNoRestricted(allowed: State<Boolean?>) = derivedStateOf {
         when (allowed.value) {
             true -> context.getString(R.string.app_permission_summary_allowed)
             false -> context.getString(R.string.app_permission_summary_not_allowed)
-            else -> context.getString(R.string.summary_placeholder)
+            null -> context.getString(R.string.summary_placeholder)
         }
+    }
+
+    @Composable
+    override fun AppListItemModel<T>.AppItem() {
+        AppListItem(
+            onClick = TogglePermissionAppInfoPageProvider.navigator(
+                permissionType = permissionType,
+                app = record.app,
+            ),
+        )
     }
 }

@@ -35,7 +35,7 @@ import com.android.internal.os.KernelCpuUidTimeReader.KernelCpuUidFreqTimeReader
 import com.android.internal.os.KernelCpuUidTimeReader.KernelCpuUidUserSysTimeReader;
 import com.android.internal.os.KernelSingleUidTimeReader;
 import com.android.internal.os.PowerProfile;
-import com.android.internal.power.MeasuredEnergyStats;
+import com.android.internal.power.EnergyConsumerStats;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -78,11 +78,13 @@ public class MockBatteryStatsImpl extends BatteryStatsImpl {
 
     public void initMeasuredEnergyStats(String[] customBucketNames) {
         final boolean[] supportedStandardBuckets =
-                new boolean[MeasuredEnergyStats.NUMBER_STANDARD_POWER_BUCKETS];
+                new boolean[EnergyConsumerStats.NUMBER_STANDARD_POWER_BUCKETS];
         Arrays.fill(supportedStandardBuckets, true);
-        mMeasuredEnergyStatsConfig = new MeasuredEnergyStats.Config(supportedStandardBuckets,
-                customBucketNames, new int[0], new String[]{""});
-        mGlobalMeasuredEnergyStats = new MeasuredEnergyStats(mMeasuredEnergyStatsConfig);
+        synchronized (this) {
+            mEnergyConsumerStatsConfig = new EnergyConsumerStats.Config(supportedStandardBuckets,
+                    customBucketNames, new int[0], new String[]{""});
+            mGlobalEnergyConsumerStats = new EnergyConsumerStats(mEnergyConsumerStatsConfig);
+        }
     }
 
     public TimeBase getOnBatteryTimeBase() {
@@ -211,6 +213,13 @@ public class MockBatteryStatsImpl extends BatteryStatsImpl {
         return this;
     }
 
+    @GuardedBy("this")
+    public MockBatteryStatsImpl setPerUidModemModel(int perUidModemModel) {
+        mConstants.PER_UID_MODEM_MODEL = perUidModemModel;
+        mConstants.onChange();
+        return this;
+    }
+
     public int getAndClearExternalStatsSyncFlags() {
         final int flags = mExternalStatsSync.flags;
         mExternalStatsSync.flags = 0;
@@ -220,6 +229,10 @@ public class MockBatteryStatsImpl extends BatteryStatsImpl {
     public void setDummyExternalStatsSync(DummyExternalStatsSync externalStatsSync) {
         mExternalStatsSync = externalStatsSync;
         setExternalStatsSyncLocked(mExternalStatsSync);
+    }
+
+    @Override
+    public void writeSyncLocked() {
     }
 
     public static class DummyExternalStatsSync implements ExternalStatsSync {

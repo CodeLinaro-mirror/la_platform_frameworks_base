@@ -50,6 +50,8 @@ import android.util.SparseArray;
 import android.view.Display;
 import android.view.Surface;
 
+import com.android.internal.R;
+
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
@@ -64,6 +66,16 @@ import java.util.concurrent.Executor;
 public final class DisplayManager {
     private static final String TAG = "DisplayManager";
     private static final boolean DEBUG = false;
+    private static final boolean ENABLE_VIRTUAL_DISPLAY_REFRESH_RATE = true;
+
+    /**
+     * The hdr output control feature flag, the value should be read via
+     * {@link android.provider.DeviceConfig#getBoolean(String, String, boolean)} with
+     * {@link android.provider.DeviceConfig#NAMESPACE_DISPLAY_MANAGER} as the namespace.
+     * @hide
+     */
+    @TestApi
+    public static final String HDR_OUTPUT_CONTROL_FLAG = "enable_hdr_output_control";
 
     private final Context mContext;
     private final DisplayManagerGlobal mGlobal;
@@ -112,6 +124,24 @@ public final class DisplayManager {
             "android.hardware.display.category.PRESENTATION";
 
     /**
+     * Display category: Rear displays.
+     * <p>
+     * This category can be used to identify complementary internal displays that are facing away
+     * from the user.
+     * Certain applications may present to this display.
+     * Similar to presentation displays.
+     * </p>
+     *
+     * @see android.app.Presentation
+     * @see Display#FLAG_PRESENTATION
+     * @see #getDisplays(String)
+     * @hide
+     */
+    @TestApi
+    public static final String DISPLAY_CATEGORY_REAR =
+            "android.hardware.display.category.REAR";
+
+    /**
      * Display category: All displays, including disabled displays.
      * <p>
      * This returns all displays, including currently disabled and inaccessible displays.
@@ -137,7 +167,9 @@ public final class DisplayManager {
             VIRTUAL_DISPLAY_FLAG_TRUSTED,
             VIRTUAL_DISPLAY_FLAG_OWN_DISPLAY_GROUP,
             VIRTUAL_DISPLAY_FLAG_ALWAYS_UNLOCKED,
-            VIRTUAL_DISPLAY_FLAG_TOUCH_FEEDBACK_DISABLED
+            VIRTUAL_DISPLAY_FLAG_TOUCH_FEEDBACK_DISABLED,
+            VIRTUAL_DISPLAY_FLAG_OWN_FOCUS,
+            VIRTUAL_DISPLAY_FLAG_STEAL_TOP_FOCUS_DISABLED,
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface VirtualDisplayFlag {}
@@ -403,6 +435,43 @@ public final class DisplayManager {
      */
     public static final int VIRTUAL_DISPLAY_FLAG_TOUCH_FEEDBACK_DISABLED = 1 << 13;
 
+    /**
+     * Virtual display flags: Indicates that the display maintains its own focus and touch mode.
+     *
+     * This flag is similar to {@link com.android.internal.R.bool.config_perDisplayFocusEnabled} in
+     * behavior, but only applies to the specific display instead of system-wide to all displays.
+     *
+     * Note: The display must be trusted in order to have its own focus.
+     *
+     * @see #createVirtualDisplay
+     * @see #VIRTUAL_DISPLAY_FLAG_TRUSTED
+     * @hide
+     */
+    @TestApi
+    public static final int VIRTUAL_DISPLAY_FLAG_OWN_FOCUS = 1 << 14;
+
+    /**
+     * Virtual display flags: Indicates that the display should not be a part of the default
+     * DisplayGroup and instead be part of a DisplayGroup associated with its virtual device.
+     *
+     * @see #createVirtualDisplay
+     * @hide
+     */
+    public static final int VIRTUAL_DISPLAY_FLAG_DEVICE_DISPLAY_GROUP = 1 << 15;
+
+
+    /**
+     * Virtual display flags: Indicates that the display should not become the top focused display
+     * by stealing the top focus from another display.
+     *
+     * @see Display#FLAG_STEAL_TOP_FOCUS_DISABLED
+     * @see #createVirtualDisplay
+     * @see #VIRTUAL_DISPLAY_FLAG_OWN_FOCUS
+     * @hide
+     */
+    @SystemApi
+    public static final int VIRTUAL_DISPLAY_FLAG_STEAL_TOP_FOCUS_DISABLED = 1 << 16;
+
     /** @hide */
     @IntDef(prefix = {"MATCH_CONTENT_FRAMERATE_"}, value = {
             MATCH_CONTENT_FRAMERATE_UNKNOWN,
@@ -481,7 +550,8 @@ public final class DisplayManager {
             EVENT_FLAG_DISPLAY_ADDED,
             EVENT_FLAG_DISPLAY_CHANGED,
             EVENT_FLAG_DISPLAY_REMOVED,
-            EVENT_FLAG_DISPLAY_BRIGHTNESS
+            EVENT_FLAG_DISPLAY_BRIGHTNESS,
+            EVENT_FLAG_HDR_SDR_RATIO_CHANGED
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface EventsMask {}
@@ -523,6 +593,19 @@ public final class DisplayManager {
      * @hide
      */
     public static final long EVENT_FLAG_DISPLAY_BRIGHTNESS = 1L << 3;
+
+    /**
+     * Event flag to register for a display's hdr/sdr ratio changes. This notification is sent
+     * through the {@link DisplayListener#onDisplayChanged} callback method. New hdr/sdr
+     * values can be retrieved via {@link Display#getHdrSdrRatio()}.
+     *
+     * Requires that {@link Display#isHdrSdrRatioAvailable()} is true.
+     *
+     * @see #registerDisplayListener(DisplayListener, Handler, long)
+     *
+     * @hide
+     */
+    public static final long EVENT_FLAG_HDR_SDR_RATIO_CHANGED = 1L << 4;
 
     /** @hide */
     public DisplayManager(Context context) {
@@ -571,18 +654,28 @@ public final class DisplayManager {
      * @see #DISPLAY_CATEGORY_PRESENTATION
      */
     public Display[] getDisplays(String category) {
-        final int[] displayIds = mGlobal.getDisplayIds();
+        boolean includeDisabled = (category != null
+                && category.equals(DISPLAY_CATEGORY_ALL_INCLUDING_DISABLED));
+        final int[] displayIds = mGlobal.getDisplayIds(includeDisabled);
         synchronized (mLock) {
             try {
-                if (category == null
+                if (DISPLAY_CATEGORY_PRESENTATION.equals(category)) {
+                    addDisplaysLocked(mTempDisplays, displayIds, Display.TYPE_WIFI,
+                            Display.FLAG_PRESENTATION);
+                    addDisplaysLocked(mTempDisplays, displayIds, Display.TYPE_EXTERNAL,
+                            Display.FLAG_PRESENTATION);
+                    addDisplaysLocked(mTempDisplays, displayIds, Display.TYPE_OVERLAY,
+                            Display.FLAG_PRESENTATION);
+                    addDisplaysLocked(mTempDisplays, displayIds, Display.TYPE_VIRTUAL,
+                            Display.FLAG_PRESENTATION);
+                    addDisplaysLocked(mTempDisplays, displayIds, Display.TYPE_INTERNAL,
+                            Display.FLAG_PRESENTATION);
+                } else if (DISPLAY_CATEGORY_REAR.equals(category)) {
+                    addDisplaysLocked(mTempDisplays, displayIds, Display.TYPE_INTERNAL,
+                            Display.FLAG_REAR);
+                } else if (category == null
                         || DISPLAY_CATEGORY_ALL_INCLUDING_DISABLED.equals(category)) {
                     addAllDisplaysLocked(mTempDisplays, displayIds);
-                } else if (category.equals(DISPLAY_CATEGORY_PRESENTATION)) {
-                    addPresentationDisplaysLocked(mTempDisplays, displayIds, Display.TYPE_WIFI);
-                    addPresentationDisplaysLocked(mTempDisplays, displayIds, Display.TYPE_EXTERNAL);
-                    addPresentationDisplaysLocked(mTempDisplays, displayIds, Display.TYPE_OVERLAY);
-                    addPresentationDisplaysLocked(mTempDisplays, displayIds, Display.TYPE_VIRTUAL);
-                    addPresentationDisplaysLocked(mTempDisplays, displayIds, Display.TYPE_INTERNAL);
                 }
                 return mTempDisplays.toArray(new Display[mTempDisplays.size()]);
             } finally {
@@ -600,15 +693,16 @@ public final class DisplayManager {
         }
     }
 
-    private void addPresentationDisplaysLocked(
-            ArrayList<Display> displays, int[] displayIds, int matchType) {
-        for (int i = 0; i < displayIds.length; i++) {
-            if (displayIds[i] == DEFAULT_DISPLAY) {
+    private void addDisplaysLocked(
+            ArrayList<Display> displays, int[] displayIds, int matchType, int flagMask) {
+        for (int displayId : displayIds) {
+            if (displayId == DEFAULT_DISPLAY) {
                 continue;
             }
-            Display display = getOrCreateDisplayLocked(displayIds[i], true /*assumeValid*/);
+
+            Display display = getOrCreateDisplayLocked(displayId, /* assumeValid= */ true);
             if (display != null
-                    && (display.getFlags() & Display.FLAG_PRESENTATION) != 0
+                    && (display.getFlags() & flagMask) == flagMask
                     && display.getType() == matchType) {
                 displays.add(display);
             }
@@ -944,13 +1038,65 @@ public final class DisplayManager {
             @VirtualDisplayFlag int flags,
             @Nullable VirtualDisplay.Callback callback,
             @Nullable Handler handler) {
-        final VirtualDisplayConfig.Builder builder = new VirtualDisplayConfig.Builder(name, width,
-                height, densityDpi);
+        final VirtualDisplayConfig.Builder builder =
+                new VirtualDisplayConfig.Builder(name, width, height, densityDpi);
         builder.setFlags(flags);
         if (surface != null) {
             builder.setSurface(surface);
         }
-        return createVirtualDisplay(null /* projection */, builder.build(), callback, handler,
+        return createVirtualDisplay(builder.build(), handler, callback);
+    }
+
+    /**
+     * Creates a virtual display.
+     *
+     * @see #createVirtualDisplay(VirtualDisplayConfig, Handler, VirtualDisplay.Callback)
+     */
+    @Nullable
+    public VirtualDisplay createVirtualDisplay(@NonNull VirtualDisplayConfig config) {
+        return createVirtualDisplay(config, /*handler=*/null, /*callback=*/null);
+    }
+
+    /**
+     * Creates a virtual display.
+     * <p>
+     * The content of a virtual display is rendered to a {@link Surface} provided
+     * by the application.
+     * </p><p>
+     * The virtual display should be {@link VirtualDisplay#release released}
+     * when no longer needed.  Because a virtual display renders to a surface
+     * provided by the application, it will be released automatically when the
+     * process terminates and all remaining windows on it will be forcibly removed.
+     * </p><p>
+     * The behavior of the virtual display depends on the flags that are provided
+     * to this method.  By default, virtual displays are created to be private,
+     * non-presentation and unsecure.  Permissions may be required to use certain flags.
+     * </p><p>
+     * As of {@link android.os.Build.VERSION_CODES#KITKAT_WATCH}, the surface may
+     * be attached or detached dynamically using {@link VirtualDisplay#setSurface}.
+     * Previously, the surface had to be non-null when {@link #createVirtualDisplay}
+     * was called and could not be changed for the lifetime of the display.
+     * </p><p>
+     * Detaching the surface that backs a virtual display has a similar effect to
+     * turning off the screen.
+     * </p>
+     *
+     * @param config The configuration of the virtual display, must be non-null.
+     * @param handler The handler on which the listener should be invoked, or null
+     * if the listener should be invoked on the calling thread's looper.
+     * @param callback Callback to call when the state of the {@link VirtualDisplay} changes
+     * @return The newly created virtual display, or null if the application could
+     * not create the virtual display.
+     *
+     * @throws SecurityException if the caller does not have permission to create
+     * a virtual display with flags specified in the configuration.
+     */
+    @Nullable
+    public VirtualDisplay createVirtualDisplay(
+            @NonNull VirtualDisplayConfig config,
+            @Nullable Handler handler,
+            @Nullable VirtualDisplay.Callback callback) {
+        return createVirtualDisplay(null /* projection */, config, callback, handler,
                 null /* windowContext */);
     }
 
@@ -1258,6 +1404,75 @@ public final class DisplayManager {
     }
 
     /**
+     * Sets the HDR conversion mode for the device.
+     *
+     * @param hdrConversionMode The {@link HdrConversionMode} to set.
+     * Note, {@code HdrConversionMode.preferredHdrOutputType} is only applicable when
+     * {@code HdrConversionMode.conversionMode} is {@link HdrConversionMode#HDR_CONVERSION_FORCE}.
+     * If {@code HdrConversionMode.preferredHdrOutputType} is not set in case when
+     * {@code HdrConversionMode.conversionMode} is {@link HdrConversionMode#HDR_CONVERSION_FORCE},
+     * it means that preferred output type is SDR.
+     *
+     * @throws IllegalArgumentException if hdrConversionMode.preferredHdrOutputType is set but
+     * hdrConversionMode.conversionMode is not {@link HdrConversionMode#HDR_CONVERSION_FORCE}.
+     *
+     * @see #getHdrConversionMode
+     * @see #getHdrConversionModeSetting
+     * @see #getSupportedHdrOutputTypes
+     * @hide
+     */
+    @TestApi
+    @RequiresPermission(Manifest.permission.MODIFY_HDR_CONVERSION_MODE)
+    public void setHdrConversionMode(@NonNull HdrConversionMode hdrConversionMode) {
+        mGlobal.setHdrConversionMode(hdrConversionMode);
+    }
+
+    /**
+     * Returns the {@link HdrConversionMode} of the device, which is set by the user.
+     *
+     * When {@link HdrConversionMode#getConversionMode} is
+     * {@link HdrConversionMode#HDR_CONVERSION_SYSTEM}, the
+     * {@link HdrConversionMode#getPreferredHdrOutputType} depicts the systemPreferredHdrOutputType.
+     * The HDR conversion mode chosen by user which considers the app override is returned. Apps can
+     * override HDR conversion using
+     * {@link android.view.WindowManager.LayoutParams#setHdrConversionEnabled(boolean)}.
+     */
+    @NonNull
+    public HdrConversionMode getHdrConversionMode() {
+        return mGlobal.getHdrConversionMode();
+    }
+
+    /**
+     * Returns the {@link HdrConversionMode} of the device, which is set by the user.
+
+     * The HDR conversion mode chosen by user is returned irrespective of whether HDR conversion
+     * is disabled by an app.
+     *
+     * @see #setHdrConversionMode
+     * @see #getSupportedHdrOutputTypes
+     * @see #getHdrConversionMode
+     * @hide
+     */
+    @TestApi
+    @NonNull
+    public HdrConversionMode getHdrConversionModeSetting() {
+        return mGlobal.getHdrConversionModeSetting();
+    }
+
+    /**
+     * Returns the HDR output types supported by the device.
+     *
+     * @see #getHdrConversionMode
+     * @see #setHdrConversionMode
+     * @hide
+     */
+    @TestApi
+    @NonNull
+    public @HdrType int[] getSupportedHdrOutputTypes() {
+        return mGlobal.getSupportedHdrOutputTypes();
+    }
+
+    /**
      * When enabled the app requested mode is always selected regardless of user settings and
      * policies for low brightness, low battery, etc.
      *
@@ -1279,6 +1494,22 @@ public final class DisplayManager {
     @RequiresPermission(Manifest.permission.OVERRIDE_DISPLAY_MODE_REQUESTS)
     public boolean shouldAlwaysRespectAppRequestedMode() {
         return mGlobal.shouldAlwaysRespectAppRequestedMode();
+    }
+
+    /**
+     * Returns whether device supports seamless refresh rate switching.
+     *
+     * Match content frame rate setting has three options: seamless, non-seamless and never.
+     * The seamless option does nothing if the device does not support seamless refresh rate
+     * switching. This API is used in such a case to hide the seamless option.
+     *
+     * @see DisplayManager#setRefreshRateSwitchingType
+     * @see DisplayManager#getMatchContentFrameRateUserPreference
+     * @hide
+     */
+    public boolean supportsSeamlessRefreshRateSwitching() {
+        return mContext.getResources().getBoolean(
+                R.bool.config_supportsSeamlessRefreshRateSwitching);
     }
 
     /**

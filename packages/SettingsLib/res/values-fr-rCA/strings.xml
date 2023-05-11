@@ -467,7 +467,8 @@
     <string name="power_charging" msgid="6727132649743436802">"<xliff:g id="LEVEL">%1$s</xliff:g> - <xliff:g id="STATE">%2$s</xliff:g>"</string>
     <string name="power_remaining_charging_duration_only" msgid="8085099012811384899">"<xliff:g id="TIME">%1$s</xliff:g> jusqu\'à la recharge complète"</string>
     <string name="power_charging_duration" msgid="6127154952524919719">"<xliff:g id="LEVEL">%1$s</xliff:g> (<xliff:g id="TIME">%2$s</xliff:g> jusqu\'à la recharge complète)"</string>
-    <string name="power_charging_limited" msgid="6971664137170239141">"<xliff:g id="LEVEL">%1$s</xliff:g> - La recharge est interrompue"</string>
+    <string name="power_charging_limited" msgid="8202147604844938236">"<xliff:g id="LEVEL">%1$s</xliff:g> - Recharge optimisée"</string>
+    <string name="power_charging_future_paused" msgid="4730177778538118032">"<xliff:g id="LEVEL">%1$s</xliff:g> - Recharge optimisée"</string>
     <string name="battery_info_status_unknown" msgid="268625384868401114">"Inconnu"</string>
     <string name="battery_info_status_charging" msgid="4279958015430387405">"Charge en cours…"</string>
     <string name="battery_info_status_charging_fast" msgid="8027559755902954885">"Recharge rapide"</string>
@@ -539,6 +540,13 @@
     <string name="media_transfer_this_device_name" product="default" msgid="2357329267148436433">"Ce téléphone"</string>
     <string name="media_transfer_this_device_name" product="tablet" msgid="3714653244000242800">"Cette tablette"</string>
     <string name="media_transfer_this_phone" msgid="7194341457812151531">"Ce téléphone"</string>
+    <string name="media_output_status_unknown_error" msgid="5098565887497902222">"Impossible de faire jouer le contenu sur cet appareil"</string>
+    <string name="media_output_status_require_premium" msgid="8411255800047014822">"Mettez à jour le compte pour passer à la version payante"</string>
+    <string name="media_output_status_not_support_downloads" msgid="4523828729240373315">"Lecture des téléchargements impossible ici"</string>
+    <string name="media_output_status_try_after_ad" msgid="8312579066856015441">"Réessayez après l\'annonce"</string>
+    <string name="media_output_status_device_in_low_power_mode" msgid="8184631698321758451">"Activer l\'appareil pour faire jouer le contenu ici"</string>
+    <string name="media_output_status_unauthorized" msgid="5880222828273853838">"L\'appareil n\'est pas autorisé à faire jouer le contenu"</string>
+    <string name="media_output_status_track_unsupported" msgid="5576313219317709664">"Impossible de faire jouer ce contenu multimédia ici"</string>
     <string name="profile_connect_timeout_subtext" msgid="4043408193005851761">"Problème de connexion. Éteingez et rallumez l\'appareil"</string>
     <string name="media_transfer_wired_device_name" msgid="4447880899964056007">"Appareil audio à câble"</string>
     <string name="help_label" msgid="3528360748637781274">"Aide et commentaires"</string>
@@ -563,6 +571,8 @@
     <string name="user_add_user_title" msgid="5457079143694924885">"Ajouter un utilisateur?"</string>
     <string name="user_add_user_message_long" msgid="1527434966294733380">"Vous pouvez partager cet appareil avec d\'autres personnes en ajoutant des utilisateurs. Chaque utilisateur dispose de son propre espace, où il peut personnaliser, entre autres, ses applications et son fond d\'écran. Chacun peut également modifier les paramètres de l\'appareil, comme les réseaux Wi-Fi, qui touchent tous les utilisateurs.\n\nLorsque vous ajoutez un utilisateur, celui-ci doit configurer son propre espace.\n\nTout utilisateur peut mettre à jour les applications pour les autres utilisateurs. Il se peut que les paramètres et les services d\'accessibilité ne soient pas transférés aux nouveaux utilisateurs."</string>
     <string name="user_add_user_message_short" msgid="3295959985795716166">"Lorsque vous ajoutez un utilisateur, celui-ci doit configurer son espace.\n\nTout utilisateur peut mettre à jour les applications pour tous les autres utilisateurs."</string>
+    <string name="user_grant_admin_title" msgid="5565796912475193314">"Privi. d\'admin. à l\'utilisateur?"</string>
+    <string name="user_grant_admin_message" msgid="7925257971286380976">"En tant qu\'administrateur, il pourra gérer d\'autres utilisateurs, modifier les paramètres de l\'appareil et rétablir les paramètres par défaut de l\'appareil."</string>
     <string name="user_setup_dialog_title" msgid="8037342066381939995">"Configurer l\'utilisateur?"</string>
     <string name="user_setup_dialog_message" msgid="269931619868102841">"Assurez-vous que la personne est disponible et qu\'elle peut utiliser l\'appareil pour configurer son espace."</string>
     <string name="user_setup_profile_dialog_message" msgid="4788197052296962620">"Configurer le profil maintenant?"</string>
@@ -594,6 +604,8 @@
     <string name="guest_reset_and_restart_dialog_message" msgid="2764425635305200790">"Une nouvelle session d\'invité sera lancée, et toutes les applications et données de la session en cours seront supprimées"</string>
     <string name="guest_exit_dialog_title" msgid="1846494656849381804">"Quitter le mode Invité?"</string>
     <string name="guest_exit_dialog_message" msgid="1743218864242719783">"Les applications et les données de la session d\'invité en cours seront supprimées"</string>
+    <string name="grant_admin" msgid="4273077214151417783">"Accorder des privilèges d\'administrateur à cet utilisateur"</string>
+    <string name="not_grant_admin" msgid="6985027675930546850">"Ne pas accorder de privilèges d\'administrateur à l\'utilisateur"</string>
     <string name="guest_exit_dialog_button" msgid="1736401897067442044">"Quitter"</string>
     <string name="guest_exit_dialog_title_non_ephemeral" msgid="7675327443743162986">"Enregistrer l\'activité d\'invité?"</string>
     <string name="guest_exit_dialog_message_non_ephemeral" msgid="223385323235719442">"Vous pouvez enregistrer l\'activité de session ou supprimer les applis et données"</string>
@@ -661,4 +673,10 @@
     <string name="back_navigation_animation" msgid="8105467568421689484">"Animations pour le retour prédictif"</string>
     <string name="back_navigation_animation_summary" msgid="741292224121599456">"Activer les animations système pour le retour prédictif."</string>
     <string name="back_navigation_animation_dialog" msgid="8696966520944625596">"Ce paramètre permet d\'activer les animations du système pour l\'animation des gestes prédictifs. Cela exige de définir le paramètre enableOnBackInvokedCallback à Vrai pour chaque application dans le fichier de configuration."</string>
+  <string-array name="udfps_accessibility_touch_hints">
+    <item msgid="1737722959616802157">"Déplacez vers la gauche"</item>
+    <item msgid="5425394847942513942">"Déplacez vers le bas"</item>
+    <item msgid="7728484337962740316">"Déplacez vers la droite"</item>
+    <item msgid="324200556467459329">"Déplacez vers le haut"</item>
+  </string-array>
 </resources>

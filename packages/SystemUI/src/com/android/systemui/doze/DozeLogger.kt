@@ -96,13 +96,11 @@ class DozeLogger @Inject constructor(
     fun logFling(
         expand: Boolean,
         aboveThreshold: Boolean,
-        thresholdNeeded: Boolean,
         screenOnFromTouch: Boolean
     ) {
         buffer.log(TAG, DEBUG, {
             bool1 = expand
             bool2 = aboveThreshold
-            bool3 = thresholdNeeded
             bool4 = screenOnFromTouch
         }, {
             "Fling expand=$bool1 aboveThreshold=$bool2 thresholdNeeded=$bool3 " +
@@ -363,6 +361,14 @@ class DozeLogger @Inject constructor(
             str1 = sensor
         }, {
             "Skipping sensor registration because its already registered. sensor=$str1"
+        })
+    }
+
+    fun logSetIgnoreTouchWhilePulsing(ignoreTouchWhilePulsing: Boolean) {
+        buffer.log(TAG, DEBUG, {
+            bool1 = ignoreTouchWhilePulsing
+        }, {
+            "Prox changed while pulsing. setIgnoreTouchWhilePulsing=$bool1"
         })
     }
 

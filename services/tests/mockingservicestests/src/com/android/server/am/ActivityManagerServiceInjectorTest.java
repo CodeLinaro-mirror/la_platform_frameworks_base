@@ -31,11 +31,11 @@ import android.os.UserManager;
 import android.util.Log;
 import android.view.Display;
 
-import com.android.dx.mockito.inline.extended.StaticMockitoSessionBuilder;
-import com.android.server.ExtendedMockitoTestCase;
+import com.android.server.ExtendedMockitoRule;
 import com.android.server.am.ActivityManagerService.Injector;
 
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.mockito.Mock;
 
@@ -45,7 +45,7 @@ import java.util.Arrays;
  * Run as {@code atest
  * FrameworksMockingServicesTests:com.android.server.am.ActivityManagerServiceInjectorTest}
  */
-public final class ActivityManagerServiceInjectorTest extends ExtendedMockitoTestCase {
+public final class ActivityManagerServiceInjectorTest {
 
     private static final String TAG = ActivityManagerServiceInjectorTest.class.getSimpleName();
 
@@ -63,76 +63,76 @@ public final class ActivityManagerServiceInjectorTest extends ExtendedMockitoTes
         when(mContext.getSystemService(DisplayManager.class)).thenReturn(mDisplayManager);
     }
 
-    @Override
-    protected void initializeSession(StaticMockitoSessionBuilder builder) {
-        builder.spyStatic(UserManager.class);
-    }
+    @Rule
+    public final ExtendedMockitoRule mExtendedMockitoRule = new ExtendedMockitoRule.Builder(this)
+            .spyStatic(UserManager.class)
+            .build();
 
     @Test
-    public void testGetSecondaryDisplayIdsForStartingBackgroundUsers_notSupported() {
+    public void testGetDisplayIdsForStartingBackgroundUsers_notSupported() {
         mockUmIsUsersOnSecondaryDisplaysEnabled(false);
 
-        int [] displayIds = mInjector.getSecondaryDisplayIdsForStartingBackgroundUsers();
+        int [] displayIds = mInjector.getDisplayIdsForStartingVisibleBackgroundUsers();
 
-        assertWithMessage("mAms.getSecondaryDisplayIdsForStartingBackgroundUsers()")
+        assertWithMessage("mAms.getDisplayIdsForStartingBackgroundUsers()")
                 .that(displayIds).isNull();
     }
 
     @Test
-    public void testGetSecondaryDisplayIdsForStartingBackgroundUsers_noDisplaysAtAll() {
+    public void testGetDisplayIdsForStartingBackgroundUsers_noDisplaysAtAll() {
         mockUmIsUsersOnSecondaryDisplaysEnabled(true);
         mockGetDisplays();
 
-        int[] displayIds = mInjector.getSecondaryDisplayIdsForStartingBackgroundUsers();
+        int[] displayIds = mInjector.getDisplayIdsForStartingVisibleBackgroundUsers();
 
-        assertWithMessage("mAms.getSecondaryDisplayIdsForStartingBackgroundUsers()")
+        assertWithMessage("mAms.getDisplayIdsForStartingBackgroundUsers()")
                 .that(displayIds).isNull();
     }
 
     @Test
-    public void testGetSecondaryDisplayIdsForStartingBackgroundUsers_defaultDisplayOnly() {
+    public void testGetDisplayIdsForStartingBackgroundUsers_defaultDisplayOnly() {
         mockUmIsUsersOnSecondaryDisplaysEnabled(true);
         mockGetDisplays(mDefaultDisplay);
 
-        int[] displayIds = mInjector.getSecondaryDisplayIdsForStartingBackgroundUsers();
+        int[] displayIds = mInjector.getDisplayIdsForStartingVisibleBackgroundUsers();
 
-        assertWithMessage("mAms.getSecondaryDisplayIdsForStartingBackgroundUsers()")
+        assertWithMessage("mAms.getDisplayIdsForStartingBackgroundUsers()")
                 .that(displayIds).isNull();
     }
 
     @Test
-    public void testGetSecondaryDisplayIdsForStartingBackgroundUsers_noDefaultDisplay() {
+    public void testGetDisplayIdsForStartingBackgroundUsers_noDefaultDisplay() {
         mockUmIsUsersOnSecondaryDisplaysEnabled(true);
         mockGetDisplays(validDisplay(42));
 
-        int[] displayIds = mInjector.getSecondaryDisplayIdsForStartingBackgroundUsers();
+        int[] displayIds = mInjector.getDisplayIdsForStartingVisibleBackgroundUsers();
 
-        assertWithMessage("mAms.getSecondaryDisplayIdsForStartingBackgroundUsers()")
+        assertWithMessage("mAms.getDisplayIdsForStartingBackgroundUsers()")
                 .that(displayIds).isNull();
     }
 
     @Test
-    public void testGetSecondaryDisplayIdsForStartingBackgroundUsers_mixed() {
+    public void testGetDisplayIdsForStartingBackgroundUsers_mixed() {
         mockUmIsUsersOnSecondaryDisplaysEnabled(true);
         mockGetDisplays(mDefaultDisplay, validDisplay(42), invalidDisplay(108));
 
-        int[] displayIds = mInjector.getSecondaryDisplayIdsForStartingBackgroundUsers();
+        int[] displayIds = mInjector.getDisplayIdsForStartingVisibleBackgroundUsers();
 
-        assertWithMessage("mAms.getSecondaryDisplayIdsForStartingBackgroundUsers()")
+        assertWithMessage("mAms.getDisplayIdsForStartingBackgroundUsers()")
                 .that(displayIds).isNotNull();
-        assertWithMessage("mAms.getSecondaryDisplayIdsForStartingBackgroundUsers()")
+        assertWithMessage("mAms.getDisplayIdsForStartingBackgroundUsers()")
                 .that(displayIds).asList().containsExactly(42);
     }
 
     // Extra test to make sure the array is properly copied...
     @Test
-    public void testGetSecondaryDisplayIdsForStartingBackgroundUsers_mixed_invalidFirst() {
+    public void testGetDisplayIdsForStartingBackgroundUsers_mixed_invalidFirst() {
         mockUmIsUsersOnSecondaryDisplaysEnabled(true);
         mockGetDisplays(invalidDisplay(108), mDefaultDisplay, validDisplay(42));
 
-        int[] displayIds = mInjector.getSecondaryDisplayIdsForStartingBackgroundUsers();
+        int[] displayIds = mInjector.getDisplayIdsForStartingVisibleBackgroundUsers();
 
-        assertWithMessage("mAms.getSecondaryDisplayIdsForStartingBackgroundUsers()")
+        assertWithMessage("mAms.getDisplayIdsForStartingBackgroundUsers()")
                 .that(displayIds).asList().containsExactly(42);
     }
 
@@ -160,6 +160,6 @@ public final class ActivityManagerServiceInjectorTest extends ExtendedMockitoTes
 
     private void mockUmIsUsersOnSecondaryDisplaysEnabled(boolean enabled) {
         Log.d(TAG, "Mocking UserManager.isUsersOnSecondaryDisplaysEnabled() to return " + enabled);
-        doReturn(enabled).when(() -> UserManager.isUsersOnSecondaryDisplaysEnabled());
+        doReturn(enabled).when(() -> UserManager.isVisibleBackgroundUsersEnabled());
     }
 }

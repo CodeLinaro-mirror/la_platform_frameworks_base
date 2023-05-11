@@ -17,26 +17,26 @@
 package com.android.server.wm.flicker.close
 
 import android.platform.test.annotations.Presubmit
+import android.tools.common.datatypes.component.ComponentNameMatcher.Companion.LAUNCHER
+import android.tools.device.apphelpers.StandardAppHelper
+import android.tools.device.flicker.legacy.FlickerBuilder
+import android.tools.device.flicker.legacy.FlickerTest
 import com.android.server.wm.flicker.BaseTest
-import com.android.server.wm.flicker.FlickerTestParameter
-import com.android.server.wm.flicker.dsl.FlickerBuilder
 import com.android.server.wm.flicker.helpers.SimpleAppHelper
-import com.android.server.wm.flicker.helpers.StandardAppHelper
 import com.android.server.wm.flicker.helpers.setRotation
 import com.android.server.wm.flicker.replacesLayer
-import com.android.server.wm.traces.common.ComponentNameMatcher.Companion.LAUNCHER
 import org.junit.Test
 
 /** Base test class for transitions that close an app back to the launcher screen */
-abstract class CloseAppTransition(testSpec: FlickerTestParameter) : BaseTest(testSpec) {
+abstract class CloseAppTransition(flicker: FlickerTest) : BaseTest(flicker) {
     protected open val testApp: StandardAppHelper = SimpleAppHelper(instrumentation)
 
     /** {@inheritDoc} */
     override val transition: FlickerBuilder.() -> Unit = {
         setup {
-            tapl.setExpectedRotation(testSpec.startRotation)
+            tapl.setExpectedRotation(flicker.scenario.startRotation.value)
             testApp.launchViaIntent(wmHelper)
-            this.setRotation(testSpec.startRotation)
+            this.setRotation(flicker.scenario.startRotation)
         }
         teardown { testApp.exit(wmHelper) }
     }
@@ -48,7 +48,7 @@ abstract class CloseAppTransition(testSpec: FlickerTestParameter) : BaseTest(tes
     @Presubmit
     @Test
     open fun launcherReplacesAppWindowAsTopWindow() {
-        testSpec.assertWm { this.isAppWindowOnTop(testApp).then().isAppWindowOnTop(LAUNCHER) }
+        flicker.assertWm { this.isAppWindowOnTop(testApp).then().isAppWindowOnTop(LAUNCHER) }
     }
 
     /**
@@ -58,17 +58,17 @@ abstract class CloseAppTransition(testSpec: FlickerTestParameter) : BaseTest(tes
     @Presubmit
     @Test
     open fun launcherWindowBecomesVisible() {
-        testSpec.assertWm { this.isAppWindowNotOnTop(LAUNCHER).then().isAppWindowOnTop(LAUNCHER) }
+        flicker.assertWm { this.isAppWindowNotOnTop(LAUNCHER).then().isAppWindowOnTop(LAUNCHER) }
     }
 
     /** Checks that [LAUNCHER] layer becomes visible when [testApp] becomes invisible */
     @Presubmit
     @Test
     open fun launcherLayerReplacesApp() {
-        testSpec.replacesLayer(
+        flicker.replacesLayer(
             testApp,
             LAUNCHER,
-            ignoreEntriesWithRotationLayer = testSpec.isLandscapeOrSeascapeAtStart
+            ignoreEntriesWithRotationLayer = flicker.scenario.isLandscapeOrSeascapeAtStart
         )
     }
 }

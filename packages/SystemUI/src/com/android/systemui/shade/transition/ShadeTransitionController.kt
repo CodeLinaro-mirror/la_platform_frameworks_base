@@ -43,8 +43,6 @@ constructor(
     shadeExpansionStateManager: ShadeExpansionStateManager,
     dumpManager: DumpManager,
     private val context: Context,
-    private val splitShadeOverScrollerFactory: SplitShadeOverScroller.Factory,
-    private val noOpOverScroller: NoOpOverScroller,
     private val scrimShadeTransitionController: ScrimShadeTransitionController,
     private val statusBarStateController: SysuiStatusBarStateController,
 ) {
@@ -57,17 +55,6 @@ constructor(
     private var currentPanelState: Int? = null
     private var lastShadeExpansionChangeEvent: ShadeExpansionChangeEvent? = null
 
-    private val splitShadeOverScroller by lazy {
-        splitShadeOverScrollerFactory.create({ qs }, { notificationStackScrollLayoutController })
-    }
-    private val shadeOverScroller: ShadeOverScroller
-        get() =
-            if (inSplitShade && isScreenUnlocked() && propertiesInitialized()) {
-                splitShadeOverScroller
-            } else {
-                noOpOverScroller
-            }
-
     init {
         updateResources()
         configurationController.addCallback(
@@ -78,7 +65,7 @@ constructor(
             })
         shadeExpansionStateManager.addExpansionListener(this::onPanelExpansionChanged)
         shadeExpansionStateManager.addStateListener(this::onPanelStateChanged)
-        dumpManager.registerDumpable("ShadeTransitionController") { printWriter, _ ->
+        dumpManager.registerCriticalDumpable("ShadeTransitionController") { printWriter, _ ->
             dump(printWriter)
         }
     }
@@ -89,20 +76,13 @@ constructor(
 
     private fun onPanelStateChanged(@PanelState state: Int) {
         currentPanelState = state
-        shadeOverScroller.onPanelStateChanged(state)
         scrimShadeTransitionController.onPanelStateChanged(state)
     }
 
     private fun onPanelExpansionChanged(event: ShadeExpansionChangeEvent) {
         lastShadeExpansionChangeEvent = event
-        shadeOverScroller.onDragDownAmountChanged(event.dragDownPxAmount)
         scrimShadeTransitionController.onPanelExpansionChanged(event)
     }
-
-    private fun propertiesInitialized() =
-        this::qs.isInitialized &&
-            this::notificationPanelViewController.isInitialized &&
-            this::notificationStackScrollLayoutController.isInitialized
 
     private fun dump(pw: PrintWriter) {
         pw.println(

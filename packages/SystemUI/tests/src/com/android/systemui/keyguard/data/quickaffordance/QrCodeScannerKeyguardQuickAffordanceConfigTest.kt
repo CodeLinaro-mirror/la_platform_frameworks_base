@@ -18,27 +18,28 @@
 package com.android.systemui.keyguard.data.quickaffordance
 
 import android.content.Intent
+import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.keyguard.data.quickaffordance.KeyguardQuickAffordanceConfig.OnTriggeredResult
 import com.android.systemui.qrcodescanner.controller.QRCodeScannerController
 import com.android.systemui.util.mockito.argumentCaptor
 import com.android.systemui.util.mockito.mock
+import com.android.systemui.util.mockito.whenever
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.test.runBlockingTest
+import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.junit.runners.JUnit4
 import org.mockito.Mock
 import org.mockito.Mockito.verify
-import org.mockito.Mockito.`when` as whenever
 import org.mockito.MockitoAnnotations
 
 @SmallTest
-@RunWith(JUnit4::class)
+@RunWith(AndroidJUnit4::class)
 class QrCodeScannerKeyguardQuickAffordanceConfigTest : SysuiTestCase() {
 
     @Mock private lateinit var controller: QRCodeScannerController
@@ -132,6 +133,33 @@ class QrCodeScannerKeyguardQuickAffordanceConfigTest : SysuiTestCase() {
                     canShowWhileLocked = true,
                 )
             )
+    }
+
+    @Test
+    fun `getPickerScreenState - enabled if configured on device - can open camera`() = runTest {
+        whenever(controller.isAvailableOnDevice).thenReturn(true)
+        whenever(controller.isAbleToOpenCameraApp).thenReturn(true)
+
+        assertThat(underTest.getPickerScreenState())
+            .isEqualTo(KeyguardQuickAffordanceConfig.PickerScreenState.Default())
+    }
+
+    @Test
+    fun `getPickerScreenState - disabled if configured on device - cannot open camera`() = runTest {
+        whenever(controller.isAvailableOnDevice).thenReturn(true)
+        whenever(controller.isAbleToOpenCameraApp).thenReturn(false)
+
+        assertThat(underTest.getPickerScreenState())
+            .isInstanceOf(KeyguardQuickAffordanceConfig.PickerScreenState.Disabled::class.java)
+    }
+
+    @Test
+    fun `getPickerScreenState - unavailable if not configured on device`() = runTest {
+        whenever(controller.isAvailableOnDevice).thenReturn(false)
+        whenever(controller.isAbleToOpenCameraApp).thenReturn(true)
+
+        assertThat(underTest.getPickerScreenState())
+            .isEqualTo(KeyguardQuickAffordanceConfig.PickerScreenState.UnavailableOnDevice)
     }
 
     private fun assertVisibleState(latest: KeyguardQuickAffordanceConfig.LockScreenState?) {

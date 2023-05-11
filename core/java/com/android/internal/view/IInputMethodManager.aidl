@@ -17,11 +17,13 @@
 package com.android.internal.view;
 
 import android.os.ResultReceiver;
+import android.view.inputmethod.ImeTracker;
 import android.view.inputmethod.InputMethodInfo;
 import android.view.inputmethod.InputMethodSubtype;
 import android.view.inputmethod.EditorInfo;
 import android.window.ImeOnBackInvokedDispatcher;
 
+import com.android.internal.inputmethod.IImeTracker;
 import com.android.internal.inputmethod.IInputMethodClient;
 import com.android.internal.inputmethod.IRemoteAccessibilityInputConnection;
 import com.android.internal.inputmethod.IRemoteInputConnection;
@@ -34,6 +36,11 @@ import com.android.internal.inputmethod.InputBindResult;
 interface IInputMethodManager {
     void addClient(in IInputMethodClient client, in IRemoteInputConnection inputmethod,
             int untrustedDisplayId);
+
+    // TODO: Use ParceledListSlice instead
+    @JavaPassthrough(annotation="@android.annotation.RequiresPermission(value = "
+            + "android.Manifest.permission.INTERACT_ACROSS_USERS_FULL, conditional = true)")
+    InputMethodInfo getCurrentInputMethodInfoAsUser(int userId);
 
     // TODO: Use ParceledListSlice instead
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission(value = "
@@ -54,11 +61,12 @@ interface IInputMethodManager {
             + "android.Manifest.permission.INTERACT_ACROSS_USERS_FULL, conditional = true)")
     InputMethodSubtype getLastInputMethodSubtype(int userId);
 
-    boolean showSoftInput(in IInputMethodClient client, @nullable IBinder windowToken, int flags,
-            int lastClickToolType, in @nullable ResultReceiver resultReceiver, int reason);
-    boolean hideSoftInput(in IInputMethodClient client, @nullable IBinder windowToken, int flags,
+    boolean showSoftInput(in IInputMethodClient client, @nullable IBinder windowToken,
+            in @nullable ImeTracker.Token statsToken, int flags, int lastClickToolType,
             in @nullable ResultReceiver resultReceiver, int reason);
-
+    boolean hideSoftInput(in IInputMethodClient client, @nullable IBinder windowToken,
+            in @nullable ImeTracker.Token statsToken, int flags,
+            in @nullable ResultReceiver resultReceiver, int reason);
     // If windowToken is null, this just does startInput().  Otherwise this reports that a window
     // has gained focus, and if 'editorInfo' is non-null then also does startInput.
     // @NonNull
@@ -140,6 +148,15 @@ interface IInputMethodManager {
     /** Start Stylus handwriting session **/
     void startStylusHandwriting(in IInputMethodClient client);
 
+    /** Prepares delegation of starting stylus handwriting session to a different editor **/
+    void prepareStylusHandwritingDelegation(in IInputMethodClient client,
+                in String delegatePackageName,
+                in String delegatorPackageName);
+
+    /** Accepts and starts a stylus handwriting session for the delegate view **/
+    boolean acceptStylusHandwritingDelegation(in IInputMethodClient client,
+                in String delegatePackageName, in String delegatorPackageName);
+
     /** Returns {@code true} if currently selected IME supports Stylus handwriting. */
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission(value = "
             + "android.Manifest.permission.INTERACT_ACROSS_USERS_FULL, conditional = true)")
@@ -156,4 +173,10 @@ interface IInputMethodManager {
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission(value = "
             + "android.Manifest.permission.TEST_INPUT_METHOD)")
     void setStylusWindowIdleTimeoutForTest(in IInputMethodClient client, long timeout);
+
+    /**
+     * Returns the singleton instance for the Ime Tracker Service.
+     * {@hide}
+     */
+    IImeTracker getImeTrackerService();
 }

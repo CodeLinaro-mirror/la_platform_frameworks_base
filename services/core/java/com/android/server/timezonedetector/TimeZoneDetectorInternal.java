@@ -56,14 +56,14 @@ public interface TimeZoneDetectorInternal {
      * valid but does not change the time zone because it matches the current device time zone is
      * considered accepted.
      */
-    boolean setManualTimeZoneForDpm(@NonNull ManualTimeZoneSuggestion timeZoneSuggestion);
+    boolean setManualTimeZoneForDpm(@NonNull ManualTimeZoneSuggestion suggestion);
 
     /**
-     * Suggests the current time zone, determined using geolocation, to the detector. The
-     * detector may ignore the signal based on system settings, whether better information is
-     * available, and so on. This method may be implemented asynchronously.
+     * Handles the supplied {@link LocationAlgorithmEvent}. The detector may ignore the event based
+     * on system settings, whether better information is available, and so on. This method may be
+     * implemented asynchronously.
      */
-    void suggestGeolocationTimeZone(@NonNull GeolocationTimeZoneSuggestion timeZoneSuggestion);
+    void handleLocationAlgorithmEvent(@NonNull LocationAlgorithmEvent locationAlgorithmEvent);
 
     /** Generates a state snapshot for metrics. */
     @NonNull

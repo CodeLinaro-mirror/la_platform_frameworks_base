@@ -84,7 +84,6 @@ stubs_defaults {
         ":framework-connectivity-sources",
         ":framework-bluetooth-sources",
         ":framework-connectivity-tiramisu-updatable-sources",
-        ":framework-federatedcompute-sources",
         ":framework-graphics-srcs",
         ":framework-mediaprovider-sources",
         ":framework-nearby-sources",
@@ -184,6 +183,7 @@ droidstubs {
 /////////////////////////////////////////////////////////////////////
 
 framework_docs_only_args = " -android -manifest $(location core/res/AndroidManifest.xml) " +
+    "-metalavaApiSince " +
     "-werror -lerror -hide 111 -hide 113 -hide 125 -hide 126 -hide 127 -hide 128 " +
     "-overview $(location core/java/overview.html) " +
     // Federate Support Library references against local API file.
@@ -375,7 +375,7 @@ droiddoc {
     ],
     proofread_file: "ds-docs-proofread.txt",
     args: framework_docs_only_args +
-        " -toroot / -yamlV2 -metalavaApiSince -samplegroup Admin " +
+        " -toroot / -yamlV2 -samplegroup Admin " +
         " -samplegroup Background " +
         " -samplegroup Connectivity " +
         " -samplegroup Content " +
@@ -422,26 +422,27 @@ java_genrule {
         "$(location merge_zips) $(out) $(location :ds-docs-java{.docs.zip}) $(genDir)/ds-docs-kt-moved.zip",
 }
 
-java_genrule {
-    name: "ds-docs-switched",
-    tools: [
-        "switcher4",
-        "soong_zip",
-    ],
-    srcs: [
-        ":ds-docs-java{.docs.zip}",
-        ":ds-docs-kt{.docs.zip}",
-    ],
-    out: ["ds-docs-switched.zip"],
-    dist: {
-        targets: ["docs"],
-    },
-    cmd: "unzip -q $(location :ds-docs-java{.docs.zip}) -d $(genDir) && " +
-        "unzip -q $(location :ds-docs-kt{.docs.zip}) -d $(genDir)/en/reference/kotlin && " +
-        "SWITCHER=$$(cd $$(dirname $(location switcher4)) && pwd)/$$(basename $(location switcher4)) && " +
-        "(cd $(genDir)/en/reference && $$SWITCHER --work platform) > /dev/null && " +
-        "$(location soong_zip) -o $(out) -C $(genDir) -D $(genDir)",
-}
+// Disable doc generation until Doclava is migrated to JDK 17 (b/240421555).
+// java_genrule {
+//     name: "ds-docs-switched",
+//     tools: [
+//         "switcher4",
+//         "soong_zip",
+//     ],
+//     srcs: [
+//         ":ds-docs-java{.docs.zip}",
+//         ":ds-docs-kt{.docs.zip}",
+//     ],
+//     out: ["ds-docs-switched.zip"],
+//     dist: {
+//         targets: ["docs"],
+//     },
+//     cmd: "unzip -q $(location :ds-docs-java{.docs.zip}) -d $(genDir) && " +
+//         "unzip -q $(location :ds-docs-kt{.docs.zip}) -d $(genDir)/en/reference/kotlin && " +
+//         "SWITCHER=$$(cd $$(dirname $(location switcher4)) && pwd)/$$(basename $(location switcher4)) && " +
+//         "(cd $(genDir)/en/reference && $$SWITCHER --work platform) > /dev/null && " +
+//         "$(location soong_zip) -o $(out) -C $(genDir) -D $(genDir)",
+// }
 
 droiddoc {
     name: "ds-static-docs",

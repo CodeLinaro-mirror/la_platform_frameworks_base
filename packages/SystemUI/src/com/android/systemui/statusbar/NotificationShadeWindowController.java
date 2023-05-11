@@ -123,9 +123,6 @@ public interface NotificationShadeWindowController extends RemoteInputController
     /** Sets whether the window was collapsed by force or not. */
     default void setForceWindowCollapsed(boolean force) {}
 
-    /** Sets whether panel is expanded or not. */
-    default void setPanelExpanded(boolean isExpanded) {}
-
     /** Gets whether the panel is expanded or not. */
     default boolean getPanelExpanded() {
         return false;
@@ -145,6 +142,9 @@ public interface NotificationShadeWindowController extends RemoteInputController
 
     /** Sets the state of whether sysui is dozing or not. */
     default void setDozing(boolean dozing) {}
+
+    /** Sets the state of whether sysui is dreaming or not. */
+    default void setDreaming(boolean dreaming) {}
 
     /** Sets the state of whether plugin open is forced or not. */
     default void setForcePluginOpen(boolean forcePluginOpen, Object token) {}

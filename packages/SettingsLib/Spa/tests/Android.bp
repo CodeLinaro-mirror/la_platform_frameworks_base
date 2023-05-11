@@ -22,17 +22,19 @@ android_test {
     name: "SpaLibTests",
     test_suites: ["device-tests"],
 
-    srcs: ["src/**/*.kt"],
+    srcs: [
+        ":SpaLib_srcs",
+        "src/**/*.kt",
+    ],
 
     static_libs: [
         "SpaLib",
-        "androidx.test.runner",
-        "androidx.test.ext.junit",
+        "SpaLibTestUtils",
         "androidx.compose.runtime_runtime",
-        "androidx.compose.ui_ui-test-junit4",
-        "androidx.compose.ui_ui-test-manifest",
+        "androidx.lifecycle_lifecycle-runtime-testing",
+        "androidx.test.ext.junit",
+        "androidx.test.runner",
         "mockito-target-minus-junit4",
-        "truth-prebuilt",
     ],
     kotlincflags: ["-Xjvm-default=all"],
     min_sdk_version: "31",

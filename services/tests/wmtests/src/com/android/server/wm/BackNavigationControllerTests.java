@@ -16,9 +16,17 @@
 
 package com.android.server.wm;
 
+import static android.app.ActivityOptions.ANIM_SCENE_TRANSITION;
+import static android.app.WindowConfiguration.ACTIVITY_TYPE_STANDARD;
+import static android.app.WindowConfiguration.WINDOWING_MODE_MULTI_WINDOW;
 import static android.content.pm.ApplicationInfo.PRIVATE_FLAG_EXT_ENABLE_ON_BACK_INVOKED_CALLBACK;
 import static android.view.WindowManager.LayoutParams.FIRST_APPLICATION_WINDOW;
+import static android.view.WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
+import static android.view.WindowManager.LayoutParams.TYPE_BASE_APPLICATION;
 import static android.window.BackNavigationInfo.typeToString;
+
+import static com.android.dx.mockito.inline.extended.ExtendedMockito.doReturn;
+import static com.android.dx.mockito.inline.extended.ExtendedMockito.spyOn;
 
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
@@ -26,29 +34,30 @@ import static com.google.common.truth.Truth.assertWithMessage;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
-import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
-import android.hardware.HardwareBuffer;
+import android.app.ActivityOptions;
+import android.content.Context;
+import android.content.pm.ApplicationInfo;
+import android.os.Bundle;
+import android.os.RemoteCallback;
 import android.os.RemoteException;
 import android.platform.test.annotations.Presubmit;
+import android.util.ArraySet;
 import android.view.WindowManager;
 import android.window.BackAnimationAdapter;
-import android.window.BackEvent;
+import android.window.BackMotionEvent;
 import android.window.BackNavigationInfo;
 import android.window.IOnBackInvokedCallback;
 import android.window.OnBackInvokedCallback;
 import android.window.OnBackInvokedCallbackInfo;
 import android.window.OnBackInvokedDispatcher;
-import android.window.TaskSnapshot;
 import android.window.WindowOnBackInvokedDispatcher;
 
 import com.android.server.LocalServices;
@@ -67,6 +76,7 @@ public class BackNavigationControllerTests extends WindowTestsBase {
     private BackNavigationController mBackNavigationController;
     private WindowManagerInternal mWindowManagerInternal;
     private BackAnimationAdapter mBackAnimationAdapter;
+    private Task mRootHomeTask;
 
     @Before
     public void setUp() throws Exception {
@@ -76,6 +86,7 @@ public class BackNavigationControllerTests extends WindowTestsBase {
         LocalServices.addService(WindowManagerInternal.class, mWindowManagerInternal);
         mBackNavigationController.setWindowManager(mWm);
         mBackAnimationAdapter = mock(BackAnimationAdapter.class);
+        mRootHomeTask = initHomeActivity();
     }
 
     @Test
@@ -90,9 +101,7 @@ public class BackNavigationControllerTests extends WindowTestsBase {
                 .isEqualTo(typeToString(BackNavigationInfo.TYPE_RETURN_TO_HOME));
 
         // verify if back animation would start.
-        verify(mBackNavigationController).scheduleAnimationLocked(
-                eq(BackNavigationInfo.TYPE_RETURN_TO_HOME), any(), eq(mBackAnimationAdapter),
-                any());
+        assertTrue("Animation scheduled", backNavigationInfo.isPrepareRemoteAnimation());
     }
 
     @Test
@@ -101,16 +110,65 @@ public class BackNavigationControllerTests extends WindowTestsBase {
         ActivityRecord recordA = createActivityRecord(taskA);
         Mockito.doNothing().when(recordA).reparentSurfaceControl(any(), any());
 
-        withSystemCallback(createTopTaskWithActivity());
+        final Task topTask = createTopTaskWithActivity();
+        withSystemCallback(topTask);
         BackNavigationInfo backNavigationInfo = startBackNavigation();
         assertWithMessage("BackNavigationInfo").that(backNavigationInfo).isNotNull();
         assertThat(typeToString(backNavigationInfo.getType()))
                 .isEqualTo(typeToString(BackNavigationInfo.TYPE_CROSS_TASK));
 
         // verify if back animation would start.
-        verify(mBackNavigationController).scheduleAnimationLocked(
-                eq(BackNavigationInfo.TYPE_CROSS_TASK), any(), eq(mBackAnimationAdapter),
-                any());
+        assertTrue("Animation scheduled", backNavigationInfo.isPrepareRemoteAnimation());
+
+        // reset drawning status
+        topTask.forAllWindows(w -> {
+            makeWindowVisibleAndDrawn(w);
+        }, true);
+        setupKeyguardOccluded();
+        backNavigationInfo = startBackNavigation();
+        assertThat(typeToString(backNavigationInfo.getType()))
+                .isEqualTo(typeToString(BackNavigationInfo.TYPE_CALLBACK));
+
+        doReturn(true).when(recordA).canShowWhenLocked();
+        backNavigationInfo = startBackNavigation();
+        assertThat(typeToString(backNavigationInfo.getType()))
+                .isEqualTo(typeToString(BackNavigationInfo.TYPE_CROSS_TASK));
+    }
+
+    @Test
+    public void backTypeBackToHomeDifferentUser() {
+        Task taskA = createTask(mDefaultDisplay);
+        ActivityRecord recordA = createActivityRecord(taskA);
+        Mockito.doNothing().when(recordA).reparentSurfaceControl(any(), any());
+        doReturn(false).when(taskA).showToCurrentUser();
+
+        withSystemCallback(createTopTaskWithActivity());
+        BackNavigationInfo backNavigationInfo = startBackNavigation();
+        assertWithMessage("BackNavigationInfo").that(backNavigationInfo).isNotNull();
+        assertThat(typeToString(backNavigationInfo.getType()))
+                .isEqualTo(typeToString(BackNavigationInfo.TYPE_RETURN_TO_HOME));
+    }
+
+    @Test
+    public void backTypeCrossActivityWithCustomizeExitAnimation() {
+        CrossActivityTestCase testCase = createTopTaskWithTwoActivities();
+        IOnBackInvokedCallback callback = withSystemCallback(testCase.task);
+        testCase.windowFront.mAttrs.windowAnimations = 0x10;
+        spyOn(mDisplayContent.mAppTransition.mTransitionAnimation);
+        doReturn(0xffff00AB).when(mDisplayContent.mAppTransition.mTransitionAnimation)
+                .getAnimationResId(any(), anyInt(), anyInt());
+        doReturn(0xffff00CD).when(mDisplayContent.mAppTransition.mTransitionAnimation)
+                .getDefaultAnimationResId(anyInt(), anyInt());
+
+        BackNavigationInfo backNavigationInfo = startBackNavigation();
+        assertWithMessage("BackNavigationInfo").that(backNavigationInfo).isNotNull();
+        assertThat(backNavigationInfo.getOnBackInvokedCallback()).isEqualTo(callback);
+        assertThat(backNavigationInfo.getCustomAnimationInfo().getWindowAnimations())
+                .isEqualTo(testCase.windowFront.mAttrs.windowAnimations);
+        assertThat(typeToString(backNavigationInfo.getType()))
+                .isEqualTo(typeToString(BackNavigationInfo.TYPE_CROSS_ACTIVITY));
+        // verify if back animation would start.
+        assertTrue("Animation scheduled", backNavigationInfo.isPrepareRemoteAnimation());
     }
 
     @Test
@@ -121,6 +179,22 @@ public class BackNavigationControllerTests extends WindowTestsBase {
         BackNavigationInfo backNavigationInfo = startBackNavigation();
         assertWithMessage("BackNavigationInfo").that(backNavigationInfo).isNotNull();
         assertThat(backNavigationInfo.getOnBackInvokedCallback()).isEqualTo(callback);
+        assertThat(typeToString(backNavigationInfo.getType()))
+                .isEqualTo(typeToString(BackNavigationInfo.TYPE_CROSS_ACTIVITY));
+        // verify if back animation would start.
+        assertTrue("Animation scheduled", backNavigationInfo.isPrepareRemoteAnimation());
+
+        // reset drawing status
+        testCase.recordFront.forAllWindows(w -> {
+            makeWindowVisibleAndDrawn(w);
+        }, true);
+        setupKeyguardOccluded();
+        backNavigationInfo = startBackNavigation();
+        assertThat(typeToString(backNavigationInfo.getType()))
+                .isEqualTo(typeToString(BackNavigationInfo.TYPE_CALLBACK));
+
+        doReturn(true).when(testCase.recordBack).canShowWhenLocked();
+        backNavigationInfo = startBackNavigation();
         assertThat(typeToString(backNavigationInfo.getType()))
                 .isEqualTo(typeToString(BackNavigationInfo.TYPE_CROSS_ACTIVITY));
     }
@@ -136,6 +210,7 @@ public class BackNavigationControllerTests extends WindowTestsBase {
         WindowState window = createWindow(null, WindowManager.LayoutParams.TYPE_WALLPAPER,
                 "Wallpaper");
         addToWindowMap(window, true);
+        makeWindowVisibleAndDrawn(window);
 
         IOnBackInvokedCallback callback = createOnBackInvokedCallback();
         window.setOnBackInvokedCallbackInfo(
@@ -149,12 +224,17 @@ public class BackNavigationControllerTests extends WindowTestsBase {
 
     @Test
     public void preparesForBackToHome() {
-        Task task = createTopTaskWithActivity();
-        withSystemCallback(task);
+        final Task topTask = createTopTaskWithActivity();
+        withSystemCallback(topTask);
 
         BackNavigationInfo backNavigationInfo = startBackNavigation();
         assertThat(typeToString(backNavigationInfo.getType()))
                 .isEqualTo(typeToString(BackNavigationInfo.TYPE_RETURN_TO_HOME));
+
+        setupKeyguardOccluded();
+        backNavigationInfo = startBackNavigation();
+        assertThat(typeToString(backNavigationInfo.getType()))
+                .isEqualTo(typeToString(BackNavigationInfo.TYPE_CALLBACK));
     }
 
     @Test
@@ -168,16 +248,50 @@ public class BackNavigationControllerTests extends WindowTestsBase {
         assertThat(backNavigationInfo.getOnBackInvokedCallback()).isEqualTo(appCallback);
     }
 
+    // TODO (b/259427810) Remove this test when we figure out new API
+    @Test
+    public void backAnimationSkipSharedElementTransition() {
+        // Simulate ActivityOptions#makeSceneTransitionAnimation
+        final Bundle myBundle = new Bundle();
+        myBundle.putInt(ActivityOptions.KEY_ANIM_TYPE, ANIM_SCENE_TRANSITION);
+        myBundle.putParcelable("android:activity.transitionCompleteListener",
+                mock(android.os.ResultReceiver.class));
+        final ActivityOptions options = new ActivityOptions(myBundle);
+
+        final ActivityRecord testActivity = new ActivityBuilder(mAtm)
+                .setCreateTask(true)
+                .setActivityOptions(options)
+                .build();
+        testActivity.info.applicationInfo.privateFlagsExt |=
+                PRIVATE_FLAG_EXT_ENABLE_ON_BACK_INVOKED_CALLBACK;
+        final WindowState window = createWindow(null, TYPE_BASE_APPLICATION, testActivity,
+                "window");
+        addToWindowMap(window, true);
+        makeWindowVisibleAndDrawn(window);
+        IOnBackInvokedCallback callback = withSystemCallback(testActivity.getTask());
+
+        BackNavigationInfo backNavigationInfo = startBackNavigation();
+        assertTrue(testActivity.mHasSceneTransition);
+        assertThat(typeToString(backNavigationInfo.getType()))
+                .isEqualTo(typeToString(BackNavigationInfo.TYPE_CALLBACK));
+        assertThat(backNavigationInfo.getOnBackInvokedCallback()).isEqualTo(callback);
+    }
+
     @Test
     public void testUnregisterCallbacksWithSystemCallback()
             throws InterruptedException, RemoteException {
         CountDownLatch systemLatch = new CountDownLatch(1);
         CountDownLatch appLatch = new CountDownLatch(1);
 
+        final ApplicationInfo info = mock(ApplicationInfo.class);
+        final Context context = mock(Context.class);
+        Mockito.doReturn(true).when(info).isOnBackInvokedCallbackEnabled();
+        Mockito.doReturn(info).when(context).getApplicationInfo();
+
         Task task = createTopTaskWithActivity();
         WindowState appWindow = task.getTopVisibleAppMainWindow();
         WindowOnBackInvokedDispatcher dispatcher =
-                new WindowOnBackInvokedDispatcher(true /* applicationCallbackEnabled */);
+                new WindowOnBackInvokedDispatcher(context);
         doAnswer(invocation -> {
             appWindow.setOnBackInvokedCallbackInfo(invocation.getArgument(1));
             return null;
@@ -222,6 +336,78 @@ public class BackNavigationControllerTests extends WindowTestsBase {
                 1, appLatch.getCount());
     }
 
+    @Test
+    public void backInfoWindowWithoutDrawn() {
+        WindowState window = createWindow(null, WindowManager.LayoutParams.TYPE_APPLICATION,
+                "TestWindow");
+        addToWindowMap(window, true);
+
+        IOnBackInvokedCallback callback = createOnBackInvokedCallback();
+        window.setOnBackInvokedCallbackInfo(
+                new OnBackInvokedCallbackInfo(callback, OnBackInvokedDispatcher.PRIORITY_DEFAULT));
+
+        BackNavigationInfo backNavigationInfo = startBackNavigation();
+        assertThat(backNavigationInfo).isNull();
+    }
+
+    @Test
+    public void testTransitionHappensCancelNavigation() {
+        // Create a floating task and a fullscreen task, then navigating on fullscreen task.
+        // The navigation should not been cancelled when transition happens on floating task, and
+        // only be cancelled when transition happens on the navigating task.
+        final Task floatingTask = createTask(mDisplayContent, WINDOWING_MODE_MULTI_WINDOW,
+                ACTIVITY_TYPE_STANDARD);
+        final ActivityRecord baseFloatingActivity = createActivityRecord(floatingTask);
+
+        final Task fullscreenTask = createTopTaskWithActivity();
+        withSystemCallback(fullscreenTask);
+        final ActivityRecord baseFullscreenActivity = fullscreenTask.getTopMostActivity();
+
+        final CountDownLatch navigationObserver = new CountDownLatch(1);
+        startBackNavigation(navigationObserver);
+
+        final ArraySet<ActivityRecord> opening = new ArraySet<>();
+        final ArraySet<ActivityRecord> closing = new ArraySet<>();
+        final ActivityRecord secondFloatingActivity = createActivityRecord(floatingTask);
+        opening.add(secondFloatingActivity);
+        closing.add(baseFloatingActivity);
+        mBackNavigationController.removeIfContainsBackAnimationTargets(opening, closing);
+        assertEquals("Transition happen on an irrelevant task, callback should not been called",
+                1, navigationObserver.getCount());
+
+        // Create a new activity above navigation target, the transition should cancel navigation.
+        final ActivityRecord topFullscreenActivity = createActivityRecord(fullscreenTask);
+        opening.clear();
+        closing.clear();
+        opening.add(topFullscreenActivity);
+        closing.add(baseFullscreenActivity);
+        mBackNavigationController.removeIfContainsBackAnimationTargets(opening, closing);
+        assertEquals("Transition happen on navigation task, callback should have been called",
+                0, navigationObserver.getCount());
+    }
+
+    @Test
+    public void testWindowFocusChangeCancelNavigation() {
+        Task task = createTopTaskWithActivity();
+        withSystemCallback(task);
+        WindowState focusWindow = task.getTopVisibleAppMainWindow();
+        final CountDownLatch navigationObserver = new CountDownLatch(1);
+        startBackNavigation(navigationObserver);
+
+        mBackNavigationController.onFocusChanged(null);
+        assertEquals("change focus to null, callback should not have been called",
+                1, navigationObserver.getCount());
+        mBackNavigationController.onFocusChanged(focusWindow);
+        assertEquals("change focus back, callback should not have been called",
+                1, navigationObserver.getCount());
+
+        WindowState newWindow = createWindow(null, TYPE_APPLICATION_OVERLAY, "overlayWindow");
+        addToWindowMap(newWindow, true);
+        mBackNavigationController.onFocusChanged(newWindow);
+        assertEquals("Focus change, callback should have been called",
+                0, navigationObserver.getCount());
+    }
+
     private IOnBackInvokedCallback withSystemCallback(Task task) {
         IOnBackInvokedCallback callback = createOnBackInvokedCallback();
         task.getTopMostActivity().getTopChild().setOnBackInvokedCallbackInfo(
@@ -238,18 +424,25 @@ public class BackNavigationControllerTests extends WindowTestsBase {
 
     @Nullable
     private BackNavigationInfo startBackNavigation() {
-        return mBackNavigationController.startBackNavigation(null, mBackAnimationAdapter);
+        return mBackNavigationController.startBackNavigation(
+                createNavigationObserver(null), mBackAnimationAdapter);
+    }
+
+    @Nullable
+    private BackNavigationInfo startBackNavigation(CountDownLatch navigationObserverLatch) {
+        return mBackNavigationController.startBackNavigation(
+                createNavigationObserver(navigationObserverLatch), mBackAnimationAdapter);
     }
 
     @NonNull
     private IOnBackInvokedCallback createOnBackInvokedCallback() {
         return new IOnBackInvokedCallback.Stub() {
             @Override
-            public void onBackStarted(BackEvent backEvent) {
+            public void onBackStarted(BackMotionEvent backMotionEvent) {
             }
 
             @Override
-            public void onBackProgressed(BackEvent backEvent) {
+            public void onBackProgressed(BackMotionEvent backMotionEvent) {
             }
 
             @Override
@@ -273,14 +466,30 @@ public class BackNavigationControllerTests extends WindowTestsBase {
         };
     }
 
-    @NonNull
-    private TaskSnapshotController createMockTaskSnapshotController() {
-        TaskSnapshotController taskSnapshotController = mock(TaskSnapshotController.class);
-        TaskSnapshot taskSnapshot = mock(TaskSnapshot.class);
-        when(taskSnapshot.getHardwareBuffer()).thenReturn(mock(HardwareBuffer.class));
-        when(taskSnapshotController.getSnapshot(anyInt(), anyInt(), anyBoolean(), anyBoolean()))
-                .thenReturn(taskSnapshot);
-        return taskSnapshotController;
+    private RemoteCallback createNavigationObserver(CountDownLatch latch) {
+        return new RemoteCallback(result -> {
+            if (latch != null) {
+                latch.countDown();
+            }
+        });
+    }
+
+    private Task initHomeActivity() {
+        final Task task = mDisplayContent.getDefaultTaskDisplayArea().getRootHomeTask();
+        task.forAllLeafTasks((t) -> {
+            if (t.getTopMostActivity() == null) {
+                final ActivityRecord r = createActivityRecord(t);
+                Mockito.doNothing().when(t).reparentSurfaceControl(any(), any());
+                Mockito.doNothing().when(r).reparentSurfaceControl(any(), any());
+            }
+        }, true);
+        return task;
+    }
+
+    private void setupKeyguardOccluded() {
+        final KeyguardController kc = mRootHomeTask.mTaskSupervisor.getKeyguardController();
+        doReturn(true).when(kc).isKeyguardLocked(anyInt());
+        doReturn(true).when(kc).isDisplayOccluded(anyInt());
     }
 
     @NonNull
@@ -295,6 +504,7 @@ public class BackNavigationControllerTests extends WindowTestsBase {
         Mockito.doNothing().when(task).reparentSurfaceControl(any(), any());
         mAtm.setFocusedTask(task.mTaskId, record);
         addToWindowMap(window, true);
+        makeWindowVisibleAndDrawn(window);
         return task;
     }
 
@@ -319,10 +529,14 @@ public class BackNavigationControllerTests extends WindowTestsBase {
         addToWindowMap(window1, true);
         addToWindowMap(window2, true);
 
+        makeWindowVisibleAndDrawn(window2);
+
         CrossActivityTestCase testCase = new CrossActivityTestCase();
         testCase.task = task;
         testCase.recordBack = record1;
         testCase.recordFront = record2;
+        testCase.windowBack = window1;
+        testCase.windowFront = window2;
         return testCase;
     }
 
@@ -338,6 +552,8 @@ public class BackNavigationControllerTests extends WindowTestsBase {
     private class CrossActivityTestCase {
         public Task task;
         public ActivityRecord recordBack;
+        public WindowState windowBack;
         public ActivityRecord recordFront;
+        public WindowState windowFront;
     }
 }

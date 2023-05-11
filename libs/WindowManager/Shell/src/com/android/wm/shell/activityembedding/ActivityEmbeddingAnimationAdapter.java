@@ -22,13 +22,14 @@ import static android.graphics.Matrix.MTRANS_Y;
 import android.annotation.CallSuper;
 import android.graphics.Point;
 import android.graphics.Rect;
-import android.view.Choreographer;
 import android.view.SurfaceControl;
 import android.view.animation.Animation;
 import android.view.animation.Transformation;
 import android.window.TransitionInfo;
 
 import androidx.annotation.NonNull;
+
+import com.android.wm.shell.util.TransitionUtil;
 
 /**
  * Wrapper to handle the ActivityEmbedding animation update in one
@@ -50,6 +51,16 @@ class ActivityEmbeddingAnimationAdapter {
     /** Area in absolute coordinate that the animation surface shouldn't go beyond. */
     @NonNull
     private final Rect mWholeAnimationBounds = new Rect();
+    /**
+     * Area in absolute coordinate that should represent all the content to show for this window.
+     * This should be the end bounds for opening window, and start bounds for closing window in case
+     * the window is resizing during the open/close transition.
+     */
+    @NonNull
+    private final Rect mContentBounds = new Rect();
+    /** Offset relative to the window parent surface for {@link #mContentBounds}. */
+    @NonNull
+    private final Point mContentRelOffset = new Point();
 
     @NonNull
     final Transformation mTransformation = new Transformation();
@@ -59,7 +70,6 @@ class ActivityEmbeddingAnimationAdapter {
     final float[] mVecs = new float[4];
     @NonNull
     final Rect mRect = new Rect();
-    private boolean mIsFirstFrame = true;
     private int mOverrideLayer = LAYER_NO_OVERRIDE;
 
     ActivityEmbeddingAnimationAdapter(@NonNull Animation animation,
@@ -80,6 +90,21 @@ class ActivityEmbeddingAnimationAdapter {
         mChange = change;
         mLeash = leash;
         mWholeAnimationBounds.set(wholeAnimationBounds);
+        if (TransitionUtil.isClosingType(change.getMode())) {
+            // When it is closing, we want to show the content at the start position in case the
+            // window is resizing as well. For example, when the activities is changing from split
+            // to stack, the bottom TaskFragment will be resized to fullscreen when hiding.
+            final Rect startBounds = change.getStartAbsBounds();
+            final Rect endBounds = change.getEndAbsBounds();
+            mContentBounds.set(startBounds);
+            mContentRelOffset.set(change.getEndRelOffset());
+            mContentRelOffset.offset(
+                    startBounds.left - endBounds.left,
+                    startBounds.top - endBounds.top);
+        } else {
+            mContentBounds.set(change.getEndAbsBounds());
+            mContentRelOffset.set(change.getEndRelOffset());
+        }
     }
 
     /**
@@ -90,28 +115,28 @@ class ActivityEmbeddingAnimationAdapter {
         mOverrideLayer = layer;
     }
 
+    /** Called to prepare for the starting state. */
+    final void prepareForFirstFrame(@NonNull SurfaceControl.Transaction startTransaction) {
+        startTransaction.show(mLeash);
+        if (mOverrideLayer != LAYER_NO_OVERRIDE) {
+            startTransaction.setLayer(mLeash, mOverrideLayer);
+        }
+        mAnimation.getTransformationAt(0, mTransformation);
+        onAnimationUpdateInner(startTransaction);
+    }
+
     /** Called on frame update. */
     final void onAnimationUpdate(@NonNull SurfaceControl.Transaction t, long currentPlayTime) {
-        if (mIsFirstFrame) {
-            t.show(mLeash);
-            if (mOverrideLayer != LAYER_NO_OVERRIDE) {
-                t.setLayer(mLeash, mOverrideLayer);
-            }
-            mIsFirstFrame = false;
-        }
-
         // Extract the transformation to the current time.
         mAnimation.getTransformation(Math.min(currentPlayTime, mAnimation.getDuration()),
                 mTransformation);
-        t.setFrameTimelineVsync(Choreographer.getInstance().getVsyncId());
         onAnimationUpdateInner(t);
     }
 
     /** To be overridden by subclasses to adjust the animation surface change. */
     void onAnimationUpdateInner(@NonNull SurfaceControl.Transaction t) {
         // Update the surface position and alpha.
-        final Point offset = mChange.getEndRelOffset();
-        mTransformation.getMatrix().postTranslate(offset.x, offset.y);
+        mTransformation.getMatrix().postTranslate(mContentRelOffset.x, mContentRelOffset.y);
         t.setMatrix(mLeash, mTransformation.getMatrix(), mMatrix);
         t.setAlpha(mLeash, mTransformation.getAlpha());
 
@@ -119,8 +144,8 @@ class ActivityEmbeddingAnimationAdapter {
         // positionX/Y are in local coordinate, so minus the local offset to get the slide amount.
         final int positionX = Math.round(mMatrix[MTRANS_X]);
         final int positionY = Math.round(mMatrix[MTRANS_Y]);
-        final Rect cropRect = new Rect(mChange.getEndAbsBounds());
-        cropRect.offset(positionX - offset.x, positionY - offset.y);
+        final Rect cropRect = new Rect(mContentBounds);
+        cropRect.offset(positionX - mContentRelOffset.x, positionY - mContentRelOffset.y);
 
         // Store the current offset of the surface top left from (0,0) in absolute coordinate.
         final int offsetX = cropRect.left;
@@ -133,7 +158,7 @@ class ActivityEmbeddingAnimationAdapter {
         } else if (mAnimation.hasExtension()) {
             // Allow the surface to be shown in its original bounds in case we want to use edge
             // extensions.
-            cropRect.union(mChange.getEndAbsBounds());
+            cropRect.union(mContentBounds);
         }
 
         // cropRect is in absolute coordinate, so we need to translate it to surface top left.

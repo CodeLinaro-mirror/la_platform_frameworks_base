@@ -20,15 +20,15 @@ class NotificationTargetsHelper
 constructor(
     featureFlags: FeatureFlags,
 ) {
-    private val isNotificationGroupCornerEnabled =
-        featureFlags.isEnabled(Flags.NOTIFICATION_GROUP_CORNER)
+    private val useRoundnessSourceTypes = featureFlags.isEnabled(Flags.USE_ROUNDNESS_SOURCETYPES)
 
     /**
      * This method looks for views that can be rounded (and implement [Roundable]) during a
      * notification swipe.
+     *
      * @return The [Roundable] targets above/below the [viewSwiped] (if available). The
-     * [RoundableTargets.before] and [RoundableTargets.after] parameters can be `null` if there is
-     * no above/below notification or the notification is not part of the same section.
+     *   [RoundableTargets.before] and [RoundableTargets.after] parameters can be `null` if there is
+     *   no above/below notification or the notification is not part of the same section.
      */
     fun findRoundableTargets(
         viewSwiped: ExpandableNotificationRow,
@@ -48,7 +48,7 @@ constructor(
         if (notificationParent != null && childrenContainer != null) {
             // We are inside a notification group
 
-            if (!isNotificationGroupCornerEnabled) {
+            if (!useRoundnessSourceTypes) {
                 return RoundableTargets(null, null, null)
             }
 

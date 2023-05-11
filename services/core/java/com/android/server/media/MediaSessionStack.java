@@ -21,7 +21,9 @@ import static com.android.server.media.MediaSessionPolicyProvider.SESSION_POLICY
 import android.media.Session2Token;
 import android.media.session.MediaSession;
 import android.os.UserHandle;
+import android.text.TextUtils;
 import android.util.Log;
+import android.util.Slog;
 import android.util.SparseArray;
 
 import java.io.PrintWriter;
@@ -37,6 +39,8 @@ import java.util.Objects;
 class MediaSessionStack {
     private static final boolean DEBUG = MediaSessionService.DEBUG;
     private static final String TAG = "MediaSessionStack";
+
+    private static final int DUMP_EVENTS_MAX_COUNT = 70;
 
     /**
      * Listen the change in the media button session.
@@ -80,6 +84,10 @@ class MediaSessionStack {
      * @param record The record to add.
      */
     public void addSession(MediaSessionRecordImpl record) {
+        Slog.i(TAG, TextUtils.formatSimple(
+                "addSession to bottom of stack | record: %s",
+                record
+        ));
         mSessions.add(record);
         clearCache(record.getUserId());
 
@@ -95,6 +103,10 @@ class MediaSessionStack {
      * @param record The record to remove.
      */
     public void removeSession(MediaSessionRecordImpl record) {
+        Slog.i(TAG, TextUtils.formatSimple(
+                "removeSession | record: %s",
+                record
+        ));
         mSessions.remove(record);
         if (mMediaButtonSession == record) {
             // When the media button session is removed, nullify the media button session and do not
@@ -140,6 +152,10 @@ class MediaSessionStack {
     public void onPlaybackStateChanged(
             MediaSessionRecordImpl record, boolean shouldUpdatePriority) {
         if (shouldUpdatePriority) {
+            Slog.i(TAG, TextUtils.formatSimple(
+                    "onPlaybackStateChanged - Pushing session to top | record: %s",
+                    record
+            ));
             mSessions.remove(record);
             mSessions.add(0, record);
             clearCache(record.getUserId());

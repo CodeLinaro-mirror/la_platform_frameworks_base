@@ -20,21 +20,20 @@ import android.app.Instrumentation
 import android.os.Bundle
 import android.os.Handler
 import android.platform.test.annotations.Presubmit
+import android.tools.common.datatypes.component.ComponentNameMatcher
+import android.tools.common.traces.ConditionsFactory
+import android.tools.device.flicker.junit.FlickerBuilderProvider
+import android.tools.device.flicker.junit.FlickerParametersRunnerFactory
+import android.tools.device.flicker.legacy.FlickerBuilder
+import android.tools.device.flicker.legacy.FlickerTest
+import android.tools.device.flicker.legacy.FlickerTestFactory
 import androidx.test.filters.RequiresDevice
 import androidx.test.platform.app.InstrumentationRegistry
-import com.android.server.wm.flicker.FlickerBuilderProvider
-import com.android.server.wm.flicker.FlickerParametersRunnerFactory
-import com.android.server.wm.flicker.FlickerTestParameter
-import com.android.server.wm.flicker.FlickerTestParameterFactory
 import com.android.server.wm.flicker.R
-import com.android.server.wm.flicker.dsl.FlickerBuilder
-import com.android.server.wm.flicker.helpers.SimpleAppHelper
-import com.android.server.wm.flicker.helpers.StandardAppHelper
 import com.android.server.wm.flicker.helpers.setRotation
-import com.android.server.wm.flicker.helpers.wakeUpAndGoToHomeScreen
-import com.android.server.wm.flicker.rules.RemoveAllTasksButHomeRule
-import com.android.server.wm.traces.common.ComponentNameMatcher
-import com.android.server.wm.traces.common.WindowManagerConditionsFactory
+import android.tools.device.flicker.rules.RemoveAllTasksButHomeRule
+import android.tools.device.helpers.wakeUpAndGoToHomeScreen
+import com.android.server.wm.flicker.helpers.SimpleAppHelper
 import org.junit.FixMethodOrder
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -55,10 +54,10 @@ import org.junit.runners.Parameterized
 @RunWith(Parameterized::class)
 @Parameterized.UseParametersRunnerFactory(FlickerParametersRunnerFactory::class)
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
-class OverrideTaskTransitionTest(val testSpec: FlickerTestParameter) {
+class OverrideTaskTransitionTest(val flicker: FlickerTest) {
 
     private val instrumentation: Instrumentation = InstrumentationRegistry.getInstrumentation()
-    private val testApp: StandardAppHelper = SimpleAppHelper(instrumentation)
+    private val testApp = SimpleAppHelper(instrumentation)
 
     @FlickerBuilderProvider
     fun buildFlicker(): FlickerBuilder {
@@ -66,7 +65,7 @@ class OverrideTaskTransitionTest(val testSpec: FlickerTestParameter) {
             setup {
                 device.wakeUpAndGoToHomeScreen()
                 RemoveAllTasksButHomeRule.removeAllTasksButHome()
-                setRotation(testSpec.startRotation)
+                setRotation(flicker.scenario.startRotation)
             }
             transitions {
                 instrumentation.context.startActivity(
@@ -75,7 +74,7 @@ class OverrideTaskTransitionTest(val testSpec: FlickerTestParameter) {
                 )
                 wmHelper
                     .StateSyncBuilder()
-                    .add(WindowManagerConditionsFactory.isWMStateComplete())
+                    .add(ConditionsFactory.isWMStateComplete())
                     .withAppTransitionIdle()
                     .withWindowSurfaceAppeared(testApp)
                     .waitForAndVerify()
@@ -87,24 +86,23 @@ class OverrideTaskTransitionTest(val testSpec: FlickerTestParameter) {
     @Presubmit
     @Test
     fun testSimpleActivityIsShownDirectly() {
-        testSpec.assertLayers {
+        flicker.assertLayers {
             // Before the app launches, only the launcher is visible.
             isVisible(ComponentNameMatcher.LAUNCHER)
-                    .isInvisible(testApp)
-                    .then()
-                    // Animation starts, but the app may not be drawn yet which means the Splash
-                    // may be visible.
-                    .isInvisible(testApp, isOptional = true)
-                    .isVisible(ComponentNameMatcher.SPLASH_SCREEN, isOptional = true)
-                    .then()
-                    // App shows up with the custom animation starting at alpha=1.
-                    .isVisible(testApp)
-                    .then()
-                    // App custom animation continues to alpha=0 (invisible).
-                    .isInvisible(testApp)
-                    .then()
-                    // App custom animation ends with it being visible.
-                    .isVisible(testApp)
+                .isInvisible(testApp)
+                .then()
+                // Animation starts, but the app may not be drawn yet which means the Splash
+                // may be visible.
+                .isSplashScreenVisibleFor(testApp, isOptional = true)
+                .then()
+                // App shows up with the custom animation starting at alpha=1.
+                .isVisible(testApp)
+                .then()
+                // App custom animation continues to alpha=0 (invisible).
+                .isInvisible(testApp)
+                .then()
+                // App custom animation ends with it being visible.
+                .isVisible(testApp)
         }
     }
 
@@ -123,8 +121,8 @@ class OverrideTaskTransitionTest(val testSpec: FlickerTestParameter) {
     companion object {
         @Parameterized.Parameters(name = "{0}")
         @JvmStatic
-        fun getParams(): Collection<FlickerTestParameter> {
-            return FlickerTestParameterFactory.getInstance().getConfigNonRotationTests()
+        fun getParams(): Collection<FlickerTest> {
+            return FlickerTestFactory.nonRotationTests()
         }
     }
 }

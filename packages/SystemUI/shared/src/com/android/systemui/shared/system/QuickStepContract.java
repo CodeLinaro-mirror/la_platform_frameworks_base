@@ -23,6 +23,7 @@ import static android.view.WindowManagerPolicyConstants.NAV_BAR_MODE_GESTURAL;
 import android.annotation.IntDef;
 import android.content.Context;
 import android.content.res.Resources;
+import android.os.SystemProperties;
 import android.view.ViewConfiguration;
 import android.view.WindowManagerPolicyConstants;
 
@@ -43,6 +44,7 @@ public class QuickStepContract {
     public static final String KEY_EXTRA_SYSUI_PROXY = "extra_sysui_proxy";
     public static final String KEY_EXTRA_WINDOW_CORNER_RADIUS = "extra_window_corner_radius";
     public static final String KEY_EXTRA_SUPPORTS_WINDOW_CORNERS = "extra_supports_window_corners";
+    public static final String KEY_EXTRA_UNFOLD_ANIMATION_FORWARDER = "extra_unfold_animation";
     // See ISysuiUnlockAnimationController.aidl
     public static final String KEY_EXTRA_UNLOCK_ANIMATION_CONTROLLER = "unlock_animation";
 
@@ -112,7 +114,32 @@ public class QuickStepContract {
     public static final int SYSUI_STATE_VOICE_INTERACTION_WINDOW_SHOWING = 1 << 25;
     // Freeform windows are showing in desktop mode
     public static final int SYSUI_STATE_FREEFORM_ACTIVE_IN_DESKTOP_MODE = 1 << 26;
+    // Device dreaming state
+    public static final int SYSUI_STATE_DEVICE_DREAMING = 1 << 27;
+    // Whether the screen is currently on. Note that the screen is considered on while turning on,
+    // but not while turning off.
+    public static final int SYSUI_STATE_SCREEN_ON = 1 << 28;
+    // Whether the screen is currently transitioning into the state indicated by
+    // SYSUI_STATE_SCREEN_ON.
+    public static final int SYSUI_STATE_SCREEN_TRANSITION = 1 << 29;
 
+    // Mask for SystemUiStateFlags to isolate SYSUI_STATE_SCREEN_ON and
+    // SYSUI_STATE_SCREEN_TRANSITION, to match SCREEN_STATE_*
+    public static final int SYSUI_STATE_SCREEN_STATE_MASK =
+            SYSUI_STATE_SCREEN_ON | SYSUI_STATE_SCREEN_TRANSITION;
+    // Screen is off.
+    public static final int SCREEN_STATE_OFF = 0;
+    // Screen is on.
+    public static final int SCREEN_STATE_ON = SYSUI_STATE_SCREEN_ON;
+    // Screen is still on, but transitioning to turn off.
+    public static final int SCREEN_STATE_TURNING_OFF = SYSUI_STATE_SCREEN_TRANSITION;
+    // Screen was off and is now turning on.
+    public static final int SCREEN_STATE_TURNING_ON =
+            SYSUI_STATE_SCREEN_TRANSITION | SYSUI_STATE_SCREEN_ON;
+
+    // Whether the back gesture is allowed (or ignored) by the Shade
+    public static final boolean ALLOW_BACK_GESTURE_IN_SHADE = SystemProperties.getBoolean(
+            "persist.wm.debug.shade_allow_back_gesture", false);
 
     @Retention(RetentionPolicy.SOURCE)
     @IntDef({SYSUI_STATE_SCREEN_PINNING,
@@ -141,7 +168,10 @@ public class QuickStepContract {
             SYSUI_STATE_BUBBLES_MANAGE_MENU_EXPANDED,
             SYSUI_STATE_IMMERSIVE_MODE,
             SYSUI_STATE_VOICE_INTERACTION_WINDOW_SHOWING,
-            SYSUI_STATE_FREEFORM_ACTIVE_IN_DESKTOP_MODE
+            SYSUI_STATE_FREEFORM_ACTIVE_IN_DESKTOP_MODE,
+            SYSUI_STATE_DEVICE_DREAMING,
+            SYSUI_STATE_SCREEN_ON,
+            SYSUI_STATE_SCREEN_TRANSITION,
     })
     public @interface SystemUiStateFlags {}
 
@@ -179,6 +209,11 @@ public class QuickStepContract {
         str.add((flags & SYSUI_STATE_VOICE_INTERACTION_WINDOW_SHOWING) != 0 ? "vis_win_showing" : "");
         str.add((flags & SYSUI_STATE_FREEFORM_ACTIVE_IN_DESKTOP_MODE) != 0
                 ? "freeform_active_in_desktop_mode" : "");
+        str.add((flags & SYSUI_STATE_DEVICE_DREAMING) != 0 ? "device_dreaming" : "");
+        str.add("screen_"
+                + ((flags & SYSUI_STATE_SCREEN_TRANSITION) != 0 ? "turning_" : "")
+                + ((flags & SYSUI_STATE_SCREEN_ON) != 0 ? "on" : "off"));
+
         return str.toString();
     }
 
@@ -238,9 +273,14 @@ public class QuickStepContract {
             sysuiStateFlags &= ~SYSUI_STATE_NAV_BAR_HIDDEN;
         }
         // Disable when in immersive, or the notifications are interactive
-        int disableFlags = SYSUI_STATE_NAV_BAR_HIDDEN
-                | SYSUI_STATE_NOTIFICATION_PANEL_EXPANDED
-                | SYSUI_STATE_STATUS_BAR_KEYGUARD_SHOWING;
+        int disableFlags = SYSUI_STATE_NAV_BAR_HIDDEN | SYSUI_STATE_STATUS_BAR_KEYGUARD_SHOWING;
+
+        // EdgeBackGestureHandler ignores Back gesture when SYSUI_STATE_NOTIFICATION_PANEL_EXPANDED.
+        // To allow Shade to respond to Back, we're bypassing this check (behind a flag).
+        if (!ALLOW_BACK_GESTURE_IN_SHADE) {
+            disableFlags |= SYSUI_STATE_NOTIFICATION_PANEL_EXPANDED;
+        }
+
         return (sysuiStateFlags & disableFlags) != 0;
     }
 

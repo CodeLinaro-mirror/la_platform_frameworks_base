@@ -18,6 +18,7 @@
 #define RENDERPROXY_H_
 
 #include <SkRefCnt.h>
+#include <android/hardware_buffer.h>
 #include <android/native_window.h>
 #include <android/surface_control.h>
 #include <cutils/compiler.h>
@@ -76,7 +77,7 @@ public:
     void setSwapBehavior(SwapBehavior swapBehavior);
     bool loadSystemProperties();
     void setName(const char* name);
-
+    void setHardwareBuffer(AHardwareBuffer* buffer);
     void setSurface(ANativeWindow* window, bool enableTimeout = true);
     void setSurfaceControl(ASurfaceControl* surfaceControl);
     void allocateBuffers();
@@ -84,8 +85,10 @@ public:
     void setStopped(bool stopped);
     void setLightAlpha(uint8_t ambientShadowAlpha, uint8_t spotShadowAlpha);
     void setLightGeometry(const Vector3& lightCenter, float lightRadius);
+    void setHardwareBufferRenderParams(const HardwareBufferRenderParams& params);
     void setOpaque(bool opaque);
-    void setColorMode(ColorMode mode);
+    float setColorMode(ColorMode mode);
+    void setRenderSdrHdrRatio(float ratio);
     int64_t* frameInfo();
     void forceDrawNextFrame();
     int syncAndDrawFrame();
@@ -109,6 +112,8 @@ public:
     static int maxTextureSize();
     void stopDrawing();
     void notifyFramePending();
+    void notifyCallbackPending();
+    void notifyExpensiveFrame();
 
     void dumpProfileInfo(int fd, int dumpFlags);
     // Not exported, only used for testing

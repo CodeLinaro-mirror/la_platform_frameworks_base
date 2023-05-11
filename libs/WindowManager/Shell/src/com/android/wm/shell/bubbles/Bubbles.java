@@ -16,6 +16,8 @@
 
 package com.android.wm.shell.bubbles;
 
+import static android.window.ScreenCapture.ScreenshotSync;
+
 import static java.lang.annotation.ElementType.FIELD;
 import static java.lang.annotation.ElementType.LOCAL_VARIABLE;
 import static java.lang.annotation.ElementType.PARAMETER;
@@ -24,11 +26,13 @@ import static java.lang.annotation.RetentionPolicy.SOURCE;
 import android.app.NotificationChannel;
 import android.content.Intent;
 import android.content.pm.UserInfo;
+import android.hardware.HardwareBuffer;
 import android.os.UserHandle;
 import android.service.notification.NotificationListenerService;
 import android.service.notification.NotificationListenerService.RankingMap;
 import android.util.Pair;
 import android.util.SparseArray;
+import android.window.ScreenCapture.ScreenshotHardwareBuffer;
 
 import androidx.annotation.IntDef;
 import androidx.annotation.Nullable;
@@ -109,13 +113,40 @@ public interface Bubbles {
     void expandStackAndSelectBubble(Bubble bubble);
 
     /**
-     * Adds and expands bubble that is not notification based, but instead based on an intent from
-     * the app. The intent must be explicit (i.e. include a package name or fully qualified
-     * component class name) and the activity for it should be resizable.
+     * This method has different behavior depending on:
+     *    - if an app bubble exists
+     *    - if an app bubble is expanded
      *
-     * @param intent the intent to populate the bubble.
+     * If no app bubble exists, this will add and expand a bubble with the provided intent. The
+     * intent must be explicit (i.e. include a package name or fully qualified component class name)
+     * and the activity for it should be resizable.
+     *
+     * If an app bubble exists, this will toggle the visibility of it, i.e. if the app bubble is
+     * expanded, calling this method will collapse it. If the app bubble is not expanded, calling
+     * this method will expand it.
+     *
+     * These bubbles are <b>not</b> backed by a notification and remain until the user dismisses
+     * the bubble or bubble stack.
+     *
+     * Some notes:
+     *    - Only one app bubble is supported at a time
+     *    - Calling this method with a different intent than the existing app bubble will do nothing
+     *
+     * @param intent the intent to display in the bubble expanded view.
      */
-    void showAppBubble(Intent intent);
+    void showOrHideAppBubble(Intent intent);
+
+    /** @return true if the specified {@code taskId} corresponds to app bubble's taskId. */
+    boolean isAppBubbleTaskId(int taskId);
+
+    /**
+     * @return a {@link ScreenshotSync} after performing a screenshot that may exclude the bubble
+     * layer, if one is present. The underlying {@link ScreenshotHardwareBuffer} can be access via
+     * {@link ScreenshotSync#get()} asynchronously and care should be taken to
+     * {@link HardwareBuffer#close()} the associated
+     * {@link ScreenshotHardwareBuffer#getHardwareBuffer()} when no longer required.
+     */
+    ScreenshotSync getScreenshotExcludingBubble(int displayId);
 
     /**
      * @return a bubble that matches the provided shortcutId, if one exists.
@@ -241,11 +272,6 @@ public interface Bubbles {
      * @param removedUserId the id of the removed user.
      */
     void onUserRemoved(int removedUserId);
-
-    /**
-     * Sets whether bubble bar should be enabled or not.
-     */
-    void setBubbleBarEnabled(boolean enabled);
 
     /** Listener to find out about stack expansion / collapse events. */
     interface BubbleExpandListener {

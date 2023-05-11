@@ -22,7 +22,9 @@ import static android.view.Display.DEFAULT_DISPLAY;
 import static java.lang.annotation.RetentionPolicy.SOURCE;
 
 import android.annotation.IntDef;
+import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.annotation.SuppressLint;
 import android.annotation.TestApi;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.graphics.Matrix;
@@ -1281,6 +1283,8 @@ public final class MotionEvent extends InputEvent implements Parcelable {
      * swipe gesture starts at X = 500 then moves to X = 400, this axis would have a value of
      * -0.1.
      * </ul>
+     * These values are relative to the state from the last event, not accumulated, so developers
+     * should make sure to process this axis value for all batched historical events.
      */
     public static final int AXIS_GESTURE_X_OFFSET = 48;
 
@@ -1290,6 +1294,38 @@ public final class MotionEvent extends InputEvent implements Parcelable {
      * The same as {@link #AXIS_GESTURE_X_OFFSET}, but for the Y axis.
      */
     public static final int AXIS_GESTURE_Y_OFFSET = 49;
+
+    /**
+     * Axis constant: X scroll distance axis of a motion event.
+     * <p>
+     * <ul>
+     * <li>For a touch pad, reports the distance that should be scrolled in the X axis as a result
+     * of the user's two-finger scroll gesture, in display pixels.
+     * </ul>
+     * These values are relative to the state from the last event, not accumulated, so developers
+     * should make sure to process this axis value for all batched historical events.
+     */
+    public static final int AXIS_GESTURE_SCROLL_X_DISTANCE = 50;
+
+    /**
+     * Axis constant: Y scroll distance axis of a motion event.
+     *
+     * The same as {@link #AXIS_GESTURE_SCROLL_X_DISTANCE}, but for the Y axis.
+     */
+    public static final int AXIS_GESTURE_SCROLL_Y_DISTANCE = 51;
+
+    /**
+     * Axis constant: pinch scale factor of a motion event.
+     * <p>
+     * <ul>
+     * <li>For a touch pad, reports the change in distance between the fingers when the user is
+     * making a pinch gesture, as a proportion of the previous distance. For example, if the fingers
+     * were 50 units apart and are now 52 units apart, the scale factor would be 1.04.
+     * </ul>
+     * These values are relative to the state from the last event, not accumulated, so developers
+     * should make sure to process this axis value for all batched historical events.
+     */
+    public static final int AXIS_GESTURE_PINCH_SCALE_FACTOR = 52;
 
     // NOTE: If you add a new axis here you must also add it to:
     //  frameworks/native/include/android/input.h
@@ -1348,6 +1384,9 @@ public final class MotionEvent extends InputEvent implements Parcelable {
         names.append(AXIS_GENERIC_16, "AXIS_GENERIC_16");
         names.append(AXIS_GESTURE_X_OFFSET, "AXIS_GESTURE_X_OFFSET");
         names.append(AXIS_GESTURE_Y_OFFSET, "AXIS_GESTURE_Y_OFFSET");
+        names.append(AXIS_GESTURE_SCROLL_X_DISTANCE, "AXIS_GESTURE_SCROLL_X_DISTANCE");
+        names.append(AXIS_GESTURE_SCROLL_Y_DISTANCE, "AXIS_GESTURE_SCROLL_Y_DISTANCE");
+        names.append(AXIS_GESTURE_PINCH_SCALE_FACTOR, "AXIS_GESTURE_PINCH_SCALE_FACTOR");
     }
 
     /**
@@ -1489,11 +1528,34 @@ public final class MotionEvent extends InputEvent implements Parcelable {
      */
     public static final int CLASSIFICATION_TWO_FINGER_SWIPE = 3;
 
+    /**
+     * Classification constant: multi-finger swipe.
+     *
+     * The current event stream represents the user swiping with three or more fingers on a
+     * touchpad. Unlike two-finger swipes, these are only to be handled by the system UI, which is
+     * why they have a separate constant from two-finger swipes.
+     *
+     * @see #getClassification
+     * @hide
+     */
+    public static final int CLASSIFICATION_MULTI_FINGER_SWIPE = 4;
+
+    /**
+     * Classification constant: touchpad pinch.
+     *
+     * The current event stream represents the user pinching with two fingers on a touchpad. The
+     * gesture is centered around the current cursor position.
+     *
+     * @see #getClassification
+     */
+    public static final int CLASSIFICATION_PINCH = 5;
+
     /** @hide */
     @Retention(SOURCE)
     @IntDef(prefix = { "CLASSIFICATION" }, value = {
             CLASSIFICATION_NONE, CLASSIFICATION_AMBIGUOUS_GESTURE, CLASSIFICATION_DEEP_PRESS,
-            CLASSIFICATION_TWO_FINGER_SWIPE})
+            CLASSIFICATION_TWO_FINGER_SWIPE, CLASSIFICATION_MULTI_FINGER_SWIPE,
+            CLASSIFICATION_PINCH})
     public @interface Classification {};
 
     /**
@@ -1780,19 +1842,18 @@ public final class MotionEvent extends InputEvent implements Parcelable {
      * @param displayId The display ID associated with this event.
      * @param flags The motion event flags.
      * @param classification The classification to give this event.
-     * @hide
      */
-    public static MotionEvent obtain(long downTime, long eventTime,
-            int action, int pointerCount, PointerProperties[] pointerProperties,
-            PointerCoords[] pointerCoords, int metaState, int buttonState,
-            float xPrecision, float yPrecision, int deviceId,
-            int edgeFlags, int source, int displayId, int flags,
-            @Classification int classification) {
+    public static @Nullable MotionEvent obtain(long downTime, long eventTime, int action,
+            int pointerCount,
+            @SuppressLint("ArrayReturn") @NonNull PointerProperties[] pointerProperties,
+            @SuppressLint("ArrayReturn") @NonNull PointerCoords[] pointerCoords, int metaState,
+            int buttonState, float xPrecision, float yPrecision, int deviceId, int edgeFlags,
+            int source, int displayId, int flags, @Classification int classification) {
         MotionEvent ev = obtain();
         final boolean success = ev.initialize(deviceId, source, displayId, action, flags, edgeFlags,
                 metaState, buttonState, classification, 0, 0, xPrecision, yPrecision,
-                downTime * NS_PER_MS, eventTime * NS_PER_MS,
-                pointerCount, pointerProperties, pointerCoords);
+                downTime * NS_PER_MS, eventTime * NS_PER_MS, pointerCount, pointerProperties,
+                pointerCoords);
         if (!success) {
             Log.e(TAG, "Could not initialize MotionEvent");
             ev.recycle();
@@ -2198,6 +2259,7 @@ public final class MotionEvent extends InputEvent implements Parcelable {
     }
 
     /** @hide */
+    @TestApi
     @Override
     public int getDisplayId() {
         return nativeGetDisplayId(mNativePtr);
@@ -2257,6 +2319,29 @@ public final class MotionEvent extends InputEvent implements Parcelable {
      */
     public final boolean isTouchEvent() {
         return nativeIsTouchEvent(mNativePtr);
+    }
+
+    /**
+     * Returns {@code true} if this motion event is from a stylus pointer.
+     * @hide
+     */
+    public boolean isStylusPointer() {
+        final int actionIndex = getActionIndex();
+        return isFromSource(InputDevice.SOURCE_STYLUS)
+                && (getToolType(actionIndex) == TOOL_TYPE_STYLUS
+                || getToolType(actionIndex) == TOOL_TYPE_ERASER);
+    }
+
+    /**
+     * Returns {@code true} if this motion event is a hover event, identified by it having an action
+     * of either {@link #ACTION_HOVER_ENTER}, {@link #ACTION_HOVER_MOVE} or
+     * {@link #ACTION_HOVER_EXIT}.
+     * @hide
+     */
+    public boolean isHoverEvent() {
+        return getActionMasked() == ACTION_HOVER_ENTER
+                || getActionMasked() == ACTION_HOVER_EXIT
+                || getActionMasked() == ACTION_HOVER_MOVE;
     }
 
     /**
@@ -3939,7 +4024,8 @@ public final class MotionEvent extends InputEvent implements Parcelable {
                 return "DEEP_PRESS";
             case CLASSIFICATION_TWO_FINGER_SWIPE:
                 return "TWO_FINGER_SWIPE";
-
+            case CLASSIFICATION_MULTI_FINGER_SWIPE:
+                return "MULTI_FINGER_SWIPE";
         }
         return "UNKNOWN";
     }
@@ -4219,6 +4305,13 @@ public final class MotionEvent extends InputEvent implements Parcelable {
         public float relativeY;
 
         /**
+         * Whether these coordinate data were generated by resampling.
+         *
+         * @hide
+         */
+        public boolean isResampled;
+
+        /**
          * Clears the contents of this object.
          * Resets all axes to zero.
          */
@@ -4236,6 +4329,7 @@ public final class MotionEvent extends InputEvent implements Parcelable {
             orientation = 0;
             relativeX = 0;
             relativeY = 0;
+            isResampled = false;
         }
 
         /**
@@ -4268,6 +4362,7 @@ public final class MotionEvent extends InputEvent implements Parcelable {
             orientation = other.orientation;
             relativeX = other.relativeX;
             relativeY = other.relativeY;
+            isResampled = other.isResampled;
         }
 
         /**

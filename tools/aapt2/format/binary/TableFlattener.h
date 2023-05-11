@@ -14,8 +14,13 @@
  * limitations under the License.
  */
 
-#ifndef AAPT_FORMAT_BINARY_TABLEFLATTENER_H
-#define AAPT_FORMAT_BINARY_TABLEFLATTENER_H
+#ifndef TOOLS_AAPT2_FORMAT_BINARY_TABLEFLATTENER_H_
+#define TOOLS_AAPT2_FORMAT_BINARY_TABLEFLATTENER_H_
+
+#include <map>
+#include <set>
+#include <string>
+#include <unordered_map>
 
 #include "Resource.h"
 #include "ResourceTable.h"
@@ -44,6 +49,9 @@ struct TableFlattenerOptions {
   // as a sparse map of entry ID and offset to actual data.
   SparseEntriesMode sparse_entries = SparseEntriesMode::Disabled;
 
+  // When true, use compact entries for simple data
+  bool use_compact_entries = false;
+
   // When true, the key string pool in the final ResTable
   // is collapsed to a single entry. All resource entries
   // have name indices that point to this single value
@@ -51,6 +59,9 @@ struct TableFlattenerOptions {
 
   // Set of resources to avoid collapsing to a single entry in key stringpool.
   std::set<ResourceName> name_collapse_exemptions;
+
+  // Set of resources to avoid path shortening.
+  std::set<ResourceName> path_shorten_exemptions;
 
   // Map from original resource paths to shortened resource paths.
   std::map<std::string, std::string> shortened_path_map;
@@ -68,6 +79,9 @@ struct TableFlattenerOptions {
   //
   // This applies only to simple entries (entry->flags & ResTable_entry::FLAG_COMPLEX == 0).
   bool deduplicate_entry_values = false;
+
+  // Map from original resource ids to obfuscated names.
+  std::unordered_map<uint32_t, std::string> id_resource_map;
 };
 
 class TableFlattener : public IResourceTableConsumer {
@@ -79,12 +93,12 @@ class TableFlattener : public IResourceTableConsumer {
   bool Consume(IAaptContext* context, ResourceTable* table) override;
 
  private:
-  DISALLOW_COPY_AND_ASSIGN(TableFlattener);
-
   TableFlattenerOptions options_;
   android::BigBuffer* buffer_;
+
+  DISALLOW_COPY_AND_ASSIGN(TableFlattener);
 };
 
 }  // namespace aapt
 
-#endif /* AAPT_FORMAT_BINARY_TABLEFLATTENER_H */
+#endif  // TOOLS_AAPT2_FORMAT_BINARY_TABLEFLATTENER_H_

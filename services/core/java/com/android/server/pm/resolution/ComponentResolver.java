@@ -35,6 +35,7 @@ import android.content.pm.PackageManager;
 import android.content.pm.ProviderInfo;
 import android.content.pm.ResolveInfo;
 import android.content.pm.ServiceInfo;
+import android.os.UserHandle;
 import android.util.ArrayMap;
 import android.util.ArraySet;
 import android.util.DebugUtils;
@@ -498,9 +499,9 @@ public class ComponentResolver extends ComponentResolverLocked implements
         }
 
         String packageName = activity.getPackageName();
-        AndroidPackage pkg = computer.getPackage(packageName);
+        var packageState = computer.getPackageStateInternal(packageName);
 
-        final boolean privilegedApp = pkg.isPrivileged();
+        final boolean privilegedApp = packageState.isPrivileged();
         String className = activity.getClassName();
         if (!privilegedApp) {
             // non-privileged applications can never define a priority >0
@@ -942,11 +943,7 @@ public class ComponentResolver extends ComponentResolverLocked implements
                 return false;
             }
 
-            // System apps are never considered stopped for purposes of
-            // filtering, because there may be no way for the user to
-            // actually re-launch them.
-            return !packageState.isSystem()
-                    && packageState.getUserStateOrDefault(userId).isStopped();
+            return packageState.getUserStateOrDefault(userId).isStopped();
         }
     }
 
@@ -1197,6 +1194,7 @@ public class ComponentResolver extends ComponentResolverLocked implements
             res.iconResourceId = info.getIcon();
             res.system = res.activityInfo.applicationInfo.isSystemApp();
             res.isInstantAppAvailable = userState.isInstantApp();
+            res.userHandle = UserHandle.of(userId);
             return res;
         }
 

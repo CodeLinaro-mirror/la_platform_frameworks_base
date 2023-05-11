@@ -55,6 +55,7 @@ extern int register_android_graphics_ColorFilter(JNIEnv* env);
 extern int register_android_graphics_ColorSpace(JNIEnv* env);
 extern int register_android_graphics_DrawFilter(JNIEnv* env);
 extern int register_android_graphics_FontFamily(JNIEnv* env);
+extern int register_android_graphics_Gainmap(JNIEnv* env);
 extern int register_android_graphics_HardwareRendererObserver(JNIEnv* env);
 extern int register_android_graphics_Matrix(JNIEnv* env);
 extern int register_android_graphics_Paint(JNIEnv* env);
@@ -76,11 +77,15 @@ extern int register_android_graphics_pdf_PdfRenderer(JNIEnv* env);
 extern int register_android_graphics_text_MeasuredText(JNIEnv* env);
 extern int register_android_graphics_text_LineBreaker(JNIEnv *env);
 extern int register_android_graphics_text_TextShaper(JNIEnv *env);
+extern int register_android_graphics_text_GraphemeBreak(JNIEnv* env);
+extern int register_android_graphics_MeshSpecification(JNIEnv* env);
+extern int register_android_graphics_Mesh(JNIEnv* env);
 
 extern int register_android_util_PathParser(JNIEnv* env);
 extern int register_android_view_DisplayListCanvas(JNIEnv* env);
 extern int register_android_view_RenderNode(JNIEnv* env);
 extern int register_android_view_ThreadedRenderer(JNIEnv* env);
+extern int register_android_graphics_HardwareBufferRenderer(JNIEnv* env);
 
 #ifdef NDEBUG
     #define REG_JNI(name)      { name }
@@ -111,6 +116,7 @@ extern int register_android_view_ThreadedRenderer(JNIEnv* env);
             REG_JNI(register_android_graphics_ColorFilter),
             REG_JNI(register_android_graphics_DrawFilter),
             REG_JNI(register_android_graphics_FontFamily),
+            REG_JNI(register_android_graphics_Gainmap),
             REG_JNI(register_android_graphics_HardwareRendererObserver),
             REG_JNI(register_android_graphics_ImageDecoder),
             REG_JNI(register_android_graphics_drawable_AnimatedImageDrawable),
@@ -143,10 +149,15 @@ extern int register_android_view_ThreadedRenderer(JNIEnv* env);
             REG_JNI(register_android_graphics_text_MeasuredText),
             REG_JNI(register_android_graphics_text_LineBreaker),
             REG_JNI(register_android_graphics_text_TextShaper),
+            REG_JNI(register_android_graphics_text_GraphemeBreak),
+            REG_JNI(register_android_graphics_MeshSpecification),
+            REG_JNI(register_android_graphics_Mesh),
 
             REG_JNI(register_android_util_PathParser),
             REG_JNI(register_android_view_RenderNode),
             REG_JNI(register_android_view_DisplayListCanvas),
+            REG_JNI(register_android_graphics_HardwareBufferRenderer),
+
             REG_JNI(register_android_view_ThreadedRenderer),
     };
 

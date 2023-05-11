@@ -16,6 +16,7 @@
 
 package com.android.server.tare;
 
+import static android.app.tare.EconomyManager.ENABLED_MODE_OFF;
 import static android.text.format.DateUtils.DAY_IN_MILLIS;
 
 import static com.android.server.tare.EconomicPolicy.REGULATION_BASIC_INCOME;
@@ -164,8 +165,9 @@ class Agent {
     }
 
     @GuardedBy("mLock")
-    private boolean isAffordableLocked(long balance, long price, long ctp) {
-        return balance >= price && mScribe.getRemainingConsumableCakesLocked() >= ctp;
+    private boolean isAffordableLocked(long balance, long price, long stockLimitHonoringCtp) {
+        return balance >= price
+                && mScribe.getRemainingConsumableCakesLocked() >= stockLimitHonoringCtp;
     }
 
     @GuardedBy("mLock")
@@ -286,7 +288,7 @@ class Agent {
 
         for (int i = 0; i < pkgNames.size(); ++i) {
             final String pkgName = pkgNames.valueAt(i);
-            final boolean isVip = mIrs.isVip(userId, pkgName);
+            final boolean isVip = mIrs.isVip(userId, pkgName, nowElapsed);
             SparseArrayMap<String, OngoingEvent> ongoingEvents =
                     mCurrentOngoingEvents.get(userId, pkgName);
             if (ongoingEvents != null) {
@@ -303,7 +305,8 @@ class Agent {
                         note.recalculateCosts(economicPolicy, userId, pkgName);
                         final boolean isAffordable = isVip
                                 || isAffordableLocked(newBalance,
-                                        note.getCachedModifiedPrice(), note.getCtp());
+                                        note.getCachedModifiedPrice(),
+                                        note.getStockLimitHonoringCtp());
                         if (note.isCurrentlyAffordable() != isAffordable) {
                             note.setNewAffordability(isAffordable);
                             mIrs.postAffordabilityChanged(userId, pkgName, note);
@@ -321,7 +324,7 @@ class Agent {
         final long nowElapsed = SystemClock.elapsedRealtime();
         final CompleteEconomicPolicy economicPolicy = mIrs.getCompleteEconomicPolicyLocked();
 
-        final boolean isVip = mIrs.isVip(userId, pkgName);
+        final boolean isVip = mIrs.isVip(userId, pkgName, nowElapsed);
         SparseArrayMap<String, OngoingEvent> ongoingEvents =
                 mCurrentOngoingEvents.get(userId, pkgName);
         if (ongoingEvents != null) {
@@ -339,7 +342,7 @@ class Agent {
                 note.recalculateCosts(economicPolicy, userId, pkgName);
                 final boolean isAffordable = isVip
                         || isAffordableLocked(newBalance,
-                        note.getCachedModifiedPrice(), note.getCtp());
+                        note.getCachedModifiedPrice(), note.getStockLimitHonoringCtp());
                 if (note.isCurrentlyAffordable() != isAffordable) {
                     note.setNewAffordability(isAffordable);
                     mIrs.postAffordabilityChanged(userId, pkgName, note);
@@ -397,13 +400,14 @@ class Agent {
                 if (actionAffordabilityNotes != null) {
                     final int size = actionAffordabilityNotes.size();
                     final long newBalance = getBalanceLocked(userId, pkgName);
-                    final boolean isVip = mIrs.isVip(userId, pkgName);
+                    final boolean isVip = mIrs.isVip(userId, pkgName, nowElapsed);
                     for (int n = 0; n < size; ++n) {
                         final ActionAffordabilityNote note = actionAffordabilityNotes.valueAt(n);
                         note.recalculateCosts(economicPolicy, userId, pkgName);
                         final boolean isAffordable = isVip
                                 || isAffordableLocked(newBalance,
-                                        note.getCachedModifiedPrice(), note.getCtp());
+                                        note.getCachedModifiedPrice(),
+                                        note.getStockLimitHonoringCtp());
                         if (note.isCurrentlyAffordable() != isAffordable) {
                             note.setNewAffordability(isAffordable);
                             mIrs.postAffordabilityChanged(userId, pkgName, note);
@@ -503,7 +507,8 @@ class Agent {
                     "Tried to adjust system balance for " + appToString(userId, pkgName));
             return;
         }
-        if (mIrs.isVip(userId, pkgName)) {
+        final boolean isVip = mIrs.isVip(userId, pkgName);
+        if (isVip) {
             // This could happen if the app was made a VIP after it started performing actions.
             // Continue recording the transaction for debugging purposes, but don't let it change
             // any numbers.
@@ -536,12 +541,11 @@ class Agent {
                     mActionAffordabilityNotes.get(userId, pkgName);
             if (actionAffordabilityNotes != null) {
                 final long newBalance = ledger.getCurrentBalance();
-                final boolean isVip = mIrs.isVip(userId, pkgName);
                 for (int i = 0; i < actionAffordabilityNotes.size(); ++i) {
                     final ActionAffordabilityNote note = actionAffordabilityNotes.valueAt(i);
                     final boolean isAffordable = isVip
                             || isAffordableLocked(newBalance,
-                                    note.getCachedModifiedPrice(), note.getCtp());
+                                    note.getCachedModifiedPrice(), note.getStockLimitHonoringCtp());
                     if (note.isCurrentlyAffordable() != isAffordable) {
                         note.setNewAffordability(isAffordable);
                         mIrs.postAffordabilityChanged(userId, pkgName, note);
@@ -830,7 +834,6 @@ class Agent {
 
     @GuardedBy("mLock")
     void onUserRemovedLocked(final int userId) {
-        mScribe.discardLedgersLocked(userId);
         mCurrentOngoingEvents.delete(userId);
         mBalanceThresholdAlarmQueue.removeAlarmsForUserId(userId);
     }
@@ -883,7 +886,7 @@ class Agent {
                         mUpperThreshold = (mUpperThreshold == Long.MIN_VALUE)
                                 ? price : Math.min(mUpperThreshold, price);
                     }
-                    final long ctp = note.getCtp();
+                    final long ctp = note.getStockLimitHonoringCtp();
                     if (ctp <= mRemainingConsumableCredits) {
                         mCtpThreshold = Math.max(mCtpThreshold, ctp);
                     }
@@ -1109,7 +1112,7 @@ class Agent {
         final ActionAffordabilityNote note =
                 new ActionAffordabilityNote(bill, listener, economicPolicy);
         if (actionAffordabilityNotes.add(note)) {
-            if (!mIrs.isEnabled()) {
+            if (mIrs.getEnabledMode() == ENABLED_MODE_OFF) {
                 // When TARE isn't enabled, we always say something is affordable. We also don't
                 // want to silently drop affordability change listeners in case TARE becomes enabled
                 // because then clients will be in an ambiguous state.
@@ -1120,7 +1123,7 @@ class Agent {
             note.recalculateCosts(economicPolicy, userId, pkgName);
             note.setNewAffordability(isVip
                     || isAffordableLocked(getBalanceLocked(userId, pkgName),
-                            note.getCachedModifiedPrice(), note.getCtp()));
+                            note.getCachedModifiedPrice(), note.getStockLimitHonoringCtp()));
             mIrs.postAffordabilityChanged(userId, pkgName, note);
             // Update ongoing alarm
             scheduleBalanceCheckLocked(userId, pkgName);
@@ -1147,7 +1150,7 @@ class Agent {
     static final class ActionAffordabilityNote {
         private final EconomyManagerInternal.ActionBill mActionBill;
         private final EconomyManagerInternal.AffordabilityChangeListener mListener;
-        private long mCtp;
+        private long mStockLimitHonoringCtp;
         private long mModifiedPrice;
         private boolean mIsAffordable;
 
@@ -1186,29 +1189,34 @@ class Agent {
             return mModifiedPrice;
         }
 
-        private long getCtp() {
-            return mCtp;
+        /** Returns the cumulative CTP of actions in this note that respect the stock limit. */
+        private long getStockLimitHonoringCtp() {
+            return mStockLimitHonoringCtp;
         }
 
         @VisibleForTesting
         void recalculateCosts(@NonNull EconomicPolicy economicPolicy,
                 int userId, @NonNull String pkgName) {
             long modifiedPrice = 0;
-            long ctp = 0;
+            long stockLimitHonoringCtp = 0;
             final List<EconomyManagerInternal.AnticipatedAction> anticipatedActions =
                     mActionBill.getAnticipatedActions();
             for (int i = 0; i < anticipatedActions.size(); ++i) {
                 final EconomyManagerInternal.AnticipatedAction aa = anticipatedActions.get(i);
+                final EconomicPolicy.Action action = economicPolicy.getAction(aa.actionId);
 
                 final EconomicPolicy.Cost actionCost =
                         economicPolicy.getCostOfAction(aa.actionId, userId, pkgName);
                 modifiedPrice += actionCost.price * aa.numInstantaneousCalls
                         + actionCost.price * (aa.ongoingDurationMs / 1000);
-                ctp += actionCost.costToProduce * aa.numInstantaneousCalls
-                        + actionCost.costToProduce * (aa.ongoingDurationMs / 1000);
+                if (action.respectsStockLimit) {
+                    stockLimitHonoringCtp +=
+                            actionCost.costToProduce * aa.numInstantaneousCalls
+                                    + actionCost.costToProduce * (aa.ongoingDurationMs / 1000);
+                }
             }
             mModifiedPrice = modifiedPrice;
-            mCtp = ctp;
+            mStockLimitHonoringCtp = stockLimitHonoringCtp;
         }
 
         boolean isCurrentlyAffordable() {
@@ -1268,7 +1276,8 @@ class Agent {
                                 final ActionAffordabilityNote note =
                                         actionAffordabilityNotes.valueAt(i);
                                 final boolean isAffordable = isVip || isAffordableLocked(
-                                        newBalance, note.getCachedModifiedPrice(), note.getCtp());
+                                        newBalance, note.getCachedModifiedPrice(),
+                                        note.getStockLimitHonoringCtp());
                                 if (note.isCurrentlyAffordable() != isAffordable) {
                                     note.setNewAffordability(isAffordable);
                                     mIrs.postAffordabilityChanged(userId, pkgName, note);

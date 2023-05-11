@@ -36,6 +36,7 @@ import android.util.Slog;
 import com.android.internal.R;
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.util.DumpUtils;
+import com.android.server.pm.UserManagerInternal;
 
 import libcore.io.IoUtils;
 
@@ -156,14 +157,19 @@ public class PersistentDataBlockService extends SystemService {
         mBlockDeviceSize = -1; // Load lazily
     }
 
-    private int getAllowedUid(int userHandle) {
+    private int getAllowedUid() {
+        final UserManagerInternal umInternal = LocalServices.getService(UserManagerInternal.class);
+        final int mainUserId = umInternal.getMainUserId();
+        if (mainUserId < 0) {
+            return -1;
+        }
         String allowedPackage = mContext.getResources()
                 .getString(R.string.config_persistentDataPackageName);
         int allowedUid = -1;
         if (!TextUtils.isEmpty(allowedPackage)) {
             try {
                 allowedUid = mContext.getPackageManager().getPackageUidAsUser(
-                        allowedPackage, PackageManager.MATCH_SYSTEM_ONLY, userHandle);
+                        allowedPackage, PackageManager.MATCH_SYSTEM_ONLY, mainUserId);
             } catch (PackageManager.NameNotFoundException e) {
                 // not expected
                 Slog.e(TAG, "not able to find package " + allowedPackage, e);
@@ -176,7 +182,6 @@ public class PersistentDataBlockService extends SystemService {
     public void onStart() {
         // Do init on a separate thread, will join in PHASE_ACTIVITY_MANAGER_READY
         SystemServerInitThreadPool.submit(() -> {
-            mAllowedUid = getAllowedUid(UserHandle.USER_SYSTEM);
             enforceChecksumValidity();
             formatIfOemUnlockEnabled();
             publishBinderService(Context.PERSISTENT_DATA_BLOCK_SERVICE, mService);
@@ -196,6 +201,8 @@ public class PersistentDataBlockService extends SystemService {
                 Thread.currentThread().interrupt();
                 throw new IllegalStateException("Service " + TAG + " init interrupted", e);
             }
+            // The user responsible for FRP should exist by now.
+            mAllowedUid = getAllowedUid();
             LocalServices.addService(PersistentDataBlockManagerInternal.class, mInternalService);
         }
         super.onBootPhase(phase);

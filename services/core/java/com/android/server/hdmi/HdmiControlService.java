@@ -18,11 +18,16 @@ package com.android.server.hdmi;
 
 import static android.hardware.hdmi.HdmiControlManager.DEVICE_EVENT_ADD_DEVICE;
 import static android.hardware.hdmi.HdmiControlManager.DEVICE_EVENT_REMOVE_DEVICE;
+import static android.hardware.hdmi.HdmiControlManager.EARC_FEATURE_DISABLED;
+import static android.hardware.hdmi.HdmiControlManager.EARC_FEATURE_ENABLED;
 import static android.hardware.hdmi.HdmiControlManager.HDMI_CEC_CONTROL_ENABLED;
+import static android.hardware.hdmi.HdmiControlManager.SOUNDBAR_MODE_DISABLED;
+import static android.hardware.hdmi.HdmiControlManager.SOUNDBAR_MODE_ENABLED;
 
 import static com.android.server.hdmi.Constants.ADDR_UNREGISTERED;
 import static com.android.server.hdmi.Constants.DISABLED;
 import static com.android.server.hdmi.Constants.ENABLED;
+import static com.android.server.hdmi.Constants.HDMI_EARC_STATUS_ARC_PENDING;
 import static com.android.server.hdmi.Constants.OPTION_MHL_ENABLE;
 import static com.android.server.hdmi.Constants.OPTION_MHL_INPUT_SWITCHING;
 import static com.android.server.hdmi.Constants.OPTION_MHL_POWER_CHARGE;
@@ -82,6 +87,7 @@ import android.os.ShellCallback;
 import android.os.SystemClock;
 import android.os.SystemProperties;
 import android.os.UserHandle;
+import android.provider.DeviceConfig;
 import android.provider.Settings.Global;
 import android.sysprop.HdmiProperties;
 import android.text.TextUtils;
@@ -124,6 +130,8 @@ import java.util.stream.Collectors;
 /**
  * Provides a service for sending and processing HDMI control messages,
  * HDMI-CEC and MHL control command, and providing the information on both standard.
+ *
+ * Additionally takes care of establishing and managing an eARC connection.
  */
 public class HdmiControlService extends SystemService {
     private static final String TAG = "HdmiControlService";
@@ -182,12 +190,14 @@ public class HdmiControlService extends SystemService {
 
     static final String PERMISSION = "android.permission.HDMI_CEC";
 
-    // The reason code to initiate initializeCec().
+    // The reason code to initiate initializeCec() and initializeEarc().
     static final int INITIATED_BY_ENABLE_CEC = 0;
     static final int INITIATED_BY_BOOT_UP = 1;
     static final int INITIATED_BY_SCREEN_ON = 2;
     static final int INITIATED_BY_WAKE_UP_MESSAGE = 3;
     static final int INITIATED_BY_HOTPLUG = 4;
+    static final int INITIATED_BY_SOUNDBAR_MODE = 5;
+    static final int INITIATED_BY_ENABLE_EARC = 6;
 
     // The reason code representing the intent action that drives the standby
     // procedure. The procedure starts either by Intent.ACTION_SCREEN_OFF or
@@ -336,8 +346,8 @@ public class HdmiControlService extends SystemService {
     // Used to synchronize the access to the service.
     private final Object mLock = new Object();
 
-    // Type of logical devices hosted in the system. Stored in the unmodifiable list.
-    private final List<Integer> mLocalDevices;
+    // Type of CEC logical devices hosted in the system. Stored in the unmodifiable list.
+    private final List<Integer> mCecLocalDevices;
 
     // List of records for HDMI control status change listener for death monitoring.
     @GuardedBy("mLock")
@@ -381,6 +391,18 @@ public class HdmiControlService extends SystemService {
     @HdmiControlManager.HdmiCecControl
     private int mHdmiControlEnabled;
 
+    // Set to true while the eARC feature is supported by the hardware on at least one port
+    // and the eARC HAL is present.
+    @GuardedBy("mLock")
+    @VisibleForTesting
+    private boolean mEarcSupported;
+
+    // Set to true while the eARC feature is enabled.
+    @GuardedBy("mLock")
+    private boolean mEarcEnabled;
+
+    private int mEarcPortId = -1;
+
     // Set to true while the service is in normal mode. While set to false, no input change is
     // allowed. Used for situations where input change can confuse users such as channel auto-scan,
     // system upgrade, etc., a.k.a. "prohibit mode".
@@ -414,6 +436,12 @@ public class HdmiControlService extends SystemService {
 
     private HdmiCecPowerStatusController mPowerStatusController;
 
+    @Nullable
+    private HdmiEarcController mEarcController;
+
+    @Nullable
+    private HdmiEarcLocalDevice mEarcLocalDevice;
+
     @ServiceThreadOnly
     private String mMenuLanguage = localeToMenuLanguage(Locale.getDefault());
 
@@ -422,6 +450,15 @@ public class HdmiControlService extends SystemService {
 
     @ServiceThreadOnly
     private boolean mWakeUpMessageReceived = false;
+
+    @ServiceThreadOnly
+    private boolean mSoundbarModeFeatureFlagEnabled = false;
+
+    @ServiceThreadOnly
+    private boolean mEarcTxFeatureFlagEnabled = false;
+
+    @ServiceThreadOnly
+    private boolean mTransitionFromArcToEarcTxEnabled = false;
 
     @ServiceThreadOnly
     private int mActivePortId = Constants.INVALID_PORT_ID;
@@ -443,6 +480,9 @@ public class HdmiControlService extends SystemService {
 
     @Nullable
     private TvInputManager mTvInputManager;
+
+    @Nullable
+    private DeviceConfigWrapper mDeviceConfig;
 
     @Nullable
     private PowerManagerWrapper mPowerManager;
@@ -496,17 +536,19 @@ public class HdmiControlService extends SystemService {
     @VisibleForTesting HdmiControlService(Context context, List<Integer> deviceTypes,
             AudioDeviceVolumeManagerWrapperInterface audioDeviceVolumeManager) {
         super(context);
-        mLocalDevices = deviceTypes;
+        mCecLocalDevices = deviceTypes;
         mSettingsObserver = new SettingsObserver(mHandler);
         mHdmiCecConfig = new HdmiCecConfig(context);
+        mDeviceConfig = new DeviceConfigWrapper();
         mAudioDeviceVolumeManager = audioDeviceVolumeManager;
     }
 
     public HdmiControlService(Context context) {
         super(context);
-        mLocalDevices = readDeviceTypes();
+        mCecLocalDevices = readDeviceTypes();
         mSettingsObserver = new SettingsObserver(mHandler);
         mHdmiCecConfig = new HdmiCecConfig(context);
+        mDeviceConfig = new DeviceConfigWrapper();
     }
 
     @VisibleForTesting
@@ -628,9 +670,24 @@ public class HdmiControlService extends SystemService {
             mPowerStatusController = new HdmiCecPowerStatusController(this);
         }
         mPowerStatusController.setPowerStatus(getInitialPowerStatus());
-        mProhibitMode = false;
+        setProhibitMode(false);
         mHdmiControlEnabled = mHdmiCecConfig.getIntValue(
                 HdmiControlManager.CEC_SETTING_NAME_HDMI_CEC_ENABLED);
+
+        mSoundbarModeFeatureFlagEnabled = mDeviceConfig.getBoolean(
+                Constants.DEVICE_CONFIG_FEATURE_FLAG_SOUNDBAR_MODE, false);
+        mEarcTxFeatureFlagEnabled = mDeviceConfig.getBoolean(
+                Constants.DEVICE_CONFIG_FEATURE_FLAG_ENABLE_EARC_TX, false);
+        mTransitionFromArcToEarcTxEnabled = mDeviceConfig.getBoolean(
+                Constants.DEVICE_CONFIG_FEATURE_FLAG_TRANSITION_ARC_TO_EARC_TX, false);
+
+        synchronized (mLock) {
+            mEarcEnabled = (mHdmiCecConfig.getIntValue(
+                    HdmiControlManager.SETTING_NAME_EARC_ENABLED) == EARC_FEATURE_ENABLED);
+            if (isTvDevice()) {
+                mEarcEnabled &= mEarcTxFeatureFlagEnabled;
+            }
+        }
         setHdmiCecVolumeControlEnabledInternal(getHdmiCecConfig().getIntValue(
                 HdmiControlManager.CEC_SETTING_NAME_VOLUME_CONTROL_MODE));
         mMhlInputChangeEnabled = readBooleanSetting(Global.MHL_INPUT_SWITCHING_ENABLED, true);
@@ -651,22 +708,60 @@ public class HdmiControlService extends SystemService {
         if (!mMhlController.isReady()) {
             Slog.i(TAG, "Device does not support MHL-control.");
         }
+        if (mEarcController == null) {
+            mEarcController = HdmiEarcController.create(this);
+        }
+        if (mEarcController == null) {
+            Slog.i(TAG, "Device does not support eARC.");
+        }
         mHdmiCecNetwork = new HdmiCecNetwork(this, mCecController, mMhlController);
-        if (mHdmiControlEnabled == HdmiControlManager.HDMI_CEC_CONTROL_ENABLED) {
+        if (isCecControlEnabled()) {
             initializeCec(INITIATED_BY_BOOT_UP);
         } else {
             mCecController.enableCec(false);
         }
-        mMhlDevices = Collections.emptyList();
+
+        synchronized (mLock) {
+            mMhlDevices = Collections.emptyList();
+        }
 
         mHdmiCecNetwork.initPortInfo();
+        List<HdmiPortInfo> ports = getPortInfo();
+        synchronized (mLock) {
+            mEarcSupported = false;
+            for (HdmiPortInfo port : ports) {
+                boolean earcSupportedOnPort = port.isEarcSupported();
+                if (earcSupportedOnPort && mEarcSupported) {
+                    // This means that more than 1 port supports eARC.
+                    // The HDMI specification only allows 1 active eARC connection.
+                    // Android does not support devices with multiple eARC-enabled ports.
+                    // Consider eARC not supported in this case.
+                    Slog.e(TAG, "HDMI eARC supported on more than 1 port.");
+                    mEarcSupported = false;
+                    mEarcPortId = -1;
+                    break;
+                } else if (earcSupportedOnPort) {
+                    mEarcPortId = port.getId();
+                    mEarcSupported = earcSupportedOnPort;
+                }
+            }
+            mEarcSupported &= (mEarcController != null);
+        }
+        if (isEarcSupported()) {
+            if (isEarcEnabled()) {
+                initializeEarc(INITIATED_BY_BOOT_UP);
+            } else {
+                setEarcEnabledInHal(false, false);
+            }
+        }
+
         mHdmiCecConfig.registerChangeListener(HdmiControlManager.CEC_SETTING_NAME_HDMI_CEC_ENABLED,
                 new HdmiCecConfig.SettingChangeListener() {
                     @Override
                     public void onChange(String setting) {
                         @HdmiControlManager.HdmiCecControl int enabled = mHdmiCecConfig.getIntValue(
                                 HdmiControlManager.CEC_SETTING_NAME_HDMI_CEC_ENABLED);
-                        setControlEnabled(enabled);
+                        setCecEnabled(enabled);
                     }
                 }, mServiceThreadExecutor);
         mHdmiCecConfig.registerChangeListener(HdmiControlManager.CEC_SETTING_NAME_HDMI_CEC_VERSION,
@@ -732,10 +827,79 @@ public class HdmiControlService extends SystemService {
                             mCecController.enableWakeupByOtp(tv().getAutoWakeup());
                         }
                     }
+                }, mServiceThreadExecutor);
+
+        if (isTvDevice()) {
+            mDeviceConfig.addOnPropertiesChangedListener(getContext().getMainExecutor(),
+                    new DeviceConfig.OnPropertiesChangedListener() {
+                        @Override
+                        public void onPropertiesChanged(DeviceConfig.Properties properties) {
+                            mEarcTxFeatureFlagEnabled = properties.getBoolean(
+                                    Constants.DEVICE_CONFIG_FEATURE_FLAG_ENABLE_EARC_TX,
+                                    false);
+                            boolean earcEnabledSetting = mHdmiCecConfig.getIntValue(
+                                    HdmiControlManager.SETTING_NAME_EARC_ENABLED)
+                                    == EARC_FEATURE_ENABLED;
+                            setEarcEnabled(earcEnabledSetting && mEarcTxFeatureFlagEnabled
+                                    ? EARC_FEATURE_ENABLED : EARC_FEATURE_DISABLED);
+                        }
+                    });
+        }
+
+        mHdmiCecConfig.registerChangeListener(HdmiControlManager.SETTING_NAME_EARC_ENABLED,
+                new HdmiCecConfig.SettingChangeListener() {
+                    @Override
+                    public void onChange(String setting) {
+                        if (isTvDevice()) {
+                            boolean earcEnabledSetting = mHdmiCecConfig.getIntValue(
+                                    HdmiControlManager.SETTING_NAME_EARC_ENABLED)
+                                    == EARC_FEATURE_ENABLED;
+                            setEarcEnabled(earcEnabledSetting && mEarcTxFeatureFlagEnabled
+                                    ? EARC_FEATURE_ENABLED : EARC_FEATURE_DISABLED);
+                        } else {
+                            setEarcEnabled(mHdmiCecConfig.getIntValue(
+                                    HdmiControlManager.SETTING_NAME_EARC_ENABLED));
+                        }
+                    }
                 },
                 mServiceThreadExecutor);
-    }
 
+        mDeviceConfig.addOnPropertiesChangedListener(getContext().getMainExecutor(),
+                new DeviceConfig.OnPropertiesChangedListener() {
+                    @Override
+                    public void onPropertiesChanged(DeviceConfig.Properties properties) {
+                        mSoundbarModeFeatureFlagEnabled = properties.getBoolean(
+                                Constants.DEVICE_CONFIG_FEATURE_FLAG_SOUNDBAR_MODE,
+                                false);
+                        boolean soundbarModeSetting = mHdmiCecConfig.getIntValue(
+                                HdmiControlManager.CEC_SETTING_NAME_SOUNDBAR_MODE)
+                                == SOUNDBAR_MODE_ENABLED;
+                        setSoundbarMode(soundbarModeSetting && mSoundbarModeFeatureFlagEnabled
+                                ? SOUNDBAR_MODE_ENABLED : SOUNDBAR_MODE_DISABLED);
+                    }
+                });
+        mHdmiCecConfig.registerChangeListener(HdmiControlManager.CEC_SETTING_NAME_SOUNDBAR_MODE,
+                new HdmiCecConfig.SettingChangeListener() {
+                    @Override
+                    public void onChange(String setting) {
+                        boolean soundbarModeSetting = mHdmiCecConfig.getIntValue(
+                                HdmiControlManager.CEC_SETTING_NAME_SOUNDBAR_MODE)
+                                == SOUNDBAR_MODE_ENABLED;
+                        setSoundbarMode(soundbarModeSetting && mSoundbarModeFeatureFlagEnabled
+                                ? SOUNDBAR_MODE_ENABLED : SOUNDBAR_MODE_DISABLED);
+                    }
+                }, mServiceThreadExecutor);
+
+        mDeviceConfig.addOnPropertiesChangedListener(getContext().getMainExecutor(),
+                new DeviceConfig.OnPropertiesChangedListener() {
+                    @Override
+                    public void onPropertiesChanged(DeviceConfig.Properties properties) {
+                        mTransitionFromArcToEarcTxEnabled = properties.getBoolean(
+                                Constants.DEVICE_CONFIG_FEATURE_FLAG_TRANSITION_ARC_TO_EARC_TX,
+                                false);
+                    }
+                });
+    }
     /** Returns true if the device screen is off */
     boolean isScreenOff() {
         return mDisplayManager.getDisplay(Display.DEFAULT_DISPLAY).getState() == Display.STATE_OFF;
@@ -747,7 +911,7 @@ public class HdmiControlService extends SystemService {
             mPowerStatusController.setPowerStatus(HdmiControlManager.POWER_STATUS_ON);
             // Start all actions that were queued because the device was in standby
             if (mAddressAllocated) {
-                for (HdmiCecLocalDevice localDevice : getAllLocalDevices()) {
+                for (HdmiCecLocalDevice localDevice : getAllCecLocalDevices()) {
                     localDevice.startQueuedActions();
                 }
             }
@@ -770,8 +934,18 @@ public class HdmiControlService extends SystemService {
     }
 
     @VisibleForTesting
+    void setAudioManager(AudioManager audioManager) {
+        mAudioManager = audioManager;
+    }
+
+    @VisibleForTesting
     void setCecController(HdmiCecController cecController) {
         mCecController = cecController;
+    }
+
+    @VisibleForTesting
+    void setEarcController(HdmiEarcController earcController) {
+        mEarcController = earcController;
     }
 
     @VisibleForTesting
@@ -829,6 +1003,11 @@ public class HdmiControlService extends SystemService {
     }
 
     @VisibleForTesting
+    void setDeviceConfig(DeviceConfigWrapper deviceConfig) {
+        mDeviceConfig = deviceConfig;
+    }
+
+    @VisibleForTesting
     void setPowerManager(PowerManagerWrapper powerManager) {
         mPowerManager = powerManager;
     }
@@ -838,12 +1017,71 @@ public class HdmiControlService extends SystemService {
         mPowerManagerInternal = powerManagerInternal;
     }
 
+    DeviceConfigWrapper getDeviceConfig() {
+        return mDeviceConfig;
+    }
+
     PowerManagerWrapper getPowerManager() {
         return mPowerManager;
     }
 
     PowerManagerInternalWrapper getPowerManagerInternal() {
         return mPowerManagerInternal;
+    }
+
+    /**
+     * Triggers the address allocation that states the presence of a local device audio system in
+     * the network.
+     */
+    @VisibleForTesting
+    public void setSoundbarMode(final int settingValue) {
+        HdmiCecLocalDevicePlayback playback = playback();
+        HdmiCecLocalDeviceAudioSystem audioSystem = audioSystem();
+        if (playback == null) {
+            Slog.w(TAG, "Device type not compatible to change soundbar mode.");
+            return;
+        }
+        if (!SystemProperties.getBoolean(Constants.PROPERTY_ARC_SUPPORT, true)) {
+            Slog.w(TAG, "Device type doesn't support ARC.");
+            return;
+        }
+        boolean isArcEnabled = false;
+        if (settingValue == SOUNDBAR_MODE_DISABLED && audioSystem != null) {
+            isArcEnabled = audioSystem.isArcEnabled();
+            if (isSystemAudioActivated()) {
+                audioSystem.terminateSystemAudioMode();
+            }
+            if (isArcEnabled) {
+                if (audioSystem.hasAction(ArcTerminationActionFromAvr.class)) {
+                    audioSystem.removeAction(ArcTerminationActionFromAvr.class);
+                }
+                audioSystem.addAndStartAction(new ArcTerminationActionFromAvr(audioSystem,
+                        new IHdmiControlCallback.Stub() {
+                            @Override
+                            public void onComplete(int result) {
+                                mAddressAllocated = false;
+                                initializeCecLocalDevices(INITIATED_BY_SOUNDBAR_MODE);
+                            }
+                        }));
+            }
+        }
+        if (!isArcEnabled) {
+            mAddressAllocated = false;
+            initializeCecLocalDevices(INITIATED_BY_SOUNDBAR_MODE);
+        }
+    }
+
+    /**
+     * Checks if the Device Discovery is handled by the local device playback.
+     * See {@link HdmiCecLocalDeviceAudioSystem#launchDeviceDiscovery}.
+     */
+    public boolean isDeviceDiscoveryHandledByPlayback() {
+        HdmiCecLocalDevicePlayback playback = playback();
+        if (playback != null && (playback.hasAction(DeviceDiscoveryAction.class)
+                || playback.hasAction(HotplugDetectionAction.class))) {
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -866,7 +1104,7 @@ public class HdmiControlService extends SystemService {
                 break;
             case INITIATED_BY_SCREEN_ON:
                 reason = HdmiControlManager.CONTROL_STATE_CHANGED_REASON_WAKEUP;
-                final List<HdmiCecLocalDevice> devices = getAllLocalDevices();
+                final List<HdmiCecLocalDevice> devices = getAllCecLocalDevices();
                 for (HdmiCecLocalDevice device : devices) {
                     device.onInitializeCecComplete(initiatedBy);
                 }
@@ -990,15 +1228,35 @@ public class HdmiControlService extends SystemService {
 
         mCecController.enableSystemCecControl(true);
         mCecController.setLanguage(mMenuLanguage);
-        initializeLocalDevices(initiatedBy);
+        initializeCecLocalDevices(initiatedBy);
+    }
+
+    /**
+     * If the Soundbar mode is turned on, adds the local device type audio system in the list of
+     * local devices types. This method is called when the local devices are initialized such that
+     * the list of local devices is in sync with the Soundbar mode setting.
+     * @return the list of integer device types
+     */
+    @ServiceThreadOnly
+    private List<Integer> getCecLocalDeviceTypes() {
+        ArrayList<Integer> allLocalDeviceTypes = new ArrayList<>(mCecLocalDevices);
+        if (mHdmiCecConfig.getIntValue(HdmiControlManager.CEC_SETTING_NAME_SOUNDBAR_MODE)
+                == SOUNDBAR_MODE_ENABLED
+                && !allLocalDeviceTypes.contains(HdmiDeviceInfo.DEVICE_AUDIO_SYSTEM)
+                && SystemProperties.getBoolean(Constants.PROPERTY_ARC_SUPPORT, true)
+                && mSoundbarModeFeatureFlagEnabled) {
+            allLocalDeviceTypes.add(HdmiDeviceInfo.DEVICE_AUDIO_SYSTEM);
+        }
+        return allLocalDeviceTypes;
     }
 
     @ServiceThreadOnly
-    private void initializeLocalDevices(final int initiatedBy) {
+    @VisibleForTesting
+    protected void initializeCecLocalDevices(final int initiatedBy) {
         assertRunOnServiceThread();
         // A container for [Device type, Local device info].
         ArrayList<HdmiCecLocalDevice> localDevices = new ArrayList<>();
-        for (int type : mLocalDevices) {
+        for (int type : getCecLocalDeviceTypes()) {
             HdmiCecLocalDevice localDevice = mHdmiCecNetwork.getLocalDevice(type);
             if (localDevice == null) {
                 localDevice = HdmiCecLocalDevice.create(this, type);
@@ -1008,7 +1266,7 @@ public class HdmiControlService extends SystemService {
         }
         // It's now safe to flush existing local devices from mCecController since they were
         // already moved to 'localDevices'.
-        clearLocalDevices();
+        clearCecLocalDevices();
         allocateLogicalAddress(localDevices, initiatedBy);
     }
 
@@ -1051,9 +1309,10 @@ public class HdmiControlService extends SystemService {
 
                             // Address allocation completed for all devices. Notify each device.
                             if (allocatingDevices.size() == ++finished[0]) {
-                                if (initiatedBy != INITIATED_BY_HOTPLUG) {
-                                    // In case of the hotplug we don't call
-                                    // onInitializeCecComplete()
+                                if (initiatedBy != INITIATED_BY_HOTPLUG
+                                        && initiatedBy != INITIATED_BY_SOUNDBAR_MODE) {
+                                    // In case of the hotplug or soundbar mode setting toggle
+                                    // we don't call onInitializeCecComplete()
                                     // since we reallocate the logical address only.
                                     onInitializeCecComplete(initiatedBy);
                                 }
@@ -1155,7 +1414,6 @@ public class HdmiControlService extends SystemService {
      * Returns {@link Looper} of main thread. Use this {@link Looper} instance
      * for tasks that are running on main service thread.
      */
-    @VisibleForTesting
     protected Looper getServiceLooper() {
         return mHandler.getLooper();
     }
@@ -1331,7 +1589,7 @@ public class HdmiControlService extends SystemService {
      * Returns whether the source address of a message is a local logical address.
      */
     private boolean sourceAddressIsLocal(HdmiCecMessage message) {
-        for (HdmiCecLocalDevice device : getAllLocalDevices()) {
+        for (HdmiCecLocalDevice device : getAllCecLocalDevices()) {
             if (message.getSource() == device.getDeviceInfo().getLogicalAddress()
                     && message.getSource() != Constants.ADDR_UNREGISTERED) {
                 HdmiLogger.warning(
@@ -1373,6 +1631,11 @@ public class HdmiControlService extends SystemService {
     }
 
     void enableAudioReturnChannel(int portId, boolean enabled) {
+        if (!mTransitionFromArcToEarcTxEnabled && enabled && mEarcController != null) {
+            // If the feature flag is set to false, prevent eARC from establishing if ARC is already
+            // established.
+            setEarcEnabledInHal(false, false);
+        }
         mCecController.enableAudioReturnChannel(portId, enabled);
     }
 
@@ -1413,7 +1676,7 @@ public class HdmiControlService extends SystemService {
         if (connected && !isTvDevice()
                 && getPortInfo(portId).getType() == HdmiPortInfo.PORT_OUTPUT) {
             ArrayList<HdmiCecLocalDevice> localDevices = new ArrayList<>();
-            for (int type : mLocalDevices) {
+            for (int type : getCecLocalDeviceTypes()) {
                 HdmiCecLocalDevice localDevice = mHdmiCecNetwork.getLocalDevice(type);
                 if (localDevice == null) {
                     localDevice = HdmiCecLocalDevice.create(this, type);
@@ -1461,7 +1724,7 @@ public class HdmiControlService extends SystemService {
         return strategy | iterationStrategy;
     }
 
-    List<HdmiCecLocalDevice> getAllLocalDevices() {
+    List<HdmiCecLocalDevice> getAllCecLocalDevices() {
         assertRunOnServiceThread();
         return mHdmiCecNetwork.getLocalDeviceList();
     }
@@ -1484,7 +1747,7 @@ public class HdmiControlService extends SystemService {
         if (physicalAddress == getPhysicalAddress()) {
             return;
         }
-        for (HdmiCecLocalDevice device : getAllLocalDevices()) {
+        for (HdmiCecLocalDevice device : getAllCecLocalDevices()) {
             if (device.getDeviceInfo().getLogicalAddress() == logicalAddress) {
                 HdmiLogger.debug("allocate logical address for " + device.getDeviceInfo());
                 ArrayList<HdmiCecLocalDevice> localDevices = new ArrayList<>();
@@ -1555,7 +1818,7 @@ public class HdmiControlService extends SystemService {
     // Set the display name in HdmiDeviceInfo of the current devices to content provided by
     // Global.DEVICE_NAME. Only set and broadcast if the new name is different.
     private void setDisplayName(String newDisplayName) {
-        for (HdmiCecLocalDevice device : getAllLocalDevices()) {
+        for (HdmiCecLocalDevice device : getAllCecLocalDevices()) {
             HdmiDeviceInfo deviceInfo = device.getDeviceInfo();
             if (deviceInfo.getDisplayName().equals(newDisplayName)) {
                 continue;
@@ -1816,10 +2079,10 @@ public class HdmiControlService extends SystemService {
         @Override
         public int[] getSupportedTypes() {
             initBinderCall();
-            // mLocalDevices is an unmodifiable list - no lock necesary.
-            int[] localDevices = new int[mLocalDevices.size()];
+            // mCecLocalDevices is an unmodifiable list - no lock necessary.
+            int[] localDevices = new int[mCecLocalDevices.size()];
             for (int i = 0; i < localDevices.length; ++i) {
-                localDevices[i] = mLocalDevices.get(i);
+                localDevices[i] = mCecLocalDevices.get(i);
             }
             return localDevices;
         }
@@ -2236,6 +2499,7 @@ public class HdmiControlService extends SystemService {
                         Slog.w(TAG, "Local tv device not available to change arc mode.");
                         return;
                     }
+                    tv.startArcAction(enabled);
                 }
             });
         }
@@ -2379,7 +2643,7 @@ public class HdmiControlService extends SystemService {
             runOnServiceThread(new Runnable() {
                 @Override
                 public void run() {
-                    if (!isControlEnabled()) {
+                    if (!isCecControlEnabled()) {
                         Slog.w(TAG, "Hdmi control is disabled.");
                         return ;
                     }
@@ -2478,7 +2742,9 @@ public class HdmiControlService extends SystemService {
             if (!DumpUtils.checkDumpPermission(getContext(), TAG, writer)) return;
             final IndentingPrintWriter pw = new IndentingPrintWriter(writer, "  ");
 
-            pw.println("mProhibitMode: " + mProhibitMode);
+            synchronized (mLock) {
+                pw.println("mProhibitMode: " + mProhibitMode);
+            }
             pw.println("mPowerStatus: " + mPowerStatusController.getPowerStatus());
             pw.println("mIsCecAvailable: " + mIsCecAvailable);
             pw.println("mCecVersion: " + mCecVersion);
@@ -2487,9 +2753,9 @@ public class HdmiControlService extends SystemService {
             // System settings
             pw.println("System_settings:");
             pw.increaseIndent();
-            pw.println("mMhlInputChangeEnabled: " + mMhlInputChangeEnabled);
+            pw.println("mMhlInputChangeEnabled: " + isMhlInputChangeEnabled());
             pw.println("mSystemAudioActivated: " + isSystemAudioActivated());
-            pw.println("mHdmiCecVolumeControlEnabled: " + mHdmiCecVolumeControl);
+            pw.println("mHdmiCecVolumeControlEnabled: " + getHdmiCecVolumeControl());
             pw.decreaseIndent();
 
             // CEC settings
@@ -2514,6 +2780,14 @@ public class HdmiControlService extends SystemService {
             pw.println("mMhlController: ");
             pw.increaseIndent();
             mMhlController.dump(pw);
+            pw.decreaseIndent();
+            pw.print("eARC local device: ");
+            pw.increaseIndent();
+            if (mEarcLocalDevice == null) {
+                pw.println("None. eARC is either disabled or not available.");
+            } else {
+                mEarcLocalDevice.dump(pw);
+            }
             pw.decreaseIndent();
             mHdmiCecNetwork.dump(pw);
             if (mCecController != null) {
@@ -3062,6 +3336,9 @@ public class HdmiControlService extends SystemService {
     }
 
     private void invokeCallback(IHdmiControlCallback callback, int result) {
+        if (callback == null) {
+            return;
+        }
         try {
             callback.onComplete(result);
         } catch (RemoteException e) {
@@ -3172,15 +3449,15 @@ public class HdmiControlService extends SystemService {
     }
 
     boolean isTvDevice() {
-        return mLocalDevices.contains(HdmiDeviceInfo.DEVICE_TV);
+        return mCecLocalDevices.contains(HdmiDeviceInfo.DEVICE_TV);
     }
 
     boolean isAudioSystemDevice() {
-        return mLocalDevices.contains(HdmiDeviceInfo.DEVICE_AUDIO_SYSTEM);
+        return mCecLocalDevices.contains(HdmiDeviceInfo.DEVICE_AUDIO_SYSTEM);
     }
 
     boolean isPlaybackDevice() {
-        return mLocalDevices.contains(HdmiDeviceInfo.DEVICE_PLAYBACK);
+        return mCecLocalDevices.contains(HdmiDeviceInfo.DEVICE_PLAYBACK);
     }
 
     boolean isSwitchDevice() {
@@ -3217,9 +3494,21 @@ public class HdmiControlService extends SystemService {
         return mAudioDeviceVolumeManager;
     }
 
-    boolean isControlEnabled() {
+    boolean isCecControlEnabled() {
         synchronized (mLock) {
             return mHdmiControlEnabled == HdmiControlManager.HDMI_CEC_CONTROL_ENABLED;
+        }
+    }
+
+    private boolean isEarcEnabled() {
+        synchronized (mLock) {
+            return mEarcEnabled;
+        }
+    }
+
+    private boolean isEarcSupported() {
+        synchronized (mLock) {
+            return mEarcSupported;
         }
     }
 
@@ -3294,7 +3583,7 @@ public class HdmiControlService extends SystemService {
         mPowerStatusController.setPowerStatus(HdmiControlManager.POWER_STATUS_TRANSIENT_TO_ON,
                 false);
         if (mCecController != null) {
-            if (mHdmiControlEnabled == HDMI_CEC_CONTROL_ENABLED) {
+            if (isCecControlEnabled()) {
                 int startReason = -1;
                 switch (wakeUpAction) {
                     case WAKE_UP_SCREEN_ON:
@@ -3316,6 +3605,25 @@ public class HdmiControlService extends SystemService {
         } else {
             Slog.i(TAG, "Device does not support HDMI-CEC.");
         }
+        if (isEarcSupported()) {
+            if (isEarcEnabled()) {
+                int startReason = -1;
+                switch (wakeUpAction) {
+                    case WAKE_UP_SCREEN_ON:
+                        startReason = INITIATED_BY_SCREEN_ON;
+                        break;
+                    case WAKE_UP_BOOT_UP:
+                        startReason = INITIATED_BY_BOOT_UP;
+                        break;
+                    default:
+                        Slog.e(TAG, "wakeUpAction " + wakeUpAction + " not defined.");
+                        return;
+                }
+                initializeEarc(startReason);
+            } else {
+                setEarcEnabledInHal(false, false);
+            }
+        }
         // TODO: Initialize MHL local devices.
     }
 
@@ -3329,7 +3637,7 @@ public class HdmiControlService extends SystemService {
         invokeVendorCommandListenersOnControlStateChanged(false,
                 HdmiControlManager.CONTROL_STATE_CHANGED_REASON_STANDBY);
 
-        final List<HdmiCecLocalDevice> devices = getAllLocalDevices();
+        final List<HdmiCecLocalDevice> devices = getAllCecLocalDevices();
 
         if (!isStandbyMessageReceived() && !canGoToStandby()) {
             mPowerStatusController.setPowerStatus(HdmiControlManager.POWER_STATUS_STANDBY);
@@ -3339,7 +3647,7 @@ public class HdmiControlService extends SystemService {
             return;
         }
 
-        disableDevices(new PendingActionClearedCallback() {
+        disableCecLocalDevices(new PendingActionClearedCallback() {
             @Override
             public void onCleared(HdmiCecLocalDevice device) {
                 Slog.v(TAG, "On standby-action cleared:" + device.mDeviceType);
@@ -3387,7 +3695,7 @@ public class HdmiControlService extends SystemService {
         return mMenuLanguage;
     }
 
-    private void disableDevices(PendingActionClearedCallback callback) {
+    private void disableCecLocalDevices(PendingActionClearedCallback callback) {
         if (mCecController != null) {
             for (HdmiCecLocalDevice device : mHdmiCecNetwork.getLocalDeviceList()) {
                 device.disableDevice(mStandbyMessageReceived, callback);
@@ -3397,7 +3705,8 @@ public class HdmiControlService extends SystemService {
     }
 
     @ServiceThreadOnly
-    private void clearLocalDevices() {
+    @VisibleForTesting
+    protected void clearCecLocalDevices() {
         assertRunOnServiceThread();
         if (mCecController == null) {
             return;
@@ -3573,7 +3882,7 @@ public class HdmiControlService extends SystemService {
     }
 
     @ServiceThreadOnly
-    void setControlEnabled(@HdmiControlManager.HdmiCecControl int enabled) {
+    void setCecEnabled(@HdmiControlManager.HdmiCecControl int enabled) {
         assertRunOnServiceThread();
 
         synchronized (mLock) {
@@ -3581,7 +3890,7 @@ public class HdmiControlService extends SystemService {
         }
 
         if (enabled == HDMI_CEC_CONTROL_ENABLED) {
-            enableHdmiControlService();
+            onEnableCec();
             setHdmiCecVolumeControlEnabledInternal(getHdmiCecConfig().getIntValue(
                     HdmiControlManager.CEC_SETTING_NAME_VOLUME_CONTROL_MODE));
             return;
@@ -3596,7 +3905,7 @@ public class HdmiControlService extends SystemService {
         runOnServiceThread(new Runnable() {
             @Override
             public void run() {
-                disableHdmiControlService();
+                onDisableCec();
             }
         });
         announceHdmiControlStatusChange(enabled);
@@ -3605,7 +3914,7 @@ public class HdmiControlService extends SystemService {
     }
 
     @ServiceThreadOnly
-    private void enableHdmiControlService() {
+    private void onEnableCec() {
         mCecController.enableCec(true);
         mCecController.enableSystemCecControl(true);
         mMhlController.setOption(OPTION_MHL_ENABLE, ENABLED);
@@ -3614,8 +3923,8 @@ public class HdmiControlService extends SystemService {
     }
 
     @ServiceThreadOnly
-    private void disableHdmiControlService() {
-        disableDevices(
+    private void onDisableCec() {
+        disableCecLocalDevices(
                 new PendingActionClearedCallback() {
                     @Override
                     public void onCleared(HdmiCecLocalDevice device) {
@@ -3627,7 +3936,7 @@ public class HdmiControlService extends SystemService {
                                         mCecController.enableCec(false);
                                         mCecController.enableSystemCecControl(false);
                                         mMhlController.setOption(OPTION_MHL_ENABLE, DISABLED);
-                                        clearLocalDevices();
+                                        clearCecLocalDevices();
                                     }
                                 });
                     }
@@ -3671,7 +3980,7 @@ public class HdmiControlService extends SystemService {
 
         // If the current device is a source device, check if the current Active Source matches
         // the local device info.
-        for (HdmiCecLocalDevice device : getAllLocalDevices()) {
+        for (HdmiCecLocalDevice device : getAllCecLocalDevices()) {
             boolean deviceIsActiveSource =
                     logicalAddress == device.getDeviceInfo().getLogicalAddress()
                             && physicalAddress == getPhysicalAddress();
@@ -4204,5 +4513,182 @@ public class HdmiControlService extends SystemService {
     void setStreamMusicVolume(int volume, int flags) {
         getAudioManager().setStreamVolume(AudioManager.STREAM_MUSIC,
                 volume * mStreamMusicMaxVolume / AudioStatus.MAX_VOLUME, flags);
+    }
+
+    private void initializeEarc(int initiatedBy) {
+        Slog.i(TAG, "eARC initialized, reason = " + initiatedBy);
+        initializeEarcLocalDevice(initiatedBy);
+
+        if (initiatedBy == INITIATED_BY_ENABLE_EARC) {
+            // Since ARC and eARC cannot be connected simultaneously, we need to terminate ARC
+            // before even enabling eARC.
+            setEarcEnabledInHal(true, true);
+        } else {
+            // On boot, wake-up, and hotplug in, eARC will always be attempted before ARC.
+            // So there is no need to explicitly terminate ARC before enabling eARC.
+            setEarcEnabledInHal(true, false);
+        }
+    }
+
+    @ServiceThreadOnly
+    @VisibleForTesting
+    protected void initializeEarcLocalDevice(final int initiatedBy) {
+        // TODO remove initiatedBy argument if it stays unused
+        assertRunOnServiceThread();
+        if (mEarcLocalDevice == null) {
+            mEarcLocalDevice = HdmiEarcLocalDevice.create(this, HdmiDeviceInfo.DEVICE_TV);
+        }
+        // TODO create HdmiEarcLocalDeviceRx if we're an audio system device.
+    }
+
+    @ServiceThreadOnly
+    @VisibleForTesting
+    protected void setEarcEnabled(@HdmiControlManager.EarcFeature int enabled) {
+        assertRunOnServiceThread();
+        synchronized (mLock) {
+            mEarcEnabled = (enabled == EARC_FEATURE_ENABLED);
+
+            if (!isEarcSupported()) {
+                Slog.i(TAG, "Enabled/disabled eARC setting, but the hardware doesn´t support eARC. "
+                        + "This settings change doesn´t have an effect.");
+                return;
+            }
+
+            if (mEarcEnabled) {
+                onEnableEarc();
+                return;
+            }
+        }
+        runOnServiceThread(new Runnable() {
+            @Override
+            public void run() {
+                onDisableEarc();
+            }
+        });
+    }
+
+    @VisibleForTesting
+    protected void setEarcSupported(boolean supported) {
+        synchronized (mLock) {
+            mEarcSupported = supported;
+        }
+    }
+
+    @ServiceThreadOnly
+    private void onEnableEarc() {
+        // This will terminate ARC as well.
+        initializeEarc(INITIATED_BY_ENABLE_EARC);
+    }
+
+    @ServiceThreadOnly
+    private void onDisableEarc() {
+        disableEarcLocalDevice();
+        setEarcEnabledInHal(false, false);
+        clearEarcLocalDevice();
+    }
+
+    @ServiceThreadOnly
+    @VisibleForTesting
+    protected void clearEarcLocalDevice() {
+        assertRunOnServiceThread();
+        mEarcLocalDevice = null;
+    }
+
+    @ServiceThreadOnly
+    @VisibleForTesting
+    protected void addEarcLocalDevice(HdmiEarcLocalDevice localDevice) {
+        assertRunOnServiceThread();
+        mEarcLocalDevice = localDevice;
+    }
+
+    @ServiceThreadOnly
+    @VisibleForTesting
+    HdmiEarcLocalDevice getEarcLocalDevice() {
+        assertRunOnServiceThread();
+        return mEarcLocalDevice;
+    }
+
+    private void disableEarcLocalDevice() {
+        if (mEarcLocalDevice == null) {
+            return;
+        }
+        mEarcLocalDevice.disableDevice();
+    }
+
+    @ServiceThreadOnly
+    @VisibleForTesting
+    protected void setEarcEnabledInHal(boolean enabled, boolean terminateArcFirst) {
+        assertRunOnServiceThread();
+        if (terminateArcFirst) {
+            startArcAction(false, new IHdmiControlCallback.Stub() {
+                @Override
+                public void onComplete(int result) throws RemoteException {
+                    if (result != HdmiControlManager.RESULT_SUCCESS) {
+                        Slog.w(TAG,
+                                "ARC termination before enabling eARC in the HAL failed with "
+                                        + "result: " + result);
+                    }
+                    // Independently of the result (i.e. independently of whether the ARC RX device
+                    // responded with <Terminate ARC> or not), we always end up terminating ARC in
+                    // the HAL. As soon as we do that, we can enable eARC in the HAL.
+                    mEarcController.setEarcEnabled(enabled);
+                    mCecController.setHpdSignalType(
+                            enabled ? Constants.HDMI_HPD_TYPE_STATUS_BIT
+                                    : Constants.HDMI_HPD_TYPE_PHYSICAL,
+                            mEarcPortId);
+                }
+            });
+        } else {
+            mEarcController.setEarcEnabled(enabled);
+            mCecController.setHpdSignalType(
+                    enabled ? Constants.HDMI_HPD_TYPE_STATUS_BIT : Constants.HDMI_HPD_TYPE_PHYSICAL,
+                    mEarcPortId);
+        }
+    }
+
+    @ServiceThreadOnly
+    void handleEarcStateChange(int status, int portId) {
+        assertRunOnServiceThread();
+        if (!getPortInfo(portId).isEarcSupported()) {
+            Slog.w(TAG, "Tried to update eARC status on a port that doesn't support eARC.");
+            return;
+        }
+        // If eARC is disabled, the local device is null. In this case, the HAL shouldn't have
+        // reported connection state changes, but even if it did, it won't take effect.
+        if (mEarcLocalDevice != null) {
+            mEarcLocalDevice.handleEarcStateChange(status);
+        }
+    }
+
+    @ServiceThreadOnly
+    void handleEarcCapabilitiesReported(byte[] rawCapabilities, int portId) {
+        assertRunOnServiceThread();
+        if (!getPortInfo(portId).isEarcSupported()) {
+            Slog.w(TAG,
+                    "Tried to process eARC capabilities from a port that doesn't support eARC.");
+            return;
+        }
+        // If eARC is disabled, the local device is null. In this case, the HAL shouldn't have
+        // reported eARC capabilities, but even if it did, it won't take effect.
+        if (mEarcLocalDevice != null) {
+            mEarcLocalDevice.handleEarcCapabilitiesReported(rawCapabilities);
+        }
+    }
+
+    protected boolean earcBlocksArcConnection() {
+        if (mEarcLocalDevice == null) {
+            return false;
+        }
+        synchronized (mLock) {
+            return mEarcLocalDevice.mEarcStatus != HDMI_EARC_STATUS_ARC_PENDING;
+        }
+    }
+
+    protected void startArcAction(boolean enabled, IHdmiControlCallback callback) {
+        if (!isTvDeviceEnabled()) {
+            invokeCallback(callback, HdmiControlManager.RESULT_INCORRECT_MODE);
+        } else {
+            tv().startArcAction(enabled, callback);
+        }
     }
 }

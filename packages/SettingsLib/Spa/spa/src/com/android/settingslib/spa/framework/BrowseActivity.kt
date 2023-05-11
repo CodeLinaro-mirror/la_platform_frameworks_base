@@ -14,35 +14,47 @@
  * limitations under the License.
  */
 
+@file:OptIn(ExperimentalAnimationApi::class)
+
 package com.android.settingslib.spa.framework
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.annotation.VisibleForTesting
+import androidx.compose.animation.AnimatedContentScope
+import androidx.compose.animation.ExperimentalAnimationApi
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.unit.IntOffset
 import androidx.core.view.WindowCompat
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
 import androidx.navigation.NavGraph.Companion.findStartDestination
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.rememberNavController
 import com.android.settingslib.spa.R
 import com.android.settingslib.spa.framework.common.LogCategory
-import com.android.settingslib.spa.framework.common.SettingsPage
+import com.android.settingslib.spa.framework.common.NullPageProvider
+import com.android.settingslib.spa.framework.common.SettingsPageProvider
+import com.android.settingslib.spa.framework.common.SettingsPageProviderRepository
 import com.android.settingslib.spa.framework.common.SpaEnvironmentFactory
 import com.android.settingslib.spa.framework.common.createSettingsPage
+import com.android.settingslib.spa.framework.compose.AnimatedNavHost
 import com.android.settingslib.spa.framework.compose.LocalNavController
 import com.android.settingslib.spa.framework.compose.NavControllerWrapperImpl
+import com.android.settingslib.spa.framework.compose.composable
 import com.android.settingslib.spa.framework.compose.localNavController
+import com.android.settingslib.spa.framework.compose.rememberAnimatedNavController
 import com.android.settingslib.spa.framework.theme.SettingsTheme
+import com.android.settingslib.spa.framework.util.PageWithEvent
+import com.android.settingslib.spa.framework.util.getDestination
+import com.android.settingslib.spa.framework.util.getEntryId
+import com.android.settingslib.spa.framework.util.getSessionName
 import com.android.settingslib.spa.framework.util.navRoute
 
 private const val TAG = "BrowseActivity"
@@ -74,86 +86,86 @@ open class BrowseActivity : ComponentActivity() {
 
         setContent {
             SettingsTheme {
-                MainContent()
+                val sppRepository by spaEnvironment.pageProviderRepository
+                BrowseContent(sppRepository, intent)
             }
         }
     }
+}
 
-    @Composable
-    private fun MainContent() {
-        val sppRepository by spaEnvironment.pageProviderRepository
-        val navController = rememberNavController()
-        val nullPage = SettingsPage.createNull()
-        CompositionLocalProvider(navController.localNavController()) {
-            NavHost(
-                navController = navController,
-                startDestination = nullPage.sppName,
-            ) {
-                composable(nullPage.sppName) {}
-                for (spp in sppRepository.getAllProviders()) {
-                    composable(
-                        route = spp.name + spp.parameter.navRoute(),
-                        arguments = spp.parameter,
-                    ) { navBackStackEntry ->
-                        PageLogger(remember(navBackStackEntry.arguments) {
-                            spp.createSettingsPage(arguments = navBackStackEntry.arguments)
-                        })
-
-                        spp.Page(navBackStackEntry.arguments)
-                    }
-                }
-            }
-            InitialDestinationNavigator()
-        }
-    }
-
-    @Composable
-    private fun PageLogger(settingsPage: SettingsPage) {
-        val lifecycleOwner = LocalLifecycleOwner.current
-        DisposableEffect(lifecycleOwner) {
-            val observer = LifecycleEventObserver { _, event ->
-                if (event == Lifecycle.Event.ON_START) {
-                    settingsPage.enterPage()
-                } else if (event == Lifecycle.Event.ON_STOP) {
-                    settingsPage.leavePage()
-                }
-            }
-
-            // Add the observer to the lifecycle
-            lifecycleOwner.lifecycle.addObserver(observer)
-
-            // When the effect leaves the Composition, remove the observer
-            onDispose {
-                lifecycleOwner.lifecycle.removeObserver(observer)
-            }
-        }
-    }
-
-    @Composable
-    private fun InitialDestinationNavigator() {
-        val sppRepository by spaEnvironment.pageProviderRepository
-        val destinationNavigated = rememberSaveable { mutableStateOf(false) }
-        if (destinationNavigated.value) return
-        destinationNavigated.value = true
+@VisibleForTesting
+@Composable
+fun BrowseContent(sppRepository: SettingsPageProviderRepository, initialIntent: Intent? = null) {
+    val navController = rememberAnimatedNavController()
+    CompositionLocalProvider(navController.localNavController()) {
         val controller = LocalNavController.current as NavControllerWrapperImpl
-        LaunchedEffect(Unit) {
-            val destination =
-                intent?.getStringExtra(KEY_DESTINATION) ?: sppRepository.getDefaultStartPage()
-            val highlightEntryId = intent?.getStringExtra(KEY_HIGHLIGHT_ENTRY)
-            if (destination.isNotEmpty()) {
-                controller.highlightId = highlightEntryId
-                val navController = controller.navController
-                navController.navigate(destination) {
-                    popUpTo(navController.graph.findStartDestination().id) {
-                        inclusive = true
-                    }
-                }
+        controller.NavContent(sppRepository.getAllProviders())
+        controller.InitialDestination(initialIntent, sppRepository.getDefaultStartPage())
+    }
+}
+
+@Composable
+private fun NavControllerWrapperImpl.NavContent(allProvider: Collection<SettingsPageProvider>) {
+    AnimatedNavHost(
+        navController = navController,
+        startDestination = NullPageProvider.name,
+    ) {
+        val slideEffect = tween<IntOffset>(durationMillis = 300)
+        val fadeEffect = tween<Float>(durationMillis = 300)
+        composable(NullPageProvider.name) {}
+        for (spp in allProvider) {
+            composable(
+                route = spp.name + spp.parameter.navRoute(),
+                arguments = spp.parameter,
+                enterTransition = {
+                    slideIntoContainer(
+                        AnimatedContentScope.SlideDirection.Start, animationSpec = slideEffect
+                    ) + fadeIn(animationSpec = fadeEffect)
+                },
+                exitTransition = {
+                    slideOutOfContainer(
+                        AnimatedContentScope.SlideDirection.Start, animationSpec = slideEffect
+                    ) + fadeOut(animationSpec = fadeEffect)
+                },
+                popEnterTransition = {
+                    slideIntoContainer(
+                        AnimatedContentScope.SlideDirection.End, animationSpec = slideEffect
+                    ) + fadeIn(animationSpec = fadeEffect)
+                },
+                popExitTransition = {
+                    slideOutOfContainer(
+                        AnimatedContentScope.SlideDirection.End, animationSpec = slideEffect
+                    ) + fadeOut(animationSpec = fadeEffect)
+                },
+            ) { navBackStackEntry ->
+                val page = remember { spp.createSettingsPage(navBackStackEntry.arguments) }
+                page.PageWithEvent()
             }
         }
     }
+}
 
-    companion object {
-        const val KEY_DESTINATION = "spaActivityDestination"
-        const val KEY_HIGHLIGHT_ENTRY = "highlightEntry"
+@Composable
+private fun NavControllerWrapperImpl.InitialDestination(
+    initialIntent: Intent?,
+    defaultDestination: String
+) {
+    val destinationNavigated = rememberSaveable { mutableStateOf(false) }
+    if (destinationNavigated.value) return
+    destinationNavigated.value = true
+
+    val initialDestination = initialIntent?.getDestination() ?: defaultDestination
+    if (initialDestination.isEmpty()) return
+    val initialEntryId = initialIntent?.getEntryId()
+    val sessionSourceName = initialIntent?.getSessionName()
+
+    LaunchedEffect(Unit) {
+        highlightId = initialEntryId
+        sessionName = sessionSourceName
+        navController.navigate(initialDestination) {
+            popUpTo(navController.graph.findStartDestination().id) {
+                inclusive = true
+            }
+        }
     }
 }

@@ -31,14 +31,9 @@ android_test {
     ],
 
     static_libs: [
-        "androidx.compose.ui_ui-test-junit4",
-        "androidx.compose.ui_ui-test-manifest",
+        "SpaLibTestUtils",
         "androidx.test.ext.junit",
         "androidx.test.runner",
         "mockito-target-minus-junit4",
-        "truth-prebuilt",
-    ],
-    kotlincflags: [
-        "-opt-in=kotlin.RequiresOptIn",
     ],
 }

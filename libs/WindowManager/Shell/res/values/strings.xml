@@ -69,8 +69,10 @@
     <!-- Multi-Window strings -->
     <!-- Text that gets shown on top of current activity to inform the user that the system force-resized the current activity to be displayed in split-screen and that things might crash/not work properly [CHAR LIMIT=NONE] -->
     <string name="dock_forced_resizable">App may not work with split-screen.</string>
-    <!-- Warning message when we try to dock a non-resizeable task and launch it in fullscreen instead. -->
+    <!-- Warning message when we try to dock a non-resizeable task and launch it in fullscreen instead  [CHAR LIMIT=NONE] -->
     <string name="dock_non_resizeble_failed_to_dock_text">App does not support split-screen.</string>
+    <!-- Warning message when we try to dock an app not supporting multiple instances split into multiple sides [CHAR LIMIT=NONE] -->
+    <string name="dock_multi_instances_not_supported_text">This app can only be opened in 1 window.</string>
     <!-- Text that gets shown on top of current activity to inform the user that the system force-resized the current activity to be displayed on a secondary display and that things might crash/not work properly [CHAR LIMIT=NONE] -->
     <string name="forced_resizable_secondary_display">App may not work on a secondary display.</string>
     <!-- Warning message when we try to launch a non-resizeable activity on a secondary display and launch it on the primary instead. -->
@@ -102,6 +104,15 @@
     <string name="accessibility_action_divider_top_30">Top 30%</string>
     <!-- Accessibility action for moving docked stack divider to make the bottom screen full screen [CHAR LIMIT=NONE] -->
     <string name="accessibility_action_divider_bottom_full">Bottom full screen</string>
+
+    <!-- Accessibility label for splitting to the left drop zone [CHAR LIMIT=NONE] -->
+    <string name="accessibility_split_left">Split left</string>
+    <!-- Accessibility label for splitting to the right drop zone [CHAR LIMIT=NONE] -->
+    <string name="accessibility_split_right">Split right</string>
+    <!-- Accessibility label for splitting to the top drop zone [CHAR LIMIT=NONE] -->
+    <string name="accessibility_split_top">Split top</string>
+    <!-- Accessibility label for splitting to the bottom drop zone [CHAR LIMIT=NONE] -->
+    <string name="accessibility_split_bottom">Split bottom</string>
 
     <!-- One-Handed Tutorial title [CHAR LIMIT=60] -->
     <string name="one_handed_tutorial_title">Using one-handed mode</string>
@@ -191,6 +202,23 @@
     <!-- Accessibility description of the letterbox education toast expand to dialog button. [CHAR LIMIT=NONE] -->
     <string name="letterbox_education_expand_button_description">Expand for more information.</string>
 
+    <!-- The title of the restart confirmation dialog. [CHAR LIMIT=NONE] -->
+    <string name="letterbox_restart_dialog_title">Restart for a better view?</string>
+
+    <!-- The description of the restart confirmation dialog. [CHAR LIMIT=NONE] -->
+    <string name="letterbox_restart_dialog_description">You can restart the app so it looks better on
+        your screen, but you may lose your progress or any unsaved changes
+    </string>
+
+    <!-- Button text for dismissing the restart confirmation dialog. [CHAR LIMIT=20] -->
+    <string name="letterbox_restart_cancel">Cancel</string>
+
+    <!-- Button text for dismissing the restart confirmation dialog. [CHAR LIMIT=20] -->
+    <string name="letterbox_restart_restart">Restart</string>
+
+    <!-- Checkbox text for asking to not show the restart confirmation dialog again. [CHAR LIMIT=NONE] -->
+    <string name="letterbox_restart_dialog_checkbox_title">Don\u2019t show again</string>
+
     <!-- Freeform window caption strings -->
     <!-- Accessibility text for the maximize window button [CHAR LIMIT=NONE] -->
     <string name="maximize_button_text">Maximize</string>
@@ -202,6 +230,8 @@
     <string name="back_button_text">Back</string>
     <!-- Accessibility text for the caption handle [CHAR LIMIT=NONE] -->
     <string name="handle_text">Handle</string>
+    <!-- Accessibility text for the handle menu app icon [CHAR LIMIT=NONE] -->
+    <string name="app_icon_text">App Icon</string>
     <!-- Accessibility text for the handle fullscreen button [CHAR LIMIT=NONE] -->
     <string name="fullscreen_text">Fullscreen</string>
     <!-- Accessibility text for the handle desktop button [CHAR LIMIT=NONE] -->
@@ -212,4 +242,12 @@
     <string name="more_button_text">More</string>
     <!-- Accessibility text for the handle floating window button [CHAR LIMIT=NONE] -->
     <string name="float_button_text">Float</string>
+    <!-- Accessibility text for the handle menu select button [CHAR LIMIT=NONE] -->
+    <string name="select_text">Select</string>
+    <!-- Accessibility text for the handle menu screenshot button [CHAR LIMIT=NONE] -->
+    <string name="screenshot_text">Screenshot</string>
+    <!-- Accessibility text for the handle menu close button [CHAR LIMIT=NONE] -->
+    <string name="close_text">Close</string>
+    <!-- Accessibility text for the handle menu close menu button [CHAR LIMIT=NONE] -->
+    <string name="collapse_menu_text">Close Menu</string>
 </resources>

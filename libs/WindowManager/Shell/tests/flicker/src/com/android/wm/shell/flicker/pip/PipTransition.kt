@@ -18,19 +18,23 @@ package com.android.wm.shell.flicker.pip
 
 import android.app.Instrumentation
 import android.content.Intent
-import android.view.Surface
-import com.android.server.wm.flicker.FlickerTestParameter
-import com.android.server.wm.flicker.dsl.FlickerBuilder
+import android.platform.test.annotations.Presubmit
+import android.tools.common.Rotation
+import android.tools.common.datatypes.component.ComponentNameMatcher
+import android.tools.device.flicker.legacy.FlickerBuilder
+import android.tools.device.flicker.legacy.FlickerTest
+import android.tools.device.flicker.rules.RemoveAllTasksButHomeRule.Companion.removeAllTasksButHome
+import android.tools.device.helpers.WindowUtils
 import com.android.server.wm.flicker.helpers.PipAppHelper
-import com.android.server.wm.flicker.helpers.WindowUtils
 import com.android.server.wm.flicker.helpers.setRotation
-import com.android.server.wm.flicker.rules.RemoveAllTasksButHomeRule.Companion.removeAllTasksButHome
 import com.android.server.wm.flicker.testapp.ActivityOptions
 import com.android.wm.shell.flicker.BaseTest
+import com.google.common.truth.Truth
+import org.junit.Test
 
-abstract class PipTransition(testSpec: FlickerTestParameter) : BaseTest(testSpec) {
+abstract class PipTransition(flicker: FlickerTest) : BaseTest(flicker) {
     protected val pipApp = PipAppHelper(instrumentation)
-    protected val displayBounds = WindowUtils.getDisplayBounds(testSpec.startRotation)
+    protected val displayBounds = WindowUtils.getDisplayBounds(flicker.scenario.startRotation)
     protected val broadcastActionTrigger = BroadcastActionTrigger(instrumentation)
 
     // Helper class to process test actions by broadcast.
@@ -56,7 +60,6 @@ abstract class PipTransition(testSpec: FlickerTestParameter) : BaseTest(testSpec
      * Gets a configuration that handles basic setup and teardown of pip tests and that launches the
      * Pip app for test
      *
-     * @param eachRun If the pip app should be launched in each run (otherwise only 1x per test)
      * @param stringExtras Arguments to pass to the PIP launch intent
      * @param extraSpec Additional segment of flicker specification
      */
@@ -67,17 +70,29 @@ abstract class PipTransition(testSpec: FlickerTestParameter) : BaseTest(testSpec
     ): FlickerBuilder.() -> Unit {
         return {
             setup {
-                setRotation(Surface.ROTATION_0)
+                setRotation(Rotation.ROTATION_0)
                 removeAllTasksButHome()
                 pipApp.launchViaIntentAndWaitForPip(wmHelper, stringExtras = stringExtras)
             }
-            teardown {
-                setRotation(Surface.ROTATION_0)
-                removeAllTasksButHome()
-                pipApp.exit(wmHelper)
-            }
+            teardown { pipApp.exit(wmHelper) }
 
             extraSpec(this)
+        }
+    }
+
+    @Presubmit
+    @Test
+    fun hasAtMostOnePipDismissOverlayWindow() {
+        val matcher = ComponentNameMatcher("", "pip-dismiss-overlay")
+        flicker.assertWm {
+            val overlaysPerState =
+                trace.entries.map { entry ->
+                    entry.windowStates.count { window -> matcher.windowMatchesAnyOf(window) } <= 1
+                }
+
+            Truth.assertWithMessage("Number of dismiss overlays per state")
+                .that(overlaysPerState)
+                .doesNotContain(false)
         }
     }
 }

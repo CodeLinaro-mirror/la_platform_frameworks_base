@@ -18,6 +18,7 @@ import static android.Manifest.permission.READ_PRIVILEGED_PHONE_STATE;
 import static android.content.Intent.LOCAL_FLAG_FROM_SYSTEM;
 
 import android.Manifest;
+import android.annotation.CallbackExecutor;
 import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -38,6 +39,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
+import android.os.OutcomeReceiver;
 import android.os.Process;
 import android.os.RemoteException;
 import android.os.ServiceManager;
@@ -49,6 +51,8 @@ import android.text.TextUtils;
 import android.util.Log;
 
 import com.android.internal.annotations.GuardedBy;
+import com.android.internal.telecom.ClientTransactionalServiceRepository;
+import com.android.internal.telecom.ClientTransactionalServiceWrapper;
 import com.android.internal.telecom.ITelecomService;
 
 import java.lang.annotation.Retention;
@@ -891,9 +895,13 @@ public class TelecomManager {
             "android.telecom.extra.NOTIFICATION_PHONE_NUMBER";
 
     /**
-     * The intent to clear missed calls.
+     * Included in the extras of the {@link #ACTION_SHOW_MISSED_CALLS_NOTIFICATION}, provides a
+     * pending intent which can be used to clear the missed calls notification and mark unread
+     * missed call log entries as read.
      * @hide
+     * @deprecated Use {@link #cancelMissedCallsNotification()} instead.
      */
+    @Deprecated
     @SystemApi
     public static final String EXTRA_CLEAR_MISSED_CALLS_INTENT =
             "android.telecom.extra.CLEAR_MISSED_CALLS_INTENT";
@@ -945,6 +953,23 @@ public class TelecomManager {
      */
     @SystemApi
     public static final String EXTRA_CALL_SOURCE = "android.telecom.extra.CALL_SOURCE";
+
+    /**
+     * Intent action to trigger "switch to managed profile" dialog for call in SystemUI
+     *
+     * @hide
+     */
+    public static final String ACTION_SHOW_SWITCH_TO_WORK_PROFILE_FOR_CALL_DIALOG =
+            "android.telecom.action.SHOW_SWITCH_TO_WORK_PROFILE_FOR_CALL_DIALOG";
+
+    /**
+     * Extra specifying the managed profile user id.
+     * This is used with {@link TelecomManager#ACTION_SHOW_SWITCH_TO_WORK_PROFILE_FOR_CALL_DIALOG}
+     *
+     * @hide
+     */
+    public static final String EXTRA_MANAGED_PROFILE_USER_ID =
+            "android.telecom.extra.MANAGED_PROFILE_USER_ID";
 
     /**
      * Indicating the call is initiated via emergency dialer's shortcut button.
@@ -1055,6 +1080,14 @@ public class TelecomManager {
     private final Context mContext;
 
     private final ITelecomService mTelecomServiceOverride;
+
+    /** @hide **/
+    private final ClientTransactionalServiceRepository mTransactionalServiceRepository =
+            new ClientTransactionalServiceRepository();
+    /** @hide **/
+    public static final int TELECOM_TRANSACTION_SUCCESS = 0;
+    /** @hide **/
+    public static final String TRANSACTION_CALL_ID_KEY = "TelecomCallId";
 
     /**
      * @hide
@@ -1851,7 +1884,7 @@ public class TelecomManager {
         ITelecomService service = getTelecomService();
         if (service != null) {
             try {
-                return service.getCallStateUsingPackage(mContext.getPackageName(),
+                return service.getCallStateUsingPackage(mContext.getOpPackageName(),
                         mContext.getAttributionTag());
             } catch (RemoteException e) {
                 Log.d(TAG, "RemoteException calling getCallState().", e);
@@ -2044,6 +2077,14 @@ public class TelecomManager {
      * {@link #getPhoneAccount}. Self-managed {@link ConnectionService}s must have
      * {@link android.Manifest.permission#MANAGE_OWN_CALLS} to add a new incoming call.
      * <p>
+     * Specify the address associated with the incoming call using
+     * {@link #EXTRA_INCOMING_CALL_ADDRESS}.  If an incoming call is from an anonymous source, omit
+     * this extra and ensure you specify a valid number presentation via
+     * {@link Connection#setAddress(Uri, int)} on the {@link Connection} instance you return in
+     * your
+     * {@link ConnectionService#onCreateIncomingConnection(PhoneAccountHandle, ConnectionRequest)}
+     * implementation.
+     * <p>
      * The incoming call you are adding is assumed to have a video state of
      * {@link VideoProfile#STATE_AUDIO_ONLY}, unless the extra value
      * {@link #EXTRA_INCOMING_VIDEO_STATE} is specified.
@@ -2225,9 +2266,10 @@ public class TelecomManager {
     }
 
     /**
-     * Removes the missed-call notification if one is present.
+     * Removes the missed-call notification if one is present and marks missed calls in the call
+     * log as read.
      * <p>
-     * Requires that the method-caller be set as the system dialer app.
+     * Requires that the method-caller be set as the default dialer app.
      * </p>
      */
     @RequiresPermission(android.Manifest.permission.MODIFY_PHONE_STATE)
@@ -2633,6 +2675,110 @@ public class TelecomManager {
                 Log.e(TAG, "RemoteException isInSelfManagedCall: " + e);
                 e.rethrowFromSystemServer();
                 return false;
+            }
+        } else {
+            throw new IllegalStateException("Telecom service is not present");
+        }
+    }
+
+    /**
+     * Reports a new call with the specified {@link CallAttributes} to the telecom service. This
+     * method can be used to report both incoming and outgoing calls.  By reporting the call, the
+     * system is aware of the call and can provide updates on services (ex. Another device wants to
+     * disconnect the call) or events (ex. a new Bluetooth route became available).
+     *
+     * <p>
+     * The difference between this API call and {@link TelecomManager#placeCall(Uri, Bundle)} or
+     * {@link TelecomManager#addNewIncomingCall(PhoneAccountHandle, Bundle)} is that this API
+     * will asynchronously provide an update on whether the new call was added successfully via
+     * an {@link OutcomeReceiver}.  Additionally, callbacks will run on the executor thread that was
+     * passed in.
+     *
+     * <p>
+     * Note: Only packages that register with
+     * {@link PhoneAccount#CAPABILITY_SUPPORTS_TRANSACTIONAL_OPERATIONS}
+     * can utilize this API. {@link PhoneAccount}s that set the capabilities
+     * {@link PhoneAccount#CAPABILITY_SIM_SUBSCRIPTION},
+     * {@link PhoneAccount#CAPABILITY_CALL_PROVIDER},
+     * {@link PhoneAccount#CAPABILITY_CONNECTION_MANAGER}
+     * are not supported and will cause an exception to be thrown.
+     *
+     * <p>
+     * Usage example:
+     * <pre>
+     *
+     *  // An app should first define their own construct of a Call that overrides all the
+     *  // {@link CallControlCallback}s and {@link CallEventCallback}s
+     *  private class MyVoipCall {
+     *   public String callId = "";
+     *
+     *   public CallControlCallEventCallback handshakes = new
+     *                       CallControlCallEventCallback() {
+     *                         // override/ implement all {@link CallControlCallback}s
+     *                        }
+     *   public CallEventCallback events = new
+     *                       CallEventCallback() {
+     *                         // override/ implement all {@link CallEventCallback}s
+     *                        }
+     *   public MyVoipCall(String id){
+     *       callId = id;
+     *  }
+     *
+     * PhoneAccountHandle handle = new PhoneAccountHandle(
+     *                          new ComponentName("com.example.voip.app",
+     *                                            "com.example.voip.app.NewCallActivity"), "123");
+     *
+     * CallAttributes callAttributes = new CallAttributes.Builder(handle,
+     *                                             CallAttributes.DIRECTION_OUTGOING,
+     *                                            "John Smith", Uri.fromParts("tel", "123", null))
+     *                                            .build();
+     *
+     * MyVoipCall myFirstOutgoingCall = new MyVoipCall("1");
+     *
+     * telecomManager.addCall(callAttributes, Runnable::run, new OutcomeReceiver() {
+     *                              public void onResult(CallControl callControl) {
+     *                                 // The call has been added successfully
+     *                              }
+     *                           }, myFirstOutgoingCall.handshakes, myFirstOutgoingCall.events);
+     * </pre>
+     *
+     * @param callAttributes    attributes of the new call (incoming or outgoing, address, etc. )
+     * @param executor          thread to run background CallEventCallback updates on
+     * @param pendingControl    OutcomeReceiver that receives the result of addCall transaction
+     * @param handshakes        object that overrides {@link CallControlCallback}s
+     * @param events            object that overrides {@link CallEventCallback}s
+     */
+    @RequiresPermission(android.Manifest.permission.MANAGE_OWN_CALLS)
+    @SuppressLint("SamShouldBeLast")
+    public void addCall(@NonNull CallAttributes callAttributes,
+            @NonNull @CallbackExecutor Executor executor,
+            @NonNull OutcomeReceiver<CallControl, CallException> pendingControl,
+            @NonNull CallControlCallback handshakes,
+            @NonNull CallEventCallback events) {
+        Objects.requireNonNull(callAttributes);
+        Objects.requireNonNull(executor);
+        Objects.requireNonNull(pendingControl);
+        Objects.requireNonNull(handshakes);
+        Objects.requireNonNull(events);
+
+        ITelecomService service = getTelecomService();
+        if (service != null) {
+            try {
+                // create or add the new call to a service wrapper w/ the same phoneAccountHandle
+                ClientTransactionalServiceWrapper transactionalServiceWrapper =
+                        mTransactionalServiceRepository.addNewCallForTransactionalServiceWrapper(
+                                callAttributes.getPhoneAccountHandle());
+
+                // couple all the args passed by the client
+                String newCallId = transactionalServiceWrapper.trackCall(callAttributes, executor,
+                        pendingControl, handshakes, events);
+
+                // send args to server to process new call
+                service.addCall(callAttributes, transactionalServiceWrapper.getCallEventCallback(),
+                        newCallId, mContext.getOpPackageName());
+            } catch (RemoteException e) {
+                Log.e(TAG, "RemoteException addCall: " + e);
+                e.rethrowFromSystemServer();
             }
         } else {
             throw new IllegalStateException("Telecom service is not present");

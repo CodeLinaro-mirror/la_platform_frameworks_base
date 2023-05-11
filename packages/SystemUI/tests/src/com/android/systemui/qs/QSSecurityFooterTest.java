@@ -17,52 +17,54 @@ package com.android.systemui.qs;
 import static android.app.admin.DevicePolicyManager.DEVICE_OWNER_TYPE_DEFAULT;
 import static android.app.admin.DevicePolicyManager.DEVICE_OWNER_TYPE_FINANCED;
 
+import static com.google.common.truth.Truth.assertThat;
+
 import static junit.framework.Assert.assertEquals;
 import static junit.framework.Assert.assertNotNull;
+import static junit.framework.Assert.assertNull;
 
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Matchers.any;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import android.annotation.IdRes;
 import android.app.AlertDialog;
 import android.app.admin.DevicePolicyManager;
-import android.content.BroadcastReceiver;
 import android.content.ComponentName;
 import android.content.DialogInterface;
-import android.content.Intent;
 import android.content.pm.UserInfo;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.VectorDrawable;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.DeviceConfig;
 import android.provider.Settings;
 import android.test.suitebuilder.annotation.SmallTest;
 import android.testing.AndroidTestingRunner;
-import android.testing.LayoutInflaterBuilder;
-import android.testing.TestableImageView;
 import android.testing.TestableLooper;
 import android.testing.TestableLooper.RunWithLooper;
-import android.testing.ViewUtils;
 import android.text.SpannableStringBuilder;
 import android.view.LayoutInflater;
 import android.view.View;
-import android.view.ViewGroup;
-import android.widget.FrameLayout;
 import android.widget.TextView;
+
+import androidx.annotation.Nullable;
 
 import com.android.systemui.R;
 import com.android.systemui.SysuiTestCase;
 import com.android.systemui.animation.DialogLaunchAnimator;
+import com.android.systemui.animation.Expandable;
 import com.android.systemui.broadcast.BroadcastDispatcher;
+import com.android.systemui.common.shared.model.Icon;
 import com.android.systemui.plugins.ActivityStarter;
+import com.android.systemui.qs.footer.domain.model.SecurityButtonConfig;
+import com.android.systemui.security.data.model.SecurityModel;
 import com.android.systemui.settings.UserTracker;
 import com.android.systemui.statusbar.policy.SecurityController;
 
-import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -70,8 +72,6 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.MockitoAnnotations;
-
-import java.util.concurrent.atomic.AtomicInteger;
 
 /*
  * Compile and run the whole SystemUI test suite:
@@ -96,11 +96,6 @@ public class QSSecurityFooterTest extends SysuiTestCase {
             new ComponentName("TestDPC", "Test");
     private static final int DEFAULT_ICON_ID = R.drawable.ic_info_outline;
 
-    private ViewGroup mRootView;
-    private ViewGroup mSecurityFooterView;
-    private TextView mFooterText;
-    private TestableImageView mPrimaryFooterIcon;
-    private QSSecurityFooter mFooter;
     private QSSecurityFooterUtils mFooterUtils;
     @Mock
     private SecurityController mSecurityController;
@@ -121,59 +116,60 @@ public class QSSecurityFooterTest extends SysuiTestCase {
         mTestableLooper = TestableLooper.get(this);
         Looper looper = mTestableLooper.getLooper();
         Handler mainHandler = new Handler(looper);
+        // TODO(b/259908270): remove
+        DeviceConfig.setProperty(DeviceConfig.NAMESPACE_DEVICE_POLICY_MANAGER,
+                DevicePolicyManager.ADD_ISFINANCED_DEVICE_FLAG, "true",
+                /* makeDefault= */ false);
         when(mUserTracker.getUserInfo()).thenReturn(mock(UserInfo.class));
-        mSecurityFooterView = (ViewGroup) new LayoutInflaterBuilder(mContext)
-                .replace("ImageView", TestableImageView.class)
-                .build().inflate(R.layout.quick_settings_security_footer, null, false);
         mFooterUtils = new QSSecurityFooterUtils(getContext(),
                 getContext().getSystemService(DevicePolicyManager.class), mUserTracker,
                 mainHandler, mActivityStarter, mSecurityController, looper, mDialogLaunchAnimator);
-        mFooter = new QSSecurityFooter(mSecurityFooterView, mainHandler, mSecurityController,
-                looper, mBroadcastDispatcher, mFooterUtils);
-        mFooterText = mSecurityFooterView.findViewById(R.id.footer_text);
-        mPrimaryFooterIcon = mSecurityFooterView.findViewById(R.id.primary_footer_icon);
 
         when(mSecurityController.getDeviceOwnerComponentOnAnyUser())
                 .thenReturn(DEVICE_OWNER_COMPONENT);
+        when(mSecurityController.isFinancedDevice()).thenReturn(false);
+        // TODO(b/259908270): remove
         when(mSecurityController.getDeviceOwnerType(DEVICE_OWNER_COMPONENT))
                 .thenReturn(DEVICE_OWNER_TYPE_DEFAULT);
-
-        // mSecurityFooterView must have a ViewGroup parent so that
-        // DialogLaunchAnimator.Controller.fromView() does not return null.
-        mRootView = new FrameLayout(mContext);
-        mRootView.addView(mSecurityFooterView);
-        ViewUtils.attachView(mRootView);
-
-        mFooter.init();
     }
 
-    @After
-    public void tearDown() {
-        ViewUtils.detachView(mRootView);
+    @Nullable
+    private SecurityButtonConfig getButtonConfig() {
+        SecurityModel securityModel = SecurityModel.create(mSecurityController);
+        return mFooterUtils.getButtonConfig(securityModel);
+    }
+
+    private void assertIsDefaultIcon(Icon icon) {
+        assertIsIconResource(icon, DEFAULT_ICON_ID);
+    }
+
+    private void assertIsIconResource(Icon icon, @IdRes int res) {
+        assertThat(icon).isInstanceOf(Icon.Resource.class);
+        assertEquals(res, ((Icon.Resource) icon).getRes());
+    }
+
+    private void assertIsIconDrawable(Icon icon, Drawable drawable) {
+        assertThat(icon).isInstanceOf(Icon.Loaded.class);
+        assertEquals(drawable, ((Icon.Loaded) icon).getDrawable());
     }
 
     @Test
     public void testUnmanaged() {
         when(mSecurityController.isDeviceManaged()).thenReturn(false);
         when(mSecurityController.isProfileOwnerOfOrganizationOwnedDevice()).thenReturn(false);
-        mFooter.refreshState();
-
-        TestableLooper.get(this).processAllMessages();
-        assertEquals(View.GONE, mSecurityFooterView.getVisibility());
+        assertNull(getButtonConfig());
     }
 
     @Test
     public void testManagedNoOwnerName() {
         when(mSecurityController.isDeviceManaged()).thenReturn(true);
         when(mSecurityController.getDeviceOwnerOrganizationName()).thenReturn(null);
-        mFooter.refreshState();
 
-        TestableLooper.get(this).processAllMessages();
+        SecurityButtonConfig buttonConfig = getButtonConfig();
+        assertNotNull(buttonConfig);
         assertEquals(mContext.getString(R.string.quick_settings_disclosure_management),
-                     mFooterText.getText());
-        assertEquals(View.VISIBLE, mSecurityFooterView.getVisibility());
-        assertEquals(View.VISIBLE, mPrimaryFooterIcon.getVisibility());
-        assertEquals(DEFAULT_ICON_ID, mPrimaryFooterIcon.getLastImageResource());
+                     buttonConfig.getText());
+        assertIsDefaultIcon(buttonConfig.getIcon());
     }
 
     @Test
@@ -181,15 +177,13 @@ public class QSSecurityFooterTest extends SysuiTestCase {
         when(mSecurityController.isDeviceManaged()).thenReturn(true);
         when(mSecurityController.getDeviceOwnerOrganizationName())
                 .thenReturn(MANAGING_ORGANIZATION);
-        mFooter.refreshState();
 
-        TestableLooper.get(this).processAllMessages();
+        SecurityButtonConfig buttonConfig = getButtonConfig();
+        assertNotNull(buttonConfig);
         assertEquals(mContext.getString(R.string.quick_settings_disclosure_named_management,
-                                        MANAGING_ORGANIZATION),
-                mFooterText.getText());
-        assertEquals(View.VISIBLE, mSecurityFooterView.getVisibility());
-        assertEquals(View.VISIBLE, mPrimaryFooterIcon.getVisibility());
-        assertEquals(DEFAULT_ICON_ID, mPrimaryFooterIcon.getLastImageResource());
+                        MANAGING_ORGANIZATION),
+                buttonConfig.getText());
+        assertIsDefaultIcon(buttonConfig.getIcon());
     }
 
     @Test
@@ -197,18 +191,18 @@ public class QSSecurityFooterTest extends SysuiTestCase {
         when(mSecurityController.isDeviceManaged()).thenReturn(true);
         when(mSecurityController.getDeviceOwnerOrganizationName())
                 .thenReturn(MANAGING_ORGANIZATION);
+        when(mSecurityController.isFinancedDevice()).thenReturn(true);
+        // TODO(b/259908270): remove
         when(mSecurityController.getDeviceOwnerType(DEVICE_OWNER_COMPONENT))
                 .thenReturn(DEVICE_OWNER_TYPE_FINANCED);
 
-        mFooter.refreshState();
-
-        TestableLooper.get(this).processAllMessages();
+        SecurityButtonConfig buttonConfig = getButtonConfig();
+        assertNotNull(buttonConfig);
         assertEquals(mContext.getString(
-                R.string.quick_settings_financed_disclosure_named_management,
-                MANAGING_ORGANIZATION), mFooterText.getText());
-        assertEquals(View.VISIBLE, mSecurityFooterView.getVisibility());
-        assertEquals(View.VISIBLE, mPrimaryFooterIcon.getVisibility());
-        assertEquals(DEFAULT_ICON_ID, mPrimaryFooterIcon.getLastImageResource());
+                        R.string.quick_settings_financed_disclosure_named_management,
+                        MANAGING_ORGANIZATION),
+                buttonConfig.getText());
+        assertIsDefaultIcon(buttonConfig.getIcon());
     }
 
     @Test
@@ -220,21 +214,16 @@ public class QSSecurityFooterTest extends SysuiTestCase {
         when(mUserTracker.getUserInfo()).thenReturn(mockUserInfo);
         Settings.Global.putInt(mContext.getContentResolver(), Settings.Global.DEVICE_DEMO_MODE, 1);
 
-        mFooter.refreshState();
-
-        TestableLooper.get(this).processAllMessages();
-        assertEquals(View.GONE, mSecurityFooterView.getVisibility());
+        assertNull(getButtonConfig());
     }
 
     @Test
     public void testUntappableView_profileOwnerOfOrgOwnedDevice() {
         when(mSecurityController.isProfileOwnerOfOrganizationOwnedDevice()).thenReturn(true);
 
-        mFooter.refreshState();
-
-        TestableLooper.get(this).processAllMessages();
-        assertFalse(mSecurityFooterView.isClickable());
-        assertEquals(View.GONE, mSecurityFooterView.findViewById(R.id.footer_icon).getVisibility());
+        SecurityButtonConfig buttonConfig = getButtonConfig();
+        assertNotNull(buttonConfig);
+        assertFalse(buttonConfig.isClickable());
     }
 
     @Test
@@ -244,12 +233,9 @@ public class QSSecurityFooterTest extends SysuiTestCase {
         when(mSecurityController.isWorkProfileOn()).thenReturn(true);
         when(mSecurityController.hasWorkProfile()).thenReturn(true);
 
-        mFooter.refreshState();
-
-        TestableLooper.get(this).processAllMessages();
-        assertTrue(mSecurityFooterView.isClickable());
-        assertEquals(View.VISIBLE,
-                mSecurityFooterView.findViewById(R.id.footer_icon).getVisibility());
+        SecurityButtonConfig buttonConfig = getButtonConfig();
+        assertNotNull(buttonConfig);
+        assertTrue(buttonConfig.isClickable());
     }
 
     @Test
@@ -258,35 +244,31 @@ public class QSSecurityFooterTest extends SysuiTestCase {
         when(mSecurityController.isNetworkLoggingEnabled()).thenReturn(true);
         when(mSecurityController.isWorkProfileOn()).thenReturn(false);
 
-        mFooter.refreshState();
-
-        TestableLooper.get(this).processAllMessages();
-        assertFalse(mSecurityFooterView.isClickable());
-        assertEquals(View.GONE, mSecurityFooterView.findViewById(R.id.footer_icon).getVisibility());
+        SecurityButtonConfig buttonConfig = getButtonConfig();
+        assertNotNull(buttonConfig);
+        assertFalse(buttonConfig.isClickable());
     }
 
     @Test
     public void testNetworkLoggingEnabled_deviceOwner() {
         when(mSecurityController.isDeviceManaged()).thenReturn(true);
         when(mSecurityController.isNetworkLoggingEnabled()).thenReturn(true);
-        mFooter.refreshState();
 
-        TestableLooper.get(this).processAllMessages();
+        SecurityButtonConfig buttonConfig = getButtonConfig();
+        assertNotNull(buttonConfig);
         assertEquals(mContext.getString(R.string.quick_settings_disclosure_management_monitoring),
-                mFooterText.getText());
-        assertEquals(View.VISIBLE, mPrimaryFooterIcon.getVisibility());
-        assertEquals(DEFAULT_ICON_ID, mPrimaryFooterIcon.getLastImageResource());
+                buttonConfig.getText());
+        assertIsDefaultIcon(buttonConfig.getIcon());
 
         // Same situation, but with organization name set
         when(mSecurityController.getDeviceOwnerOrganizationName())
                 .thenReturn(MANAGING_ORGANIZATION);
-        mFooter.refreshState();
-
-        TestableLooper.get(this).processAllMessages();
+        buttonConfig = getButtonConfig();
+        assertNotNull(buttonConfig);
         assertEquals(mContext.getString(
-                             R.string.quick_settings_disclosure_named_management_monitoring,
-                             MANAGING_ORGANIZATION),
-                     mFooterText.getText());
+                        R.string.quick_settings_disclosure_named_management_monitoring,
+                        MANAGING_ORGANIZATION),
+                buttonConfig.getText());
     }
 
     @Test
@@ -294,12 +276,12 @@ public class QSSecurityFooterTest extends SysuiTestCase {
         when(mSecurityController.hasWorkProfile()).thenReturn(true);
         when(mSecurityController.isNetworkLoggingEnabled()).thenReturn(true);
         when(mSecurityController.isWorkProfileOn()).thenReturn(true);
-        mFooter.refreshState();
 
-        TestableLooper.get(this).processAllMessages();
+        SecurityButtonConfig buttonConfig = getButtonConfig();
+        assertNotNull(buttonConfig);
         assertEquals(mContext.getString(
-                R.string.quick_settings_disclosure_managed_profile_network_activity),
-                mFooterText.getText());
+                        R.string.quick_settings_disclosure_managed_profile_network_activity),
+                buttonConfig.getText());
     }
 
     @Test
@@ -307,21 +289,19 @@ public class QSSecurityFooterTest extends SysuiTestCase {
         when(mSecurityController.hasWorkProfile()).thenReturn(true);
         when(mSecurityController.isNetworkLoggingEnabled()).thenReturn(true);
         when(mSecurityController.isWorkProfileOn()).thenReturn(false);
-        mFooter.refreshState();
 
-        TestableLooper.get(this).processAllMessages();
-        assertEquals("", mFooterText.getText());
+        assertNull(getButtonConfig());
     }
 
     @Test
     public void testManagedCACertsInstalled() {
         when(mSecurityController.isDeviceManaged()).thenReturn(true);
         when(mSecurityController.hasCACertInCurrentUser()).thenReturn(true);
-        mFooter.refreshState();
 
-        TestableLooper.get(this).processAllMessages();
+        SecurityButtonConfig buttonConfig = getButtonConfig();
+        assertNotNull(buttonConfig);
         assertEquals(mContext.getString(R.string.quick_settings_disclosure_management_monitoring),
-                mFooterText.getText());
+                buttonConfig.getText());
     }
 
     @Test
@@ -329,25 +309,23 @@ public class QSSecurityFooterTest extends SysuiTestCase {
         when(mSecurityController.isDeviceManaged()).thenReturn(true);
         when(mSecurityController.isVpnEnabled()).thenReturn(true);
         when(mSecurityController.getPrimaryVpnName()).thenReturn(VPN_PACKAGE);
-        mFooter.refreshState();
 
-        TestableLooper.get(this).processAllMessages();
+        SecurityButtonConfig buttonConfig = getButtonConfig();
+        assertNotNull(buttonConfig);
         assertEquals(mContext.getString(R.string.quick_settings_disclosure_management_named_vpn,
-                                        VPN_PACKAGE),
-                     mFooterText.getText());
-        assertEquals(View.VISIBLE, mPrimaryFooterIcon.getVisibility());
-        assertEquals(R.drawable.stat_sys_vpn_ic, mPrimaryFooterIcon.getLastImageResource());
+                        VPN_PACKAGE),
+                buttonConfig.getText());
+        assertIsIconResource(buttonConfig.getIcon(), R.drawable.stat_sys_vpn_ic);
 
         // Same situation, but with organization name set
         when(mSecurityController.getDeviceOwnerOrganizationName())
                 .thenReturn(MANAGING_ORGANIZATION);
-        mFooter.refreshState();
-
-        TestableLooper.get(this).processAllMessages();
+        buttonConfig = getButtonConfig();
+        assertNotNull(buttonConfig);
         assertEquals(mContext.getString(
-                              R.string.quick_settings_disclosure_named_management_named_vpn,
-                              MANAGING_ORGANIZATION, VPN_PACKAGE),
-                     mFooterText.getText());
+                        R.string.quick_settings_disclosure_named_management_named_vpn,
+                        MANAGING_ORGANIZATION, VPN_PACKAGE),
+                buttonConfig.getText());
     }
 
     @Test
@@ -356,23 +334,21 @@ public class QSSecurityFooterTest extends SysuiTestCase {
         when(mSecurityController.isVpnEnabled()).thenReturn(true);
         when(mSecurityController.getPrimaryVpnName()).thenReturn(VPN_PACKAGE);
         when(mSecurityController.getWorkProfileVpnName()).thenReturn(VPN_PACKAGE_2);
-        mFooter.refreshState();
 
-        TestableLooper.get(this).processAllMessages();
+        SecurityButtonConfig buttonConfig = getButtonConfig();
+        assertNotNull(buttonConfig);
         assertEquals(mContext.getString(R.string.quick_settings_disclosure_management_vpns),
-                     mFooterText.getText());
-        assertEquals(View.VISIBLE, mPrimaryFooterIcon.getVisibility());
-        assertEquals(R.drawable.stat_sys_vpn_ic, mPrimaryFooterIcon.getLastImageResource());
+                     buttonConfig.getText());
+        assertIsIconResource(buttonConfig.getIcon(), R.drawable.stat_sys_vpn_ic);
 
         // Same situation, but with organization name set
         when(mSecurityController.getDeviceOwnerOrganizationName())
                 .thenReturn(MANAGING_ORGANIZATION);
-        mFooter.refreshState();
-
-        TestableLooper.get(this).processAllMessages();
+        buttonConfig = getButtonConfig();
+        assertNotNull(buttonConfig);
         assertEquals(mContext.getString(R.string.quick_settings_disclosure_named_management_vpns,
                                         MANAGING_ORGANIZATION),
-                     mFooterText.getText());
+                     buttonConfig.getText());
     }
 
     @Test
@@ -381,13 +357,12 @@ public class QSSecurityFooterTest extends SysuiTestCase {
         when(mSecurityController.isNetworkLoggingEnabled()).thenReturn(true);
         when(mSecurityController.isVpnEnabled()).thenReturn(true);
         when(mSecurityController.getPrimaryVpnName()).thenReturn("VPN Test App");
-        mFooter.refreshState();
 
-        TestableLooper.get(this).processAllMessages();
-        assertEquals(View.VISIBLE, mPrimaryFooterIcon.getVisibility());
-        assertEquals(R.drawable.stat_sys_vpn_ic, mPrimaryFooterIcon.getLastImageResource());
+        SecurityButtonConfig buttonConfig = getButtonConfig();
+        assertNotNull(buttonConfig);
+        assertIsIconResource(buttonConfig.getIcon(), R.drawable.stat_sys_vpn_ic);
         assertEquals(mContext.getString(R.string.quick_settings_disclosure_management_monitoring),
-                mFooterText.getText());
+                buttonConfig.getText());
     }
 
     @Test
@@ -395,24 +370,23 @@ public class QSSecurityFooterTest extends SysuiTestCase {
         when(mSecurityController.isDeviceManaged()).thenReturn(false);
         when(mSecurityController.hasCACertInWorkProfile()).thenReturn(true);
         when(mSecurityController.isWorkProfileOn()).thenReturn(true);
-        mFooter.refreshState();
 
-        TestableLooper.get(this).processAllMessages();
-        assertEquals(DEFAULT_ICON_ID, mPrimaryFooterIcon.getLastImageResource());
+        SecurityButtonConfig buttonConfig = getButtonConfig();
+        assertNotNull(buttonConfig);
+        assertIsDefaultIcon(buttonConfig.getIcon());
         assertEquals(mContext.getString(
                              R.string.quick_settings_disclosure_managed_profile_monitoring),
-                     mFooterText.getText());
+                     buttonConfig.getText());
 
         // Same situation, but with organization name set
         when(mSecurityController.getWorkProfileOrganizationName())
                 .thenReturn(MANAGING_ORGANIZATION);
-        mFooter.refreshState();
-
-        TestableLooper.get(this).processAllMessages();
+        buttonConfig = getButtonConfig();
+        assertNotNull(buttonConfig);
         assertEquals(mContext.getString(
                              R.string.quick_settings_disclosure_named_managed_profile_monitoring,
                              MANAGING_ORGANIZATION),
-                     mFooterText.getText());
+                     buttonConfig.getText());
     }
 
     @Test
@@ -420,22 +394,20 @@ public class QSSecurityFooterTest extends SysuiTestCase {
         when(mSecurityController.isDeviceManaged()).thenReturn(false);
         when(mSecurityController.hasCACertInWorkProfile()).thenReturn(true);
         when(mSecurityController.isWorkProfileOn()).thenReturn(false);
-        mFooter.refreshState();
 
-        TestableLooper.get(this).processAllMessages();
-        assertEquals("", mFooterText.getText());
+        assertNull(getButtonConfig());
     }
 
     @Test
     public void testCACertsInstalled() {
         when(mSecurityController.isDeviceManaged()).thenReturn(false);
         when(mSecurityController.hasCACertInCurrentUser()).thenReturn(true);
-        mFooter.refreshState();
 
-        TestableLooper.get(this).processAllMessages();
-        assertEquals(DEFAULT_ICON_ID, mPrimaryFooterIcon.getLastImageResource());
+        SecurityButtonConfig buttonConfig = getButtonConfig();
+        assertNotNull(buttonConfig);
+        assertIsDefaultIcon(buttonConfig.getIcon());
         assertEquals(mContext.getString(R.string.quick_settings_disclosure_monitoring),
-                     mFooterText.getText());
+                     buttonConfig.getText());
     }
 
     @Test
@@ -443,12 +415,12 @@ public class QSSecurityFooterTest extends SysuiTestCase {
         when(mSecurityController.isVpnEnabled()).thenReturn(true);
         when(mSecurityController.getPrimaryVpnName()).thenReturn(VPN_PACKAGE);
         when(mSecurityController.getWorkProfileVpnName()).thenReturn(VPN_PACKAGE_2);
-        mFooter.refreshState();
 
-        TestableLooper.get(this).processAllMessages();
-        assertEquals(R.drawable.stat_sys_vpn_ic, mPrimaryFooterIcon.getLastImageResource());
+        SecurityButtonConfig buttonConfig = getButtonConfig();
+        assertNotNull(buttonConfig);
+        assertIsIconResource(buttonConfig.getIcon(), R.drawable.stat_sys_vpn_ic);
         assertEquals(mContext.getString(R.string.quick_settings_disclosure_vpns),
-                     mFooterText.getText());
+                     buttonConfig.getText());
     }
 
     @Test
@@ -456,14 +428,14 @@ public class QSSecurityFooterTest extends SysuiTestCase {
         when(mSecurityController.isVpnEnabled()).thenReturn(true);
         when(mSecurityController.getWorkProfileVpnName()).thenReturn(VPN_PACKAGE_2);
         when(mSecurityController.isWorkProfileOn()).thenReturn(true);
-        mFooter.refreshState();
 
-        TestableLooper.get(this).processAllMessages();
-        assertEquals(R.drawable.stat_sys_vpn_ic, mPrimaryFooterIcon.getLastImageResource());
+        SecurityButtonConfig buttonConfig = getButtonConfig();
+        assertNotNull(buttonConfig);
+        assertIsIconResource(buttonConfig.getIcon(), R.drawable.stat_sys_vpn_ic);
         assertEquals(mContext.getString(
                              R.string.quick_settings_disclosure_managed_profile_named_vpn,
                              VPN_PACKAGE_2),
-                     mFooterText.getText());
+                     buttonConfig.getText());
     }
 
     @Test
@@ -471,22 +443,19 @@ public class QSSecurityFooterTest extends SysuiTestCase {
         when(mSecurityController.isVpnEnabled()).thenReturn(true);
         when(mSecurityController.getWorkProfileVpnName()).thenReturn(VPN_PACKAGE_2);
         when(mSecurityController.isWorkProfileOn()).thenReturn(false);
-        mFooter.refreshState();
 
-        TestableLooper.get(this).processAllMessages();
-        assertEquals("", mFooterText.getText());
+        assertNull(getButtonConfig());
     }
 
     @Test
     public void testProfileOwnerOfOrganizationOwnedDeviceNoName() {
         when(mSecurityController.isProfileOwnerOfOrganizationOwnedDevice()).thenReturn(true);
 
-        mFooter.refreshState();
-        TestableLooper.get(this).processAllMessages();
-
+        SecurityButtonConfig buttonConfig = getButtonConfig();
+        assertNotNull(buttonConfig);
         assertEquals(mContext.getString(
                 R.string.quick_settings_disclosure_management),
-                mFooterText.getText());
+                buttonConfig.getText());
     }
 
     @Test
@@ -495,35 +464,33 @@ public class QSSecurityFooterTest extends SysuiTestCase {
         when(mSecurityController.getWorkProfileOrganizationName())
                 .thenReturn(MANAGING_ORGANIZATION);
 
-        mFooter.refreshState();
-        TestableLooper.get(this).processAllMessages();
-
+        SecurityButtonConfig buttonConfig = getButtonConfig();
+        assertNotNull(buttonConfig);
         assertEquals(mContext.getString(
                 R.string.quick_settings_disclosure_named_management,
                 MANAGING_ORGANIZATION),
-                mFooterText.getText());
+                buttonConfig.getText());
     }
 
     @Test
     public void testVpnEnabled() {
         when(mSecurityController.isVpnEnabled()).thenReturn(true);
         when(mSecurityController.getPrimaryVpnName()).thenReturn(VPN_PACKAGE);
-        mFooter.refreshState();
 
-        TestableLooper.get(this).processAllMessages();
-        assertEquals(R.drawable.stat_sys_vpn_ic, mPrimaryFooterIcon.getLastImageResource());
+        SecurityButtonConfig buttonConfig = getButtonConfig();
+        assertNotNull(buttonConfig);
+        assertIsIconResource(buttonConfig.getIcon(), R.drawable.stat_sys_vpn_ic);
         assertEquals(mContext.getString(R.string.quick_settings_disclosure_named_vpn,
                                         VPN_PACKAGE),
-                     mFooterText.getText());
+                     buttonConfig.getText());
 
         when(mSecurityController.hasWorkProfile()).thenReturn(true);
-        mFooter.refreshState();
-
-        TestableLooper.get(this).processAllMessages();
+        buttonConfig = getButtonConfig();
+        assertNotNull(buttonConfig);
         assertEquals(mContext.getString(
                              R.string.quick_settings_disclosure_personal_profile_named_vpn,
                              VPN_PACKAGE),
-                     mFooterText.getText());
+                     buttonConfig.getText());
     }
 
     @Test
@@ -537,6 +504,8 @@ public class QSSecurityFooterTest extends SysuiTestCase {
     @Test
     public void testGetManagementTitleForFinancedDevice() {
         when(mSecurityController.isDeviceManaged()).thenReturn(true);
+        when(mSecurityController.isFinancedDevice()).thenReturn(true);
+        // TODO(b/259908270): remove
         when(mSecurityController.getDeviceOwnerType(DEVICE_OWNER_COMPONENT))
                 .thenReturn(DEVICE_OWNER_TYPE_FINANCED);
 
@@ -566,6 +535,8 @@ public class QSSecurityFooterTest extends SysuiTestCase {
     @Test
     public void testGetManagementMessage_deviceOwner_asFinancedDevice() {
         when(mSecurityController.isDeviceManaged()).thenReturn(true);
+        when(mSecurityController.isFinancedDevice()).thenReturn(true);
+        // TODO(b/259908270): remove
         when(mSecurityController.getDeviceOwnerType(DEVICE_OWNER_COMPONENT))
                 .thenReturn(DEVICE_OWNER_TYPE_FINANCED);
 
@@ -687,45 +658,33 @@ public class QSSecurityFooterTest extends SysuiTestCase {
     }
 
     @Test
-    public void testNoClickWhenGone() {
-        mFooter.refreshState();
-
-        TestableLooper.get(this).processAllMessages();
-
-        assertFalse(mFooter.hasFooter());
-        mFooter.onClick(mFooter.getView());
-
-        // Proxy for dialog being created
-        verify(mDialogLaunchAnimator, never()).showFromView(any(), any());
-    }
-
-    @Test
     public void testParentalControls() {
         // Make sure the security footer is visible, so that the images are updated.
         when(mSecurityController.isProfileOwnerOfOrganizationOwnedDevice()).thenReturn(true);
-
         when(mSecurityController.isParentalControlsEnabled()).thenReturn(true);
+
+        // We use the default icon when there is no admin icon.
+        when(mSecurityController.getIcon(any())).thenReturn(null);
+        SecurityButtonConfig buttonConfig = getButtonConfig();
+        assertEquals(mContext.getString(R.string.quick_settings_disclosure_parental_controls),
+                buttonConfig.getText());
+        assertIsDefaultIcon(buttonConfig.getIcon());
 
         Drawable testDrawable = new VectorDrawable();
         when(mSecurityController.getIcon(any())).thenReturn(testDrawable);
         assertNotNull(mSecurityController.getIcon(null));
 
-        mFooter.refreshState();
-
-        TestableLooper.get(this).processAllMessages();
-
+        buttonConfig = getButtonConfig();
+        assertNotNull(buttonConfig);
         assertEquals(mContext.getString(R.string.quick_settings_disclosure_parental_controls),
-                mFooterText.getText());
-        assertEquals(View.VISIBLE, mPrimaryFooterIcon.getVisibility());
-
-        assertEquals(testDrawable, mPrimaryFooterIcon.getDrawable());
+                buttonConfig.getText());
+        assertIsIconDrawable(buttonConfig.getIcon(), testDrawable);
 
         // Ensure the primary icon is back to default after parental controls are gone
         when(mSecurityController.isParentalControlsEnabled()).thenReturn(false);
-        mFooter.refreshState();
-        TestableLooper.get(this).processAllMessages();
-
-        assertEquals(DEFAULT_ICON_ID, mPrimaryFooterIcon.getLastImageResource());
+        buttonConfig = getButtonConfig();
+        assertNotNull(buttonConfig);
+        assertIsDefaultIcon(buttonConfig.getIcon());
     }
 
     @Test
@@ -739,20 +698,12 @@ public class QSSecurityFooterTest extends SysuiTestCase {
     }
 
     @Test
-    public void testDialogUsesDialogLauncher() {
-        when(mSecurityController.isDeviceManaged()).thenReturn(true);
-        mFooter.onClick(mSecurityFooterView);
-
-        mTestableLooper.processAllMessages();
-
-        verify(mDialogLaunchAnimator).show(any(), any());
-    }
-
-    @Test
     public void testCreateDialogViewForFinancedDevice() {
         when(mSecurityController.isDeviceManaged()).thenReturn(true);
         when(mSecurityController.getDeviceOwnerOrganizationName())
                 .thenReturn(MANAGING_ORGANIZATION);
+        when(mSecurityController.isFinancedDevice()).thenReturn(true);
+        // TODO(b/259908270): remove
         when(mSecurityController.getDeviceOwnerType(DEVICE_OWNER_COMPONENT))
                 .thenReturn(DEVICE_OWNER_TYPE_FINANCED);
 
@@ -775,10 +726,15 @@ public class QSSecurityFooterTest extends SysuiTestCase {
         when(mSecurityController.isDeviceManaged()).thenReturn(true);
         when(mSecurityController.getDeviceOwnerOrganizationName())
                 .thenReturn(MANAGING_ORGANIZATION);
+        when(mSecurityController.isFinancedDevice()).thenReturn(true);
+        // TODO(b/259908270): remove
         when(mSecurityController.getDeviceOwnerType(DEVICE_OWNER_COMPONENT))
                 .thenReturn(DEVICE_OWNER_TYPE_FINANCED);
 
-        mFooter.showDeviceMonitoringDialog();
+        Expandable expandable = mock(Expandable.class);
+        when(expandable.dialogLaunchController(any())).thenReturn(
+                mock(DialogLaunchAnimator.Controller.class));
+        mFooterUtils.showDeviceMonitoringDialog(getContext(), expandable);
         ArgumentCaptor<AlertDialog> dialogCaptor = ArgumentCaptor.forClass(AlertDialog.class);
 
         mTestableLooper.processAllMessages();
@@ -791,47 +747,6 @@ public class QSSecurityFooterTest extends SysuiTestCase {
                 dialog.getButton(DialogInterface.BUTTON_NEGATIVE).getText());
 
         dialog.dismiss();
-    }
-
-    @Test
-    public void testVisibilityListener() {
-        final AtomicInteger lastVisibility = new AtomicInteger(-1);
-        VisibilityChangedDispatcher.OnVisibilityChangedListener listener = lastVisibility::set;
-
-        mFooter.setOnVisibilityChangedListener(listener);
-
-        when(mSecurityController.isDeviceManaged()).thenReturn(true);
-        mFooter.refreshState();
-        mTestableLooper.processAllMessages();
-        assertEquals(View.VISIBLE, lastVisibility.get());
-
-        when(mSecurityController.isDeviceManaged()).thenReturn(false);
-        mFooter.refreshState();
-        mTestableLooper.processAllMessages();
-        assertEquals(View.GONE, lastVisibility.get());
-    }
-
-    @Test
-    public void testBroadcastShowsDialog() {
-        // Setup dialog content
-        when(mSecurityController.isDeviceManaged()).thenReturn(true);
-        when(mSecurityController.getDeviceOwnerOrganizationName())
-                .thenReturn(MANAGING_ORGANIZATION);
-        when(mSecurityController.getDeviceOwnerType(DEVICE_OWNER_COMPONENT))
-                .thenReturn(DEVICE_OWNER_TYPE_FINANCED);
-
-        ArgumentCaptor<BroadcastReceiver> captor = ArgumentCaptor.forClass(BroadcastReceiver.class);
-        verify(mBroadcastDispatcher).registerReceiverWithHandler(captor.capture(), any(), any(),
-                any());
-
-        // Pretend view is not attached anymore.
-        mRootView.removeView(mSecurityFooterView);
-        captor.getValue().onReceive(mContext,
-                new Intent(DevicePolicyManager.ACTION_SHOW_DEVICE_MONITORING_DIALOG));
-        mTestableLooper.processAllMessages();
-
-        assertTrue(mFooterUtils.getDialog().isShowing());
-        mFooterUtils.getDialog().dismiss();
     }
 
     private CharSequence addLink(CharSequence description) {

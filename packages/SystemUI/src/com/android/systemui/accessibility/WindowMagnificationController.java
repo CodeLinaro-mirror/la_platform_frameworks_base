@@ -37,6 +37,8 @@ import android.content.res.Resources;
 import android.graphics.Insets;
 import android.graphics.Matrix;
 import android.graphics.PixelFormat;
+import android.graphics.PorterDuff;
+import android.graphics.PorterDuffColorFilter;
 import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.Region;
@@ -49,6 +51,7 @@ import android.provider.Settings;
 import android.util.Log;
 import android.util.Range;
 import android.util.Size;
+import android.util.TypedValue;
 import android.view.Choreographer;
 import android.view.Display;
 import android.view.Gravity;
@@ -76,6 +79,7 @@ import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.graphics.SfVsyncFrameCallbackProvider;
 import com.android.systemui.R;
 import com.android.systemui.model.SysUiState;
+import com.android.systemui.util.settings.SecureSettings;
 
 import java.io.PrintWriter;
 import java.text.NumberFormat;
@@ -96,7 +100,7 @@ class WindowMagnificationController implements View.OnTouchListener, SurfaceHold
     // Delay to avoid updating state description too frequently.
     private static final int UPDATE_STATE_DESCRIPTION_DELAY_MS = 100;
     // It should be consistent with the value defined in WindowMagnificationGestureHandler.
-    private static final Range<Float> A11Y_ACTION_SCALE_RANGE = new Range<>(2.0f, 8.0f);
+    private static final Range<Float> A11Y_ACTION_SCALE_RANGE = new Range<>(1.0f, 8.0f);
     private static final float A11Y_CHANGE_SCALE_DIFFERENCE = 1.0f;
     private static final float ANIMATION_BOUNCE_EFFECT_SCALE = 1.05f;
     private static final float[] MAGNIFICATION_SCALE_OPTIONS = {1.0f, 1.4f, 1.8f, 2.5f};
@@ -158,6 +162,10 @@ class WindowMagnificationController implements View.OnTouchListener, SurfaceHold
     private View mTopDrag;
     private View mRightDrag;
     private View mBottomDrag;
+    private ImageView mTopLeftCornerView;
+    private ImageView mTopRightCornerView;
+    private ImageView mBottomLeftCornerView;
+    private ImageView mBottomRightCornerView;
     private final Configuration mConfiguration;
 
     @NonNull
@@ -208,7 +216,9 @@ class WindowMagnificationController implements View.OnTouchListener, SurfaceHold
     private static final int MAX_HORIZONTAL_MOVE_ANGLE = 50;
     private static final int HORIZONTAL = 1;
     private static final int VERTICAL = 0;
-    private static final double HORIZONTAL_LOCK_BASE =
+
+    @VisibleForTesting
+    static final double HORIZONTAL_LOCK_BASE =
             Math.tan(Math.toRadians(MAX_HORIZONTAL_MOVE_ANGLE));
 
     private boolean mAllowDiagonalScrolling = false;
@@ -226,7 +236,8 @@ class WindowMagnificationController implements View.OnTouchListener, SurfaceHold
             SurfaceControl.Transaction transaction,
             @NonNull WindowMagnifierCallback callback,
             SysUiState sysUiState,
-            @NonNull Supplier<IWindowSession> globalWindowSessionSupplier) {
+            @NonNull Supplier<IWindowSession> globalWindowSessionSupplier,
+            SecureSettings secureSettings) {
         mContext = context;
         mHandler = handler;
         mAnimationController = animationController;
@@ -245,7 +256,7 @@ class WindowMagnificationController implements View.OnTouchListener, SurfaceHold
         mWindowBounds = new Rect(mWm.getCurrentWindowMetrics().getBounds());
 
         mResources = mContext.getResources();
-        mScale = Settings.Secure.getFloatForUser(mContext.getContentResolver(),
+        mScale = secureSettings.getFloatForUser(
                 Settings.Secure.ACCESSIBILITY_DISPLAY_MAGNIFICATION_SCALE,
                 mResources.getInteger(R.integer.magnification_default_scale),
                 UserHandle.USER_CURRENT);
@@ -270,7 +281,7 @@ class WindowMagnificationController implements View.OnTouchListener, SurfaceHold
 
         mWindowMagnificationSettings =
                 new WindowMagnificationSettings(mContext, mWindowMagnificationSettingsCallback,
-                        mSfVsyncFrameProvider);
+                        mSfVsyncFrameProvider, secureSettings);
 
         // Initialize listeners.
         mMirrorViewRunnable = () -> {
@@ -357,13 +368,15 @@ class WindowMagnificationController implements View.OnTouchListener, SurfaceHold
         return false;
     }
 
-    private void changeMagnificationSize(@MagnificationSize int index) {
+    @VisibleForTesting
+    void changeMagnificationSize(@MagnificationSize int index) {
         final int initSize = Math.min(mWindowBounds.width(), mWindowBounds.height()) / 3;
         int size = (int) (initSize * MAGNIFICATION_SCALE_OPTIONS[index]);
         setWindowSize(size, size);
     }
 
-    private void setEditMagnifierSizeMode(boolean enable) {
+    @VisibleForTesting
+    void setEditMagnifierSizeMode(boolean enable) {
         mEditSizeEnable = enable;
         applyResourcesValues();
 
@@ -390,15 +403,21 @@ class WindowMagnificationController implements View.OnTouchListener, SurfaceHold
         mAnimationController.deleteWindowMagnification(animationCallback);
     }
 
+    void deleteWindowMagnification() {
+        deleteWindowMagnification(/* closeSettingPanel= */ true);
+    }
+
     /**
      * Deletes the magnification window.
      */
-    void deleteWindowMagnification() {
+    void deleteWindowMagnification(boolean closeSettingPanel) {
         if (!isWindowVisible()) {
             return;
         }
 
-        closeMagnificationSettings();
+        if (closeSettingPanel) {
+            closeMagnificationSettings();
+        }
 
         if (mMirrorSurface != null) {
             mTransaction.remove(mMirrorSurface).apply();
@@ -434,6 +453,7 @@ class WindowMagnificationController implements View.OnTouchListener, SurfaceHold
         final int configDiff = newConfig.diff(mConfiguration);
         mConfiguration.setTo(newConfig);
         onConfigurationChanged(configDiff);
+        mWindowMagnificationSettings.onConfigurationChanged(configDiff);
     }
 
     @Override
@@ -475,7 +495,7 @@ class WindowMagnificationController implements View.OnTouchListener, SurfaceHold
         // Recreate the window again to correct the window appearance due to density or
         // window size changed not caused by rotation.
         if (isWindowVisible() && reCreateWindow) {
-            deleteWindowMagnification();
+            deleteWindowMagnification(/* closeSettingPanel= */ false);
             enableWindowMagnificationInternal(Float.NaN, Float.NaN, Float.NaN);
         }
     }
@@ -639,10 +659,37 @@ class WindowMagnificationController implements View.OnTouchListener, SurfaceHold
         Region regionInsideDragBorder = new Region(mBorderDragSize, mBorderDragSize,
                 mMirrorView.getWidth() - mBorderDragSize,
                 mMirrorView.getHeight() - mBorderDragSize);
+
+        Region tapExcludeRegion = new Region();
+
         Rect dragArea = new Rect();
         mDragView.getHitRect(dragArea);
 
-        regionInsideDragBorder.op(dragArea, Region.Op.DIFFERENCE);
+        Rect topLeftArea = new Rect();
+        mTopLeftCornerView.getHitRect(topLeftArea);
+
+        Rect topRightArea = new Rect();
+        mTopRightCornerView.getHitRect(topRightArea);
+
+        Rect bottomLeftArea = new Rect();
+        mBottomLeftCornerView.getHitRect(bottomLeftArea);
+
+        Rect bottomRightArea = new Rect();
+        mBottomRightCornerView.getHitRect(bottomRightArea);
+
+        Rect closeArea = new Rect();
+        mCloseView.getHitRect(closeArea);
+
+        // add tapExcludeRegion for Drag or close
+        tapExcludeRegion.op(dragArea, Region.Op.UNION);
+        tapExcludeRegion.op(topLeftArea, Region.Op.UNION);
+        tapExcludeRegion.op(topRightArea, Region.Op.UNION);
+        tapExcludeRegion.op(bottomLeftArea, Region.Op.UNION);
+        tapExcludeRegion.op(bottomRightArea, Region.Op.UNION);
+        tapExcludeRegion.op(closeArea, Region.Op.UNION);
+
+        regionInsideDragBorder.op(tapExcludeRegion, Region.Op.DIFFERENCE);
+
         return regionInsideDragBorder;
     }
 
@@ -666,6 +713,11 @@ class WindowMagnificationController implements View.OnTouchListener, SurfaceHold
         if (mWindowMagnificationSettings != null) {
             mWindowMagnificationSettings.hideSettingPanel();
         }
+    }
+
+    @VisibleForTesting
+    WindowMagnificationSettings getMagnificationSettings() {
+        return mWindowMagnificationSettings;
     }
 
     /**
@@ -756,6 +808,10 @@ class WindowMagnificationController implements View.OnTouchListener, SurfaceHold
         mRightDrag = mMirrorView.findViewById(R.id.right_handle);
         mBottomDrag = mMirrorView.findViewById(R.id.bottom_handle);
         mCloseView = mMirrorView.findViewById(R.id.close_button);
+        mTopRightCornerView = mMirrorView.findViewById(R.id.top_right_corner);
+        mTopLeftCornerView = mMirrorView.findViewById(R.id.top_left_corner);
+        mBottomRightCornerView = mMirrorView.findViewById(R.id.bottom_right_corner);
+        mBottomLeftCornerView = mMirrorView.findViewById(R.id.bottom_left_corner);
 
         mDragView.setOnTouchListener(this);
         mLeftDrag.setOnTouchListener(this);
@@ -763,6 +819,10 @@ class WindowMagnificationController implements View.OnTouchListener, SurfaceHold
         mRightDrag.setOnTouchListener(this);
         mBottomDrag.setOnTouchListener(this);
         mCloseView.setOnTouchListener(this);
+        mTopLeftCornerView.setOnTouchListener(this);
+        mTopRightCornerView.setOnTouchListener(this);
+        mBottomLeftCornerView.setOnTouchListener(this);
+        mBottomRightCornerView.setOnTouchListener(this);
     }
 
     /**
@@ -831,8 +891,16 @@ class WindowMagnificationController implements View.OnTouchListener, SurfaceHold
 
     @Override
     public boolean onTouch(View v, MotionEvent event) {
-        if (v == mDragView || v == mLeftDrag || v == mTopDrag || v == mRightDrag
-                || v == mBottomDrag || v == mCloseView) {
+        if (v == mDragView
+                || v == mLeftDrag
+                || v == mTopDrag
+                || v == mRightDrag
+                || v == mBottomDrag
+                || v == mTopLeftCornerView
+                || v == mTopRightCornerView
+                || v == mBottomLeftCornerView
+                || v == mBottomRightCornerView
+                || v == mCloseView) {
             return mGestureDetector.onTouch(v, event);
         }
         return false;
@@ -1023,7 +1091,7 @@ class WindowMagnificationController implements View.OnTouchListener, SurfaceHold
 
     /**
      * Enables window magnification with specified parameters. If the given scale is <strong>less
-     * than or equal to 1.0f<strong>, then
+     * than 1.0f<strong>, then
      * {@link WindowMagnificationController#deleteWindowMagnification()} will be called instead to
      * be consistent with the behavior of display magnification.
      *
@@ -1041,7 +1109,7 @@ class WindowMagnificationController implements View.OnTouchListener, SurfaceHold
      */
     void enableWindowMagnificationInternal(float scale, float centerX, float centerY,
                 float magnificationFrameOffsetRatioX, float magnificationFrameOffsetRatioY) {
-        if (Float.compare(scale, 1.0f)  <= 0) {
+        if (Float.compare(scale, 1.0f) < 0) {
             deleteWindowMagnification();
             return;
         }
@@ -1195,7 +1263,7 @@ class WindowMagnificationController implements View.OnTouchListener, SurfaceHold
     @Override
     public boolean onDrag(View view, float offsetX, float offsetY) {
         if (mEditSizeEnable) {
-            changeWindowSize(view, offsetX, offsetY);
+            return changeWindowSize(view, offsetX, offsetY);
         } else {
             move((int) offsetX, (int) offsetY);
         }
@@ -1214,19 +1282,63 @@ class WindowMagnificationController implements View.OnTouchListener, SurfaceHold
     }
 
     private void applyResourcesValues() {
-        mMirrorBorderView.setBackgroundColor(mResources.getColor(mEditSizeEnable
-                ? R.color.magnification_border_color_change : R.color.magnification_border_color));
+        // Sets the border appearance for the magnifier window
+        mMirrorBorderView.setBackground(mResources.getDrawable(mEditSizeEnable
+                ? R.drawable.accessibility_window_magnification_background_change
+                : R.drawable.accessibility_window_magnification_background));
 
+        // Changes the corner radius of the mMirrorSurfaceView
+        mMirrorSurfaceView.setCornerRadius(
+                        TypedValue.applyDimension(
+                                TypedValue.COMPLEX_UNIT_DIP,
+                                mEditSizeEnable ? 16f : 28f,
+                                mContext.getResources().getDisplayMetrics()));
+
+        // Sets visibility of components for the magnifier window
         if (mEditSizeEnable) {
             mDragView.setVisibility(View.GONE);
             mCloseView.setVisibility(View.VISIBLE);
+            mTopRightCornerView.setVisibility(View.VISIBLE);
+            mTopLeftCornerView.setVisibility(View.VISIBLE);
+            mBottomRightCornerView.setVisibility(View.VISIBLE);
+            mBottomLeftCornerView.setVisibility(View.VISIBLE);
         } else {
             mDragView.setVisibility(View.VISIBLE);
             mCloseView.setVisibility(View.GONE);
+            mTopRightCornerView.setVisibility(View.GONE);
+            mTopLeftCornerView.setVisibility(View.GONE);
+            mBottomRightCornerView.setVisibility(View.GONE);
+            mBottomLeftCornerView.setVisibility(View.GONE);
         }
     }
 
-    public boolean changeWindowSize(View view, float offsetX, float offsetY) {
+    private boolean changeWindowSize(View view, float offsetX, float offsetY) {
+        if (view == mLeftDrag) {
+            changeMagnificationFrameSize(offsetX, 0, 0, 0);
+        } else if (view == mRightDrag) {
+            changeMagnificationFrameSize(0, 0, offsetX, 0);
+        } else if (view == mTopDrag) {
+            changeMagnificationFrameSize(0, offsetY, 0, 0);
+        } else if (view == mBottomDrag) {
+            changeMagnificationFrameSize(0, 0, 0, offsetY);
+        } else if (view == mTopLeftCornerView) {
+            changeMagnificationFrameSize(offsetX, offsetY, 0, 0);
+        } else if (view == mTopRightCornerView) {
+            changeMagnificationFrameSize(0, offsetY, offsetX, 0);
+        } else if (view == mBottomLeftCornerView) {
+            changeMagnificationFrameSize(offsetX, 0, 0, offsetY);
+        } else if (view == mBottomRightCornerView) {
+            changeMagnificationFrameSize(0, 0, offsetX, offsetY);
+        } else {
+            return false;
+        }
+
+        return true;
+    }
+
+    private void changeMagnificationFrameSize(
+            float leftOffset, float topOffset, float rightOffset,
+            float bottomOffset) {
         boolean bRTL = isRTL(mContext);
         final int initSize = Math.min(mWindowBounds.width(), mWindowBounds.height()) / 3;
 
@@ -1236,54 +1348,26 @@ class WindowMagnificationController implements View.OnTouchListener, SurfaceHold
         Rect tempRect = new Rect();
         tempRect.set(mMagnificationFrame);
 
-        if (view == mLeftDrag) {
-            if (bRTL) {
-                tempRect.right += offsetX;
-                if (tempRect.right > mWindowBounds.width()) {
-                    return false;
-                }
-            } else {
-                tempRect.left += offsetX;
-                if (tempRect.left < 0) {
-                    return false;
-                }
-            }
-        } else if (view == mRightDrag) {
-            if (bRTL) {
-                tempRect.left += offsetX;
-                if (tempRect.left < 0) {
-                    return false;
-                }
-            } else {
-                tempRect.right += offsetX;
-                if (tempRect.right > mWindowBounds.width()) {
-                    return false;
-                }
-            }
-        } else if (view == mTopDrag) {
-            tempRect.top += offsetY;
-            if (tempRect.top < 0) {
-                return false;
-            }
-        } else if (view == mBottomDrag) {
-            tempRect.bottom += offsetY;
-            if (tempRect.bottom > mWindowBounds.height()) {
-                return false;
-            }
+        if (bRTL) {
+            tempRect.left += (int) (rightOffset);
+            tempRect.right += (int) (leftOffset);
+        } else {
+            tempRect.right += (int) (rightOffset);
+            tempRect.left += (int) (leftOffset);
         }
+        tempRect.top += (int) (topOffset);
+        tempRect.bottom += (int) (bottomOffset);
 
         if (tempRect.width() < initSize || tempRect.height() < initSize
                 || tempRect.width() > maxWidthSize || tempRect.height() > maxHeightSize) {
-            return false;
+            return;
         }
-
         mMagnificationFrame.set(tempRect);
 
         computeBounceAnimationScale();
         calculateMagnificationFrameBoundary();
 
         modifyWindowMagnification(true);
-        return true;
     }
 
     private static boolean isRTL(Context context) {
@@ -1321,6 +1405,11 @@ class WindowMagnificationController implements View.OnTouchListener, SurfaceHold
         public void onMagnifierScale(float scale) {
             mWindowMagnifierCallback.onPerformScaleAction(mDisplayId,
                     A11Y_ACTION_SCALE_RANGE.clamp(scale));
+        }
+
+        @Override
+        public void onSettingsPanelVisibilityChanged(boolean shown) {
+            updateDragHandleResourcesIfNeeded(/* settingsPanelIsShown= */ shown);
         }
     };
 
@@ -1360,6 +1449,20 @@ class WindowMagnificationController implements View.OnTouchListener, SurfaceHold
         }
     }
 
+    private void updateDragHandleResourcesIfNeeded(boolean settingsPanelIsShown) {
+        mDragView.setBackground(mContext.getResources().getDrawable(settingsPanelIsShown
+                ? R.drawable.accessibility_window_magnification_drag_handle_background_change
+                : R.drawable.accessibility_window_magnification_drag_handle_background));
+
+        PorterDuffColorFilter filter = new PorterDuffColorFilter(
+                mContext.getColor(settingsPanelIsShown
+                        ? R.color.magnification_border_color
+                        : R.color.magnification_drag_handle_stroke),
+                PorterDuff.Mode.SRC_ATOP);
+
+        mDragView.setColorFilter(filter);
+    }
+
     private void animateBounceEffect() {
         final ObjectAnimator scaleAnimator = ObjectAnimator.ofPropertyValuesHolder(mMirrorView,
                 PropertyValuesHolder.ofFloat(View.SCALE_X, 1, mBounceEffectAnimationScale, 1),
@@ -1392,7 +1495,7 @@ class WindowMagnificationController implements View.OnTouchListener, SurfaceHold
             super.onInitializeAccessibilityNodeInfo(host, info);
             final AccessibilityAction clickAction = new AccessibilityAction(
                     AccessibilityAction.ACTION_CLICK.getId(), mContext.getResources().getString(
-                    R.string.magnification_mode_switch_click_label));
+                    R.string.magnification_open_settings_click_label));
             info.addAction(clickAction);
             info.setClickable(true);
             info.addAction(

@@ -16,12 +16,16 @@
 
 package com.android.server.input
 
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.content.ContextWrapper
 import android.hardware.BatteryState.STATUS_CHARGING
 import android.hardware.BatteryState.STATUS_DISCHARGING
 import android.hardware.BatteryState.STATUS_FULL
 import android.hardware.BatteryState.STATUS_UNKNOWN
+import android.hardware.input.HostUsiVersion
 import android.hardware.input.IInputDeviceBatteryListener
 import android.hardware.input.IInputDeviceBatteryState
 import android.hardware.input.IInputDevicesChangedListener
@@ -33,6 +37,8 @@ import android.os.test.TestLooper
 import android.platform.test.annotations.Presubmit
 import android.view.InputDevice
 import androidx.test.InstrumentationRegistry
+import com.android.server.input.BatteryController.BluetoothBatteryManager
+import com.android.server.input.BatteryController.BluetoothBatteryManager.BluetoothBatteryListener
 import com.android.server.input.BatteryController.POLLING_PERIOD_MILLIS
 import com.android.server.input.BatteryController.UEventManager
 import com.android.server.input.BatteryController.UEventManager.UEventBatteryListener
@@ -52,6 +58,7 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.mockito.ArgumentCaptor
+import org.mockito.ArgumentMatchers.any
 import org.mockito.ArgumentMatchers.notNull
 import org.mockito.Mock
 import org.mockito.Mockito.anyInt
@@ -80,7 +87,7 @@ private fun createInputDevice(
         .setDescriptor("descriptor $deviceId")
         .setExternal(true)
         .setHasBattery(hasBattery)
-        .setSupportsUsi(supportsUsi)
+        .setUsiVersion(if (supportsUsi) HostUsiVersion(1, 0) else null)
         .setGeneration(generation)
         .build()
 
@@ -172,6 +179,8 @@ class BatteryControllerTests {
         const val SECOND_DEVICE_ID = 11
         const val USI_DEVICE_ID = 101
         const val SECOND_USI_DEVICE_ID = 102
+        const val BT_DEVICE_ID = 100001
+        const val SECOND_BT_DEVICE_ID = 100002
         const val TIMESTAMP = 123456789L
     }
 
@@ -184,6 +193,8 @@ class BatteryControllerTests {
     private lateinit var iInputManager: IInputManager
     @Mock
     private lateinit var uEventManager: UEventManager
+    @Mock
+    private lateinit var bluetoothBatteryManager: BluetoothBatteryManager
 
     private lateinit var batteryController: BatteryController
     private lateinit var context: Context
@@ -203,11 +214,13 @@ class BatteryControllerTests {
         addInputDevice(DEVICE_ID)
         addInputDevice(SECOND_DEVICE_ID)
 
-        batteryController = BatteryController(context, native, testLooper.looper, uEventManager)
+        batteryController = BatteryController(context, native, testLooper.looper, uEventManager,
+            bluetoothBatteryManager)
         batteryController.systemRunning()
         val listenerCaptor = ArgumentCaptor.forClass(IInputDevicesChangedListener::class.java)
         verify(iInputManager).registerInputDevicesChangedListener(listenerCaptor.capture())
         devicesChangedListener = listenerCaptor.value
+        testLooper.dispatchAll()
     }
 
     private fun notifyDeviceChanged(
@@ -230,10 +243,15 @@ class BatteryControllerTests {
     private fun addInputDevice(
             deviceId: Int,
         hasBattery: Boolean = true,
-        supportsUsi: Boolean = false
+        supportsUsi: Boolean = false,
     ) {
         deviceGenerationMap[deviceId] = 0
         notifyDeviceChanged(deviceId, hasBattery, supportsUsi)
+    }
+
+    private fun createBluetoothDevice(address: String): BluetoothDevice {
+        return context.getSystemService(BluetoothManager::class.java)!!
+            .adapter.getRemoteDevice(address)
     }
 
     @After
@@ -633,5 +651,246 @@ class BatteryControllerTests {
         listener.verifyNotified(USI_DEVICE_ID, status = STATUS_UNKNOWN, capacity = 0f)
         assertThat("battery state matches", batteryController.getBatteryState(USI_DEVICE_ID),
             matchesState(USI_DEVICE_ID, status = STATUS_UNKNOWN, capacity = 0f))
+    }
+
+    @Test
+    fun testRegisterBluetoothListenerForMonitoredBluetoothDevices() {
+        `when`(iInputManager.getInputDeviceBluetoothAddress(BT_DEVICE_ID))
+            .thenReturn("AA:BB:CC:DD:EE:FF")
+        `when`(iInputManager.getInputDeviceBluetoothAddress(SECOND_BT_DEVICE_ID))
+            .thenReturn("11:22:33:44:55:66")
+        addInputDevice(BT_DEVICE_ID)
+        testLooper.dispatchNext()
+        addInputDevice(SECOND_BT_DEVICE_ID)
+        testLooper.dispatchNext()
+
+        // Listen to a non-Bluetooth device and ensure that the BT battery listener is not added
+        // when there are no monitored BT devices.
+        val listener = createMockListener()
+        batteryController.registerBatteryListener(DEVICE_ID, listener, PID)
+        verify(bluetoothBatteryManager, never()).addBatteryListener(any())
+
+        val bluetoothListener = ArgumentCaptor.forClass(BluetoothBatteryListener::class.java)
+
+        // The BT battery listener is added when the first BT input device is monitored.
+        batteryController.registerBatteryListener(BT_DEVICE_ID, listener, PID)
+        verify(bluetoothBatteryManager).addBatteryListener(bluetoothListener.capture())
+
+        // The BT listener is only added once for all BT devices.
+        batteryController.registerBatteryListener(SECOND_BT_DEVICE_ID, listener, PID)
+        verify(bluetoothBatteryManager, times(1)).addBatteryListener(any())
+
+        // The BT listener is only removed when there are no monitored BT devices.
+        batteryController.unregisterBatteryListener(BT_DEVICE_ID, listener, PID)
+        verify(bluetoothBatteryManager, never()).removeBatteryListener(any())
+
+        `when`(iInputManager.getInputDeviceBluetoothAddress(SECOND_BT_DEVICE_ID))
+            .thenReturn(null)
+        notifyDeviceChanged(SECOND_BT_DEVICE_ID)
+        testLooper.dispatchNext()
+        verify(bluetoothBatteryManager).removeBatteryListener(bluetoothListener.value)
+    }
+
+    @Test
+    fun testNotifiesBluetoothBatteryChanges() {
+        `when`(iInputManager.getInputDeviceBluetoothAddress(BT_DEVICE_ID))
+            .thenReturn("AA:BB:CC:DD:EE:FF")
+        `when`(bluetoothBatteryManager.getBatteryLevel(eq("AA:BB:CC:DD:EE:FF"))).thenReturn(21)
+        addInputDevice(BT_DEVICE_ID)
+        val bluetoothListener = ArgumentCaptor.forClass(BluetoothBatteryListener::class.java)
+        val listener = createMockListener()
+        batteryController.registerBatteryListener(BT_DEVICE_ID, listener, PID)
+        verify(bluetoothBatteryManager).addBatteryListener(bluetoothListener.capture())
+        listener.verifyNotified(BT_DEVICE_ID, capacity = 0.21f)
+
+        // When the state has not changed, the listener is not notified again.
+        bluetoothListener.value!!.onBluetoothBatteryChanged(TIMESTAMP, "AA:BB:CC:DD:EE:FF", 21)
+        listener.verifyNotified(BT_DEVICE_ID, mode = times(1), capacity = 0.21f)
+
+        bluetoothListener.value!!.onBluetoothBatteryChanged(TIMESTAMP, "AA:BB:CC:DD:EE:FF", 25)
+        listener.verifyNotified(BT_DEVICE_ID, capacity = 0.25f)
+    }
+
+    @Test
+    fun testBluetoothBatteryIsPrioritized() {
+        `when`(native.getBatteryDevicePath(BT_DEVICE_ID)).thenReturn("/sys/dev/bt_device")
+        `when`(iInputManager.getInputDeviceBluetoothAddress(BT_DEVICE_ID))
+            .thenReturn("AA:BB:CC:DD:EE:FF")
+        `when`(bluetoothBatteryManager.getBatteryLevel(eq("AA:BB:CC:DD:EE:FF"))).thenReturn(21)
+        `when`(native.getBatteryCapacity(BT_DEVICE_ID)).thenReturn(98)
+        addInputDevice(BT_DEVICE_ID)
+        val bluetoothListener = ArgumentCaptor.forClass(BluetoothBatteryListener::class.java)
+        val listener = createMockListener()
+        val uEventListener = ArgumentCaptor.forClass(UEventBatteryListener::class.java)
+
+        // When the device is first monitored and both native and BT battery is available,
+        // the latter is used.
+        batteryController.registerBatteryListener(BT_DEVICE_ID, listener, PID)
+        verify(bluetoothBatteryManager).addBatteryListener(bluetoothListener.capture())
+        verify(uEventManager).addListener(uEventListener.capture(), any())
+        listener.verifyNotified(BT_DEVICE_ID, capacity = 0.21f)
+        assertThat("battery state matches", batteryController.getBatteryState(BT_DEVICE_ID),
+            matchesState(BT_DEVICE_ID, capacity = 0.21f))
+
+        // If only the native battery state changes the listener is not notified.
+        `when`(native.getBatteryCapacity(BT_DEVICE_ID)).thenReturn(97)
+        uEventListener.value!!.onBatteryUEvent(TIMESTAMP)
+        listener.verifyNotified(BT_DEVICE_ID, mode = times(1), capacity = 0.21f)
+        assertThat("battery state matches", batteryController.getBatteryState(BT_DEVICE_ID),
+            matchesState(BT_DEVICE_ID, capacity = 0.21f))
+    }
+
+    @Test
+    fun testFallBackToNativeBatteryStateWhenBluetoothStateInvalid() {
+        `when`(native.getBatteryDevicePath(BT_DEVICE_ID)).thenReturn("/sys/dev/bt_device")
+        `when`(iInputManager.getInputDeviceBluetoothAddress(BT_DEVICE_ID))
+            .thenReturn("AA:BB:CC:DD:EE:FF")
+        `when`(bluetoothBatteryManager.getBatteryLevel(eq("AA:BB:CC:DD:EE:FF"))).thenReturn(21)
+        `when`(native.getBatteryCapacity(BT_DEVICE_ID)).thenReturn(98)
+        addInputDevice(BT_DEVICE_ID)
+        val bluetoothListener = ArgumentCaptor.forClass(BluetoothBatteryListener::class.java)
+        val listener = createMockListener()
+        val uEventListener = ArgumentCaptor.forClass(UEventBatteryListener::class.java)
+
+        batteryController.registerBatteryListener(BT_DEVICE_ID, listener, PID)
+        verify(bluetoothBatteryManager).addBatteryListener(bluetoothListener.capture())
+        verify(uEventManager).addListener(uEventListener.capture(), any())
+        listener.verifyNotified(BT_DEVICE_ID, capacity = 0.21f)
+
+        // Fall back to the native state when BT is off.
+        bluetoothListener.value!!.onBluetoothBatteryChanged(TIMESTAMP, "AA:BB:CC:DD:EE:FF",
+            BluetoothDevice.BATTERY_LEVEL_BLUETOOTH_OFF)
+        listener.verifyNotified(BT_DEVICE_ID, capacity = 0.98f)
+
+        bluetoothListener.value!!.onBluetoothBatteryChanged(TIMESTAMP, "AA:BB:CC:DD:EE:FF", 22)
+        verify(bluetoothBatteryManager).addBatteryListener(bluetoothListener.capture())
+        listener.verifyNotified(BT_DEVICE_ID, capacity = 0.22f)
+
+        // Fall back to the native state when BT battery is unknown.
+        bluetoothListener.value!!.onBluetoothBatteryChanged(TIMESTAMP, "AA:BB:CC:DD:EE:FF",
+            BluetoothDevice.BATTERY_LEVEL_UNKNOWN)
+        listener.verifyNotified(BT_DEVICE_ID, mode = times(2), capacity = 0.98f)
+    }
+
+    @Test
+    fun testRegisterBluetoothMetadataListenerForMonitoredBluetoothDevices() {
+        `when`(iInputManager.getInputDeviceBluetoothAddress(BT_DEVICE_ID))
+            .thenReturn("AA:BB:CC:DD:EE:FF")
+        `when`(iInputManager.getInputDeviceBluetoothAddress(SECOND_BT_DEVICE_ID))
+            .thenReturn("11:22:33:44:55:66")
+        addInputDevice(BT_DEVICE_ID)
+        testLooper.dispatchNext()
+        addInputDevice(SECOND_BT_DEVICE_ID)
+        testLooper.dispatchNext()
+
+        // Listen to a non-Bluetooth device and ensure that the metadata listener is not added when
+        // there are no monitored BT devices.
+        val listener = createMockListener()
+        batteryController.registerBatteryListener(DEVICE_ID, listener, PID)
+        verify(bluetoothBatteryManager, never()).addMetadataListener(any(), any())
+
+        val metadataListener1 = ArgumentCaptor.forClass(
+            BluetoothAdapter.OnMetadataChangedListener::class.java)
+        val metadataListener2 = ArgumentCaptor.forClass(
+            BluetoothAdapter.OnMetadataChangedListener::class.java)
+
+        // The metadata listener is added when the first BT input device is monitored.
+        batteryController.registerBatteryListener(BT_DEVICE_ID, listener, PID)
+        verify(bluetoothBatteryManager)
+            .addMetadataListener(eq("AA:BB:CC:DD:EE:FF"), metadataListener1.capture())
+
+        // There is one metadata listener added for each BT device.
+        batteryController.registerBatteryListener(SECOND_BT_DEVICE_ID, listener, PID)
+        verify(bluetoothBatteryManager)
+            .addMetadataListener(eq("11:22:33:44:55:66"), metadataListener2.capture())
+
+        // The metadata listener is removed when the device is no longer monitored.
+        batteryController.unregisterBatteryListener(BT_DEVICE_ID, listener, PID)
+        verify(bluetoothBatteryManager)
+            .removeMetadataListener("AA:BB:CC:DD:EE:FF", metadataListener1.value)
+
+        `when`(iInputManager.getInputDeviceBluetoothAddress(SECOND_BT_DEVICE_ID))
+            .thenReturn(null)
+        notifyDeviceChanged(SECOND_BT_DEVICE_ID)
+        testLooper.dispatchNext()
+        verify(bluetoothBatteryManager)
+            .removeMetadataListener("11:22:33:44:55:66", metadataListener2.value)
+    }
+
+    @Test
+    fun testNotifiesBluetoothMetadataBatteryChanges() {
+        `when`(iInputManager.getInputDeviceBluetoothAddress(BT_DEVICE_ID))
+            .thenReturn("AA:BB:CC:DD:EE:FF")
+        `when`(bluetoothBatteryManager.getMetadata("AA:BB:CC:DD:EE:FF",
+                BluetoothDevice.METADATA_MAIN_BATTERY))
+            .thenReturn("21".toByteArray())
+        addInputDevice(BT_DEVICE_ID)
+        val metadataListener = ArgumentCaptor.forClass(
+            BluetoothAdapter.OnMetadataChangedListener::class.java)
+        val listener = createMockListener()
+        val bluetoothDevice = createBluetoothDevice("AA:BB:CC:DD:EE:FF")
+        batteryController.registerBatteryListener(BT_DEVICE_ID, listener, PID)
+        verify(bluetoothBatteryManager)
+            .addMetadataListener(eq("AA:BB:CC:DD:EE:FF"), metadataListener.capture())
+        listener.verifyNotified(BT_DEVICE_ID, capacity = 0.21f, status = STATUS_UNKNOWN)
+
+        // When the state has not changed, the listener is not notified again.
+        metadataListener.value!!.onMetadataChanged(
+            bluetoothDevice, BluetoothDevice.METADATA_MAIN_BATTERY, "21".toByteArray())
+        listener.verifyNotified(BT_DEVICE_ID, mode = times(1), capacity = 0.21f)
+
+        metadataListener.value!!.onMetadataChanged(
+            bluetoothDevice, BluetoothDevice.METADATA_MAIN_BATTERY, "25".toByteArray())
+        listener.verifyNotified(BT_DEVICE_ID, capacity = 0.25f, status = STATUS_UNKNOWN)
+
+        metadataListener.value!!.onMetadataChanged(
+            bluetoothDevice, BluetoothDevice.METADATA_MAIN_CHARGING, "true".toByteArray())
+        listener.verifyNotified(BT_DEVICE_ID, capacity = 0.25f, status = STATUS_CHARGING)
+
+        metadataListener.value!!.onMetadataChanged(
+            bluetoothDevice, BluetoothDevice.METADATA_MAIN_CHARGING, "false".toByteArray())
+        listener.verifyNotified(BT_DEVICE_ID, capacity = 0.25f, status = STATUS_DISCHARGING)
+
+        metadataListener.value!!.onMetadataChanged(
+            bluetoothDevice, BluetoothDevice.METADATA_MAIN_CHARGING, null)
+        listener.verifyNotified(BT_DEVICE_ID, mode = times(2), capacity = 0.25f,
+            status = STATUS_UNKNOWN)
+    }
+
+    @Test
+    fun testBluetoothMetadataBatteryIsPrioritized() {
+        `when`(iInputManager.getInputDeviceBluetoothAddress(BT_DEVICE_ID))
+            .thenReturn("AA:BB:CC:DD:EE:FF")
+        `when`(bluetoothBatteryManager.getBatteryLevel(eq("AA:BB:CC:DD:EE:FF"))).thenReturn(21)
+        `when`(bluetoothBatteryManager.getMetadata("AA:BB:CC:DD:EE:FF",
+                BluetoothDevice.METADATA_MAIN_BATTERY))
+            .thenReturn("22".toByteArray())
+        addInputDevice(BT_DEVICE_ID)
+        val bluetoothListener = ArgumentCaptor.forClass(BluetoothBatteryListener::class.java)
+        val metadataListener = ArgumentCaptor.forClass(
+            BluetoothAdapter.OnMetadataChangedListener::class.java)
+        val listener = createMockListener()
+        val bluetoothDevice = createBluetoothDevice("AA:BB:CC:DD:EE:FF")
+        batteryController.registerBatteryListener(BT_DEVICE_ID, listener, PID)
+
+        verify(bluetoothBatteryManager).addBatteryListener(bluetoothListener.capture())
+        verify(bluetoothBatteryManager)
+            .addMetadataListener(eq("AA:BB:CC:DD:EE:FF"), metadataListener.capture())
+        listener.verifyNotified(BT_DEVICE_ID, capacity = 0.22f)
+
+        // A change in the Bluetooth battery level has no effect while there is a valid battery
+        // level obtained through the metadata.
+        bluetoothListener.value!!.onBluetoothBatteryChanged(TIMESTAMP, "AA:BB:CC:DD:EE:FF", 23)
+        listener.verifyNotified(BT_DEVICE_ID, mode = never(), capacity = 0.23f)
+
+        metadataListener.value!!.onMetadataChanged(
+            bluetoothDevice, BluetoothDevice.METADATA_MAIN_BATTERY, "24".toByteArray())
+        listener.verifyNotified(BT_DEVICE_ID, capacity = 0.24f)
+
+        // When the battery level from the metadata is no longer valid, we fall back to using the
+        // Bluetooth battery level.
+        metadataListener.value!!.onMetadataChanged(
+            bluetoothDevice, BluetoothDevice.METADATA_MAIN_BATTERY, null)
+        listener.verifyNotified(BT_DEVICE_ID, capacity = 0.23f)
     }
 }

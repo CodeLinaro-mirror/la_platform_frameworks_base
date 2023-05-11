@@ -74,6 +74,7 @@ import android.view.Surface;
 import android.view.WindowManagerGlobal;
 
 import com.android.framework.protobuf.nano.MessageNano;
+import com.android.internal.R;
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.util.FrameworkStatsLog;
 import com.android.server.LocalServices;
@@ -246,7 +247,7 @@ public class CameraServiceProxy extends SystemService
         private long mDurationOrStartTimeMs;  // Either start time, or duration once completed
 
         CameraUsageEvent(String cameraId, int facing, String clientName, int apiLevel,
-                boolean isNdk, int action, int latencyMs, int operatingMode) {
+                boolean isNdk, int action, int latencyMs, int operatingMode, boolean deviceError) {
             mCameraId = cameraId;
             mCameraFacing = facing;
             mClientName = clientName;
@@ -257,6 +258,7 @@ public class CameraServiceProxy extends SystemService
             mAction = action;
             mLatencyMs = latencyMs;
             mOperatingMode = operatingMode;
+            mDeviceError = deviceError;
         }
 
         public void markCompleted(int internalReconfigure, long requestCount,
@@ -389,6 +391,16 @@ public class CameraServiceProxy extends SystemService
             return CaptureRequest.SCALER_ROTATE_AND_CROP_NONE;
         }
 
+        // When config_isWindowManagerCameraCompatTreatmentEnabled is true,
+        // DisplayRotationCompatPolicy in WindowManager force rotates fullscreen activities with
+        // fixed orientation to align them with the natural orientation of the device.
+        if (ctx.getResources().getBoolean(
+                R.bool.config_isWindowManagerCameraCompatTreatmentEnabled)) {
+            Slog.v(TAG, "Disable Rotate and Crop to avoid conflicts with"
+                    + " WM force rotation treatment.");
+            return CaptureRequest.SCALER_ROTATE_AND_CROP_NONE;
+        }
+
         // External cameras do not need crop-rotate-scale.
         if (lensFacing != CameraMetadata.LENS_FACING_FRONT
                 && lensFacing != CameraMetadata.LENS_FACING_BACK) {
@@ -487,7 +499,8 @@ public class CameraServiceProxy extends SystemService
 
             if ((recentTasks != null) && (!recentTasks.getList().isEmpty())) {
                 for (ActivityManager.RecentTaskInfo task : recentTasks.getList()) {
-                    if (packageName.equals(task.topActivityInfo.packageName)) {
+                    if (task.topActivityInfo != null && packageName.equals(
+                            task.topActivityInfo.packageName)) {
                         taskInfo = new TaskInfo();
                         taskInfo.frontTaskId = task.taskId;
                         taskInfo.isResizeable =
@@ -549,6 +562,15 @@ public class CameraServiceProxy extends SystemService
 
             return getCropRotateScale(mContext, packageName, taskInfo, displayRotation,
                     lensFacing, ignoreResizableAndSdkCheck);
+        }
+
+        /**
+         * Placeholder method to fetch the system state for autoframing.
+         * TODO: b/260617354
+         */
+        @Override
+        public int getAutoframingOverride(String packageName) {
+            return CaptureRequest.CONTROL_AUTOFRAMING_OFF;
         }
 
         @Override
@@ -1088,7 +1110,7 @@ public class CameraServiceProxy extends SystemService
                     CameraUsageEvent openEvent = new CameraUsageEvent(
                             cameraId, facing, clientName, apiLevel, isNdk,
                             FrameworkStatsLog.CAMERA_ACTION_EVENT__ACTION__OPEN,
-                            latencyMs, sessionType);
+                            latencyMs, sessionType, deviceError);
                     mCameraUsageHistory.add(openEvent);
                     break;
                 case CameraSessionStats.CAMERA_STATE_ACTIVE:
@@ -1115,7 +1137,7 @@ public class CameraServiceProxy extends SystemService
                     CameraUsageEvent newEvent = new CameraUsageEvent(
                             cameraId, facing, clientName, apiLevel, isNdk,
                             FrameworkStatsLog.CAMERA_ACTION_EVENT__ACTION__SESSION,
-                            latencyMs, sessionType);
+                            latencyMs, sessionType, deviceError);
                     CameraUsageEvent oldEvent = mActiveCameraUsage.put(cameraId, newEvent);
                     if (oldEvent != null) {
                         Slog.w(TAG, "Camera " + cameraId + " was already marked as active");
@@ -1134,6 +1156,8 @@ public class CameraServiceProxy extends SystemService
                                 resultErrorCount, deviceError, streamStats, userTag,
                                 videoStabilizationMode);
                         mCameraUsageHistory.add(doneEvent);
+                        // Do not double count device error
+                        deviceError = false;
 
                         // Check current active camera IDs to see if this package is still
                         // talking to some camera
@@ -1157,7 +1181,7 @@ public class CameraServiceProxy extends SystemService
                         CameraUsageEvent closeEvent = new CameraUsageEvent(
                                 cameraId, facing, clientName, apiLevel, isNdk,
                                 FrameworkStatsLog.CAMERA_ACTION_EVENT__ACTION__CLOSE,
-                                latencyMs, sessionType);
+                                latencyMs, sessionType, deviceError);
                         mCameraUsageHistory.add(closeEvent);
                     }
 

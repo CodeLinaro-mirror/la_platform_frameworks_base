@@ -3,6 +3,7 @@ package com.android.systemui
 import android.content.ComponentName
 import android.content.Context
 import android.content.pm.PackageManager
+import android.content.pm.UserInfo
 import android.content.res.Resources
 import android.testing.AndroidTestingRunner
 import androidx.test.filters.SmallTest
@@ -10,10 +11,13 @@ import com.android.systemui.flags.FeatureFlags
 import com.android.systemui.flags.Flag
 import com.android.systemui.flags.FlagListenable
 import com.android.systemui.flags.Flags
+import com.android.systemui.flags.ReleasedFlag
 import com.android.systemui.flags.UnreleasedFlag
+import com.android.systemui.settings.UserTracker
 import com.android.systemui.util.mockito.any
 import com.android.systemui.util.mockito.eq
 import com.android.systemui.util.mockito.kotlinArgumentCaptor
+import com.android.systemui.util.mockito.whenever
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancel
@@ -26,9 +30,9 @@ import org.mockito.Mock
 import org.mockito.Mockito.anyInt
 import org.mockito.Mockito.clearInvocations
 import org.mockito.Mockito.never
+import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
 import org.mockito.Mockito.verifyZeroInteractions
-import org.mockito.Mockito.`when`
 import org.mockito.MockitoAnnotations
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -44,6 +48,8 @@ class ChooserSelectorTest : SysuiTestCase() {
     private lateinit var chooserSelector: ChooserSelector
 
     @Mock private lateinit var mockContext: Context
+    @Mock private lateinit var mockProfileContext: Context
+    @Mock private lateinit var mockUserTracker: UserTracker
     @Mock private lateinit var mockPackageManager: PackageManager
     @Mock private lateinit var mockResources: Resources
     @Mock private lateinit var mockFeatureFlags: FeatureFlags
@@ -52,12 +58,20 @@ class ChooserSelectorTest : SysuiTestCase() {
     fun setup() {
         MockitoAnnotations.initMocks(this)
 
-        `when`(mockContext.packageManager).thenReturn(mockPackageManager)
-        `when`(mockContext.resources).thenReturn(mockResources)
-        `when`(mockResources.getString(anyInt())).thenReturn(
+        whenever(mockContext.createContextAsUser(any(), anyInt())).thenReturn(mockProfileContext)
+        whenever(mockContext.resources).thenReturn(mockResources)
+        whenever(mockProfileContext.packageManager).thenReturn(mockPackageManager)
+        whenever(mockResources.getString(anyInt())).thenReturn(
                 ComponentName("TestPackage", "TestClass").flattenToString())
+        whenever(mockUserTracker.userProfiles).thenReturn(listOf(UserInfo(), UserInfo()))
 
-        chooserSelector = ChooserSelector(mockContext, mockFeatureFlags, testScope, testDispatcher)
+        chooserSelector = ChooserSelector(
+                mockContext,
+                mockUserTracker,
+                mockFeatureFlags,
+                testScope,
+                testDispatcher,
+        )
     }
 
     @After
@@ -74,7 +88,9 @@ class ChooserSelectorTest : SysuiTestCase() {
 
         // Assert
         verify(mockFeatureFlags).addListener(
-                eq<Flag<*>>(Flags.CHOOSER_UNBUNDLED), flagListener.capture())
+                eq<Flag<*>>(Flags.CHOOSER_UNBUNDLED),
+                flagListener.capture(),
+        )
         verify(mockFeatureFlags, never()).removeListener(any())
 
         // Act
@@ -87,93 +103,113 @@ class ChooserSelectorTest : SysuiTestCase() {
     @Test
     fun initialize_enablesUnbundledChooser_whenFlagEnabled() {
         // Arrange
-        `when`(mockFeatureFlags.isEnabled(any<UnreleasedFlag>())).thenReturn(true)
+        setFlagMock(true)
 
         // Act
         chooserSelector.start()
 
         // Assert
-        verify(mockPackageManager).setComponentEnabledSetting(
+        verify(mockPackageManager, times(2)).setComponentEnabledSetting(
                 eq(ComponentName("TestPackage", "TestClass")),
                 eq(PackageManager.COMPONENT_ENABLED_STATE_ENABLED),
-                anyInt())
+                anyInt(),
+        )
     }
 
     @Test
     fun initialize_disablesUnbundledChooser_whenFlagDisabled() {
         // Arrange
-        `when`(mockFeatureFlags.isEnabled(any<UnreleasedFlag>())).thenReturn(false)
+        setFlagMock(false)
 
         // Act
         chooserSelector.start()
 
         // Assert
-        verify(mockPackageManager).setComponentEnabledSetting(
+        verify(mockPackageManager, times(2)).setComponentEnabledSetting(
                 eq(ComponentName("TestPackage", "TestClass")),
                 eq(PackageManager.COMPONENT_ENABLED_STATE_DISABLED),
-                anyInt())
+                anyInt(),
+        )
     }
 
     @Test
     fun enablesUnbundledChooser_whenFlagBecomesEnabled() {
         // Arrange
-        `when`(mockFeatureFlags.isEnabled(any<UnreleasedFlag>())).thenReturn(false)
+        setFlagMock(false)
         chooserSelector.start()
         verify(mockFeatureFlags).addListener(
-                eq<Flag<*>>(Flags.CHOOSER_UNBUNDLED), flagListener.capture())
+                eq<Flag<*>>(Flags.CHOOSER_UNBUNDLED),
+                flagListener.capture(),
+        )
         verify(mockPackageManager, never()).setComponentEnabledSetting(
-                any(), eq(PackageManager.COMPONENT_ENABLED_STATE_ENABLED), anyInt())
+                any(),
+                eq(PackageManager.COMPONENT_ENABLED_STATE_ENABLED),
+                anyInt(),
+        )
 
         // Act
-        `when`(mockFeatureFlags.isEnabled(any<UnreleasedFlag>())).thenReturn(true)
-        flagListener.value.onFlagChanged(TestFlagEvent(Flags.CHOOSER_UNBUNDLED.id))
+        setFlagMock(true)
+        flagListener.value.onFlagChanged(TestFlagEvent(Flags.CHOOSER_UNBUNDLED.name))
 
         // Assert
-        verify(mockPackageManager).setComponentEnabledSetting(
+        verify(mockPackageManager, times(2)).setComponentEnabledSetting(
                 eq(ComponentName("TestPackage", "TestClass")),
                 eq(PackageManager.COMPONENT_ENABLED_STATE_ENABLED),
-                anyInt())
+                anyInt(),
+        )
     }
 
     @Test
     fun disablesUnbundledChooser_whenFlagBecomesDisabled() {
         // Arrange
-        `when`(mockFeatureFlags.isEnabled(any<UnreleasedFlag>())).thenReturn(true)
+        setFlagMock(true)
         chooserSelector.start()
         verify(mockFeatureFlags).addListener(
-                eq<Flag<*>>(Flags.CHOOSER_UNBUNDLED), flagListener.capture())
+                eq<Flag<*>>(Flags.CHOOSER_UNBUNDLED),
+                flagListener.capture(),
+        )
         verify(mockPackageManager, never()).setComponentEnabledSetting(
-                any(), eq(PackageManager.COMPONENT_ENABLED_STATE_DISABLED), anyInt())
+                any(),
+                eq(PackageManager.COMPONENT_ENABLED_STATE_DISABLED),
+                anyInt(),
+        )
 
         // Act
-        `when`(mockFeatureFlags.isEnabled(any<UnreleasedFlag>())).thenReturn(false)
-        flagListener.value.onFlagChanged(TestFlagEvent(Flags.CHOOSER_UNBUNDLED.id))
+        setFlagMock(false)
+        flagListener.value.onFlagChanged(TestFlagEvent(Flags.CHOOSER_UNBUNDLED.name))
 
         // Assert
-        verify(mockPackageManager).setComponentEnabledSetting(
+        verify(mockPackageManager, times(2)).setComponentEnabledSetting(
                 eq(ComponentName("TestPackage", "TestClass")),
                 eq(PackageManager.COMPONENT_ENABLED_STATE_DISABLED),
-                anyInt())
+                anyInt(),
+        )
     }
 
     @Test
     fun doesNothing_whenAnotherFlagChanges() {
         // Arrange
-        `when`(mockFeatureFlags.isEnabled(any<UnreleasedFlag>())).thenReturn(false)
+        setFlagMock(false)
         chooserSelector.start()
         verify(mockFeatureFlags).addListener(
-                eq<Flag<*>>(Flags.CHOOSER_UNBUNDLED), flagListener.capture())
+                eq<Flag<*>>(Flags.CHOOSER_UNBUNDLED),
+                flagListener.capture(),
+        )
         clearInvocations(mockPackageManager)
 
         // Act
-        `when`(mockFeatureFlags.isEnabled(any<UnreleasedFlag>())).thenReturn(false)
-        flagListener.value.onFlagChanged(TestFlagEvent(Flags.CHOOSER_UNBUNDLED.id + 1))
+        flagListener.value.onFlagChanged(TestFlagEvent("other flag"))
 
         // Assert
         verifyZeroInteractions(mockPackageManager)
     }
 
-    private class TestFlagEvent(override val flagId: Int) : FlagListenable.FlagEvent {
+    private fun setFlagMock(enabled: Boolean) {
+        whenever(mockFeatureFlags.isEnabled(any<UnreleasedFlag>())).thenReturn(enabled)
+        whenever(mockFeatureFlags.isEnabled(any<ReleasedFlag>())).thenReturn(enabled)
+    }
+
+    private class TestFlagEvent(override val flagName: String) : FlagListenable.FlagEvent {
         override fun requestNoRestart() {}
     }
 }

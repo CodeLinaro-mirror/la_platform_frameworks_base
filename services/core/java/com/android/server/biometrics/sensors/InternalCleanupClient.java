@@ -64,7 +64,6 @@ public abstract class InternalCleanupClient<S extends BiometricAuthenticator.Ide
     private final ArrayList<UserTemplate> mUnknownHALTemplates = new ArrayList<>();
     private final BiometricUtils<S> mBiometricUtils;
     private final Map<Integer, Long> mAuthenticatorIds;
-    private final List<S> mEnrolledList;
     private final boolean mHasEnrollmentsBeforeStarting;
     private BaseClientMonitor mCurrentTask;
     private boolean mFavorHalEnrollments = false;
@@ -113,7 +112,11 @@ public abstract class InternalCleanupClient<S extends BiometricAuthenticator.Ide
         @Override
         public void onClientFinished(@NonNull BaseClientMonitor clientMonitor, boolean success) {
             Slog.d(TAG, "Remove onClientFinished: " + clientMonitor + ", success: " + success);
-            mCallback.onClientFinished(InternalCleanupClient.this, success);
+            if (mUnknownHALTemplates.isEmpty()) {
+                mCallback.onClientFinished(InternalCleanupClient.this, success);
+            } else {
+                startCleanupUnknownHalTemplates();
+            }
         }
     };
 
@@ -131,13 +134,12 @@ public abstract class InternalCleanupClient<S extends BiometricAuthenticator.Ide
     protected InternalCleanupClient(@NonNull Context context, @NonNull Supplier<T> lazyDaemon,
             int userId, @NonNull String owner, int sensorId,
             @NonNull BiometricLogger logger, @NonNull BiometricContext biometricContext,
-            @NonNull List<S> enrolledList, @NonNull BiometricUtils<S> utils,
+            @NonNull BiometricUtils<S> utils,
             @NonNull Map<Integer, Long> authenticatorIds) {
         super(context, lazyDaemon, null /* token */, null /* ClientMonitorCallbackConverter */,
                 userId, owner, 0 /* cookie */, sensorId, logger, biometricContext);
         mBiometricUtils = utils;
         mAuthenticatorIds = authenticatorIds;
-        mEnrolledList = enrolledList;
         mHasEnrollmentsBeforeStarting = !utils.getBiometricsForUser(context, userId).isEmpty();
     }
 
@@ -165,12 +167,16 @@ public abstract class InternalCleanupClient<S extends BiometricAuthenticator.Ide
     public void start(@NonNull ClientMonitorCallback callback) {
         super.start(callback);
 
+        final List<S> enrolledList =
+                mBiometricUtils.getBiometricsForUser(getContext(), getTargetUserId());
+
         // Start enumeration. Removal will start if necessary, when enumeration is completed.
         mCurrentTask = getEnumerateClient(getContext(), mLazyDaemon, getToken(), getTargetUserId(),
-                getOwnerString(), mEnrolledList, mBiometricUtils, getSensorId(), getLogger(),
+                getOwnerString(), enrolledList, mBiometricUtils, getSensorId(), getLogger(),
                 getBiometricContext());
 
-        Slog.d(TAG, "Starting enumerate: " + mCurrentTask);
+        Slog.d(TAG, "Starting enumerate: " + mCurrentTask + " enrolledList size:"
+                + enrolledList.size());
         mCurrentTask.start(mEnumerateCallback);
     }
 
@@ -236,5 +242,10 @@ public abstract class InternalCleanupClient<S extends BiometricAuthenticator.Ide
     @VisibleForTesting
     public RemovalClient<S, T> getCurrentRemoveClient() {
         return (RemovalClient<S, T>) mCurrentTask;
+    }
+
+    @VisibleForTesting
+    public ArrayList<UserTemplate> getUnknownHALTemplates() {
+        return mUnknownHALTemplates;
     }
 }

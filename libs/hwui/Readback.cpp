@@ -16,16 +16,6 @@
 
 #include "Readback.h"
 
-#include <sync/sync.h>
-#include <system/window.h>
-
-#include <gui/TraceUtils.h>
-#include "DeferredLayerUpdater.h"
-#include "Properties.h"
-#include "hwui/Bitmap.h"
-#include "pipeline/skia/LayerDrawable.h"
-#include "renderthread/EglManager.h"
-#include "renderthread/VulkanManager.h"
 #include <SkBitmap.h>
 #include <SkBlendMode.h>
 #include <SkCanvas.h>
@@ -38,6 +28,20 @@
 #include <SkRefCnt.h>
 #include <SkSamplingOptions.h>
 #include <SkSurface.h>
+#include "include/gpu/GpuTypes.h" // from Skia
+#include <gui/TraceUtils.h>
+#include <private/android/AHardwareBufferHelpers.h>
+#include <shaders/shaders.h>
+#include <sync/sync.h>
+#include <system/window.h>
+
+#include "DeferredLayerUpdater.h"
+#include "Properties.h"
+#include "Tonemapper.h"
+#include "hwui/Bitmap.h"
+#include "pipeline/skia/LayerDrawable.h"
+#include "renderthread/EglManager.h"
+#include "renderthread/VulkanManager.h"
 #include "utils/Color.h"
 #include "utils/MathUtils.h"
 #include "utils/NdkUtils.h"
@@ -91,8 +95,18 @@ void Readback::copySurfaceInto(ANativeWindow* window, const std::shared_ptr<Copy
         }
     }
 
-    sk_sp<SkColorSpace> colorSpace = DataSpaceToColorSpace(
-            static_cast<android_dataspace>(ANativeWindow_getBuffersDataSpace(window)));
+    int32_t dataspace = ANativeWindow_getBuffersDataSpace(window);
+
+    // If the application is not updating the Surface themselves, e.g., another
+    // process is producing buffers for the application to display, then
+    // ANativeWindow_getBuffersDataSpace will return an unknown answer, so grab
+    // the dataspace from buffer metadata instead, if it exists.
+    if (dataspace == 0) {
+        dataspace = AHardwareBuffer_getDataSpace(sourceBuffer.get());
+    }
+
+    sk_sp<SkColorSpace> colorSpace =
+            DataSpaceToColorSpace(static_cast<android_dataspace>(dataspace));
     sk_sp<SkImage> image =
             SkImage::MakeFromAHardwareBuffer(sourceBuffer.get(), kPremul_SkAlphaType, colorSpace);
 
@@ -157,14 +171,15 @@ void Readback::copySurfaceInto(ANativeWindow* window, const std::shared_ptr<Copy
     SkBitmap skBitmap = request->getDestinationBitmap(srcRect.width(), srcRect.height());
     SkBitmap* bitmap = &skBitmap;
     sk_sp<SkSurface> tmpSurface =
-            SkSurface::MakeRenderTarget(mRenderThread.getGrContext(), SkBudgeted::kYes,
+            SkSurface::MakeRenderTarget(mRenderThread.getGrContext(), skgpu::Budgeted::kYes,
                                         bitmap->info(), 0, kTopLeft_GrSurfaceOrigin, nullptr);
 
     // if we can't generate a GPU surface that matches the destination bitmap (e.g. 565) then we
     // attempt to do the intermediate rendering step in 8888
     if (!tmpSurface.get()) {
         SkImageInfo tmpInfo = bitmap->info().makeColorType(SkColorType::kN32_SkColorType);
-        tmpSurface = SkSurface::MakeRenderTarget(mRenderThread.getGrContext(), SkBudgeted::kYes,
+        tmpSurface = SkSurface::MakeRenderTarget(mRenderThread.getGrContext(),
+                                                 skgpu::Budgeted::kYes,
                                                  tmpInfo, 0, kTopLeft_GrSurfaceOrigin, nullptr);
         if (!tmpSurface.get()) {
             ALOGW("Unable to generate GPU buffer in a format compatible with the provided bitmap");
@@ -227,6 +242,10 @@ void Readback::copySurfaceInto(ANativeWindow* window, const std::shared_ptr<Copy
     const bool hasBufferCrop = cropRect.left < cropRect.right && cropRect.top < cropRect.bottom;
     auto constraint =
             hasBufferCrop ? SkCanvas::kStrict_SrcRectConstraint : SkCanvas::kFast_SrcRectConstraint;
+
+    static constexpr float kMaxLuminanceNits = 4000.f;
+    tonemapPaint(image->imageInfo(), canvas->imageInfo(), kMaxLuminanceNits, paint);
+
     canvas->drawImageRect(image, imageSrcRect, imageDstRect, sampling, &paint, constraint);
     canvas->restore();
 
@@ -328,14 +347,17 @@ bool Readback::copyLayerInto(Layer* layer, const SkRect* srcRect, const SkRect* 
      * software buffer.
      */
     sk_sp<SkSurface> tmpSurface = SkSurface::MakeRenderTarget(mRenderThread.getGrContext(),
-                                                              SkBudgeted::kYes, bitmap->info(), 0,
+                                                              skgpu::Budgeted::kYes,
+                                                              bitmap->info(),
+                                                              0,
                                                               kTopLeft_GrSurfaceOrigin, nullptr);
 
     // if we can't generate a GPU surface that matches the destination bitmap (e.g. 565) then we
     // attempt to do the intermediate rendering step in 8888
     if (!tmpSurface.get()) {
         SkImageInfo tmpInfo = bitmap->info().makeColorType(SkColorType::kN32_SkColorType);
-        tmpSurface = SkSurface::MakeRenderTarget(mRenderThread.getGrContext(), SkBudgeted::kYes,
+        tmpSurface = SkSurface::MakeRenderTarget(mRenderThread.getGrContext(),
+                                                 skgpu::Budgeted::kYes,
                                                  tmpInfo, 0, kTopLeft_GrSurfaceOrigin, nullptr);
         if (!tmpSurface.get()) {
             ALOGW("Unable to generate GPU buffer in a format compatible with the provided bitmap");

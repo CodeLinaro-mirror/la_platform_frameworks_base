@@ -16,6 +16,7 @@
 
 package com.android.systemui.qs.tiles;
 
+import android.app.Dialog;
 import android.content.Intent;
 import android.os.Handler;
 import android.os.Looper;
@@ -43,7 +44,6 @@ import com.android.systemui.qs.QSHost;
 import com.android.systemui.qs.logging.QSLogger;
 import com.android.systemui.qs.tileimpl.QSTileImpl;
 import com.android.systemui.screenrecord.RecordingController;
-import com.android.systemui.screenrecord.ScreenRecordDialog;
 import com.android.systemui.statusbar.phone.KeyguardDismissUtil;
 import com.android.systemui.statusbar.policy.KeyguardStateController;
 
@@ -54,6 +54,9 @@ import javax.inject.Inject;
  */
 public class ScreenRecordTile extends QSTileImpl<QSTile.BooleanState>
         implements RecordingController.RecordingStateChangeCallback {
+
+    public static final String TILE_SPEC = "screenrecord";
+
     private static final String TAG = "ScreenRecordTile";
     private static final String INTERACTION_JANK_TAG = "screen_record";
 
@@ -170,7 +173,8 @@ public class ScreenRecordTile extends QSTileImpl<QSTile.BooleanState>
             mDialogLaunchAnimator.disableAllCurrentDialogsExitAnimations();
             getHost().collapsePanels();
         };
-        ScreenRecordDialog dialog = mController.createScreenRecordDialog(mContext, mFlags,
+
+        final Dialog dialog = mController.createScreenRecordDialog(mContext, mFlags,
                 mDialogLaunchAnimator, mActivityStarter, onStartRecordingClicked);
 
         ActivityStarter.OnDismissAction dismissAction = () -> {

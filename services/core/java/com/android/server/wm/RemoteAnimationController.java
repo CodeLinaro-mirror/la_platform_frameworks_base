@@ -16,6 +16,8 @@
 
 package com.android.server.wm;
 
+import static android.view.WindowManager.TRANSIT_OLD_KEYGUARD_UNOCCLUDE;
+
 import static com.android.internal.protolog.ProtoLogGroup.WM_DEBUG_REMOTE_ANIMATIONS;
 import static com.android.server.wm.AnimationAdapterProto.REMOTE;
 import static com.android.server.wm.RemoteAnimationAdapterWrapperProto.TARGET;
@@ -104,10 +106,29 @@ class RemoteAnimationController implements DeathRecipient {
     RemoteAnimationRecord createRemoteAnimationRecord(WindowContainer windowContainer,
             Point position, Rect localBounds, Rect endBounds, Rect startBounds,
             boolean showBackdrop) {
+        return createRemoteAnimationRecord(windowContainer, position, localBounds, endBounds,
+                startBounds, showBackdrop, startBounds != null /* shouldCreateSnapshot */);
+    }
+
+    /**
+     * Creates an animation record for each individual {@link WindowContainer}.
+     *
+     * @param windowContainer The windows to animate.
+     * @param position        The position app bounds relative to its parent.
+     * @param localBounds     The bounds of the app relative to its parent.
+     * @param endBounds       The end bounds after the transition, in screen coordinates.
+     * @param startBounds     The start bounds before the transition, in screen coordinates.
+     * @param showBackdrop    To show background behind a window during animation.
+     * @param shouldCreateSnapshot   Whether this target should create a snapshot animation.
+     * @return The record representing animation(s) to run on the app.
+     */
+    RemoteAnimationRecord createRemoteAnimationRecord(WindowContainer windowContainer,
+            Point position, Rect localBounds, Rect endBounds, Rect startBounds,
+            boolean showBackdrop, boolean shouldCreateSnapshot) {
         ProtoLog.d(WM_DEBUG_REMOTE_ANIMATIONS, "createAnimationAdapter(): container=%s",
                 windowContainer);
         final RemoteAnimationRecord adapters = new RemoteAnimationRecord(windowContainer, position,
-                localBounds, endBounds, startBounds, showBackdrop);
+                localBounds, endBounds, startBounds, showBackdrop, shouldCreateSnapshot);
         mPendingAnimations.add(adapters);
         return adapters;
     }
@@ -176,6 +197,13 @@ class RemoteAnimationController implements DeathRecipient {
                                 + " transit=%s, apps=%d, wallpapers=%d, nonApps=%d",
                         AppTransition.appTransitionOldToString(transit), appTargets.length,
                         wallpaperTargets.length, nonAppTargets.length);
+                if (AppTransition.isKeyguardOccludeTransitOld(transit)) {
+                    EventLogTags.writeWmSetKeyguardOccluded(
+                            transit == TRANSIT_OLD_KEYGUARD_UNOCCLUDE ? 0 : 1,
+                            1 /* animate */,
+                            transit,
+                            "onAnimationStart");
+                }
                 mRemoteAnimationAdapter.getRunner().onAnimationStart(transit, appTargets,
                         wallpaperTargets, nonAppTargets, mFinishedCallback);
             } catch (RemoteException e) {
@@ -337,6 +365,11 @@ class RemoteAnimationController implements DeathRecipient {
         final boolean isKeyguardOccluded = mDisplayContent.isKeyguardOccluded();
 
         try {
+            EventLogTags.writeWmSetKeyguardOccluded(
+                    isKeyguardOccluded ? 1 : 0,
+                    0 /* animate */,
+                    0 /* transit */,
+                    "onAnimationCancelled");
             mRemoteAnimationAdapter.getRunner().onAnimationCancelled(isKeyguardOccluded);
         } catch (RemoteException e) {
             Slog.e(TAG, "Failed to notify cancel", e);
@@ -441,14 +474,15 @@ class RemoteAnimationController implements DeathRecipient {
         private @RemoteAnimationTarget.Mode int mMode = RemoteAnimationTarget.MODE_CHANGING;
 
         RemoteAnimationRecord(WindowContainer windowContainer, Point endPos, Rect localBounds,
-                Rect endBounds, Rect startBounds, boolean showBackdrop) {
+                Rect endBounds, @Nullable Rect startBounds, boolean showBackdrop,
+                boolean shouldCreateSnapshot) {
             mWindowContainer = windowContainer;
             mShowBackdrop = showBackdrop;
             if (startBounds != null) {
                 mStartBounds = new Rect(startBounds);
                 mAdapter = new RemoteAnimationAdapterWrapper(this, endPos, localBounds, endBounds,
                         mStartBounds, mShowBackdrop);
-                if (mRemoteAnimationAdapter.getChangeNeedsSnapshot()) {
+                if (shouldCreateSnapshot && mRemoteAnimationAdapter.getChangeNeedsSnapshot()) {
                     final Rect thumbnailLocalBounds = new Rect(startBounds);
                     thumbnailLocalBounds.offsetTo(0, 0);
                     // Snapshot is located at (0,0) of the animation leash. It doesn't have size

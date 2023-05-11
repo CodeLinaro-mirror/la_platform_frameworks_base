@@ -467,7 +467,8 @@
     <string name="power_charging" msgid="6727132649743436802">"<xliff:g id="LEVEL">%1$s</xliff:g> - <xliff:g id="STATE">%2$s</xliff:g>"</string>
     <string name="power_remaining_charging_duration_only" msgid="8085099012811384899">"<xliff:g id="TIME">%1$s</xliff:g> alla ricarica completa"</string>
     <string name="power_charging_duration" msgid="6127154952524919719">"<xliff:g id="LEVEL">%1$s</xliff:g> - <xliff:g id="TIME">%2$s</xliff:g> alla ricarica completa"</string>
-    <string name="power_charging_limited" msgid="6971664137170239141">"<xliff:g id="LEVEL">%1$s</xliff:g> - Ricarica in pausa"</string>
+    <string name="power_charging_limited" msgid="8202147604844938236">"<xliff:g id="LEVEL">%1$s</xliff:g> - Ricarica ottimizzata"</string>
+    <string name="power_charging_future_paused" msgid="4730177778538118032">"<xliff:g id="LEVEL">%1$s</xliff:g> - Ricarica ottimizzata"</string>
     <string name="battery_info_status_unknown" msgid="268625384868401114">"Sconosciuta"</string>
     <string name="battery_info_status_charging" msgid="4279958015430387405">"In carica"</string>
     <string name="battery_info_status_charging_fast" msgid="8027559755902954885">"Ricarica veloce"</string>
@@ -539,6 +540,13 @@
     <string name="media_transfer_this_device_name" product="default" msgid="2357329267148436433">"Questo telefono"</string>
     <string name="media_transfer_this_device_name" product="tablet" msgid="3714653244000242800">"Questo tablet"</string>
     <string name="media_transfer_this_phone" msgid="7194341457812151531">"Questo telefono"</string>
+    <string name="media_output_status_unknown_error" msgid="5098565887497902222">"Impossibile riprodurre su questo dispositivo"</string>
+    <string name="media_output_status_require_premium" msgid="8411255800047014822">"Esegui l\'upgrade dell\'account per cambiare"</string>
+    <string name="media_output_status_not_support_downloads" msgid="4523828729240373315">"Qui non è possibile riprodurre i download"</string>
+    <string name="media_output_status_try_after_ad" msgid="8312579066856015441">"Riprova dopo l\'annuncio"</string>
+    <string name="media_output_status_device_in_low_power_mode" msgid="8184631698321758451">"Riattiva il dispositivo per riprodurre qui"</string>
+    <string name="media_output_status_unauthorized" msgid="5880222828273853838">"Dispositivo non approvato per la riproduzione"</string>
+    <string name="media_output_status_track_unsupported" msgid="5576313219317709664">"Impossibile riprodurre questo contenuto multimediale qui"</string>
     <string name="profile_connect_timeout_subtext" msgid="4043408193005851761">"Problema di connessione. Spegni e riaccendi il dispositivo"</string>
     <string name="media_transfer_wired_device_name" msgid="4447880899964056007">"Dispositivo audio cablato"</string>
     <string name="help_label" msgid="3528360748637781274">"Guida e feedback"</string>
@@ -563,6 +571,8 @@
     <string name="user_add_user_title" msgid="5457079143694924885">"Aggiungere un nuovo utente?"</string>
     <string name="user_add_user_message_long" msgid="1527434966294733380">"Puoi condividere il dispositivo con altre persone creando altri utenti. Ogni utente ha un proprio spazio personalizzabile con app, sfondo e così via. Gli utenti possono anche regolare le impostazioni del dispositivo, come il Wi‑Fi, che riguardano tutti.\n\nQuando crei un nuovo utente, la persona in questione deve configurare il proprio spazio.\n\nQualsiasi utente può aggiornare le app per tutti gli altri utenti. I servizi e le impostazioni di accessibilità non potranno essere trasferiti al nuovo utente."</string>
     <string name="user_add_user_message_short" msgid="3295959985795716166">"Il nuovo utente, una volta aggiunto, deve configurare il proprio spazio.\n\nQualsiasi utente può aggiornare le app per tutti gli altri."</string>
+    <string name="user_grant_admin_title" msgid="5565796912475193314">"Concedere privilegi amministrativi all\'utente?"</string>
+    <string name="user_grant_admin_message" msgid="7925257971286380976">"In qualità di amministratore, l\'utente potrà gestire altri utenti, modificare le impostazioni del dispositivo e ripristinare i dati di fabbrica di quest\'ultimo."</string>
     <string name="user_setup_dialog_title" msgid="8037342066381939995">"Configurare l\'utente ora?"</string>
     <string name="user_setup_dialog_message" msgid="269931619868102841">"Assicurati che la persona sia disponibile a prendere il dispositivo e configurare il suo spazio"</string>
     <string name="user_setup_profile_dialog_message" msgid="4788197052296962620">"Configurare il profilo ora?"</string>
@@ -594,6 +604,8 @@
     <string name="guest_reset_and_restart_dialog_message" msgid="2764425635305200790">"Verrà avviata una nuova sessione Ospite e verranno eliminati tutti i dati e le app della sessione corrente"</string>
     <string name="guest_exit_dialog_title" msgid="1846494656849381804">"Vuoi uscire da modalità Ospite?"</string>
     <string name="guest_exit_dialog_message" msgid="1743218864242719783">"Verranno eliminati i dati e le app della sessione Ospite corrente"</string>
+    <string name="grant_admin" msgid="4273077214151417783">"Concedi privilegi amministrativi all\'utente"</string>
+    <string name="not_grant_admin" msgid="6985027675930546850">"Non concedere privilegi amministrativi all\'utente"</string>
     <string name="guest_exit_dialog_button" msgid="1736401897067442044">"Esci"</string>
     <string name="guest_exit_dialog_title_non_ephemeral" msgid="7675327443743162986">"Vuoi salvare l\'attività Ospite?"</string>
     <string name="guest_exit_dialog_message_non_ephemeral" msgid="223385323235719442">"Puoi salvare l\'attività della sessione corrente o eliminare tutti i dati e le app"</string>
@@ -661,4 +673,10 @@
     <string name="back_navigation_animation" msgid="8105467568421689484">"Animazioni predittive per Indietro"</string>
     <string name="back_navigation_animation_summary" msgid="741292224121599456">"Attiva le animazioni di sistema per il gesto Indietro predittivo."</string>
     <string name="back_navigation_animation_dialog" msgid="8696966520944625596">"Questa impostazione attiva le animazioni di sistema per il gesto Indietro predittivo. Richiede di impostare il metodo enableOnBackInvokedCallback su true nel file manifest di tutte le app."</string>
+  <string-array name="udfps_accessibility_touch_hints">
+    <item msgid="1737722959616802157">"Sposta a sinistra"</item>
+    <item msgid="5425394847942513942">"Sposta in basso"</item>
+    <item msgid="7728484337962740316">"Sposta a destra"</item>
+    <item msgid="324200556467459329">"Sposta in alto"</item>
+  </string-array>
 </resources>

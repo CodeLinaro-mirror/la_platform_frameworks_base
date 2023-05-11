@@ -21,6 +21,9 @@ import static android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_A
 import static android.view.accessibility.AccessibilityNodeInfo.EXTRA_DATA_REQUESTED_KEY;
 import static android.view.accessibility.AccessibilityNodeInfo.EXTRA_DATA_TEXT_CHARACTER_LOCATION_KEY;
 
+import static com.android.internal.util.function.pooled.PooledLambda.obtainMessage;
+
+import android.accessibilityservice.AccessibilityService;
 import android.annotation.NonNull;
 import android.graphics.Matrix;
 import android.graphics.Rect;
@@ -46,11 +49,13 @@ import android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction;
 import android.view.accessibility.AccessibilityNodeProvider;
 import android.view.accessibility.AccessibilityRequestPreparer;
 import android.view.accessibility.IAccessibilityInteractionConnectionCallback;
+import android.window.ScreenCapture;
 
 import com.android.internal.R;
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.os.SomeArgs;
+import com.android.internal.util.function.pooled.PooledLambda;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -167,7 +172,7 @@ public final class AccessibilityInteractionController {
 
     private boolean isVisibleToAccessibilityService(View view) {
         return view != null && (mA11yManager.isRequestFromAccessibilityTool()
-                || !view.isAccessibilityDataPrivate());
+                || !view.isAccessibilityDataSensitive());
     }
 
     public void findAccessibilityNodeInfoByAccessibilityIdClientThread(
@@ -588,6 +593,43 @@ public final class AccessibilityInteractionController {
         }
     }
 
+    /**
+     * Take a screenshot using {@link ScreenCapture} of this {@link ViewRootImpl}'s {@link
+     * SurfaceControl}.
+     */
+    public void takeScreenshotOfWindowClientThread(int interactionId,
+            ScreenCapture.ScreenCaptureListener listener,
+            IAccessibilityInteractionConnectionCallback callback) {
+        Message message = PooledLambda.obtainMessage(
+                AccessibilityInteractionController::takeScreenshotOfWindowUiThread,
+                this, interactionId, listener, callback);
+
+        // Screenshot results are returned to the service asynchronously, so the same-thread
+        // message wait logic from #scheduleMessage() is not needed.
+        mHandler.sendMessage(message);
+    }
+
+    private void takeScreenshotOfWindowUiThread(int interactionId,
+            ScreenCapture.ScreenCaptureListener listener,
+            IAccessibilityInteractionConnectionCallback callback) {
+        try {
+            if ((mViewRootImpl.getWindowFlags() & WindowManager.LayoutParams.FLAG_SECURE) != 0) {
+                callback.sendTakeScreenshotOfWindowError(
+                        AccessibilityService.ERROR_TAKE_SCREENSHOT_SECURE_WINDOW, interactionId);
+                return;
+            }
+            final ScreenCapture.LayerCaptureArgs captureArgs =
+                    new ScreenCapture.LayerCaptureArgs.Builder(mViewRootImpl.getSurfaceControl())
+                            .setChildrenOnly(false).setUid(Process.myUid()).build();
+            if (ScreenCapture.captureLayers(captureArgs, listener) != 0) {
+                callback.sendTakeScreenshotOfWindowError(
+                        AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERNAL_ERROR, interactionId);
+            }
+        } catch (RemoteException re) {
+            /* ignore - the other side will time out */
+        }
+    }
+
     public void findFocusClientThread(long accessibilityNodeId, int focusType,
             Region interactiveRegion, int interactionId,
             IAccessibilityInteractionConnectionCallback callback, int flags, int interrogatingPid,
@@ -832,8 +874,11 @@ public final class AccessibilityInteractionController {
             return;
         }
         try {
+            // Clearing focus does not expose sensitive data, so set fetch flags to ensure that the
+            // root view is always returned if present.
             setAccessibilityFetchFlags(
-                    AccessibilityNodeInfo.FLAG_SERVICE_REQUESTS_INCLUDE_NOT_IMPORTANT_VIEWS);
+                    AccessibilityNodeInfo.FLAG_SERVICE_REQUESTS_INCLUDE_NOT_IMPORTANT_VIEWS
+                            | AccessibilityNodeInfo.FLAG_SERVICE_IS_ACCESSIBILITY_TOOL);
             final View root = getRootView();
             if (root != null && isShown(root)) {
                 final View host = mViewRootImpl.mAccessibilityFocusedHost;
@@ -1529,7 +1574,7 @@ public final class AccessibilityInteractionController {
                     parent = provider.createAccessibilityNodeInfo(virtualDescendantId);
                     if (parent == null) {
                         // Going up the parent relation we found a null predecessor,
-                        // so remove these disconnected nodes form the result.
+                        // so remove these disconnected nodes from the result.
                         final int currentResultSize = outInfos.size();
                         for (int i = currentResultSize - 1; i >= initialResultSize; i--) {
                             outInfos.remove(i);
@@ -1919,6 +1964,25 @@ public final class AccessibilityInteractionController {
                     deque.push(new VirtualNode(childNodeId, mProvider));
                 }
             }
+        }
+    }
+
+    /** Attaches an accessibility overlay to the specified window. */
+    public void attachAccessibilityOverlayToWindowClientThread(SurfaceControl sc) {
+        mHandler.sendMessage(
+                obtainMessage(
+                        AccessibilityInteractionController
+                                ::attachAccessibilityOverlayToWindowUiThread,
+                        this,
+                        sc));
+    }
+
+    private void attachAccessibilityOverlayToWindowUiThread(SurfaceControl sc) {
+        SurfaceControl parent = mViewRootImpl.getSurfaceControl();
+        if (parent.isValid()) {
+            SurfaceControl.Transaction t = new SurfaceControl.Transaction();
+            t.reparent(sc, parent).apply();
+            t.close();
         }
     }
 }

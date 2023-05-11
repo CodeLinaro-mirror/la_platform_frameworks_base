@@ -78,6 +78,13 @@
 -keep,allowoptimization,allowaccessmodification class com.android.server.wm.** implements com.android.server.wm.DisplayAreaPolicy$Provider
 
 # JNI keep rules
+# The global keep rule for native methods allows stripping of such methods if they're unreferenced
+# in Java. However, because system_server explicitly registers these methods from native code,
+# stripping them in Java can cause runtime issues. As such, conservatively keep all such methods in
+# system_server subpackages as long as the containing class is also kept or referenced.
+-keepclassmembers class com.android.server.** {
+  native <methods>;
+}
 # TODO(b/210510433): Revisit and fix with @Keep, or consider auto-generating from
 # frameworks/base/services/core/jni/onload.cpp.
 -keep,allowoptimization,allowaccessmodification class com.android.server.broadcastradio.hal1.BroadcastRadioService { *; }
@@ -88,6 +95,7 @@
 -keep,allowoptimization,allowaccessmodification class com.android.server.location.gnss.GnssPowerStats { *; }
 -keep,allowoptimization,allowaccessmodification class com.android.server.location.gnss.hal.GnssNative { *; }
 -keep,allowoptimization,allowaccessmodification class com.android.server.pm.PackageManagerShellCommandDataLoader { *; }
+-keep,allowoptimization,allowaccessmodification class com.android.server.sensors.SensorManagerInternal$RuntimeSensorCallback { *; }
 -keep,allowoptimization,allowaccessmodification class com.android.server.sensors.SensorManagerInternal$ProximityActiveListener { *; }
 -keep,allowoptimization,allowaccessmodification class com.android.server.sensors.SensorService { *; }
 -keep,allowoptimization,allowaccessmodification class com.android.server.soundtrigger_middleware.SoundTriggerMiddlewareImpl$AudioSessionProvider$AudioSession { *; }
@@ -95,7 +103,7 @@
 -keep,allowoptimization,allowaccessmodification class com.android.server.storage.AppFuseBridge { *; }
 -keep,allowoptimization,allowaccessmodification class com.android.server.tv.TvInputHal { *; }
 -keep,allowoptimization,allowaccessmodification class com.android.server.usb.UsbAlsaJackDetector { *; }
--keep,allowoptimization,allowaccessmodification class com.android.server.usb.UsbMidiDevice { *; }
+-keep,allowoptimization,allowaccessmodification class com.android.server.usb.UsbAlsaMidiDevice { *; }
 -keep,allowoptimization,allowaccessmodification class com.android.server.vibrator.VibratorController$OnVibrationCompleteListener { *; }
 -keep,allowoptimization,allowaccessmodification class com.android.server.vibrator.VibratorManagerService$OnSyncedVibrationCompleteListener { *; }
 -keepclasseswithmembers,allowoptimization,allowaccessmodification class com.android.server.** {

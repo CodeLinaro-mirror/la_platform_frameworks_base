@@ -606,6 +606,9 @@
     <!-- Width of the outline stroke used by the accessibility focus rectangle -->
     <dimen name="accessibility_focus_highlight_stroke_width">4dp</dimen>
 
+    <!-- padding of fullscreen magnification thumbnail -->
+    <dimen name="accessibility_magnification_thumbnail_padding">12dp</dimen>
+
     <!-- The padding ratio of the Accessibility icon foreground drawable -->
     <item name="accessibility_icon_foreground_padding_ratio" type="dimen">21.88%</item>
 
@@ -720,8 +723,6 @@
     <item type="dimen" name="aerr_padding_list_bottom">8dp</item>
 
     <item type="fraction" name="docked_stack_divider_fixed_ratio">34.15%</item>
-
-    <dimen name="resize_shadow_size">5dp</dimen>
 
     <!-- The default minimal size of a resizable task, in both dimensions. -->
     <dimen name="default_minimal_size_resizable_task">220dp</dimen>

@@ -16,32 +16,39 @@
 
 package com.android.systemui.notetask
 
-import android.app.KeyguardManager
-import android.content.Context
-import android.os.UserManager
-import androidx.core.content.getSystemService
+import android.app.Activity
+import android.app.role.RoleManager
 import com.android.systemui.flags.FeatureFlags
 import com.android.systemui.flags.Flags
+import com.android.systemui.notetask.quickaffordance.NoteTaskQuickAffordanceModule
+import com.android.systemui.notetask.shortcut.CreateNoteTaskShortcutActivity
+import com.android.systemui.notetask.shortcut.LaunchNoteTaskActivity
+import dagger.Binds
 import dagger.Module
 import dagger.Provides
-import java.util.*
+import dagger.multibindings.ClassKey
+import dagger.multibindings.IntoMap
 
 /** Compose all dependencies required by Note Task feature. */
-@Module
-internal class NoteTaskModule {
+@Module(includes = [NoteTaskQuickAffordanceModule::class])
+interface NoteTaskModule {
 
-    @[Provides NoteTaskEnabledKey]
-    fun provideIsNoteTaskEnabled(featureFlags: FeatureFlags): Boolean {
-        return featureFlags.isEnabled(Flags.NOTE_TASKS)
-    }
+    @[Binds IntoMap ClassKey(LaunchNoteTaskActivity::class)]
+    fun LaunchNoteTaskActivity.bindNoteTaskLauncherActivity(): Activity
 
-    @Provides
-    fun provideOptionalKeyguardManager(context: Context): Optional<KeyguardManager> {
-        return Optional.ofNullable(context.getSystemService())
-    }
+    @[Binds IntoMap ClassKey(CreateNoteTaskShortcutActivity::class)]
+    fun CreateNoteTaskShortcutActivity.bindNoteTaskShortcutActivity(): Activity
 
-    @Provides
-    fun provideOptionalUserManager(context: Context): Optional<UserManager> {
-        return Optional.ofNullable(context.getSystemService())
+    companion object {
+
+        @[Provides NoteTaskEnabledKey]
+        fun provideIsNoteTaskEnabled(
+            featureFlags: FeatureFlags,
+            roleManager: RoleManager,
+        ): Boolean {
+            val isRoleAvailable = roleManager.isRoleAvailable(RoleManager.ROLE_NOTES)
+            val isFeatureEnabled = featureFlags.isEnabled(Flags.NOTE_TASKS)
+            return isRoleAvailable && isFeatureEnabled
+        }
     }
 }

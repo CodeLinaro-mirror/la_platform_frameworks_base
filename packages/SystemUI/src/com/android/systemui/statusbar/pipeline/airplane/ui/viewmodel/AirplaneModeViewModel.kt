@@ -18,9 +18,10 @@ package com.android.systemui.statusbar.pipeline.airplane.ui.viewmodel
 
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Application
+import com.android.systemui.log.table.TableLogBuffer
+import com.android.systemui.log.table.logDiffsForTable
 import com.android.systemui.statusbar.pipeline.airplane.domain.interactor.AirplaneModeInteractor
-import com.android.systemui.statusbar.pipeline.shared.ConnectivityPipelineLogger
-import com.android.systemui.statusbar.pipeline.shared.ConnectivityPipelineLogger.Companion.logOutputChange
+import com.android.systemui.statusbar.pipeline.dagger.AirplaneTableLog
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.SharingStarted
@@ -36,22 +37,31 @@ import kotlinx.coroutines.flow.stateIn
  * [com.android.systemui.statusbar.pipeline.airplane.data.repository.AirplaneModeRepository] for
  * more details.
  */
+interface AirplaneModeViewModel {
+    /** True if the airplane mode icon is currently visible in the status bar. */
+    val isAirplaneModeIconVisible: StateFlow<Boolean>
+}
+
 @SysUISingleton
-class AirplaneModeViewModel
+class AirplaneModeViewModelImpl
 @Inject
 constructor(
     interactor: AirplaneModeInteractor,
-    logger: ConnectivityPipelineLogger,
+    @AirplaneTableLog logger: TableLogBuffer,
     @Application private val scope: CoroutineScope,
-) {
-    /** True if the airplane mode icon is currently visible in the status bar. */
-    val isAirplaneModeIconVisible: StateFlow<Boolean> =
+) : AirplaneModeViewModel {
+    override val isAirplaneModeIconVisible: StateFlow<Boolean> =
         combine(interactor.isAirplaneMode, interactor.isForceHidden) {
                 isAirplaneMode,
                 isAirplaneIconForceHidden ->
                 isAirplaneMode && !isAirplaneIconForceHidden
             }
             .distinctUntilChanged()
-            .logOutputChange(logger, "isAirplaneModeIconVisible")
+            .logDiffsForTable(
+                logger,
+                columnPrefix = "",
+                columnName = "isAirplaneModeIconVisible",
+                initialValue = false,
+            )
             .stateIn(scope, started = SharingStarted.WhileSubscribed(), initialValue = false)
 }

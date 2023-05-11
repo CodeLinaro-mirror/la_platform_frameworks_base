@@ -19,8 +19,11 @@ package com.android.server.accessibility;
 import static android.accessibilityservice.AccessibilityTrace.FLAGS_ACCESSIBILITY_INTERACTION_CONNECTION;
 import static android.accessibilityservice.AccessibilityTrace.FLAGS_WINDOW_MANAGER_INTERNAL;
 import static android.view.WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY;
+import static android.view.accessibility.AccessibilityEvent.WINDOWS_CHANGE_ACCESSIBILITY_FOCUSED;
 
 import static com.android.internal.util.function.pooled.PooledLambda.obtainMessage;
+import static com.android.server.accessibility.AbstractAccessibilityServiceConnection.DISPLAY_TYPE_DEFAULT;
+import static com.android.server.accessibility.AbstractAccessibilityServiceConnection.DISPLAY_TYPE_PROXY;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -102,6 +105,8 @@ public class AccessibilityWindowManager {
 
     private boolean mTouchInteractionInProgress;
 
+    private boolean mHasProxy;
+
     /** List of Display Windows Observer, mapping from displayId -> DisplayWindowsObserver. */
     private final SparseArray<DisplayWindowsObserver> mDisplayWindowsObservers =
             new SparseArray<>();
@@ -154,6 +159,33 @@ public class AccessibilityWindowManager {
     }
 
     /**
+     * Returns {@code true} if the window belongs to a display of {@code displayTypes}.
+     */
+    public boolean windowIdBelongsToDisplayType(int focusedWindowId, int displayTypes) {
+        if (!mHasProxy) {
+            return true;
+        }
+        // UIAutomation wants focus from any display type.
+        final int displayTypeMask = DISPLAY_TYPE_PROXY | DISPLAY_TYPE_DEFAULT;
+        if ((displayTypes & displayTypeMask) == displayTypeMask) {
+            return true;
+        }
+        synchronized (mLock) {
+            final int count = mDisplayWindowsObservers.size();
+            for (int i = 0; i < count; i++) {
+                final DisplayWindowsObserver observer = mDisplayWindowsObservers.valueAt(i);
+                if (observer != null
+                        && observer.findA11yWindowInfoByIdLocked(focusedWindowId) != null) {
+                    return observer.mIsProxy
+                            ? ((displayTypes & DISPLAY_TYPE_PROXY) != 0)
+                            : (displayTypes & DISPLAY_TYPE_DEFAULT) != 0;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
      * This class implements {@link WindowManagerInternal.WindowsForAccessibilityCallback} to
      * receive {@link WindowInfo}s from window manager when there's an accessibility change in
      * window and holds window lists information per display.
@@ -169,6 +201,8 @@ public class AccessibilityWindowManager {
         private List<AccessibilityWindowInfo> mWindows;
         private boolean mTrackingWindows = false;
         private boolean mHasWatchOutsideTouchWindow;
+        private int mProxyDisplayAccessibilityFocusedWindow;
+        private boolean mIsProxy;
 
         /**
          * Constructor for DisplayWindowsObserver.
@@ -427,6 +461,7 @@ public class AccessibilityWindowManager {
                 return;
             }
             windowInfo.title = attributes.getWindowTitle();
+            windowInfo.locales = attributes.getLocales();
         }
 
         private boolean shouldUpdateWindowsLocked(boolean forceSend,
@@ -580,8 +615,11 @@ public class AccessibilityWindowManager {
 
             final int windowCount = windows.size();
             final boolean isTopFocusedDisplay = mDisplayId == mTopFocusedDisplayId;
+            // A proxy with an a11y-focused window is a11y-focused should use the proxy focus id.
             final boolean isAccessibilityFocusedDisplay =
-                    mDisplayId == mAccessibilityFocusedDisplayId;
+                    mDisplayId == mAccessibilityFocusedDisplayId
+                            || (mIsProxy && mProxyDisplayAccessibilityFocusedWindow
+                                    != AccessibilityWindowInfo.UNDEFINED_WINDOW_ID);
             // Modifies the value of top focused window, active window and a11y focused window
             // only if this display is top focused display which has the top focused window.
             if (isTopFocusedDisplay) {
@@ -607,9 +645,12 @@ public class AccessibilityWindowManager {
 
             // We'll clear accessibility focus if the window with focus is no longer visible to
             // accessibility services.
+            int a11yFocusedWindowId = mIsProxy
+                    ? mProxyDisplayAccessibilityFocusedWindow
+                    : mAccessibilityFocusedWindowId;
             if (isAccessibilityFocusedDisplay) {
-                shouldClearAccessibilityFocus = mAccessibilityFocusedWindowId
-                    != AccessibilityWindowInfo.UNDEFINED_WINDOW_ID;
+                shouldClearAccessibilityFocus = a11yFocusedWindowId
+                        != AccessibilityWindowInfo.UNDEFINED_WINDOW_ID;
             }
 
             boolean hasWindowIgnore = false;
@@ -673,7 +714,7 @@ public class AccessibilityWindowManager {
                 if (isAccessibilityFocusedDisplay) {
                     for (int i = 0; i < accessibilityWindowCount; i++) {
                         final AccessibilityWindowInfo window = mWindows.get(i);
-                        if (window.getId() == mAccessibilityFocusedWindowId) {
+                        if (window.getId() == a11yFocusedWindowId) {
                             window.setAccessibilityFocused(true);
                             shouldClearAccessibilityFocus = false;
                             break;
@@ -690,7 +731,7 @@ public class AccessibilityWindowManager {
             }
 
             if (shouldClearAccessibilityFocus) {
-                clearAccessibilityFocusLocked(mAccessibilityFocusedWindowId);
+                clearAccessibilityFocusLocked(a11yFocusedWindowId);
             }
         }
 
@@ -753,6 +794,7 @@ public class AccessibilityWindowManager {
             reportedWindow.setPictureInPicture(window.inPictureInPicture);
             reportedWindow.setDisplayId(window.displayId);
             reportedWindow.setTaskId(window.taskId);
+            reportedWindow.setLocales(window.locales);
 
             final int parentId = findWindowIdLocked(userId, window.parentToken);
             if (parentId >= 0) {
@@ -868,6 +910,10 @@ public class AccessibilityWindowManager {
             pw.println("     Top Focused Window Id = " + mTopFocusedWindowId);
             pw.println("     Accessibility Focused Window Id = " + mAccessibilityFocusedWindowId
                     + " ]");
+            if (mIsProxy) {
+                pw.println("Proxy accessibility focused window = "
+                        + mProxyDisplayAccessibilityFocusedWindow);
+            }
             pw.println();
             if (mWindows != null) {
                 final int windowCount = mWindows.size();
@@ -985,11 +1031,15 @@ public class AccessibilityWindowManager {
      *
      * @param displayId The logical display id.
      */
-    public void startTrackingWindows(int displayId) {
+    public void startTrackingWindows(int displayId, boolean proxyed) {
         synchronized (mLock) {
             DisplayWindowsObserver observer = mDisplayWindowsObservers.get(displayId);
             if (observer == null) {
                 observer = new DisplayWindowsObserver(displayId);
+            }
+            if (proxyed && !observer.mIsProxy) {
+                observer.mIsProxy = true;
+                mHasProxy = true;
             }
             if (observer.isTrackingWindowsLocked()) {
                 return;
@@ -1012,7 +1062,36 @@ public class AccessibilityWindowManager {
                 observer.stopTrackingWindowsLocked();
                 mDisplayWindowsObservers.remove(displayId);
             }
+            resetHasProxyIfNeededLocked();
         }
+    }
+
+    /**
+     * Stops tracking a display as belonging to a proxy.
+     * @param displayId
+     */
+    public void stopTrackingDisplayProxy(int displayId) {
+        synchronized (mLock) {
+            final DisplayWindowsObserver proxyObserver = mDisplayWindowsObservers.get(displayId);
+            if (proxyObserver != null) {
+                proxyObserver.mIsProxy = false;
+            }
+            resetHasProxyIfNeededLocked();
+        }
+    }
+
+    private void resetHasProxyIfNeededLocked() {
+        boolean hasProxy = false;
+        final int count = mDisplayWindowsObservers.size();
+        for (int i = 0; i < count; i++) {
+            final DisplayWindowsObserver observer = mDisplayWindowsObservers.valueAt(i);
+            if (observer != null) {
+                if (observer.mIsProxy) {
+                    hasProxy = true;
+                }
+            }
+        }
+        mHasProxy = hasProxy;
     }
 
     /**
@@ -1445,6 +1524,11 @@ public class AccessibilityWindowManager {
 
             case AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED: {
                 synchronized (mLock) {
+                    // If window id belongs to a proxy display, then find the display, update the
+                    // observer focus and send WINDOWS_CHANGE_ACCESSIBILITY_FOCUSED events.
+                    if (mHasProxy && setProxyFocusLocked(windowId)) {
+                        return;
+                    }
                     if (mAccessibilityFocusedWindowId != windowId) {
                         clearAccessibilityFocusLocked(mAccessibilityFocusedWindowId);
                         setAccessibilityFocusedWindowLocked(windowId);
@@ -1455,6 +1539,10 @@ public class AccessibilityWindowManager {
 
             case AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUS_CLEARED: {
                 synchronized (mLock) {
+                    // If cleared happened on the proxy display, then clear the tracked focus.
+                    if (mHasProxy && clearProxyFocusLocked(windowId, eventAction)) {
+                        return;
+                    }
                     if (mAccessibilityFocusNodeId == nodeId) {
                         mAccessibilityFocusNodeId = AccessibilityNodeInfo.UNDEFINED_ITEM_ID;
                     }
@@ -1554,9 +1642,10 @@ public class AccessibilityWindowManager {
             if (mAccessibilityFocusedDisplayId != Display.INVALID_DISPLAY
                     && mAccessibilityFocusedWindowId
                     != AccessibilityWindowInfo.UNDEFINED_WINDOW_ID) {
+                // Previously focused window -> send a focused event for losing focus
                 events.add(AccessibilityEvent.obtainWindowsChangedEvent(
                         mAccessibilityFocusedDisplayId, mAccessibilityFocusedWindowId,
-                        AccessibilityEvent.WINDOWS_CHANGE_ACCESSIBILITY_FOCUSED));
+                        WINDOWS_CHANGE_ACCESSIBILITY_FOCUSED));
             }
 
             mAccessibilityFocusedWindowId = windowId;
@@ -1566,8 +1655,9 @@ public class AccessibilityWindowManager {
                 final DisplayWindowsObserver observer = mDisplayWindowsObservers.valueAt(i);
                 if (observer != null && observer.setAccessibilityFocusedWindowLocked(windowId)) {
                     mAccessibilityFocusedDisplayId = observer.mDisplayId;
+                    // Newly focused window -> send a focused event for gaining focus
                     events.add(AccessibilityEvent.obtainWindowsChangedEvent(observer.mDisplayId,
-                            windowId, AccessibilityEvent.WINDOWS_CHANGE_ACCESSIBILITY_FOCUSED));
+                            windowId, WINDOWS_CHANGE_ACCESSIBILITY_FOCUSED));
                 }
             }
 
@@ -1617,12 +1707,49 @@ public class AccessibilityWindowManager {
      * @return The focused windowId
      */
     public int getFocusedWindowId(int focusType) {
+        return getFocusedWindowId(focusType, Display.INVALID_DISPLAY);
+    }
+
+    /**
+     * Returns focused windowId or accessibility focused windowId according to given focusType and
+     * display id.
+     * @param focusType {@link AccessibilityNodeInfo#FOCUS_INPUT} or
+     * {@link AccessibilityNodeInfo#FOCUS_ACCESSIBILITY}
+     * @param displayId the display id to check. If this display is proxy-ed, the proxy's a11y focus
+     *                  will be returned.
+     * @return The focused windowId
+     */
+    public int getFocusedWindowId(int focusType, int displayId) {
+        if (displayId == Display.INVALID_DISPLAY || displayId == Display.DEFAULT_DISPLAY
+                || !mHasProxy) {
+            return getDefaultFocus(focusType);
+        }
+
+        final DisplayWindowsObserver observer = mDisplayWindowsObservers.get(displayId);
+        if (observer != null && observer.mIsProxy) {
+            return getProxyFocus(focusType, observer);
+        } else {
+            return getDefaultFocus(focusType);
+        }
+    }
+
+    private int getDefaultFocus(int focusType) {
         if (focusType == AccessibilityNodeInfo.FOCUS_INPUT) {
             return mTopFocusedWindowId;
         } else if (focusType == AccessibilityNodeInfo.FOCUS_ACCESSIBILITY) {
             return mAccessibilityFocusedWindowId;
         }
         return AccessibilityWindowInfo.UNDEFINED_WINDOW_ID;
+    }
+
+    private int getProxyFocus(int focusType, DisplayWindowsObserver observer) {
+        if (focusType == AccessibilityNodeInfo.FOCUS_INPUT) {
+            return mTopFocusedWindowId;
+        } else if (focusType == AccessibilityNodeInfo.FOCUS_ACCESSIBILITY) {
+            return observer.mProxyDisplayAccessibilityFocusedWindow;
+        } else {
+            return AccessibilityWindowInfo.UNDEFINED_WINDOW_ID;
+        }
     }
 
     /**
@@ -1728,15 +1855,21 @@ public class AccessibilityWindowManager {
     /**
      * Returns the display list including all displays which are tracking windows.
      *
+     * @param displayTypes the types of displays to retrieve
      * @return The display list.
      */
-    public ArrayList<Integer> getDisplayListLocked() {
+    public ArrayList<Integer> getDisplayListLocked(
+            @AbstractAccessibilityServiceConnection.DisplayTypes int displayTypes) {
         final ArrayList<Integer> displayList = new ArrayList<>();
         final int count = mDisplayWindowsObservers.size();
         for (int i = 0; i < count; i++) {
             final DisplayWindowsObserver observer = mDisplayWindowsObservers.valueAt(i);
             if (observer != null) {
-                displayList.add(observer.mDisplayId);
+                if (!observer.mIsProxy && (displayTypes & DISPLAY_TYPE_DEFAULT) != 0) {
+                    displayList.add(observer.mDisplayId);
+                } else if (observer.mIsProxy && (displayTypes & DISPLAY_TYPE_PROXY) != 0) {
+                    displayList.add(observer.mDisplayId);
+                }
             }
         }
         return displayList;
@@ -1934,6 +2067,78 @@ public class AccessibilityWindowManager {
      */
     IBinder getHostTokenLocked(IBinder token) {
         return mHostEmbeddedMap.get(token);
+    }
+
+    /**
+     * Checks if the window belongs to a proxy display and if so clears the focused window id.
+     * @param focusClearedWindowId the cleared window id.
+     * @return true if an observer is proxy-ed and has cleared its focused window id.
+     */
+    private boolean clearProxyFocusLocked(int focusClearedWindowId, int eventAction) {
+        // If we are just moving focus from one view to the other in the same window, do nothing.
+        if (eventAction == AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS) {
+            return false;
+        }
+        for (int i = 0; i < mDisplayWindowsObservers.size(); i++) {
+            final DisplayWindowsObserver observer = mDisplayWindowsObservers.get(i);
+            if (observer != null && observer.mWindows != null && observer.mIsProxy) {
+                final int windowCount = observer.mWindows.size();
+                for (int j = 0; j < windowCount; j++) {
+                    AccessibilityWindowInfo window = observer.mWindows.get(j);
+                    if (window.getId() == focusClearedWindowId) {
+                        observer.mProxyDisplayAccessibilityFocusedWindow =
+                                AccessibilityWindowInfo.UNDEFINED_WINDOW_ID;
+                        // TODO(268754409): Look into sending a WINDOW_FOCUS_CHANGED event since
+                        //  window no longer has focus (default window logic doesn't), and
+                        //  whether the node id needs to be cached (default window logic does).
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Checks if the window belongs to a proxy display and if so sends
+     * WINDOWS_CHANGE_ACCESSIBILITY_FOCUSED for that window and the previously focused window.
+     * @param focusedWindowId the focused window id.
+     * @return true if an observer is proxy-ed and contains the focused window.
+     */
+    private boolean setProxyFocusLocked(int focusedWindowId) {
+        for (int i = 0; i < mDisplayWindowsObservers.size(); i++) {
+            final DisplayWindowsObserver observer = mDisplayWindowsObservers.valueAt(i);
+            if (observer != null && observer.mIsProxy
+                    && observer.setAccessibilityFocusedWindowLocked(focusedWindowId)) {
+                final int previouslyFocusedWindowId =
+                        observer.mProxyDisplayAccessibilityFocusedWindow;
+
+                if (previouslyFocusedWindowId == focusedWindowId) {
+                    // Don't send a focus event if the window is already focused.
+                    return true;
+                }
+
+                // Previously focused window -> Clear focus on UI thread and send a focused event
+                // for losing focus
+                if (previouslyFocusedWindowId != AccessibilityWindowInfo.UNDEFINED_WINDOW_ID) {
+                    clearAccessibilityFocusLocked(previouslyFocusedWindowId);
+                    mAccessibilityEventSender.sendAccessibilityEventForCurrentUserLocked(
+                            AccessibilityEvent.obtainWindowsChangedEvent(
+                                    observer.mDisplayId, previouslyFocusedWindowId,
+                                    WINDOWS_CHANGE_ACCESSIBILITY_FOCUSED));
+                }
+                observer.mProxyDisplayAccessibilityFocusedWindow = focusedWindowId;
+                // Newly focused window -> send a focused event for it gaining focus
+                mAccessibilityEventSender.sendAccessibilityEventForCurrentUserLocked(
+                        AccessibilityEvent.obtainWindowsChangedEvent(
+                                observer.mDisplayId,
+                                observer.mProxyDisplayAccessibilityFocusedWindow,
+                                WINDOWS_CHANGE_ACCESSIBILITY_FOCUSED));
+
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

@@ -219,6 +219,7 @@ public class ParsingPackageUtils {
     public static final int PARSE_DEFAULT_INSTALL_LOCATION =
             PackageInfo.INSTALL_LOCATION_UNSPECIFIED;
     public static final int PARSE_DEFAULT_TARGET_SANDBOX = 1;
+    public static final boolean PARSE_DEFAULT_ALLOW_UPDATE_OWNERSHIP = true;
 
     /**
      * If set to true, we will only allow package files that exactly match the DTD. Otherwise, we
@@ -246,6 +247,9 @@ public class ParsingPackageUtils {
     private static final int MAX_NUM_COMPONENTS = 30000;
     private static final String MAX_NUM_COMPONENTS_ERR_MSG =
             "Total number of components has exceeded the maximum number: " + MAX_NUM_COMPONENTS;
+
+    /** The maximum permission name length. */
+    private static final int MAX_PERMISSION_NAME_LENGTH = 512;
 
     @IntDef(flag = true, prefix = { "PARSE_" }, value = {
             PARSE_CHATTY,
@@ -426,7 +430,7 @@ public class ParsingPackageUtils {
                 }
             }
 
-            pkg.setUse32BitAbi(lite.isUse32bitAbi());
+            pkg.set32BitAbiPreferred(lite.isUse32bitAbi());
             return input.success(pkg);
         } catch (IllegalArgumentException e) {
             return input.error(e.getCause() instanceof IOException ? INSTALL_FAILED_INVALID_APK
@@ -462,7 +466,7 @@ public class ParsingPackageUtils {
             }
 
             return input.success(result.getResult()
-                    .setUse32BitAbi(lite.isUse32bitAbi()));
+                    .set32BitAbiPreferred(lite.isUse32bitAbi()));
         } catch (IOException e) {
             return input.error(INSTALL_PARSE_FAILED_UNEXPECTED_EXCEPTION,
                     "Failed to get path: " + apkFile, e);
@@ -824,8 +828,8 @@ public class ParsingPackageUtils {
     }
 
     private static boolean hasTooManyComponents(ParsingPackage pkg) {
-        return pkg.getActivities().size() + pkg.getServices().size() + pkg.getProviders().size()
-                > MAX_NUM_COMPONENTS;
+        return (pkg.getActivities().size() + pkg.getServices().size() + pkg.getProviders().size()
+                + pkg.getReceivers().size()) > MAX_NUM_COMPONENTS;
     }
 
     /**
@@ -883,7 +887,9 @@ public class ParsingPackageUtils {
                 .setTargetSandboxVersion(anInteger(PARSE_DEFAULT_TARGET_SANDBOX,
                         R.styleable.AndroidManifest_targetSandboxVersion, sa))
                 /* Set the global "on SD card" flag */
-                .setExternalStorage((flags & PARSE_EXTERNAL_STORAGE) != 0);
+                .setExternalStorage((flags & PARSE_EXTERNAL_STORAGE) != 0)
+                .setAllowUpdateOwnership(bool(PARSE_DEFAULT_ALLOW_UPDATE_OWNERSHIP,
+                        R.styleable.AndroidManifest_allowUpdateOwnership, sa));
 
         boolean foundApp = false;
         final int depth = parser.getDepth();
@@ -951,10 +957,10 @@ public class ParsingPackageUtils {
         // cannot be windowed / resized. Note that an SDK version of 0 is common for
         // pre-Doughnut applications.
         if (pkg.getTargetSdkVersion() < DONUT
-                || (!pkg.isSupportsSmallScreens()
-                && !pkg.isSupportsNormalScreens()
-                && !pkg.isSupportsLargeScreens()
-                && !pkg.isSupportsExtraLargeScreens()
+                || (!pkg.isSmallScreensSupported()
+                && !pkg.isNormalScreensSupported()
+                && !pkg.isLargeScreensSupported()
+                && !pkg.isExtraLargeScreensSupported()
                 && !pkg.isResizeable()
                 && !pkg.isAnyDensity())) {
             adjustPackageToBeUnresizeableAndUnpipable(pkg);
@@ -1044,9 +1050,10 @@ public class ParsingPackageUtils {
         }
 
         return input.success(pkg
-                .setLeavingSharedUid(leaving)
+                .setLeavingSharedUser(leaving)
                 .setSharedUserId(str.intern())
-                .setSharedUserLabel(resId(R.styleable.AndroidManifest_sharedUserLabel, sa)));
+                .setSharedUserLabelResourceId(
+                        resId(R.styleable.AndroidManifest_sharedUserLabel, sa)));
     }
 
     private static ParseResult<ParsingPackage> parseKeySets(ParseInput input,
@@ -1260,6 +1267,11 @@ public class ParsingPackageUtils {
             // that may change.
             String name = sa.getNonResourceString(
                     R.styleable.AndroidManifestUsesPermission_name);
+            if (TextUtils.length(name) > MAX_PERMISSION_NAME_LENGTH) {
+                return input.error(INSTALL_PARSE_FAILED_MANIFEST_MALFORMED,
+                        "The name in the <uses-permission> is greater than "
+                                + MAX_PERMISSION_NAME_LENGTH);
+            }
 
             int minSdkVersion =  parseMinOrMaxSdkVersion(sa,
                     R.styleable.AndroidManifestUsesPermission_minSdkVersion,
@@ -1869,12 +1881,12 @@ public class ParsingPackageUtils {
                     return input.error("Empty class name in package " + packageName);
                 }
 
-                pkg.setClassName(outInfoName);
+                pkg.setApplicationClassName(outInfoName);
             }
 
             TypedValue labelValue = sa.peekValue(R.styleable.AndroidManifestApplication_label);
             if (labelValue != null) {
-                pkg.setLabelRes(labelValue.resourceId);
+                pkg.setLabelResourceId(labelValue.resourceId);
                 if (labelValue.resourceId == 0) {
                     pkg.setNonLocalizedLabel(labelValue.coerceToString());
                 }
@@ -1895,7 +1907,7 @@ public class ParsingPackageUtils {
                 pkg.setManageSpaceActivityName(manageSpaceActivityName);
             }
 
-            if (pkg.isAllowBackup()) {
+            if (pkg.isBackupAllowed()) {
                 // backupAgent, killAfterRestore, fullBackupContent, backupInForeground,
                 // and restoreAnyVersion are only relevant if backup is possible for the
                 // given application.
@@ -1913,7 +1925,7 @@ public class ParsingPackageUtils {
                     }
 
                     pkg.setBackupAgentName(backupAgentName)
-                            .setKillAfterRestore(bool(true,
+                            .setKillAfterRestoreAllowed(bool(true,
                                     R.styleable.AndroidManifestApplication_killAfterRestore, sa))
                             .setRestoreAnyVersion(bool(false,
                                     R.styleable.AndroidManifestApplication_restoreAnyVersion, sa))
@@ -1939,7 +1951,7 @@ public class ParsingPackageUtils {
                         fullBackupContent = v.data == 0 ? -1 : 0;
                     }
 
-                    pkg.setFullBackupContent(fullBackupContent);
+                    pkg.setFullBackupContentResourceId(fullBackupContent);
                 }
                 if (DEBUG_BACKUP) {
                     Slog.v(TAG, "fullBackupContent=" + fullBackupContent + " for " + pkgName);
@@ -2013,7 +2025,7 @@ public class ParsingPackageUtils {
             String processName = processNameResult.getResult();
             pkg.setProcessName(processName);
 
-            if (pkg.isCantSaveState()) {
+            if (pkg.isSaveStateDisallowed()) {
                 // A heavy-weight application can not be in a custom process.
                 // We can do direct compare because we intern all strings.
                 if (processName != null && !processName.equals(pkgName)) {
@@ -2213,31 +2225,31 @@ public class ParsingPackageUtils {
         // CHECKSTYLE:off
         pkg
                 // Default true
-                .setAllowBackup(bool(true, R.styleable.AndroidManifestApplication_allowBackup, sa))
-                .setAllowClearUserData(bool(true, R.styleable.AndroidManifestApplication_allowClearUserData, sa))
-                .setAllowClearUserDataOnFailedRestore(bool(true, R.styleable.AndroidManifestApplication_allowClearUserDataOnFailedRestore, sa))
+                .setBackupAllowed(bool(true, R.styleable.AndroidManifestApplication_allowBackup, sa))
+                .setClearUserDataAllowed(bool(true, R.styleable.AndroidManifestApplication_allowClearUserData, sa))
+                .setClearUserDataOnFailedRestoreAllowed(bool(true, R.styleable.AndroidManifestApplication_allowClearUserDataOnFailedRestore, sa))
                 .setAllowNativeHeapPointerTagging(bool(true, R.styleable.AndroidManifestApplication_allowNativeHeapPointerTagging, sa))
                 .setEnabled(bool(true, R.styleable.AndroidManifestApplication_enabled, sa))
-                .setExtractNativeLibs(bool(true, R.styleable.AndroidManifestApplication_extractNativeLibs, sa))
-                .setHasCode(bool(true, R.styleable.AndroidManifestApplication_hasCode, sa))
+                .setExtractNativeLibrariesRequested(bool(true, R.styleable.AndroidManifestApplication_extractNativeLibs, sa))
+                .setDeclaredHavingCode(bool(true, R.styleable.AndroidManifestApplication_hasCode, sa))
                 // Default false
-                .setAllowTaskReparenting(bool(false, R.styleable.AndroidManifestApplication_allowTaskReparenting, sa))
-                .setCantSaveState(bool(false, R.styleable.AndroidManifestApplication_cantSaveState, sa))
+                .setTaskReparentingAllowed(bool(false, R.styleable.AndroidManifestApplication_allowTaskReparenting, sa))
+                .setSaveStateDisallowed(bool(false, R.styleable.AndroidManifestApplication_cantSaveState, sa))
                 .setCrossProfile(bool(false, R.styleable.AndroidManifestApplication_crossProfile, sa))
                 .setDebuggable(bool(false, R.styleable.AndroidManifestApplication_debuggable, sa))
                 .setDefaultToDeviceProtectedStorage(bool(false, R.styleable.AndroidManifestApplication_defaultToDeviceProtectedStorage, sa))
                 .setDirectBootAware(bool(false, R.styleable.AndroidManifestApplication_directBootAware, sa))
                 .setForceQueryable(bool(false, R.styleable.AndroidManifestApplication_forceQueryable, sa))
                 .setGame(bool(false, R.styleable.AndroidManifestApplication_isGame, sa))
-                .setHasFragileUserData(bool(false, R.styleable.AndroidManifestApplication_hasFragileUserData, sa))
+                .setUserDataFragile(bool(false, R.styleable.AndroidManifestApplication_hasFragileUserData, sa))
                 .setLargeHeap(bool(false, R.styleable.AndroidManifestApplication_largeHeap, sa))
                 .setMultiArch(bool(false, R.styleable.AndroidManifestApplication_multiArch, sa))
                 .setPreserveLegacyExternalStorage(bool(false, R.styleable.AndroidManifestApplication_preserveLegacyExternalStorage, sa))
                 .setRequiredForAllUsers(bool(false, R.styleable.AndroidManifestApplication_requiredForAllUsers, sa))
-                .setSupportsRtl(bool(false, R.styleable.AndroidManifestApplication_supportsRtl, sa))
+                .setRtlSupported(bool(false, R.styleable.AndroidManifestApplication_supportsRtl, sa))
                 .setTestOnly(bool(false, R.styleable.AndroidManifestApplication_testOnly, sa))
                 .setUseEmbeddedDex(bool(false, R.styleable.AndroidManifestApplication_useEmbeddedDex, sa))
-                .setUsesNonSdkApi(bool(false, R.styleable.AndroidManifestApplication_usesNonSdkApi, sa))
+                .setNonSdkApiRequested(bool(false, R.styleable.AndroidManifestApplication_usesNonSdkApi, sa))
                 .setVmSafeMode(bool(false, R.styleable.AndroidManifestApplication_vmSafeMode, sa))
                 .setAutoRevokePermissions(anInt(R.styleable.AndroidManifestApplication_autoRevokePermissions, sa))
                 .setAttributionsAreUserVisible(bool(false, R.styleable.AndroidManifestApplication_attributionsAreUserVisible, sa))
@@ -2247,9 +2259,9 @@ public class ParsingPackageUtils {
                 .setOnBackInvokedCallbackEnabled(bool(false, R.styleable.AndroidManifestApplication_enableOnBackInvokedCallback, sa))
                 // targetSdkVersion gated
                 .setAllowAudioPlaybackCapture(bool(targetSdk >= Build.VERSION_CODES.Q, R.styleable.AndroidManifestApplication_allowAudioPlaybackCapture, sa))
-                .setBaseHardwareAccelerated(bool(targetSdk >= Build.VERSION_CODES.ICE_CREAM_SANDWICH, R.styleable.AndroidManifestApplication_hardwareAccelerated, sa))
+                .setHardwareAccelerated(bool(targetSdk >= Build.VERSION_CODES.ICE_CREAM_SANDWICH, R.styleable.AndroidManifestApplication_hardwareAccelerated, sa))
                 .setRequestLegacyExternalStorage(bool(targetSdk < Build.VERSION_CODES.Q, R.styleable.AndroidManifestApplication_requestLegacyExternalStorage, sa))
-                .setUsesCleartextTraffic(bool(targetSdk < Build.VERSION_CODES.P, R.styleable.AndroidManifestApplication_usesCleartextTraffic, sa))
+                .setCleartextTrafficAllowed(bool(targetSdk < Build.VERSION_CODES.P, R.styleable.AndroidManifestApplication_usesCleartextTraffic, sa))
                 // Ints Default 0
                 .setUiOptions(anInt(R.styleable.AndroidManifestApplication_uiOptions, sa))
                 // Ints
@@ -2258,16 +2270,16 @@ public class ParsingPackageUtils {
                 .setMaxAspectRatio(aFloat(R.styleable.AndroidManifestApplication_maxAspectRatio, sa))
                 .setMinAspectRatio(aFloat(R.styleable.AndroidManifestApplication_minAspectRatio, sa))
                 // Resource ID
-                .setBanner(resId(R.styleable.AndroidManifestApplication_banner, sa))
-                .setDescriptionRes(resId(R.styleable.AndroidManifestApplication_description, sa))
-                .setIconRes(resId(R.styleable.AndroidManifestApplication_icon, sa))
-                .setLogo(resId(R.styleable.AndroidManifestApplication_logo, sa))
-                .setNetworkSecurityConfigRes(resId(R.styleable.AndroidManifestApplication_networkSecurityConfig, sa))
-                .setRoundIconRes(resId(R.styleable.AndroidManifestApplication_roundIcon, sa))
-                .setTheme(resId(R.styleable.AndroidManifestApplication_theme, sa))
-                .setDataExtractionRules(
+                .setBannerResourceId(resId(R.styleable.AndroidManifestApplication_banner, sa))
+                .setDescriptionResourceId(resId(R.styleable.AndroidManifestApplication_description, sa))
+                .setIconResourceId(resId(R.styleable.AndroidManifestApplication_icon, sa))
+                .setLogoResourceId(resId(R.styleable.AndroidManifestApplication_logo, sa))
+                .setNetworkSecurityConfigResourceId(resId(R.styleable.AndroidManifestApplication_networkSecurityConfig, sa))
+                .setRoundIconResourceId(resId(R.styleable.AndroidManifestApplication_roundIcon, sa))
+                .setThemeResourceId(resId(R.styleable.AndroidManifestApplication_theme, sa))
+                .setDataExtractionRulesResourceId(
                         resId(R.styleable.AndroidManifestApplication_dataExtractionRules, sa))
-                .setLocaleConfigRes(resId(R.styleable.AndroidManifestApplication_localeConfig, sa))
+                .setLocaleConfigResourceId(resId(R.styleable.AndroidManifestApplication_localeConfig, sa))
                 // Strings
                 .setClassLoaderName(string(R.styleable.AndroidManifestApplication_classLoader, sa))
                 .setRequiredAccountType(string(R.styleable.AndroidManifestApplication_requiredAccountType, sa))
@@ -2399,7 +2411,7 @@ public class ParsingPackageUtils {
             }
 
             return input.success(pkg.setStaticSharedLibraryName(lname.intern())
-                    .setStaticSharedLibVersion(
+                    .setStaticSharedLibraryVersion(
                             PackageInfo.composeLongVersionCode(versionMajor, version))
                     .setStaticSharedLibrary(true));
         } finally {
@@ -2694,7 +2706,7 @@ public class ParsingPackageUtils {
         // Build custom App Details activity info instead of parsing it from xml
         return input.success(ParsedActivity.makeAppDetailsActivity(packageName,
                 pkg.getProcessName(), pkg.getUiOptions(), taskAffinity,
-                pkg.isBaseHardwareAccelerated()));
+                pkg.isHardwareAccelerated()));
     }
 
     /**
@@ -2828,7 +2840,7 @@ public class ParsingPackageUtils {
                 return input.skip(message);
             }
 
-            return input.success(pkg.setOverlay(true)
+            return input.success(pkg.setResourceOverlay(true)
                     .setOverlayTarget(target)
                     .setOverlayPriority(priority)
                     .setOverlayTargetOverlayableName(
@@ -2872,13 +2884,13 @@ public class ParsingPackageUtils {
             // This is a trick to get a boolean and still able to detect
             // if a value was actually set.
             return input.success(pkg
-                    .setSupportsSmallScreens(
+                    .setSmallScreensSupported(
                             anInt(1, R.styleable.AndroidManifestSupportsScreens_smallScreens, sa))
-                    .setSupportsNormalScreens(
+                    .setNormalScreensSupported(
                             anInt(1, R.styleable.AndroidManifestSupportsScreens_normalScreens, sa))
-                    .setSupportsLargeScreens(
+                    .setLargeScreensSupported(
                             anInt(1, R.styleable.AndroidManifestSupportsScreens_largeScreens, sa))
-                    .setSupportsExtraLargeScreens(
+                    .setExtraLargeScreensSupported(
                             anInt(1, R.styleable.AndroidManifestSupportsScreens_xlargeScreens, sa))
                     .setResizeable(
                             anInt(1, R.styleable.AndroidManifestSupportsScreens_resizeable, sa))

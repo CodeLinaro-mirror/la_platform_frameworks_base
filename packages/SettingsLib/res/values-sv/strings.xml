@@ -467,7 +467,8 @@
     <string name="power_charging" msgid="6727132649743436802">"<xliff:g id="LEVEL">%1$s</xliff:g> – <xliff:g id="STATE">%2$s</xliff:g>"</string>
     <string name="power_remaining_charging_duration_only" msgid="8085099012811384899">"<xliff:g id="TIME">%1$s</xliff:g> kvar tills fulladdat"</string>
     <string name="power_charging_duration" msgid="6127154952524919719">"<xliff:g id="LEVEL">%1$s</xliff:g> – <xliff:g id="TIME">%2$s</xliff:g> kvar tills fulladdat"</string>
-    <string name="power_charging_limited" msgid="6971664137170239141">"<xliff:g id="LEVEL">%1$s</xliff:g> - Laddningen har pausats"</string>
+    <string name="power_charging_limited" msgid="8202147604844938236">"<xliff:g id="LEVEL">%1$s</xliff:g> - Laddningen har optimerats"</string>
+    <string name="power_charging_future_paused" msgid="4730177778538118032">"<xliff:g id="LEVEL">%1$s</xliff:g> - Laddningen har optimerats"</string>
     <string name="battery_info_status_unknown" msgid="268625384868401114">"Okänd"</string>
     <string name="battery_info_status_charging" msgid="4279958015430387405">"Laddar"</string>
     <string name="battery_info_status_charging_fast" msgid="8027559755902954885">"Laddas snabbt"</string>
@@ -539,6 +540,13 @@
     <string name="media_transfer_this_device_name" product="default" msgid="2357329267148436433">"Den här telefonen"</string>
     <string name="media_transfer_this_device_name" product="tablet" msgid="3714653244000242800">"Den här surfplattan"</string>
     <string name="media_transfer_this_phone" msgid="7194341457812151531">"Den här telefonen"</string>
+    <string name="media_output_status_unknown_error" msgid="5098565887497902222">"Det går inte att spela upp denna enhet"</string>
+    <string name="media_output_status_require_premium" msgid="8411255800047014822">"Uppgradera kontot för att byta"</string>
+    <string name="media_output_status_not_support_downloads" msgid="4523828729240373315">"Det går inte att spela upp nedladdningar här"</string>
+    <string name="media_output_status_try_after_ad" msgid="8312579066856015441">"Försök igen efter annonsen"</string>
+    <string name="media_output_status_device_in_low_power_mode" msgid="8184631698321758451">"Väck enheten för att spela upp här"</string>
+    <string name="media_output_status_unauthorized" msgid="5880222828273853838">"Enheten har inte godkänts för uppspelning"</string>
+    <string name="media_output_status_track_unsupported" msgid="5576313219317709664">"Det går inte att spela upp detta här"</string>
     <string name="profile_connect_timeout_subtext" msgid="4043408193005851761">"Det gick inte att ansluta. Stäng av enheten och slå på den igen"</string>
     <string name="media_transfer_wired_device_name" msgid="4447880899964056007">"Ljudenhet med kabelanslutning"</string>
     <string name="help_label" msgid="3528360748637781274">"Hjälp och feedback"</string>
@@ -563,6 +571,8 @@
     <string name="user_add_user_title" msgid="5457079143694924885">"Lägga till ny användare?"</string>
     <string name="user_add_user_message_long" msgid="1527434966294733380">"Du kan dela enheten med andra om du skapar flera användare. Alla användare får sitt eget utrymme som de kan anpassa som de vill med appar, bakgrund och så vidare. Användarna kan även ändra enhetsinställningar som påverkar alla, till exempel wifi.\n\nNär du lägger till en ny användare måste han eller hon konfigurera sitt utrymme.\n\nAlla användare kan uppdatera appar för samtliga användares räkning. Tillgänglighetsinställningar och tjänster kanske inte överförs till den nya användaren."</string>
     <string name="user_add_user_message_short" msgid="3295959985795716166">"När du lägger till en ny användare måste den personen konfigurera sitt utrymme.\n\nAlla användare kan uppdatera appar för samtliga användares räkning."</string>
+    <string name="user_grant_admin_title" msgid="5565796912475193314">"Ge administratörsbehörigheter?"</string>
+    <string name="user_grant_admin_message" msgid="7925257971286380976">"Som administratör kan användaren hantera andra användare, ändra enhetsinställningar och återställa enhetens standardinställningar"</string>
     <string name="user_setup_dialog_title" msgid="8037342066381939995">"Konfigurera användare nu?"</string>
     <string name="user_setup_dialog_message" msgid="269931619868102841">"Kontrollera att personen finns tillgänglig för att konfigurera sitt utrymme på enheten"</string>
     <string name="user_setup_profile_dialog_message" msgid="4788197052296962620">"Vill du konfigurera en profil nu?"</string>
@@ -594,6 +604,8 @@
     <string name="guest_reset_and_restart_dialog_message" msgid="2764425635305200790">"En ny gästsession startas och alla appar och all data från den pågående sessionen raderas"</string>
     <string name="guest_exit_dialog_title" msgid="1846494656849381804">"Vill du avsluta gästläget?"</string>
     <string name="guest_exit_dialog_message" msgid="1743218864242719783">"Appar och data från den pågående gästsessionen raderas"</string>
+    <string name="grant_admin" msgid="4273077214151417783">"Ge den här användaren administratörsbehörigheter"</string>
+    <string name="not_grant_admin" msgid="6985027675930546850">"Ge inte administratörsbehörigheter"</string>
     <string name="guest_exit_dialog_button" msgid="1736401897067442044">"Avsluta"</string>
     <string name="guest_exit_dialog_title_non_ephemeral" msgid="7675327443743162986">"Vill du spara gästaktivitet?"</string>
     <string name="guest_exit_dialog_message_non_ephemeral" msgid="223385323235719442">"Du kan spara aktivitet från den pågående sessionen eller radera appar och data"</string>
@@ -661,4 +673,10 @@
     <string name="back_navigation_animation" msgid="8105467568421689484">"Förhandsanimationer för bakåtrörelser"</string>
     <string name="back_navigation_animation_summary" msgid="741292224121599456">"Aktivera systemanimationer som förhandsvisar bakåtrörelser."</string>
     <string name="back_navigation_animation_dialog" msgid="8696966520944625596">"Den här inställningen aktiverar systemanimationer som förhandsvisar vart rörelserna leder. Du måste ställa in enableOnBackInvokedCallback som sant per app i manifestfilen."</string>
+  <string-array name="udfps_accessibility_touch_hints">
+    <item msgid="1737722959616802157">"Flytta åt vänster"</item>
+    <item msgid="5425394847942513942">"Flytta nedåt"</item>
+    <item msgid="7728484337962740316">"Flytta åt höger"</item>
+    <item msgid="324200556467459329">"Flytta uppåt"</item>
+  </string-array>
 </resources>

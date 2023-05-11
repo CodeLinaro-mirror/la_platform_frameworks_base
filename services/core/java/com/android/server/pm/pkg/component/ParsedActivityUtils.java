@@ -114,7 +114,7 @@ public class ParsedActivityUtils {
                 return input.error(result);
             }
 
-            if (receiver && pkg.isCantSaveState()) {
+            if (receiver && pkg.isSaveStateDisallowed()) {
                 // A heavy-weight application can not have receivers in its main process
                 if (Objects.equals(activity.getProcessName(), packageName)) {
                     return input.error("Heavy-weight applications can not have receivers "
@@ -129,7 +129,7 @@ public class ParsedActivityUtils {
             activity.setTheme(sa.getResourceId(R.styleable.AndroidManifestActivity_theme, 0))
                     .setUiOptions(sa.getInt(R.styleable.AndroidManifestActivity_uiOptions, pkg.getUiOptions()));
 
-            activity.setFlags(activity.getFlags() | (flag(ActivityInfo.FLAG_ALLOW_TASK_REPARENTING, R.styleable.AndroidManifestActivity_allowTaskReparenting, pkg.isAllowTaskReparenting(), sa)
+            activity.setFlags(activity.getFlags() | (flag(ActivityInfo.FLAG_ALLOW_TASK_REPARENTING, R.styleable.AndroidManifestActivity_allowTaskReparenting, pkg.isTaskReparentingAllowed(), sa)
                                 | flag(ActivityInfo.FLAG_ALWAYS_RETAIN_TASK_STATE, R.styleable.AndroidManifestActivity_alwaysRetainTaskState, sa)
                                 | flag(ActivityInfo.FLAG_CLEAR_TASK_ON_LAUNCH, R.styleable.AndroidManifestActivity_clearTaskOnLaunch, sa)
                                 | flag(ActivityInfo.FLAG_EXCLUDE_FROM_RECENTS, R.styleable.AndroidManifestActivity_excludeFromRecents, sa)
@@ -144,7 +144,7 @@ public class ParsedActivityUtils {
                                 | flag(ActivityInfo.FLAG_SYSTEM_USER_ONLY, R.styleable.AndroidManifestActivity_systemUserOnly, sa)));
 
             if (!receiver) {
-                activity.setFlags(activity.getFlags() | (flag(ActivityInfo.FLAG_HARDWARE_ACCELERATED, R.styleable.AndroidManifestActivity_hardwareAccelerated, pkg.isBaseHardwareAccelerated(), sa)
+                activity.setFlags(activity.getFlags() | (flag(ActivityInfo.FLAG_HARDWARE_ACCELERATED, R.styleable.AndroidManifestActivity_hardwareAccelerated, pkg.isHardwareAccelerated(), sa)
                                         | flag(ActivityInfo.FLAG_ALLOW_EMBEDDED, R.styleable.AndroidManifestActivity_allowEmbedded, sa)
                                         | flag(ActivityInfo.FLAG_ALWAYS_FOCUSABLE, R.styleable.AndroidManifestActivity_alwaysFocusable, sa)
                                         | flag(ActivityInfo.FLAG_AUTO_REMOVE_FROM_RECENTS, R.styleable.AndroidManifestActivity_autoRemoveFromRecents, sa)
@@ -195,6 +195,15 @@ public class ParsedActivityUtils {
                             sa.getFloat(R.styleable.AndroidManifestActivity_minAspectRatio,
                                     0 /*default*/));
                 }
+
+                if (sa.hasValue(R.styleable.AndroidManifestActivity_enableOnBackInvokedCallback)) {
+                    boolean enable = sa.getBoolean(
+                            R.styleable.AndroidManifestActivity_enableOnBackInvokedCallback,
+                            false);
+                    activity.setPrivateFlags(activity.getPrivateFlags()
+                            | (enable ? ActivityInfo.PRIVATE_FLAG_ENABLE_ON_BACK_INVOKED_CALLBACK
+                                    : ActivityInfo.PRIVATE_FLAG_DISABLE_ON_BACK_INVOKED_CALLBACK));
+                }
             } else {
                 activity.setLaunchMode(ActivityInfo.LAUNCH_MULTIPLE)
                         .setConfigChanges(0)
@@ -220,17 +229,17 @@ public class ParsedActivityUtils {
                 pkg.setVisibleToInstantApps(true);
             }
 
-            String targetDisplayCategory = sa.getNonConfigurationString(
-                    R.styleable.AndroidManifestActivity_targetDisplayCategory, 0);
+            String requiredDisplayCategory = sa.getNonConfigurationString(
+                    R.styleable.AndroidManifestActivity_requiredDisplayCategory, 0);
 
-            if (targetDisplayCategory != null
-                    && FrameworkParsingPackageUtils.validateName(targetDisplayCategory,
+            if (requiredDisplayCategory != null
+                    && FrameworkParsingPackageUtils.validateName(requiredDisplayCategory,
                     false /* requireSeparator */, false /* requireFilename */) != null) {
-                return input.error("targetDisplayCategory attribute can only consists of "
-                        + "alphanumeric characters, '_', and '.'");
+                return input.error("requiredDisplayCategory attribute can only consist "
+                        + "of alphanumeric characters, '_', and '.'");
             }
 
-            activity.setTargetDisplayCategory(targetDisplayCategory);
+            activity.setRequiredDisplayCategory(requiredDisplayCategory);
 
             return parseActivityOrAlias(activity, pkg, tag, parser, res, sa, receiver,
                     false /*isAlias*/, visibleToEphemeral, input,

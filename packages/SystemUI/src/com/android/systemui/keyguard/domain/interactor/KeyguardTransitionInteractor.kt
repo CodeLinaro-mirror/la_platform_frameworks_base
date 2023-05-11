@@ -21,7 +21,11 @@ import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.keyguard.data.repository.KeyguardTransitionRepository
 import com.android.systemui.keyguard.shared.model.KeyguardState
 import com.android.systemui.keyguard.shared.model.KeyguardState.AOD
+import com.android.systemui.keyguard.shared.model.KeyguardState.DREAMING
+import com.android.systemui.keyguard.shared.model.KeyguardState.GONE
 import com.android.systemui.keyguard.shared.model.KeyguardState.LOCKSCREEN
+import com.android.systemui.keyguard.shared.model.KeyguardState.OCCLUDED
+import com.android.systemui.keyguard.shared.model.KeyguardState.PRIMARY_BOUNCER
 import com.android.systemui.keyguard.shared.model.TransitionState
 import com.android.systemui.keyguard.shared.model.TransitionStep
 import javax.inject.Inject
@@ -37,15 +41,46 @@ class KeyguardTransitionInteractor
 constructor(
     repository: KeyguardTransitionRepository,
 ) {
-    /** AOD->LOCKSCREEN transition information. */
-    val aodToLockscreenTransition: Flow<TransitionStep> = repository.transition(AOD, LOCKSCREEN)
-
-    /** LOCKSCREEN->AOD transition information. */
-    val lockscreenToAodTransition: Flow<TransitionStep> = repository.transition(LOCKSCREEN, AOD)
+    /** (any)->GONE transition information */
+    val anyStateToGoneTransition: Flow<TransitionStep> =
+        repository.transitions.filter { step -> step.to == KeyguardState.GONE }
 
     /** (any)->AOD transition information */
     val anyStateToAodTransition: Flow<TransitionStep> =
         repository.transitions.filter { step -> step.to == KeyguardState.AOD }
+
+    /** AOD->LOCKSCREEN transition information. */
+    val aodToLockscreenTransition: Flow<TransitionStep> = repository.transition(AOD, LOCKSCREEN)
+
+    /** DREAMING->LOCKSCREEN transition information. */
+    val dreamingToLockscreenTransition: Flow<TransitionStep> =
+        repository.transition(DREAMING, LOCKSCREEN)
+
+    /** GONE->DREAMING transition information. */
+    val goneToDreamingTransition: Flow<TransitionStep> = repository.transition(GONE, DREAMING)
+
+    /** LOCKSCREEN->AOD transition information. */
+    val lockscreenToAodTransition: Flow<TransitionStep> = repository.transition(LOCKSCREEN, AOD)
+
+    /** LOCKSCREEN->PRIMARY_BOUNCER transition information. */
+    val mLockscreenToPrimaryBouncerTransition: Flow<TransitionStep> =
+        repository.transition(LOCKSCREEN, PRIMARY_BOUNCER)
+
+    /** LOCKSCREEN->DREAMING transition information. */
+    val lockscreenToDreamingTransition: Flow<TransitionStep> =
+        repository.transition(LOCKSCREEN, DREAMING)
+
+    /** LOCKSCREEN->OCCLUDED transition information. */
+    val lockscreenToOccludedTransition: Flow<TransitionStep> =
+        repository.transition(LOCKSCREEN, OCCLUDED)
+
+    /** OCCLUDED->LOCKSCREEN transition information. */
+    val occludedToLockscreenTransition: Flow<TransitionStep> =
+        repository.transition(OCCLUDED, LOCKSCREEN)
+
+    /** PRIMARY_BOUNCER->GONE transition information. */
+    val primaryBouncerToGoneTransition: Flow<TransitionStep> =
+        repository.transition(PRIMARY_BOUNCER, GONE)
 
     /**
      * AOD<->LOCKSCREEN transition information, mapped to dozeAmount range of AOD (1f) <->
@@ -57,6 +92,14 @@ constructor(
             lockscreenToAodTransition,
         )
 
+    /* The last [TransitionStep] with a [TransitionState] of STARTED */
+    val startedKeyguardTransitionStep: Flow<TransitionStep> =
+        repository.transitions.filter { step -> step.transitionState == TransitionState.STARTED }
+
+    /* The last [TransitionStep] with a [TransitionState] of CANCELED */
+    val canceledKeyguardTransitionStep: Flow<TransitionStep> =
+        repository.transitions.filter { step -> step.transitionState == TransitionState.CANCELED }
+
     /* The last [TransitionStep] with a [TransitionState] of FINISHED */
     val finishedKeyguardTransitionStep: Flow<TransitionStep> =
         repository.transitions.filter { step -> step.transitionState == TransitionState.FINISHED }
@@ -64,8 +107,4 @@ constructor(
     /* The last completed [KeyguardState] transition */
     val finishedKeyguardState: Flow<KeyguardState> =
         finishedKeyguardTransitionStep.map { step -> step.to }
-
-    /* The last [TransitionStep] with a [TransitionState] of STARTED */
-    val startedKeyguardTransitionStep: Flow<TransitionStep> =
-        repository.transitions.filter { step -> step.transitionState == TransitionState.STARTED }
 }
