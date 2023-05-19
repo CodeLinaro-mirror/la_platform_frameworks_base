@@ -188,6 +188,7 @@ public class DisplayResolveInfo implements TargetInfo, Parcelable {
 
     @Override
     public boolean startAsUser(Activity activity, Bundle options, UserHandle user) {
+        TargetInfo.prepareIntentForCrossProfileLaunch(mResolvedIntent, user.getIdentifier());
         activity.startActivityAsUser(mResolvedIntent, options, user);
         return false;
     }
