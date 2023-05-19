@@ -233,6 +233,13 @@ public class DisplayResolveInfo implements TargetInfo, Parcelable {
         }
     };
 
+    private static void prepareIntentForCrossProfileLaunch(Intent intent, int targetUserId) {
+        final int currentUserId = UserHandle.myUserId();
+        if (targetUserId != currentUserId) {
+            intent.fixUris(currentUserId);
+        }
+    }
+
     private DisplayResolveInfo(Parcel in) {
         mDisplayLabel = in.readCharSequence();
         mExtendedInfo = in.readCharSequence();
