@@ -26,6 +26,7 @@ import android.content.ServiceConnection;
 import android.os.IBinder;
 import android.os.RemoteException;
 import android.os.ServiceManager;
+import android.os.SystemProperties;
 import android.os.UserHandle;
 import android.telecom.DefaultDialerManager;
 import android.telecom.PhoneAccountHandle;
@@ -55,6 +56,8 @@ import java.util.List;
  */
 public class TelecomLoaderService extends SystemService {
     private static final String TAG = "TelecomLoaderService";
+
+    private static boolean mIsBike = SystemProperties.getBoolean("ro.hw.vehicle.isbike", false);
 
     private class TelecomServiceConnection implements ServiceConnection {
         @Override
@@ -123,7 +126,9 @@ public class TelecomLoaderService extends SystemService {
     public TelecomLoaderService(Context context) {
         super(context);
         mContext = context;
-        registerDefaultAppProviders();
+        if (!mIsBike) {
+            registerDefaultAppProviders();
+        }
     }
 
     @Override
@@ -132,12 +137,23 @@ public class TelecomLoaderService extends SystemService {
 
     @Override
     public void onBootPhase(int phase) {
-        if (phase == PHASE_ACTIVITY_MANAGER_READY) {
-            registerDefaultAppNotifier();
-            registerCarrierConfigChangedReceiver();
-            // core services will have already been loaded.
-            setupServiceRepository();
-            connectToTelecom();
+        if (!mIsBike) {
+            if (phase == PHASE_ACTIVITY_MANAGER_READY) {
+                registerDefaultAppNotifier();
+                registerCarrierConfigChangedReceiver();
+                // core services will have already been loaded.
+                setupServiceRepository();
+                connectToTelecom();
+            }
+        } else {
+            if (phase == PHASE_BOOT_COMPLETED) {
+                registerDefaultAppProviders();
+                registerDefaultAppNotifier();
+                registerCarrierConfigChangedReceiver();
+                // core services will have already been loaded.
+                setupServiceRepository();
+                connectToTelecom();
+            }
         }
     }
 
