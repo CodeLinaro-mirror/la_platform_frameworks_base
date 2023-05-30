@@ -91,6 +91,8 @@ public class ZygoteInit {
 
     private static final boolean LOGGING_DEBUG = Log.isLoggable(TAG, Log.DEBUG);
 
+    private static boolean mIsBike = SystemProperties.getBoolean("ro.hw.vehicle.isbike", false);
+
     private static final String PROPERTY_DISABLE_GRAPHICS_DRIVER_PRELOADING =
             "ro.zygote.disable_gl_preload";
 
@@ -966,9 +968,21 @@ public class ZygoteInit {
             }
 
             // Do an initial gc to clean up after startup
-            bootTimingsTraceLog.traceBegin("PostZygoteInitGC");
-            gcAndFinalize();
-            bootTimingsTraceLog.traceEnd(); // PostZygoteInitGC
+            if (!mIsBike) {
+                bootTimingsTraceLog.traceBegin("PostZygoteInitGC");
+                gcAndFinalize();
+                bootTimingsTraceLog.traceEnd(); // PostZygoteInitGC
+            } else {
+                Runnable postZyogoteInitGCThread = new Runnable() {
+                    @Override
+                    public void run() {
+                        bootTimingsTraceLog.traceBegin("PostZygoteInitGC");
+                        gcAndFinalize();
+                        bootTimingsTraceLog.traceEnd(); // PostZygoteInitGC
+                    }
+                };
+                postZyogoteInitGCThread.run();
+            }
 
             bootTimingsTraceLog.traceEnd(); // ZygoteInit
 
