@@ -63,6 +63,7 @@ import android.widget.FrameLayout;
 import com.android.internal.os.SomeArgs;
 import com.android.internal.util.Preconditions;
 
+import java.io.IOException;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
@@ -1009,6 +1010,13 @@ public abstract class TvInputService extends Service {
          * @param buffer the {@link AdBuffer} that was consumed.
          */
         public void notifyAdBufferConsumed(@NonNull AdBuffer buffer) {
+            AdBuffer dupBuffer;
+            try {
+                dupBuffer = AdBuffer.dupAdBuffer(buffer);
+            } catch (IOException e) {
+                Log.w(TAG, "dup AdBuffer error in notifyAdBufferConsumed:", e);
+                return;
+            }
             executeOrPostRunnableOnMainThread(new Runnable() {
                 @MainThread
                 @Override
@@ -1016,10 +1024,14 @@ public abstract class TvInputService extends Service {
                     try {
                         if (DEBUG) Log.d(TAG, "notifyAdBufferConsumed");
                         if (mSessionCallback != null) {
-                            mSessionCallback.onAdBufferConsumed(buffer);
+                            mSessionCallback.onAdBufferConsumed(dupBuffer);
                         }
                     } catch (RemoteException e) {
                         Log.w(TAG, "error in notifyAdBufferConsumed", e);
+                    } finally {
+                        if (dupBuffer != null) {
+                            dupBuffer.getSharedMemory().close();
+                        }
                     }
                 }
             });
@@ -1030,7 +1042,13 @@ public abstract class TvInputService extends Service {
          *
          * @param type The of message that was sent, such as
          * {@link TvInputManager#TV_MESSAGE_TYPE_WATERMARK}
-         * @param data The data sent with the message.
+         * @param data The raw data of the message. The bundle keys are:
+         *             {@link TvInputManager#TV_MESSAGE_KEY_STREAM_ID},
+         *             {@link TvInputManager#TV_MESSAGE_KEY_GROUP_ID},
+         *             {@link TvInputManager#TV_MESSAGE_KEY_SUBTYPE},
+         *             {@link TvInputManager#TV_MESSAGE_KEY_RAW_DATA}.
+         *             See {@link TvInputManager#TV_MESSAGE_KEY_SUBTYPE} for more information on
+         *             how to parse this data.
          */
         public void notifyTvMessage(@TvInputManager.TvMessageType int type,
                 @NonNull Bundle data) {
@@ -1500,9 +1518,15 @@ public abstract class TvInputService extends Service {
          *
          * @param type The type of message received, such as
          * {@link TvInputManager#TV_MESSAGE_TYPE_WATERMARK}
-         * @param data The raw data of the message
+         * @param data The raw data of the message. The bundle keys are:
+         *             {@link TvInputManager#TV_MESSAGE_KEY_STREAM_ID},
+         *             {@link TvInputManager#TV_MESSAGE_KEY_GROUP_ID},
+         *             {@link TvInputManager#TV_MESSAGE_KEY_SUBTYPE},
+         *             {@link TvInputManager#TV_MESSAGE_KEY_RAW_DATA}.
+         *             See {@link TvInputManager#TV_MESSAGE_KEY_SUBTYPE} for more information on
+         *             how to parse this data.
          */
-        public void onTvMessage(@NonNull @TvInputManager.TvMessageType String type,
+        public void onTvMessage(@TvInputManager.TvMessageType int type,
                 @NonNull Bundle data) {
         }
 
@@ -2055,7 +2079,7 @@ public abstract class TvInputService extends Service {
             onAdBufferReady(buffer);
         }
 
-        void onTvMessageReceived(String type, Bundle data) {
+        void onTvMessageReceived(int type, Bundle data) {
             onTvMessage(type, data);
         }
 

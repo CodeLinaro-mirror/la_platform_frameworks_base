@@ -1018,9 +1018,7 @@ public class LockTaskController {
      */
     boolean isBaseOfLockedTask(String packageName) {
         for (int i = 0; i < mLockTaskModeTasks.size(); i++) {
-            final Intent bi = mLockTaskModeTasks.get(i).getBaseIntent();
-            if (bi != null && packageName.equals(bi.getComponent()
-                    .getPackageName())) {
+            if (packageName.equals(mLockTaskModeTasks.get(i).getBasePackageName())) {
                 return true;
             }
         }

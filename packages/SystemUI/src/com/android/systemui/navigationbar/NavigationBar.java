@@ -25,6 +25,7 @@ import static android.app.StatusBarManager.WindowType;
 import static android.app.StatusBarManager.WindowVisibleState;
 import static android.app.StatusBarManager.windowStateToString;
 import static android.app.WindowConfiguration.ROTATION_UNDEFINED;
+import static android.view.InsetsSource.FLAG_SUPPRESS_SCRIM;
 import static android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE;
 import static android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
 import static android.view.WindowManager.LayoutParams.PRIVATE_FLAG_NO_MOVE_ANIMATION;
@@ -159,6 +160,8 @@ import com.android.systemui.util.ViewController;
 import com.android.wm.shell.back.BackAnimation;
 import com.android.wm.shell.pip.Pip;
 
+import dagger.Lazy;
+
 import java.io.PrintWriter;
 import java.util.Locale;
 import java.util.Map;
@@ -166,8 +169,6 @@ import java.util.Optional;
 import java.util.concurrent.Executor;
 
 import javax.inject.Inject;
-
-import dagger.Lazy;
 
 /**
  * Contains logic for a navigation bar view.
@@ -245,12 +246,6 @@ public class NavigationBar extends ViewController<NavigationBarView> implements 
 
     private boolean mTransientShown;
     private boolean mTransientShownFromGestureOnSystemBar;
-    /**
-     * This is to indicate whether the navigation bar button is forced visible. This is true
-     * when the setup wizard is on display. When that happens, the window frame should be provided
-     * as insets size directly.
-     */
-    private boolean mIsButtonForceVisible;
     private int mNavBarMode = NAV_BAR_MODE_3BUTTON;
     private LightBarController mLightBarController;
     private final LightBarController mMainLightBarController;
@@ -679,8 +674,7 @@ public class NavigationBar extends ViewController<NavigationBarView> implements 
         mView.setTouchHandler(mTouchHandler);
         setNavBarMode(mNavBarMode);
         mEdgeBackGestureHandler.setStateChangeCallback(mView::updateStates);
-        mEdgeBackGestureHandler.setButtonForceVisibleChangeCallback((forceVisible) -> {
-            mIsButtonForceVisible = forceVisible;
+        mEdgeBackGestureHandler.setButtonForcedVisibleChangeCallback((forceVisible) -> {
             repositionNavigationBar(mCurrentRotation);
         });
         mNavigationBarTransitions.addListener(this::onBarTransition);
@@ -747,7 +741,7 @@ public class NavigationBar extends ViewController<NavigationBarView> implements 
         mView.setComponents(mRecentsOptional);
         if (mCentralSurfacesOptionalLazy.get().isPresent()) {
             mView.setComponents(
-                    mCentralSurfacesOptionalLazy.get().get().getNotificationPanelViewController());
+                    mCentralSurfacesOptionalLazy.get().get().getShadeViewController());
         }
         mView.setDisabledFlags(mDisabledFlags1, mSysUiFlagsContainer);
         mView.setOnVerticalChangedListener(this::onVerticalChanged);
@@ -1349,8 +1343,8 @@ public class NavigationBar extends ViewController<NavigationBarView> implements 
 
     private void onVerticalChanged(boolean isVertical) {
         Optional<CentralSurfaces> cs = mCentralSurfacesOptionalLazy.get();
-        if (cs.isPresent() && cs.get().getNotificationPanelViewController() != null) {
-            cs.get().getNotificationPanelViewController().setQsScrimEnabled(!isVertical);
+        if (cs.isPresent() && cs.get().getShadeViewController() != null) {
+            cs.get().getShadeViewController().setQsScrimEnabled(!isVertical);
         }
     }
 
@@ -1721,15 +1715,18 @@ public class NavigationBar extends ViewController<NavigationBarView> implements 
                         .setInsetsSizeOverrides(new InsetsFrameProvider.InsetsSizeOverride[] {
                                 new InsetsFrameProvider.InsetsSizeOverride(
                                         TYPE_INPUT_METHOD, null)});
-        if (insetsHeight != -1 && !mIsButtonForceVisible) {
+        if (insetsHeight != -1 && !mEdgeBackGestureHandler.isButtonForcedVisible()) {
             navBarProvider.setInsetsSize(Insets.of(0, 0, 0, insetsHeight));
         }
+        final boolean needsScrim = userContext.getResources().getBoolean(
+                com.android.internal.R.bool.config_navBarNeedsScrim);
+        navBarProvider.setFlags(needsScrim ? 0 : FLAG_SUPPRESS_SCRIM, FLAG_SUPPRESS_SCRIM);
 
         final InsetsFrameProvider tappableElementProvider = new InsetsFrameProvider(
                 mInsetsSourceOwner, 0, WindowInsets.Type.tappableElement());
-        final boolean navBarTapThrough = userContext.getResources().getBoolean(
+        final boolean tapThrough = userContext.getResources().getBoolean(
                 com.android.internal.R.bool.config_navBarTapThrough);
-        if (navBarTapThrough) {
+        if (tapThrough) {
             tappableElementProvider.setInsetsSize(Insets.NONE);
         }
 
@@ -1739,6 +1736,11 @@ public class NavigationBar extends ViewController<NavigationBarView> implements 
         final int gestureHeight = userContext.getResources().getDimensionPixelSize(
                 com.android.internal.R.dimen.navigation_bar_gesture_height);
         final boolean handlingGesture = mEdgeBackGestureHandler.isHandlingGestures();
+        final InsetsFrameProvider mandatoryGestureProvider = new InsetsFrameProvider(
+                mInsetsSourceOwner, 0, WindowInsets.Type.mandatorySystemGestures());
+        if (handlingGesture) {
+            mandatoryGestureProvider.setInsetsSize(Insets.of(0, 0, 0, gestureHeight));
+        }
         final int gestureInsetsLeft = handlingGesture
                 ? mEdgeBackGestureHandler.getEdgeWidthLeft() + safeInsetsLeft : 0;
         final int gestureInsetsRight = handlingGesture
@@ -1746,9 +1748,7 @@ public class NavigationBar extends ViewController<NavigationBarView> implements 
         return new InsetsFrameProvider[] {
                 navBarProvider,
                 tappableElementProvider,
-                new InsetsFrameProvider(
-                        mInsetsSourceOwner, 0, WindowInsets.Type.mandatorySystemGestures())
-                        .setInsetsSize(Insets.of(0, 0, 0, gestureHeight)),
+                mandatoryGestureProvider,
                 new InsetsFrameProvider(mInsetsSourceOwner, 0, WindowInsets.Type.systemGestures())
                         .setSource(InsetsFrameProvider.SOURCE_DISPLAY)
                         .setInsetsSize(Insets.of(gestureInsetsLeft, 0, 0, 0)),

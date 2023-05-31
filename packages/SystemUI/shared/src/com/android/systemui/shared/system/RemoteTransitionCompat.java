@@ -89,7 +89,7 @@ public class RemoteTransitionCompat {
                 }
             }
         };
-        return new RemoteTransition(remote, appThread);
+        return new RemoteTransition(remote, appThread, "Recents");
     }
 
     /**
@@ -321,7 +321,9 @@ public class RemoteTransitionCompat {
                     } else {
                         // We are receiving new opening tasks, so convert to onTasksAppeared.
                         targets[i] = TransitionUtil.newTarget(change, layer, info, t, mLeashMap);
-                        t.reparent(targets[i].leash, mInfo.getRootLeash());
+                        // reparent into the original `mInfo` since that's where we are animating.
+                        final int rootIdx = TransitionUtil.rootIndexFor(change, mInfo);
+                        t.reparent(targets[i].leash, mInfo.getRoot(rootIdx).getLeash());
                         t.setLayer(targets[i].leash, layer);
                         mOpeningTasks.add(new TaskState(change, targets[i].leash));
                     }
@@ -350,7 +352,8 @@ public class RemoteTransitionCompat {
 
         @Override public TaskSnapshot screenshotTask(int taskId) {
             try {
-                return ActivityTaskManager.getService().takeTaskSnapshot(taskId);
+                return ActivityTaskManager.getService().takeTaskSnapshot(taskId,
+                        true /* updateCache */);
             } catch (RemoteException e) {
                 Log.e(TAG, "Failed to screenshot task", e);
             }

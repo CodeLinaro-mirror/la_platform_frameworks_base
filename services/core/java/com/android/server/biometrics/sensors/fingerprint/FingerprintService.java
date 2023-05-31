@@ -82,13 +82,16 @@ import com.android.internal.widget.LockPatternUtils;
 import com.android.server.SystemService;
 import com.android.server.biometrics.Utils;
 import com.android.server.biometrics.log.BiometricContext;
+import com.android.server.biometrics.sensors.BaseClientMonitor;
 import com.android.server.biometrics.sensors.BiometricStateCallback;
+import com.android.server.biometrics.sensors.ClientMonitorCallback;
 import com.android.server.biometrics.sensors.ClientMonitorCallbackConverter;
 import com.android.server.biometrics.sensors.LockoutResetDispatcher;
 import com.android.server.biometrics.sensors.LockoutTracker;
 import com.android.server.biometrics.sensors.fingerprint.aidl.FingerprintProvider;
 import com.android.server.biometrics.sensors.fingerprint.hidl.Fingerprint21;
 import com.android.server.biometrics.sensors.fingerprint.hidl.Fingerprint21UdfpsMock;
+import com.android.server.companion.virtual.VirtualDeviceManagerInternal;
 
 import com.google.android.collect.Lists;
 
@@ -97,7 +100,9 @@ import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -314,7 +319,8 @@ public class FingerprintService extends SystemService {
             final FingerprintSensorPropertiesInternal sensorProps =
                     provider.second.getSensorProperties(options.getSensorId());
             if (!isKeyguard && !Utils.isSettings(getContext(), opPackageName)
-                    && sensorProps != null && sensorProps.isAnyUdfpsType()) {
+                    && sensorProps != null && (sensorProps.isAnyUdfpsType()
+                    || sensorProps.isAnySidefpsType())) {
                 try {
                     return authenticateWithPrompt(operationId, sensorProps, callingUid,
                             callingUserId, receiver, opPackageName,
@@ -323,6 +329,16 @@ public class FingerprintService extends SystemService {
                     Slog.e(TAG, "Invalid package", e);
                     return -1;
                 }
+            }
+            final long identity2 = Binder.clearCallingIdentity();
+            try {
+                VirtualDeviceManagerInternal vdm = getLocalService(
+                        VirtualDeviceManagerInternal.class);
+                if (vdm != null) {
+                    vdm.onAuthenticationPrompt(callingUid);
+                }
+            } finally {
+                Binder.restoreCallingIdentity(identity2);
             }
             return provider.second.scheduleAuthenticate(token, operationId,
                     0 /* cookie */, new ClientMonitorCallbackConverter(receiver), options,
@@ -407,6 +423,11 @@ public class FingerprintService extends SystemService {
                             } catch (RemoteException e) {
                                 Slog.e(TAG, "Remote exception in onAuthenticationAcquired()", e);
                             }
+                        }
+
+                        @Override
+                        public void onAuthenticationHelp(int acquireInfo, CharSequence helpString) {
+                            onAuthenticationAcquired(acquireInfo);
                         }
                     };
 
@@ -1137,11 +1158,27 @@ public class FingerprintService extends SystemService {
         if (Utils.isVirtualEnabled(getContext())) {
             Slog.i(TAG, "Sync virtual enrollments");
             final int userId = ActivityManager.getCurrentUser();
+            final CountDownLatch latch = new CountDownLatch(mRegistry.getProviders().size());
             for (ServiceProvider provider : mRegistry.getProviders()) {
                 for (FingerprintSensorPropertiesInternal props : provider.getSensorProperties()) {
-                    provider.scheduleInternalCleanup(props.sensorId, userId, null /* callback */,
-                            true /* favorHalEnrollments */);
+                    provider.scheduleInternalCleanup(props.sensorId, userId,
+                            new ClientMonitorCallback() {
+                                @Override
+                                public void onClientFinished(
+                                        @NonNull BaseClientMonitor clientMonitor,
+                                        boolean success) {
+                                    latch.countDown();
+                                    if (!success) {
+                                        Slog.e(TAG, "Sync virtual enrollments failed");
+                                    }
+                                }
+                            }, true /* favorHalEnrollments */);
                 }
+            }
+            try {
+                latch.await(3, TimeUnit.SECONDS);
+            } catch (Exception e) {
+                Slog.e(TAG, "Failed to wait for sync finishing", e);
             }
         }
     }

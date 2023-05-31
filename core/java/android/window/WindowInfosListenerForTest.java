@@ -63,10 +63,23 @@ public class WindowInfosListenerForTest {
         @NonNull
         public final Rect bounds;
 
-        WindowInfo(@NonNull IBinder windowToken, @NonNull String name, @NonNull Rect bounds) {
+        /**
+         * True if the window is a trusted overlay.
+         */
+        public final boolean isTrustedOverlay;
+
+        /**
+         * True if the window is visible.
+         */
+        public final boolean isVisible;
+
+        WindowInfo(@NonNull IBinder windowToken, @NonNull String name, @NonNull Rect bounds,
+                int inputConfig) {
             this.windowToken = windowToken;
             this.name = name;
             this.bounds = bounds;
+            this.isTrustedOverlay = (inputConfig & InputConfig.TRUSTED_OVERLAY) != 0;
+            this.isVisible = (inputConfig & InputConfig.NOT_VISIBLE) == 0;
         }
     }
 
@@ -124,12 +137,10 @@ public class WindowInfosListenerForTest {
     private static List<WindowInfo> buildWindowInfos(InputWindowHandle[] windowHandles) {
         var windowInfos = new ArrayList<WindowInfo>(windowHandles.length);
         for (var handle : windowHandles) {
-            if ((handle.inputConfig & InputConfig.NOT_VISIBLE) != 0) {
-                continue;
-            }
             var bounds = new Rect(handle.frameLeft, handle.frameTop, handle.frameRight,
                     handle.frameBottom);
-            windowInfos.add(new WindowInfo(handle.getWindowToken(), handle.name, bounds));
+            windowInfos.add(new WindowInfo(handle.getWindowToken(), handle.name, bounds,
+                    handle.inputConfig));
         }
         return windowInfos;
     }

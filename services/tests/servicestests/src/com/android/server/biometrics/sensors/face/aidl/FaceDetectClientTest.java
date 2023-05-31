@@ -24,6 +24,7 @@ import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.same;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyZeroInteractions;
 import static org.mockito.Mockito.when;
 
 import android.hardware.biometrics.common.AuthenticateReason;
@@ -34,6 +35,7 @@ import android.hardware.face.FaceAuthenticateOptions;
 import android.os.IBinder;
 import android.os.PowerManager;
 import android.os.RemoteException;
+import android.os.Vibrator;
 import android.platform.test.annotations.Presubmit;
 import android.testing.TestableContext;
 
@@ -56,6 +58,8 @@ import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 
+import java.util.function.Consumer;
+
 @Presubmit
 @SmallTest
 public class FaceDetectClientTest {
@@ -73,6 +77,8 @@ public class FaceDetectClientTest {
     @Mock
     private IBinder mToken;
     @Mock
+    private Vibrator mVibrator;
+    @Mock
     private ClientMonitorCallbackConverter mClientMonitorCallbackConverter;
     @Mock
     private BiometricLogger mBiometricLogger;
@@ -84,12 +90,16 @@ public class FaceDetectClientTest {
     private Sensor.HalSessionCallback mHalSessionCallback;
     @Captor
     private ArgumentCaptor<OperationContextExt> mOperationContextCaptor;
+    @Captor
+    private ArgumentCaptor<Consumer<OperationContext>> mContextInjector;
 
     @Rule
     public final MockitoRule mockito = MockitoJUnit.rule();
 
     @Before
     public void setup() {
+        mContext.addMockSystemService(Vibrator.class, mVibrator);
+
         when(mBiometricContext.updateContext(any(), anyBoolean())).thenAnswer(
                 i -> i.getArgument(0));
     }
@@ -119,6 +129,42 @@ public class FaceDetectClientTest {
                 .isEqualTo(AUTH_REASON);
 
         verify(mHal, never()).detectInteraction();
+    }
+
+    @Test
+    public void notifyHalWhenContextChanges() throws RemoteException {
+        final FaceDetectClient client = createClient();
+        client.start(mCallback);
+
+        final ArgumentCaptor<OperationContext> captor =
+                ArgumentCaptor.forClass(OperationContext.class);
+        verify(mHal).detectInteractionWithContext(captor.capture());
+        OperationContext opContext = captor.getValue();
+
+        // fake an update to the context
+        verify(mBiometricContext).subscribe(
+                mOperationContextCaptor.capture(), mContextInjector.capture());
+        assertThat(opContext).isSameInstanceAs(
+                mOperationContextCaptor.getValue().toAidlContext());
+        mContextInjector.getValue().accept(opContext);
+        verify(mHal).onContextChanged(same(opContext));
+
+        client.stopHalOperation();
+        verify(mBiometricContext).unsubscribe(same(mOperationContextCaptor.getValue()));
+    }
+
+    @Test
+    public void doesNotPlayHapticOnInteractionDetected() throws Exception {
+        final FaceDetectClient client = createClient();
+        client.start(mCallback);
+        client.onInteractionDetected();
+        client.stopHalOperation();
+
+        verifyZeroInteractions(mVibrator);
+    }
+
+    private FaceDetectClient createClient() throws RemoteException {
+        return createClient(100 /* version */);
     }
 
     private FaceDetectClient createClient(int version) throws RemoteException {

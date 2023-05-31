@@ -26,7 +26,6 @@ import android.text.method.TextKeyListener;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup.MarginLayoutParams;
-import android.view.WindowInsets;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodInfo;
 import android.view.inputmethod.InputMethodManager;
@@ -41,6 +40,7 @@ import com.android.keyguard.KeyguardSecurityModel.SecurityMode;
 import com.android.systemui.R;
 import com.android.systemui.classifier.FalsingCollector;
 import com.android.systemui.dagger.qualifiers.Main;
+import com.android.systemui.flags.FeatureFlags;
 import com.android.systemui.util.concurrency.DelayableExecutor;
 
 import java.util.List;
@@ -105,10 +105,11 @@ public class KeyguardPasswordViewController
             @Main DelayableExecutor mainExecutor,
             @Main Resources resources,
             FalsingCollector falsingCollector,
-            KeyguardViewController keyguardViewController) {
+            KeyguardViewController keyguardViewController,
+            FeatureFlags featureFlags) {
         super(view, keyguardUpdateMonitor, securityMode, lockPatternUtils, keyguardSecurityCallback,
                 messageAreaControllerFactory, latencyTracker, falsingCollector,
-                emergencyButtonController);
+                emergencyButtonController, featureFlags);
         mKeyguardSecurityCallback = keyguardSecurityCallback;
         mInputMethodManager = inputMethodManager;
         mMainExecutor = mainExecutor;
@@ -157,15 +158,6 @@ public class KeyguardPasswordViewController
         // TODO: Remove this workaround by ensuring such a race condition never happens.
         mMainExecutor.executeDelayed(
                 this::updateSwitchImeButton, DELAY_MILLIS_TO_REEVALUATE_IME_SWITCH_ICON);
-        mView.setOnApplyWindowInsetsListener(new View.OnApplyWindowInsetsListener() {
-            @Override
-            public WindowInsets onApplyWindowInsets(View v, WindowInsets insets) {
-                if (!mKeyguardViewController.isBouncerShowing()) {
-                    mView.hideKeyboard();
-                }
-                return insets;
-            }
-        });
     }
 
     @Override

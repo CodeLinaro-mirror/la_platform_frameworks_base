@@ -16,24 +16,28 @@
 
 package com.android.keyguard.logging
 
+import android.content.Intent
 import android.hardware.biometrics.BiometricConstants.LockoutMode
 import android.os.PowerManager
 import android.os.PowerManager.WakeReason
 import android.telephony.ServiceState
 import android.telephony.SubscriptionInfo
+import android.telephony.SubscriptionManager.EXTRA_SUBSCRIPTION_INDEX
+import android.telephony.SubscriptionManager.INVALID_SUBSCRIPTION_ID
+import android.telephony.TelephonyManager
 import com.android.keyguard.ActiveUnlockConfig
 import com.android.keyguard.FaceAuthUiEvent
 import com.android.keyguard.KeyguardListenModel
 import com.android.keyguard.KeyguardUpdateMonitorCallback
 import com.android.keyguard.TrustGrantFlags
 import com.android.systemui.log.dagger.KeyguardUpdateMonitorLog
-import com.android.systemui.plugins.log.LogBuffer
-import com.android.systemui.plugins.log.LogLevel
-import com.android.systemui.plugins.log.LogLevel.DEBUG
-import com.android.systemui.plugins.log.LogLevel.ERROR
-import com.android.systemui.plugins.log.LogLevel.INFO
-import com.android.systemui.plugins.log.LogLevel.VERBOSE
-import com.android.systemui.plugins.log.LogLevel.WARNING
+import com.android.systemui.log.LogBuffer
+import com.android.systemui.log.LogLevel
+import com.android.systemui.log.LogLevel.DEBUG
+import com.android.systemui.log.LogLevel.ERROR
+import com.android.systemui.log.LogLevel.INFO
+import com.android.systemui.log.LogLevel.VERBOSE
+import com.android.systemui.log.LogLevel.WARNING
 import com.google.errorprone.annotations.CompileTimeConstant
 import javax.inject.Inject
 
@@ -62,6 +66,18 @@ constructor(@KeyguardUpdateMonitorLog private val logBuffer: LogBuffer) {
         )
     }
 
+    fun logActiveUnlockRequestSkippedForWakeReasonDueToFaceConfig(wakeReason: Int) {
+        logBuffer.log(
+            "ActiveUnlock",
+            DEBUG,
+            { int1 = wakeReason },
+            {
+                "Skip requesting active unlock from wake reason that doesn't trigger face auth" +
+                    " reason=${PowerManager.wakeReasonToString(int1)}"
+            }
+        )
+    }
+
     fun logAuthInterruptDetected(active: Boolean) {
         logBuffer.log(TAG, DEBUG, { bool1 = active }, { "onAuthInterruptDetected($bool1)" })
     }
@@ -81,10 +97,6 @@ constructor(@KeyguardUpdateMonitorLog private val logBuffer: LogBuffer) {
 
     fun logException(ex: Exception, @CompileTimeConstant logMsg: String) {
         logBuffer.log(TAG, ERROR, {}, { logMsg }, exception = ex)
-    }
-
-    fun logFaceAcquired(acquireInfo: Int) {
-        logBuffer.log(TAG, DEBUG, { int1 = acquireInfo }, { "Face acquired acquireInfo=$int1" })
     }
 
     fun logFaceAuthDisabledForUser(userId: Int) {
@@ -113,18 +125,6 @@ constructor(@KeyguardUpdateMonitorLog private val logBuffer: LogBuffer) {
             DEBUG,
             { int1 = authUserId },
             { "Face authenticated for wrong user: $int1" }
-        )
-    }
-
-    fun logFaceAuthHelpMsg(msgId: Int, helpMsg: String?) {
-        logBuffer.log(
-            TAG,
-            DEBUG,
-            {
-                int1 = msgId
-                str1 = helpMsg
-            },
-            { "Face help received, msgId: $int1 msg: $str1" }
         )
     }
 
@@ -197,17 +197,27 @@ constructor(@KeyguardUpdateMonitorLog private val logBuffer: LogBuffer) {
     }
 
     fun logFaceDetected(userId: Int, isStrongBiometric: Boolean) {
-        logBuffer.log(TAG, DEBUG, {
-            int1 = userId
-            bool1 = isStrongBiometric
-        }, {"Face detected: userId: $int1, isStrongBiometric: $bool1"})
+        logBuffer.log(
+            TAG,
+            DEBUG,
+            {
+                int1 = userId
+                bool1 = isStrongBiometric
+            },
+            { "Face detected: userId: $int1, isStrongBiometric: $bool1" }
+        )
     }
 
     fun logFingerprintDetected(userId: Int, isStrongBiometric: Boolean) {
-        logBuffer.log(TAG, DEBUG, {
-            int1 = userId
-            bool1 = isStrongBiometric
-        }, {"Fingerprint detected: userId: $int1, isStrongBiometric: $bool1"})
+        logBuffer.log(
+            TAG,
+            DEBUG,
+            {
+                int1 = userId
+                bool1 = isStrongBiometric
+            },
+            { "Fingerprint detected: userId: $int1, isStrongBiometric: $bool1" }
+        )
     }
 
     fun logFingerprintError(msgId: Int, originalErrMsg: String) {
@@ -354,6 +364,21 @@ constructor(@KeyguardUpdateMonitorLog private val logBuffer: LogBuffer) {
                 int1 = subId
             },
             { "action $str1 serviceState=$str2 subId=$int1" }
+        )
+    }
+
+    fun logServiceProvidersUpdated(intent: Intent) {
+        logBuffer.log(
+                TAG,
+                VERBOSE,
+                {
+                    int1 = intent.getIntExtra(EXTRA_SUBSCRIPTION_INDEX, INVALID_SUBSCRIPTION_ID)
+                    str1 = intent.getStringExtra(TelephonyManager.EXTRA_SPN)
+                    str2 = intent.getStringExtra(TelephonyManager.EXTRA_PLMN)
+                },
+                {
+                    "action SERVICE_PROVIDERS_UPDATED subId=$int1 spn=$str1 plmn=$str2"
+                }
         )
     }
 
@@ -659,13 +684,10 @@ constructor(@KeyguardUpdateMonitorLog private val logBuffer: LogBuffer) {
     }
 
     fun logHandleBatteryUpdate(isInteresting: Boolean) {
-        logBuffer.log(
-            TAG,
-            DEBUG,
-            {
-                bool1 = isInteresting
-            },
-            { "handleBatteryUpdate: $bool1" }
-        )
+        logBuffer.log(TAG, DEBUG, { bool1 = isInteresting }, { "handleBatteryUpdate: $bool1" })
+    }
+
+    fun scheduleWatchdog(@CompileTimeConstant watchdogType: String) {
+        logBuffer.log(TAG, DEBUG, "Scheduling biometric watchdog for $watchdogType")
     }
 }

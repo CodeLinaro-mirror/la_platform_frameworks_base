@@ -1420,7 +1420,7 @@ public final class TvInteractiveAppManager {
                 return;
             }
             try {
-                mService.notifyRecordingScheduled(mToken, recordingId, recordingId, mUserId);
+                mService.notifyRecordingScheduled(mToken, recordingId, requestId, mUserId);
             } catch (RemoteException e) {
                 throw e.rethrowFromSystemServer();
             }
@@ -1608,6 +1608,10 @@ public final class TvInteractiveAppManager {
                 mService.notifyAdBufferConsumed(mToken, buffer, mUserId);
             } catch (RemoteException e) {
                 throw e.rethrowFromSystemServer();
+            } finally {
+                if (buffer != null) {
+                    buffer.getSharedMemory().close();
+                }
             }
         }
 

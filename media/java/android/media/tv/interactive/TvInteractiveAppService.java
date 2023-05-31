@@ -69,6 +69,7 @@ import android.widget.FrameLayout;
 
 import com.android.internal.os.SomeArgs;
 
+import java.io.IOException;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
@@ -919,7 +920,13 @@ public abstract class TvInteractiveAppService extends Service {
          *
          * @param type The type of message received, such as
          * {@link TvInputManager#TV_MESSAGE_TYPE_WATERMARK}
-         * @param data The raw data of the message
+         * @param data The raw data of the message. The bundle keys are:
+         *             {@link TvInputManager#TV_MESSAGE_KEY_STREAM_ID},
+         *             {@link TvInputManager#TV_MESSAGE_KEY_GROUP_ID},
+         *             {@link TvInputManager#TV_MESSAGE_KEY_SUBTYPE},
+         *             {@link TvInputManager#TV_MESSAGE_KEY_RAW_DATA}.
+         *             See {@link TvInputManager#TV_MESSAGE_KEY_SUBTYPE} for more information on
+         *             how to parse this data.
          */
         public void onTvMessage(@TvInputManager.TvMessageType int type,
                 @NonNull Bundle data) {
@@ -1957,6 +1964,13 @@ public abstract class TvInteractiveAppService extends Service {
          */
         @CallSuper
         public void notifyAdBufferReady(@NonNull AdBuffer buffer) {
+            AdBuffer dupBuffer;
+            try {
+                dupBuffer = AdBuffer.dupAdBuffer(buffer);
+            } catch (IOException e) {
+                Log.w(TAG, "dup AdBuffer error in notifyAdBufferReady:", e);
+                return;
+            }
             executeOrPostRunnableOnMainThread(new Runnable() {
                 @MainThread
                 @Override
@@ -1967,10 +1981,14 @@ public abstract class TvInteractiveAppService extends Service {
                                     "notifyAdBufferReady(buffer=" + buffer + ")");
                         }
                         if (mSessionCallback != null) {
-                            mSessionCallback.onAdBufferReady(buffer);
+                            mSessionCallback.onAdBufferReady(dupBuffer);
                         }
                     } catch (RemoteException e) {
                         Log.w(TAG, "error in notifyAdBuffer", e);
+                    } finally {
+                        if (dupBuffer != null) {
+                            dupBuffer.getSharedMemory().close();
+                        }
                     }
                 }
             });

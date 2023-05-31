@@ -302,9 +302,16 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
     }
 
     public void forEachLocked(Consumer<LogicalDisplay> consumer) {
+        forEachLocked(consumer, /* includeDisabled= */ true);
+    }
+
+    public void forEachLocked(Consumer<LogicalDisplay> consumer, boolean includeDisabled) {
         final int count = mLogicalDisplays.size();
         for (int i = 0; i < count; i++) {
-            consumer.accept(mLogicalDisplays.valueAt(i));
+            LogicalDisplay display = mLogicalDisplays.valueAt(i);
+            if (display.isEnabledLocked() || includeDisabled) {
+                consumer.accept(display);
+            }
         }
     }
 
@@ -677,7 +684,9 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
         for (int i = mLogicalDisplays.size() - 1; i >= 0; i--) {
             final int displayId = mLogicalDisplays.keyAt(i);
             LogicalDisplay display = mLogicalDisplays.valueAt(i);
+            assignDisplayGroupLocked(display);
 
+            boolean wasDirty = display.isDirtyLocked();
             mTempDisplayInfo.copyFrom(display.getDisplayInfoLocked());
             display.getNonOverrideDisplayInfoLocked(mTempNonOverrideDisplayInfo);
 
@@ -711,19 +720,14 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
             // The display is new.
             } else if (!wasPreviouslyUpdated) {
                 Slog.i(TAG, "Adding new display: " + displayId + ": " + newDisplayInfo);
-                assignDisplayGroupLocked(display);
                 mLogicalDisplaysToUpdate.put(displayId, LOGICAL_DISPLAY_EVENT_ADDED);
 
             // Underlying displays device has changed to a different one.
             } else if (!TextUtils.equals(mTempDisplayInfo.uniqueId, newDisplayInfo.uniqueId)) {
-                // FLAG_OWN_DISPLAY_GROUP could have changed, recalculate just in case
-                assignDisplayGroupLocked(display);
                 mLogicalDisplaysToUpdate.put(displayId, LOGICAL_DISPLAY_EVENT_SWAPPED);
 
             // Something about the display device has changed.
-            } else if (!mTempDisplayInfo.equals(newDisplayInfo)) {
-                // FLAG_OWN_DISPLAY_GROUP could have changed, recalculate just in case
-                assignDisplayGroupLocked(display);
+            } else if (wasDirty || !mTempDisplayInfo.equals(newDisplayInfo)) {
                 // If only the hdr/sdr ratio changed, then send just the event for that case
                 if ((diff == DisplayDeviceInfo.DIFF_HDR_SDR_RATIO)) {
                     mLogicalDisplaysToUpdate.put(displayId,
@@ -849,9 +853,18 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
         }
     }
 
+    /** This method should be called before LogicalDisplay.updateLocked,
+     * DisplayInfo in LogicalDisplay (display.getDisplayInfoLocked()) is not updated yet,
+     * and should not be used directly or indirectly in this method */
     private void assignDisplayGroupLocked(LogicalDisplay display) {
+        if (!display.isValidLocked()) { // null check for display.mPrimaryDisplayDevice
+            return;
+        }
+        // updated primary device directly from LogicalDisplay (not from DisplayInfo)
+        final DisplayDevice displayDevice = display.getPrimaryDisplayDeviceLocked();
+        // final in LogicalDisplay
         final int displayId = display.getDisplayIdLocked();
-        final String primaryDisplayUniqueId = display.getPrimaryDisplayDeviceLocked().getUniqueId();
+        final String primaryDisplayUniqueId = displayDevice.getUniqueId();
         final Integer linkedDeviceUniqueId =
                 mVirtualDeviceDisplayMapping.get(primaryDisplayUniqueId);
 
@@ -864,8 +877,17 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
         }
         final DisplayGroup oldGroup = getDisplayGroupLocked(groupId);
 
-        // Get the new display group if a change is needed
-        final boolean needsOwnDisplayGroup = display.needsOwnDisplayGroupLocked();
+        // groupName directly from LogicalDisplay (not from DisplayInfo)
+        final String groupName = display.getDisplayGroupNameLocked();
+        // DisplayDeviceInfo is safe to use, it is updated earlier
+        final DisplayDeviceInfo displayDeviceInfo = displayDevice.getDisplayDeviceInfoLocked();
+        // Get the new display group if a change is needed, if display group name is empty and
+        // {@code DisplayDeviceInfo.FLAG_OWN_DISPLAY_GROUP} is not set, the display is assigned
+        // to the default display group.
+        final boolean needsOwnDisplayGroup =
+                (displayDeviceInfo.flags & DisplayDeviceInfo.FLAG_OWN_DISPLAY_GROUP) != 0
+                        || !TextUtils.isEmpty(groupName);
+
         final boolean hasOwnDisplayGroup = groupId != Display.DEFAULT_DISPLAY_GROUP;
         final boolean needsDeviceDisplayGroup =
                 !needsOwnDisplayGroup && linkedDeviceUniqueId != null;
@@ -1020,17 +1042,17 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
             newDisplay.updateLayoutLimitedRefreshRateLocked(
                     config.getRefreshRange(displayLayout.getRefreshRateZoneId())
             );
-            newDisplay.updateRefreshRateThermalThrottling(
-                    config.getRefreshRateThrottlingData(
+            newDisplay.updateThermalRefreshRateThrottling(
+                    config.getThermalRefreshRateThrottlingData(
                             displayLayout.getRefreshRateThermalThrottlingMapId()
                     )
             );
 
             setEnabledLocked(newDisplay, displayLayout.isEnabled());
-            newDisplay.setBrightnessThrottlingDataIdLocked(
-                    displayLayout.getBrightnessThrottlingMapId() == null
+            newDisplay.setThermalBrightnessThrottlingDataIdLocked(
+                    displayLayout.getThermalBrightnessThrottlingMapId() == null
                             ? DisplayDeviceConfig.DEFAULT_ID
-                            : displayLayout.getBrightnessThrottlingMapId());
+                            : displayLayout.getThermalBrightnessThrottlingMapId());
 
             newDisplay.setDisplayGroupNameLocked(displayLayout.getDisplayGroupName());
         }

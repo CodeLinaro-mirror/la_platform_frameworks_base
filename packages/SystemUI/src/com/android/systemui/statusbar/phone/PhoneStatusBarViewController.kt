@@ -26,6 +26,8 @@ import android.view.ViewGroup
 import android.view.ViewTreeObserver
 import com.android.systemui.Gefingerpoken
 import com.android.systemui.R
+import com.android.systemui.flags.FeatureFlags
+import com.android.systemui.flags.Flags
 import com.android.systemui.shade.ShadeController
 import com.android.systemui.shade.ShadeLogger
 import com.android.systemui.shared.animation.UnfoldMoveFromCenterAnimator
@@ -163,19 +165,19 @@ class PhoneStatusBarViewController private constructor(
             if (event.action == MotionEvent.ACTION_DOWN) {
                 // If the view that would receive the touch is disabled, just have status
                 // bar eat the gesture.
-                if (!centralSurfaces.notificationPanelViewController.isViewEnabled) {
+                if (!centralSurfaces.shadeViewController.isViewEnabled) {
                     shadeLogger.logMotionEvent(event,
                             "onTouchForwardedFromStatusBar: panel view disabled")
                     return true
                 }
-                if (centralSurfaces.notificationPanelViewController.isFullyCollapsed &&
+                if (centralSurfaces.shadeViewController.isFullyCollapsed &&
                         event.y < 1f) {
                     // b/235889526 Eat events on the top edge of the phone when collapsed
                     shadeLogger.logMotionEvent(event, "top edge touch ignored")
                     return true
                 }
             }
-            return centralSurfaces.notificationPanelViewController.handleExternalTouch(event)
+            return centralSurfaces.shadeViewController.handleExternalTouch(event)
         }
     }
 
@@ -215,6 +217,7 @@ class PhoneStatusBarViewController private constructor(
         private val unfoldComponent: Optional<SysUIUnfoldComponent>,
         @Named(UNFOLD_STATUS_BAR)
         private val progressProvider: Optional<ScopedUnfoldTransitionProgressProvider>,
+        private val featureFlags: FeatureFlags,
         private val userChipViewModel: StatusBarUserChipViewModel,
         private val centralSurfaces: CentralSurfaces,
         private val shadeController: ShadeController,
@@ -224,17 +227,25 @@ class PhoneStatusBarViewController private constructor(
     ) {
         fun create(
             view: PhoneStatusBarView
-        ) =
-            PhoneStatusBarViewController(
-                view,
-                progressProvider.getOrNull(),
-                centralSurfaces,
-                shadeController,
-                shadeLogger,
-                unfoldComponent.getOrNull()?.getStatusBarMoveFromCenterAnimationController(),
-                userChipViewModel,
-                viewUtil,
-                configurationController
+        ): PhoneStatusBarViewController {
+            val statusBarMoveFromCenterAnimationController =
+                    if (featureFlags.isEnabled(Flags.ENABLE_UNFOLD_STATUS_BAR_ANIMATIONS)) {
+                        unfoldComponent.getOrNull()?.getStatusBarMoveFromCenterAnimationController()
+                    } else {
+                        null
+                    }
+
+            return PhoneStatusBarViewController(
+                    view,
+                    progressProvider.getOrNull(),
+                    centralSurfaces,
+                    shadeController,
+                    shadeLogger,
+                    statusBarMoveFromCenterAnimationController,
+                    userChipViewModel,
+                    viewUtil,
+                    configurationController
             )
+        }
     }
 }

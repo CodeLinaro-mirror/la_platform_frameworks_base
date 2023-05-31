@@ -47,7 +47,6 @@ import android.util.FloatProperty;
 import android.util.IndentingPrintWriter;
 import android.util.Log;
 import android.util.MathUtils;
-import android.util.Property;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
@@ -65,14 +64,15 @@ import android.widget.ImageView;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import com.android.app.animation.Interpolators;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.logging.MetricsLogger;
 import com.android.internal.logging.nano.MetricsProto.MetricsEvent;
+import com.android.internal.statusbar.IStatusBarService;
 import com.android.internal.util.ContrastColorUtil;
 import com.android.internal.widget.CachingIconView;
 import com.android.internal.widget.CallLayout;
 import com.android.systemui.R;
-import com.android.systemui.animation.Interpolators;
 import com.android.systemui.classifier.FalsingCollector;
 import com.android.systemui.flags.FeatureFlags;
 import com.android.systemui.flags.Flags;
@@ -87,7 +87,6 @@ import com.android.systemui.statusbar.StatusBarIconView;
 import com.android.systemui.statusbar.notification.AboveShelfChangedListener;
 import com.android.systemui.statusbar.notification.FeedbackIcon;
 import com.android.systemui.statusbar.notification.LaunchAnimationParameters;
-import com.android.systemui.statusbar.notification.LegacySourceType;
 import com.android.systemui.statusbar.notification.NotificationFadeAware;
 import com.android.systemui.statusbar.notification.NotificationLaunchAnimatorController;
 import com.android.systemui.statusbar.notification.NotificationUtils;
@@ -146,6 +145,7 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
     // the background on first content update just in case it happens to be during a theme change.
     private boolean mUpdateSelfBackgroundOnUpdate = true;
     private boolean mIsSnoozed;
+    private boolean mShowSnooze = false;
     private boolean mIsFaded;
     private boolean mAnimatePinnedRoundness = false;
 
@@ -184,7 +184,6 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
     private int mMaxSmallHeight;
     private int mMaxSmallHeightLarge;
     private int mMaxExpandedHeight;
-    private int mIncreasedPaddingBetweenElements;
     private int mNotificationLaunchHeight;
     private boolean mMustStayOnScreen;
 
@@ -299,6 +298,16 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
      */
     private boolean mShowGroupBackgroundWhenExpanded;
 
+    /**
+     * True if we always show the collapsed layout on lockscreen because vertical space is low.
+     */
+    private boolean mSaveSpaceOnLockscreen;
+
+    /**
+     * True if we use intrinsic height regardless of vertical space available on lockscreen.
+     */
+    private boolean mIgnoreLockscreenConstraints;
+
     private OnClickListener mExpandClickListener = new OnClickListener() {
         @Override
         public void onClick(View v) {
@@ -336,8 +345,8 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
     };
     private boolean mKeepInParentForDismissAnimation;
     private boolean mRemoved;
-    private static final Property<ExpandableNotificationRow, Float> TRANSLATE_CONTENT =
-            new FloatProperty<ExpandableNotificationRow>("translate") {
+    public static final FloatProperty<ExpandableNotificationRow> TRANSLATE_CONTENT =
+            new FloatProperty<>("translate") {
                 @Override
                 public void setValue(ExpandableNotificationRow object, float value) {
                     object.setTranslation(value);
@@ -348,6 +357,7 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
                     return object.getTranslation();
                 }
             };
+
     private OnClickListener mOnClickListener;
     private OnDragSuccessListener mOnDragSuccessListener;
     private boolean mHeadsupDisappearRunning;
@@ -393,6 +403,14 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
         return mGroupExpansionChanging;
     }
 
+    public void setSaveSpaceOnLockscreen(boolean saveSpace) {
+        mSaveSpaceOnLockscreen = saveSpace;
+    }
+
+    public boolean getSaveSpaceOnLockscreen() {
+        return mSaveSpaceOnLockscreen;
+    }
+
     public void setGroupExpansionChanging(boolean changing) {
         mGroupExpansionChanging = changing;
     }
@@ -418,15 +436,9 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
      */
     public void setAnimationRunning(boolean running) {
         // Sets animations running in the private/public layouts.
-        if (mFeatureFlags.isEnabled(Flags.NOTIFICATION_ANIMATE_BIG_PICTURE)) {
-            for (NotificationContentView l : mLayouts) {
-                if (l != null) {
-                    l.setContentAnimationRunning(running);
-                    setIconAnimationRunning(running, l);
-                }
-            }
-        } else {
-            for (NotificationContentView l : mLayouts) {
+        for (NotificationContentView l : mLayouts) {
+            if (l != null) {
+                l.setContentAnimationRunning(running);
                 setIconAnimationRunning(running, l);
             }
         }
@@ -854,9 +866,6 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
         }
         onAttachedChildrenCountChanged();
         row.setIsChildInGroup(false, null);
-        if (!mUseRoundnessSourceTypes) {
-            row.requestBottomRoundness(0.0f, LegacySourceType.DefaultValue, /* animate = */ false);
-        }
     }
 
     /**
@@ -872,10 +881,6 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
             if (child.keepInParentForDismissAnimation()) {
                 mChildrenContainer.removeNotification(child);
                 child.setIsChildInGroup(false, null);
-                if (!mUseRoundnessSourceTypes) {
-                    LegacySourceType sourceType = LegacySourceType.DefaultValue;
-                    child.requestBottomRoundness(0f, sourceType, /* animate = */ false);
-                }
                 child.setKeepInParentForDismissAnimation(false);
                 logKeepInParentChildDetached(child);
                 childCountChanged = true;
@@ -930,9 +935,7 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
             mNotificationParent.updateBackgroundForGroupState();
         }
         updateBackgroundClipping();
-        if (mUseRoundnessSourceTypes) {
-            updateBaseRoundness();
-        }
+        updateBaseRoundness();
     }
 
     @Override
@@ -953,15 +956,6 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
         } else {
             return false;
         }
-    }
-
-    @Override
-    protected boolean handleSlideBack() {
-        if (mMenuRow != null && mMenuRow.isMenuVisible()) {
-            animateResetTranslation();
-            return true;
-        }
-        return false;
     }
 
     @Override
@@ -1051,15 +1045,13 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
         if (isAboveShelf() != wasAboveShelf) {
             mAboveShelfChangedListener.onAboveShelfStateChanged(!wasAboveShelf);
         }
-        if (mUseRoundnessSourceTypes) {
-            if (pinned) {
-                // Should be animated if someone explicitly set it to 0 and the row is shown.
-                boolean animated = mAnimatePinnedRoundness && isShown();
-                requestRoundness(/* top = */ 1f, /* bottom = */ 1f, PINNED, animated);
-            } else {
-                requestRoundnessReset(PINNED);
-                mAnimatePinnedRoundness = true;
-            }
+        if (pinned) {
+            // Should be animated if someone explicitly set it to 0 and the row is shown.
+            boolean animated = mAnimatePinnedRoundness && isShown();
+            requestRoundness(/* top = */ 1f, /* bottom = */ 1f, PINNED, animated);
+        } else {
+            requestRoundnessReset(PINNED);
+            mAnimatePinnedRoundness = true;
         }
     }
 
@@ -1672,7 +1664,8 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
             MetricsLogger metricsLogger,
             SmartReplyConstants smartReplyConstants,
             SmartReplyController smartReplyController,
-            FeatureFlags featureFlags) {
+            FeatureFlags featureFlags,
+            IStatusBarService statusBarService) {
         mEntry = entry;
         mAppName = appName;
         if (mMenuRow == null) {
@@ -1700,7 +1693,8 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
                     mPeopleNotificationIdentifier,
                     rivSubcomponentFactory,
                     smartReplyConstants,
-                    smartReplyController);
+                    smartReplyController,
+                    statusBarService);
         }
         mOnUserInteractionCallback = onUserInteractionCallback;
         mBubblesManagerOptional = bubblesManagerOptional;
@@ -1874,7 +1868,6 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
             mChildrenContainer.setIsLowPriority(mIsLowPriority);
             mChildrenContainer.setContainingNotification(ExpandableNotificationRow.this);
             mChildrenContainer.onNotificationUpdated();
-            mChildrenContainer.useRoundnessSourceTypes(mUseRoundnessSourceTypes);
 
             mTranslateableViews.add(mChildrenContainer);
         });
@@ -2175,6 +2168,13 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
         return translateAnim;
     }
 
+    /** Cancels the ongoing translate animation if there is any. */
+    public void cancelTranslateAnimation() {
+        if (mTranslateAnim != null) {
+            mTranslateAnim.cancel();
+        }
+    }
+
     void ensureGutsInflated() {
         if (mGuts == null) {
             mGutsStub.inflate();
@@ -2294,24 +2294,6 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
         invalidateOutline();
 
         mBackgroundNormal.setExpandAnimationSize(params.getWidth(), actualHeight);
-    }
-
-    @Override
-    public float getTopRoundness() {
-        if (!mUseRoundnessSourceTypes && mExpandAnimationRunning) {
-            return mTopRoundnessDuringLaunchAnimation;
-        }
-
-        return super.getTopRoundness();
-    }
-
-    @Override
-    public float getBottomRoundness() {
-        if (!mUseRoundnessSourceTypes && mExpandAnimationRunning) {
-            return mBottomRoundnessDuringLaunchAnimation;
-        }
-
-        return super.getBottomRoundness();
     }
 
     public void setExpandAnimationRunning(boolean expandAnimationRunning) {
@@ -2543,11 +2525,18 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
     }
 
     @Override
+    public int getHeightWithoutLockscreenConstraints() {
+        mIgnoreLockscreenConstraints = true;
+        final int height = getIntrinsicHeight();
+        mIgnoreLockscreenConstraints = false;
+        return height;
+    }
+
+    @Override
     public int getIntrinsicHeight() {
         if (isUserLocked()) {
             return getActualHeight();
-        }
-        if (mGuts != null && mGuts.isExposed()) {
+        } else if (mGuts != null && mGuts.isExposed()) {
             return mGuts.getIntrinsicHeight();
         } else if ((isChildInGroup() && !isGroupExpanded())) {
             return mPrivateLayout.getMinHeight();
@@ -2569,13 +2558,14 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
             return getCollapsedHeight();
         }
     }
-
     /**
      * @return {@code true} if the notification can show it's heads up layout. This is mostly true
      * except for legacy use cases.
      */
     public boolean canShowHeadsUp() {
-        if (mOnKeyguard && !isDozing() && !isBypassEnabled() && !mEntry.isStickyAndNotDemoted()) {
+        if (mOnKeyguard && !isDozing() && !isBypassEnabled() &&
+                (!mEntry.isStickyAndNotDemoted()
+                        || (!mIgnoreLockscreenConstraints && mSaveSpaceOnLockscreen))) {
             return false;
         }
         return true;
@@ -3065,14 +3055,6 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
         return showingLayout != null && showingLayout.requireRowToHaveOverlappingRendering();
     }
 
-    @Override
-    public int getExtraBottomPadding() {
-        if (mIsSummaryWithChildren && isGroupExpanded()) {
-            return mIncreasedPaddingBetweenElements;
-        }
-        return 0;
-    }
-
     public void setInlineReplyAnimationFlagEnabled(boolean isEnabled) {
         mIsInlineReplyAnimationFlagEnabled = isEnabled;
     }
@@ -3477,18 +3459,11 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
 
     private void applyChildrenRoundness() {
         if (mIsSummaryWithChildren) {
-            if (mUseRoundnessSourceTypes) {
-                mChildrenContainer.requestRoundness(
-                        /* top = */ getTopRoundness(),
-                        /* bottom = */ getBottomRoundness(),
-                        /* sourceType = */ FROM_PARENT,
-                        /* animate = */ false);
-            } else {
-                mChildrenContainer.requestBottomRoundness(
-                        getBottomRoundness(),
-                        LegacySourceType.DefaultValue,
-                        /* animate = */ false);
-            }
+            mChildrenContainer.requestRoundness(
+                    /* top = */ getTopRoundness(),
+                    /* bottom = */ getBottomRoundness(),
+                    /* sourceType = */ FROM_PARENT,
+                    /* animate = */ false);
         }
     }
 
@@ -3627,6 +3602,7 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
         // Skip super call; dump viewState ourselves
         pw.println("Notification: " + mEntry.getKey());
         DumpUtilsKt.withIncreasedIndent(pw, () -> {
+            pw.println(this);
             pw.print("visibility: " + getVisibility());
             pw.print(", alpha: " + getAlpha());
             pw.print(", translation: " + getTranslation());
@@ -3645,16 +3621,13 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
             } else {
                 pw.println("no viewState!!!");
             }
-            pw.println("Roundness: " + getRoundableState().debugString());
+            pw.println(getRoundableState().debugString());
+            dumpBackgroundView(pw, args);
 
             int transientViewCount = mChildrenContainer == null
                     ? 0 : mChildrenContainer.getTransientViewCount();
             if (mIsSummaryWithChildren || transientViewCount > 0) {
-                pw.println();
-                pw.print("ChildrenContainer");
-                pw.print(" visibility: " + mChildrenContainer.getVisibility());
-                pw.print(", alpha: " + mChildrenContainer.getAlpha());
-                pw.print(", translationY: " + mChildrenContainer.getTranslationY());
+                pw.println(mChildrenContainer.debugString());
                 pw.println();
                 List<ExpandableNotificationRow> notificationChildren = getAttachedChildren();
                 pw.print("Children: " + notificationChildren.size() + " {");
@@ -3709,29 +3682,19 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
         }
     }
 
-    /**
-     * Enable the support for rounded corner based on the SourceType
-     * @param enabled true if is supported
-     */
-    @Override
-    public void useRoundnessSourceTypes(boolean enabled) {
-        super.useRoundnessSourceTypes(enabled);
-        if (mChildrenContainer != null) {
-            mChildrenContainer.useRoundnessSourceTypes(mUseRoundnessSourceTypes);
-        }
-    }
-
-    @Override
-    public String toString() {
-        String roundableStateDebug = "RoundableState = " + getRoundableState().debugString();
-        return "ExpandableNotificationRow:" + hashCode() + " { " + roundableStateDebug + " }";
-    }
-
     @Override
     protected void onAttachedToWindow() {
         super.onAttachedToWindow();
-        if (mUseRoundnessSourceTypes) {
-            updateBaseRoundness();
-        }
+        updateBaseRoundness();
+    }
+
+    /** Set whether this notification may show a snooze action. */
+    public void setShowSnooze(boolean showSnooze) {
+        mShowSnooze = showSnooze;
+    }
+
+    /** Whether this notification may show a snooze action. */
+    public boolean getShowSnooze() {
+        return mShowSnooze;
     }
 }

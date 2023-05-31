@@ -99,39 +99,34 @@ public class AutofillFeatureFlags {
             "autofill_dialog_hints";
 
     // START CREDENTIAL MANAGER FLAGS //
-
     /**
-     * Indicates whether credential manager tagged views should be ignored from autofill structures.
-     * This flag is further gated by {@link #DEVICE_CONFIG_AUTOFILL_CREDENTIAL_MANAGER_ENABLED}
+     * (deprecated) Indicates whether credential manager tagged views should be ignored from
+     * autofill structures.This flag is further gated by
+     * {@link #DEVICE_CONFIG_AUTOFILL_CREDENTIAL_MANAGER_ENABLED}
+     *
+     * TODO(b/280661772): Remove this flag once API change is allowed
      */
     public static final String DEVICE_CONFIG_AUTOFILL_CREDENTIAL_MANAGER_IGNORE_VIEWS =
             "autofill_credential_manager_ignore_views";
 
     /**
-     * Indicates CredentialManager feature enabled or not.
+     * (deprecated) Indicates CredentialManager feature enabled or not.
      * This is the overall feature flag. Individual behavior of credential manager may be controlled
      * via a different flag, but gated by this flag.
+     *
+     * TODO(b/280661772): Remove this flag once API change is allowed
      */
     public static final String DEVICE_CONFIG_AUTOFILL_CREDENTIAL_MANAGER_ENABLED =
             "autofill_credential_manager_enabled";
 
     /**
-     * Indicates whether credential manager tagged views should suppress fill dialog.
+     * Indicates whether credential manager tagged views should suppress fill and save dialog.
      * This flag is further gated by {@link #DEVICE_CONFIG_AUTOFILL_CREDENTIAL_MANAGER_ENABLED}
      *
      * @hide
      */
-    public static final String DEVICE_CONFIG_AUTOFILL_CREDENTIAL_MANAGER_SUPPRESS_FILL_DIALOG =
-            "autofill_credential_manager_suppress_fill_dialog";
-
-    /**
-     * Indicates whether credential manager tagged views should suppress save dialog.
-     * This flag is further gated by {@link #DEVICE_CONFIG_AUTOFILL_CREDENTIAL_MANAGER_ENABLED}
-     *
-     * @hide
-     */
-    public static final String DEVICE_CONFIG_AUTOFILL_CREDENTIAL_MANAGER_SUPPRESS_SAVE_DIALOG =
-            "autofill_credential_manager_suppress_save_dialog";
+    public static final String DEVICE_CONFIG_AUTOFILL_CREDENTIAL_MANAGER_SUPPRESS_FILL_AND_SAVE_DIALOG =
+            "autofill_credential_manager_suppress_fill_and_save_dialog";
     // END CREDENTIAL MANAGER FLAGS //
 
     // START AUTOFILL FOR ALL APPS FLAGS //
@@ -148,6 +143,15 @@ public class AutofillFeatureFlags {
      */
     public static final String DEVICE_CONFIG_PACKAGE_DENYLIST_FOR_UNIMPORTANT_VIEW =
             "package_deny_list_for_unimportant_view";
+
+    /**
+     * Sets the list of activities and packages allowed for autofill. The format is same with
+     * {@link #DEVICE_CONFIG_PACKAGE_DENYLIST_FOR_UNIMPORTANT_VIEW}
+     *
+     * @hide
+     */
+    public static final String DEVICE_CONFIG_PACKAGE_AND_ACTIVITY_ALLOWLIST_FOR_TRIGGERING_FILL_REQUEST =
+            "package_and_activity_allowlist_for_triggering_fill_request";
 
     /**
      * Whether the heuristics check for view is enabled
@@ -183,6 +187,33 @@ public class AutofillFeatureFlags {
      */
     public static final String DEVICE_CONFIG_SHOULD_ENABLE_AUTOFILL_ON_ALL_VIEW_TYPES =
             "should_enable_autofill_on_all_view_types";
+
+    /**
+     * Whether to enable multi-line filter when checking if view is autofillable
+     *
+     * @hide
+     */
+    public static final String DEVICE_CONFIG_MULTILINE_FILTER_ENABLED =
+            "multiline_filter_enabled";
+
+    /**
+     * Whether include all autofill type not none views in assist structure
+     *
+     * @hide
+     */
+    public static final String
+        DEVICE_CONFIG_INCLUDE_ALL_AUTOFILL_TYPE_NOT_NONE_VIEWS_IN_ASSIST_STRUCTURE =
+            "include_all_autofill_type_not_none_views_in_assist_structure";
+
+    /**
+     * Whether include all views in assist structure
+     *
+     * @hide
+     */
+    public static final String
+        DEVICE_CONFIG_INCLUDE_ALL_VIEWS_IN_ASSIST_STRUCTURE =
+            "include_all_views_in_assist_structure";
+
     // END AUTOFILL FOR ALL APPS FLAGS //
 
 
@@ -234,11 +265,7 @@ public class AutofillFeatureFlags {
 
 
     // CREDENTIAL MANAGER DEFAULTS
-    // Credential manager is enabled by default so as to allow testing by app developers
-    private static final boolean DEFAULT_CREDENTIAL_MANAGER_ENABLED = true;
-    private static final boolean DEFAULT_CREDENTIAL_MANAGER_IGNORE_VIEWS = true;
-    private static final boolean DEFAULT_CREDENTIAL_MANAGER_SUPPRESS_FILL_DIALOG = false;
-    private static final boolean DEFAULT_CREDENTIAL_MANAGER_SUPPRESS_SAVE_DIALOG = false;
+    private static final boolean DEFAULT_CREDENTIAL_MANAGER_SUPPRESS_FILL_AND_SAVE_DIALOG = true;
     // END CREDENTIAL MANAGER DEFAULTS
 
 
@@ -248,6 +275,14 @@ public class AutofillFeatureFlags {
     public static final boolean DEFAULT_AUTOFILL_PCC_CLASSIFICATION_ENABLED = false;
     // END AUTOFILL PCC CLASSIFICATION FLAGS DEFAULTS
 
+    // AUTOFILL FOR ALL APPS DEFAULTS
+    private static final boolean DEFAULT_AFAA_ON_UNIMPORTANT_VIEW_ENABLED = true;
+    private static final boolean DEFAULT_AFAA_ON_IMPORTANT_VIEW_ENABLED = true;
+    private static final String DEFAULT_AFAA_DENYLIST = "";
+    private static final String DEFAULT_AFAA_ALLOWLIST = "";
+    private static final String DEFAULT_AFAA_NON_AUTOFILLABLE_IME_ACTIONS = "3,4";
+    private static final boolean DEFAULT_AFAA_SHOULD_ENABLE_AUTOFILL_ON_ALL_VIEW_TYPES = true;
+    private static final boolean DEFAULT_AFAA_SHOULD_ENABLE_MULTILINE_FILTER = true;
 
     private AutofillFeatureFlags() {};
 
@@ -281,43 +316,19 @@ public class AutofillFeatureFlags {
                 (str) -> !TextUtils.isEmpty(str));
     }
 
-    /**
-     * Whether the Credential Manager feature is enabled or not
-     *
-     * @hide
-     */
-    public static boolean isCredentialManagerEnabled() {
-        return DeviceConfig.getBoolean(
-                DeviceConfig.NAMESPACE_AUTOFILL,
-                DEVICE_CONFIG_AUTOFILL_CREDENTIAL_MANAGER_ENABLED,
-                DEFAULT_CREDENTIAL_MANAGER_ENABLED);
-    }
-
-    /**
-     * Whether credential manager tagged views should be ignored for autofill structure.
-     *
-     * @hide
-     */
-    public static boolean shouldIgnoreCredentialViews() {
-        return isCredentialManagerEnabled()
-                && DeviceConfig.getBoolean(
-                DeviceConfig.NAMESPACE_AUTOFILL,
-                DEVICE_CONFIG_AUTOFILL_CREDENTIAL_MANAGER_IGNORE_VIEWS,
-                DEFAULT_CREDENTIAL_MANAGER_IGNORE_VIEWS);
-    }
-
+    /* starts credman flag getter function */
     /**
      * Whether credential manager tagged views should not trigger fill dialog requests.
      *
      * @hide
      */
-    public static boolean isFillDialogDisabledForCredentialManager() {
-        return isCredentialManagerEnabled()
-                && DeviceConfig.getBoolean(
-                DeviceConfig.NAMESPACE_AUTOFILL,
-                DEVICE_CONFIG_AUTOFILL_CREDENTIAL_MANAGER_SUPPRESS_FILL_DIALOG,
-                DEFAULT_CREDENTIAL_MANAGER_SUPPRESS_FILL_DIALOG);
+    public static boolean isFillAndSaveDialogDisabledForCredentialManager() {
+        return DeviceConfig.getBoolean(
+                    DeviceConfig.NAMESPACE_AUTOFILL,
+                    DEVICE_CONFIG_AUTOFILL_CREDENTIAL_MANAGER_SUPPRESS_FILL_AND_SAVE_DIALOG,
+                    DEFAULT_CREDENTIAL_MANAGER_SUPPRESS_FILL_AND_SAVE_DIALOG);
     }
+    /* ends credman flag getter function */
 
     /**
      * Whether triggering fill request on unimportant view is enabled.
@@ -327,7 +338,8 @@ public class AutofillFeatureFlags {
     public static boolean isTriggerFillRequestOnUnimportantViewEnabled() {
         return DeviceConfig.getBoolean(
             DeviceConfig.NAMESPACE_AUTOFILL,
-            DEVICE_CONFIG_TRIGGER_FILL_REQUEST_ON_UNIMPORTANT_VIEW, false);
+            DEVICE_CONFIG_TRIGGER_FILL_REQUEST_ON_UNIMPORTANT_VIEW,
+            DEFAULT_AFAA_ON_UNIMPORTANT_VIEW_ENABLED);
     }
 
     /**
@@ -338,7 +350,8 @@ public class AutofillFeatureFlags {
     public static boolean isTriggerFillRequestOnFilteredImportantViewsEnabled() {
         return DeviceConfig.getBoolean(
             DeviceConfig.NAMESPACE_AUTOFILL,
-            DEVICE_CONFIG_TRIGGER_FILL_REQUEST_ON_FILTERED_IMPORTANT_VIEWS, false);
+            DEVICE_CONFIG_TRIGGER_FILL_REQUEST_ON_FILTERED_IMPORTANT_VIEWS,
+            DEFAULT_AFAA_ON_IMPORTANT_VIEW_ENABLED);
     }
 
     /**
@@ -349,7 +362,8 @@ public class AutofillFeatureFlags {
     public static boolean shouldEnableAutofillOnAllViewTypes(){
         return DeviceConfig.getBoolean(
             DeviceConfig.NAMESPACE_AUTOFILL,
-            DEVICE_CONFIG_SHOULD_ENABLE_AUTOFILL_ON_ALL_VIEW_TYPES, false);
+            DEVICE_CONFIG_SHOULD_ENABLE_AUTOFILL_ON_ALL_VIEW_TYPES,
+            DEFAULT_AFAA_SHOULD_ENABLE_AUTOFILL_ON_ALL_VIEW_TYPES);
     }
 
     /**
@@ -360,21 +374,72 @@ public class AutofillFeatureFlags {
      */
     public static Set<String> getNonAutofillableImeActionIdSetFromFlag() {
         final String mNonAutofillableImeActions = DeviceConfig.getString(
-                DeviceConfig.NAMESPACE_AUTOFILL, DEVICE_CONFIG_NON_AUTOFILLABLE_IME_ACTION_IDS, "");
+                DeviceConfig.NAMESPACE_AUTOFILL,
+                DEVICE_CONFIG_NON_AUTOFILLABLE_IME_ACTION_IDS,
+                DEFAULT_AFAA_NON_AUTOFILLABLE_IME_ACTIONS);
         return new ArraySet<>(Arrays.asList(mNonAutofillableImeActions.split(",")));
     }
 
     /**
-     * Get denylist string from flag
+     * Get denylist string from flag.
+     *
+     * Note: This denylist works both on important view and not important views. The flag used here
+     * is legacy flag which will be replaced with soon.
      *
      * @hide
      */
     public static String getDenylistStringFromFlag() {
         return DeviceConfig.getString(
             DeviceConfig.NAMESPACE_AUTOFILL,
-            DEVICE_CONFIG_PACKAGE_DENYLIST_FOR_UNIMPORTANT_VIEW, "");
+            DEVICE_CONFIG_PACKAGE_DENYLIST_FOR_UNIMPORTANT_VIEW,
+            DEFAULT_AFAA_DENYLIST);
     }
 
+    /**
+     * Get autofill allowlist from flag
+     *
+     * @hide
+     */
+    public static String getAllowlistStringFromFlag() {
+        return DeviceConfig.getString(
+            DeviceConfig.NAMESPACE_AUTOFILL,
+            DEVICE_CONFIG_PACKAGE_AND_ACTIVITY_ALLOWLIST_FOR_TRIGGERING_FILL_REQUEST,
+            DEFAULT_AFAA_ALLOWLIST);
+    }
+    /**
+     * Whether include all views that have autofill type not none in assist structure.
+     *
+     * @hide
+     */
+    public static boolean shouldIncludeAllViewsAutofillTypeNotNoneInAssistStructrue() {
+        return DeviceConfig.getBoolean(
+            DeviceConfig.NAMESPACE_AUTOFILL,
+            DEVICE_CONFIG_INCLUDE_ALL_AUTOFILL_TYPE_NOT_NONE_VIEWS_IN_ASSIST_STRUCTURE, false);
+    }
+
+    /**
+     * Whether include all views in assist structure.
+     *
+     * @hide
+     */
+    public static boolean shouldIncludeAllChildrenViewInAssistStructure() {
+        return DeviceConfig.getBoolean(
+            DeviceConfig.NAMESPACE_AUTOFILL,
+            DEVICE_CONFIG_INCLUDE_ALL_VIEWS_IN_ASSIST_STRUCTURE, false);
+    }
+
+
+    /**
+     * Whether should enable multi-line filter
+     *
+     * @hide
+     */
+    public static boolean shouldEnableMultilineFilter() {
+        return DeviceConfig.getBoolean(
+            DeviceConfig.NAMESPACE_AUTOFILL,
+            DEVICE_CONFIG_MULTILINE_FILTER_ENABLED,
+            DEFAULT_AFAA_SHOULD_ENABLE_MULTILINE_FILTER);
+    }
 
     // START AUTOFILL PCC CLASSIFICATION FUNCTIONS
 

@@ -446,7 +446,7 @@ public class TvPipController implements PipTransitionController.PipTransitionCal
                     "%s: PiP has already been closed by custom close action", TAG);
             return;
         }
-        removeTask(mPinnedTaskId);
+        mPipTaskOrganizer.removePip();
         onPipDisappeared();
     }
 
@@ -502,7 +502,7 @@ public class TvPipController implements PipTransitionController.PipTransitionCal
                 "%s: onPipTransition_Canceled(), state=%s", TAG, stateToName(mState));
         mTvPipMenuController.onPipTransitionFinished(
                 PipAnimationController.isInPipDirection(direction));
-        mTvPipActionsProvider.onPipExpansionToggled(mTvPipBoundsState.isTvPipExpanded());
+        mTvPipActionsProvider.updatePipExpansionState(mTvPipBoundsState.isTvPipExpanded());
     }
 
     @Override
@@ -515,7 +515,7 @@ public class TvPipController implements PipTransitionController.PipTransitionCal
                 "%s: onPipTransition_Finished(), state=%s, direction=%d",
                 TAG, stateToName(mState), direction);
         mTvPipMenuController.onPipTransitionFinished(enterPipTransition);
-        mTvPipActionsProvider.onPipExpansionToggled(mTvPipBoundsState.isTvPipExpanded());
+        mTvPipActionsProvider.updatePipExpansionState(mTvPipBoundsState.isTvPipExpanded());
     }
 
     private void updateExpansionState() {
@@ -670,17 +670,6 @@ public class TvPipController implements PipTransitionController.PipTransitionCal
             ProtoLog.e(ShellProtoLogGroup.WM_SHELL_PICTURE_IN_PICTURE,
                     "%s: getRootTaskInfo() failed, %s", TAG, e);
             return null;
-        }
-    }
-
-    private static void removeTask(int taskId) {
-        ProtoLog.d(ShellProtoLogGroup.WM_SHELL_PICTURE_IN_PICTURE,
-                "%s: removeTask(), taskId=%d", TAG, taskId);
-        try {
-            ActivityTaskManager.getService().removeTask(taskId);
-        } catch (Exception e) {
-            ProtoLog.e(ShellProtoLogGroup.WM_SHELL_PICTURE_IN_PICTURE,
-                    "%s: Atm.removeTask() failed, %s", TAG, e);
         }
     }
 

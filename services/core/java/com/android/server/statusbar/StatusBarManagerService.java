@@ -33,6 +33,7 @@ import android.Manifest;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.RequiresPermission;
+import android.annotation.TestApi;
 import android.app.ActivityManager;
 import android.app.ActivityManagerInternal;
 import android.app.ActivityThread;
@@ -52,7 +53,6 @@ import android.content.pm.PackageManagerInternal;
 import android.content.pm.ResolveInfo;
 import android.graphics.drawable.Icon;
 import android.hardware.biometrics.BiometricAuthenticator.Modality;
-import android.hardware.biometrics.BiometricManager.BiometricMultiSensorMode;
 import android.hardware.biometrics.IBiometricContextListener;
 import android.hardware.biometrics.IBiometricSysuiReceiver;
 import android.hardware.biometrics.PromptInfo;
@@ -83,6 +83,7 @@ import android.util.IndentingPrintWriter;
 import android.util.Pair;
 import android.util.Slog;
 import android.util.SparseArray;
+import android.view.KeyEvent;
 import android.view.WindowInsets;
 import android.view.WindowInsets.Type.InsetsType;
 import android.view.WindowInsetsController.Appearance;
@@ -178,6 +179,7 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
     private final SessionMonitor mSessionMonitor;
     private int mCurrentUserId;
     private boolean mTracingEnabled;
+    private int mLastSystemKey = -1;
 
     private final TileRequestTracker mTileRequestTracker;
 
@@ -900,10 +902,12 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
     }
 
     @Override
-    public void handleSystemKey(int key) throws RemoteException {
+    public void handleSystemKey(KeyEvent key) throws RemoteException {
         if (!checkCanCollapseStatusBar("handleSystemKey")) {
             return;
         }
+
+        mLastSystemKey = key.getKeyCode();
 
         if (mBar != null) {
             try {
@@ -911,6 +915,14 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
             } catch (RemoteException ex) {
             }
         }
+    }
+
+    @Override
+    @TestApi
+    public int getLastSystemKey() {
+        enforceStatusBar();
+
+        return mLastSystemKey;
     }
 
     @Override
@@ -936,14 +948,12 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
     @Override
     public void showAuthenticationDialog(PromptInfo promptInfo, IBiometricSysuiReceiver receiver,
             int[] sensorIds, boolean credentialAllowed, boolean requireConfirmation,
-            int userId, long operationId, String opPackageName, long requestId,
-            @BiometricMultiSensorMode int multiSensorConfig) {
+            int userId, long operationId, String opPackageName, long requestId) {
         enforceBiometricDialog();
         if (mBar != null) {
             try {
                 mBar.showAuthenticationDialog(promptInfo, receiver, sensorIds, credentialAllowed,
-                        requireConfirmation, userId, operationId, opPackageName, requestId,
-                        multiSensorConfig);
+                        requireConfirmation, userId, operationId, opPackageName, requestId);
             } catch (RemoteException ex) {
             }
         }

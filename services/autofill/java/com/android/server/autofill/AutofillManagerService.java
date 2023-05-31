@@ -383,7 +383,7 @@ public final class AutofillManagerService
             final AutofillManagerServiceImpl service = peekServiceForUserLocked(userId);
             if (service == null) {
                 // If we cannot get the service from the services cache, it will call
-                // updateRemoteAugmentedAutofillService() finally. Skip call this update again.
+                // updateRemoteFieldClassificationService() finally. Skip call this update again.
                 getServiceForUserLocked(userId);
             } else {
                 service.updateRemoteFieldClassificationService();
@@ -761,6 +761,24 @@ public final class AutofillManagerService
     }
 
     // Called by Shell command
+    boolean isFieldDetectionServiceEnabledForUser(@UserIdInt int userId) {
+        enforceCallingPermissionForManagement();
+        synchronized (mLock) {
+            final AutofillManagerServiceImpl service = getServiceForUserLocked(userId);
+            if (service != null) {
+                return service.isPccClassificationEnabled();
+            }
+        }
+        return false;
+    }
+
+    // Called by Shell command
+    String getFieldDetectionServiceName(@UserIdInt int userId) {
+        enforceCallingPermissionForManagement();
+        return mFieldClassificationResolver.readServiceName(userId);
+    }
+
+    // Called by Shell command
     boolean setTemporaryDetectionService(@UserIdInt int userId, @NonNull String serviceName,
             int durationMs) {
         Slog.i(mTag, "setTemporaryDetectionService(" + userId + ") to " + serviceName
@@ -903,9 +921,9 @@ public final class AutofillManagerService
     }
 
     /**
-     * Whether the Autofill PCC Classification feature is enabled.
+     * Whether the Autofill PCC Classification feature flag is enabled.
      */
-    public boolean isPccClassificationEnabled() {
+    public boolean isPccClassificationFlagEnabled() {
         synchronized (mFlagLock) {
             return mPccClassificationEnabled;
         }

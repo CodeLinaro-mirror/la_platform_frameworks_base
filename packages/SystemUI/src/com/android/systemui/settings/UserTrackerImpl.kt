@@ -103,7 +103,7 @@ open class UserTrackerImpl internal constructor(
     @GuardedBy("callbacks")
     private val callbacks: MutableList<DataItem> = ArrayList()
 
-    fun initialize(startingUser: Int) {
+    open fun initialize(startingUser: Int) {
         if (initialized) {
             return
         }
@@ -161,27 +161,31 @@ open class UserTrackerImpl internal constructor(
 
     private fun registerUserSwitchObserver() {
         iActivityManager.registerUserSwitchObserver(object : UserSwitchObserver() {
+            override fun onBeforeUserSwitching(newUserId: Int) {
+                handleBeforeUserSwitching(newUserId)
+            }
+
             override fun onUserSwitching(newUserId: Int, reply: IRemoteCallback?) {
-                backgroundHandler.run {
-                    handleUserSwitching(newUserId)
-                    reply?.sendResult(null)
-                }
+                handleUserSwitching(newUserId)
+                reply?.sendResult(null)
             }
 
             override fun onUserSwitchComplete(newUserId: Int) {
-                backgroundHandler.run {
-                    handleUserSwitchComplete(newUserId)
-                }
+                handleUserSwitchComplete(newUserId)
             }
         }, TAG)
+    }
+
+    @WorkerThread
+    protected open fun handleBeforeUserSwitching(newUserId: Int) {
+        Assert.isNotMainThread()
+        setUserIdInternal(newUserId)
     }
 
     @WorkerThread
     protected open fun handleUserSwitching(newUserId: Int) {
         Assert.isNotMainThread()
         Log.i(TAG, "Switching to user $newUserId")
-
-        setUserIdInternal(newUserId)
 
         val list = synchronized(callbacks) {
             callbacks.toList()
@@ -205,7 +209,6 @@ open class UserTrackerImpl internal constructor(
         Assert.isNotMainThread()
         Log.i(TAG, "Switched to user $newUserId")
 
-        setUserIdInternal(newUserId)
         notifySubscribers {
             onUserChanged(newUserId, userContext)
             onProfilesChanged(userProfiles)

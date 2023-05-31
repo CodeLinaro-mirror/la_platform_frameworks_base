@@ -55,12 +55,11 @@ import com.airbnb.lottie.model.KeyPath
 import com.android.internal.annotations.VisibleForTesting
 import com.android.systemui.Dumpable
 import com.android.systemui.R
+import com.android.systemui.biometrics.domain.interactor.DisplayStateInteractor
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.dagger.qualifiers.Main
 import com.android.systemui.dump.DumpManager
-import com.android.systemui.flags.FeatureFlags
-import com.android.systemui.flags.Flags
 import com.android.systemui.keyguard.domain.interactor.AlternateBouncerInteractor
 import com.android.systemui.recents.OverviewProxyService
 import com.android.systemui.util.concurrency.DelayableExecutor
@@ -86,11 +85,11 @@ constructor(
     private val activityTaskManager: ActivityTaskManager,
     overviewProxyService: OverviewProxyService,
     displayManager: DisplayManager,
+    private val displayStateInteractor: DisplayStateInteractor,
     @Main private val mainExecutor: DelayableExecutor,
     @Main private val handler: Handler,
     private val alternateBouncerInteractor: AlternateBouncerInteractor,
     @Application private val scope: CoroutineScope,
-    private val featureFlags: FeatureFlags,
     dumpManager: DumpManager
 ) : Dumpable {
     private val requests: HashSet<SideFpsUiRequestSource> = HashSet()
@@ -147,14 +146,13 @@ constructor(
                 orientationListener.enable()
             }
         }
-    @VisibleForTesting
-    internal var overlayOffsets: SensorLocationInternal = SensorLocationInternal.DEFAULT
+    @VisibleForTesting var overlayOffsets: SensorLocationInternal = SensorLocationInternal.DEFAULT
 
     private val overlayViewParams =
         WindowManager.LayoutParams(
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.WRAP_CONTENT,
-                WindowManager.LayoutParams.TYPE_KEYGUARD_DIALOG,
+                WindowManager.LayoutParams.TYPE_NAVIGATION_BAR_PANEL,
                 Utils.FINGERPRINT_OVERLAY_LAYOUT_PARAM_FLAGS,
                 PixelFormat.TRANSLUCENT
             )
@@ -173,16 +171,12 @@ constructor(
                 override fun show(
                     sensorId: Int,
                     @BiometricOverlayConstants.ShowReason reason: Int
-                ) {
-                    if (
-                        reason.isReasonToAutoShow(activityTaskManager) &&
-                            !context.isInRearDisplayMode()
-                    ) {
+                ) =
+                    if (reason.isReasonToAutoShow(activityTaskManager)) {
                         show(SideFpsUiRequestSource.AUTO_SHOW, reason)
                     } else {
                         hide(SideFpsUiRequestSource.AUTO_SHOW)
                     }
-                }
 
                 override fun hide(sensorId: Int) = hide(SideFpsUiRequestSource.AUTO_SHOW)
             }
@@ -195,14 +189,12 @@ constructor(
 
     private fun listenForAlternateBouncerVisibility() {
         alternateBouncerInteractor.setAlternateBouncerUIAvailable(true)
-        if (featureFlags.isEnabled(Flags.MODERN_ALTERNATE_BOUNCER)) {
-            scope.launch {
-                alternateBouncerInteractor.isVisible.collect { isVisible: Boolean ->
-                    if (isVisible) {
-                        show(SideFpsUiRequestSource.ALTERNATE_BOUNCER)
-                    } else {
-                        hide(SideFpsUiRequestSource.ALTERNATE_BOUNCER)
-                    }
+        scope.launch {
+            alternateBouncerInteractor.isVisible.collect { isVisible: Boolean ->
+                if (isVisible) {
+                    show(SideFpsUiRequestSource.ALTERNATE_BOUNCER, REASON_AUTH_KEYGUARD)
+                } else {
+                    hide(SideFpsUiRequestSource.ALTERNATE_BOUNCER)
                 }
             }
         }
@@ -213,14 +205,16 @@ constructor(
         request: SideFpsUiRequestSource,
         @BiometricOverlayConstants.ShowReason reason: Int = BiometricOverlayConstants.REASON_UNKNOWN
     ) {
-        requests.add(request)
-        mainExecutor.execute {
-            if (overlayView == null) {
-                traceSection("SideFpsController#show(request=${request.name}, reason=$reason") {
-                    createOverlayForDisplay(reason)
+        if (!displayStateInteractor.isInRearDisplayMode.value) {
+            requests.add(request)
+            mainExecutor.execute {
+                if (overlayView == null) {
+                    traceSection("SideFpsController#show(request=${request.name}, reason=$reason") {
+                        createOverlayForDisplay(reason)
+                    }
+                } else {
+                    Log.v(TAG, "overlay already shown")
                 }
-            } else {
-                Log.v(TAG, "overlay already shown")
             }
         }
     }
@@ -306,7 +300,7 @@ constructor(
     }
 
     @VisibleForTesting
-    internal fun updateOverlayParams(display: Display, bounds: Rect) {
+    fun updateOverlayParams(display: Display, bounds: Rect) {
         val isNaturalOrientation = display.isNaturalOrientation()
         val isDefaultOrientation =
             if (isReverseDefaultRotation) !isNaturalOrientation else isNaturalOrientation
@@ -440,23 +434,38 @@ private fun LottieAnimationView.addOverlayDynamicColor(
     @BiometricOverlayConstants.ShowReason reason: Int
 ) {
     fun update() {
-        val c = context.getColor(R.color.biometric_dialog_accent)
-        val chevronFill = context.getColor(R.color.sfps_chevron_fill)
         val isKeyguard = reason == REASON_AUTH_KEYGUARD
         if (isKeyguard) {
-            for (key in listOf(".blue600", ".blue400")) {
-                addValueCallback(KeyPath(key, "**"), LottieProperty.COLOR_FILTER) {
-                    PorterDuffColorFilter(c, PorterDuff.Mode.SRC_ATOP)
-                }
+            val color =
+                com.android.settingslib.Utils.getColorAttrDefaultColor(
+                    context,
+                    com.android.internal.R.attr.materialColorPrimaryFixed
+                )
+            val outerRimColor =
+                com.android.settingslib.Utils.getColorAttrDefaultColor(
+                    context,
+                    com.android.internal.R.attr.materialColorPrimaryFixedDim
+                )
+            val chevronFill =
+                com.android.settingslib.Utils.getColorAttrDefaultColor(
+                    context,
+                    com.android.internal.R.attr.materialColorOnPrimaryFixed
+                )
+            addValueCallback(KeyPath(".blue600", "**"), LottieProperty.COLOR_FILTER) {
+                PorterDuffColorFilter(color, PorterDuff.Mode.SRC_ATOP)
+            }
+            addValueCallback(KeyPath(".blue400", "**"), LottieProperty.COLOR_FILTER) {
+                PorterDuffColorFilter(outerRimColor, PorterDuff.Mode.SRC_ATOP)
             }
             addValueCallback(KeyPath(".black", "**"), LottieProperty.COLOR_FILTER) {
                 PorterDuffColorFilter(chevronFill, PorterDuff.Mode.SRC_ATOP)
             }
-        } else if (!isDarkMode(context)) {
-            addValueCallback(KeyPath(".black", "**"), LottieProperty.COLOR_FILTER) {
-                PorterDuffColorFilter(Color.WHITE, PorterDuff.Mode.SRC_ATOP)
+        } else {
+            if (!isDarkMode(context)) {
+                addValueCallback(KeyPath(".black", "**"), LottieProperty.COLOR_FILTER) {
+                    PorterDuffColorFilter(Color.WHITE, PorterDuff.Mode.SRC_ATOP)
+                }
             }
-        } else if (isDarkMode(context)) {
             for (key in listOf(".blue600", ".blue400")) {
                 addValueCallback(KeyPath(key, "**"), LottieProperty.COLOR_FILTER) {
                     PorterDuffColorFilter(
