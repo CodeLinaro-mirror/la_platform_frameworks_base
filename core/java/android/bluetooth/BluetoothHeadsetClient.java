@@ -137,6 +137,18 @@ public final class BluetoothHeadsetClient implements BluetoothProfile {
             "android.bluetooth.headsetclient.profile.action.AG_CALL_CHANGED";
 
     /**
+     * Intent sent when query of calls in remote Bluetooh device is done.
+     *
+     * <p>It includes:
+     * {@link #EXTRA_DEVICE},
+     * with value of {@link BluetoothDevice} instance.</p>
+     */
+    @RequiresBluetoothConnectPermission
+    @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
+    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+    public static final String ACTION_QUERY_CALLS_DONE =
+            "android.bluetooth.headsetclient.profile.action.AG_QUERY_CALLS_DONE";
+    /**
      * Intent that notifies about the result of the last issued action.
      * Please note that not every action results in explicit action result code being sent.
      * Instead other notifications about new Audio Gateway state might be sent,
