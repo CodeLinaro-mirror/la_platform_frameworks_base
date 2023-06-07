@@ -747,7 +747,7 @@ public class CachedBluetoothDevice implements Comparable<CachedBluetoothDevice> 
     }
 
     private boolean updateProfiles() {
-        ParcelUuid[] uuids = mDevice.getUuids();
+        ParcelUuid[] uuids = mActiveDevice.getUuids();
         if (uuids == null) return false;
 
         ParcelUuid[] localUuids = mActiveAdapter.getUuids();
