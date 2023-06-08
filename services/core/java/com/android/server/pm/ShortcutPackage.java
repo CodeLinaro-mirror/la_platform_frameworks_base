@@ -304,6 +304,7 @@ class ShortcutPackage extends ShortcutPackageItem {
         // Extract Icon and update the icon res ID and the bitmap path.
         s.saveIconAndFixUpShortcutLocked(newShortcut);
         s.fixUpShortcutResourceNamesAndValues(newShortcut);
+        ensureShortcutCountBeforePush();
         mShortcuts.put(newShortcut.getId(), newShortcut);
     }
 
