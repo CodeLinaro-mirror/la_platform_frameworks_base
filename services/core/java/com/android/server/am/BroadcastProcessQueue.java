@@ -25,6 +25,7 @@ import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.UptimeMillisLong;
+import android.app.BroadcastOptions;
 import android.content.Intent;
 import android.content.pm.ResolveInfo;
 import android.os.SystemClock;
@@ -257,7 +258,10 @@ class BroadcastProcessQueue {
             deferredStatesApplyConsumer.accept(record, recordIndex);
         }
 
-        if (record.isReplacePending()) {
+        // Ignore FLAG_RECEIVER_REPLACE_PENDING if the sender specified the policy using the
+        // BroadcastOptions delivery group APIs.
+        if (record.isReplacePending()
+                && record.getDeliveryGroupPolicy() == BroadcastOptions.DELIVERY_GROUP_POLICY_ALL) {
             final BroadcastRecord replacedBroadcastRecord = replaceBroadcast(record, recordIndex);
             if (replacedBroadcastRecord != null) {
                 return replacedBroadcastRecord;
@@ -277,6 +281,25 @@ class BroadcastProcessQueue {
         getQueueForBroadcast(record).addLast(newBroadcastArgs);
         onBroadcastEnqueued(record, recordIndex);
         return null;
+    }
+
+    /**
+     * Re-enqueue the active broadcast so that it can be made active and delivered again. In order
+     * to keep its previous position same to avoid issues with reordering, insert it at the head
+     * of the queue.
+     *
+     * Callers are responsible for clearing the active broadcast by calling
+     * {@link #makeActiveIdle()} after re-enqueuing it.
+     */
+    public void reEnqueueActiveBroadcast() {
+        final BroadcastRecord record = getActive();
+        final int recordIndex = getActiveIndex();
+
+        final SomeArgs broadcastArgs = SomeArgs.obtain();
+        broadcastArgs.arg1 = record;
+        broadcastArgs.argi1 = recordIndex;
+        getQueueForBroadcast(record).addFirst(broadcastArgs);
+        onBroadcastEnqueued(record, recordIndex);
     }
 
     /**

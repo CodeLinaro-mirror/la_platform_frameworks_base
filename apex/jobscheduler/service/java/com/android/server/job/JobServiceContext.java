@@ -465,7 +465,8 @@ public final class JobServiceContext implements ServiceConnection {
                     job.getSourceUid(), null, job.getBatteryName(),
                     FrameworkStatsLog.SCHEDULED_JOB_STATE_CHANGED__STATE__STARTED,
                     JobProtoEnums.INTERNAL_STOP_REASON_UNKNOWN,
-                    job.getStandbyBucket(), job.getJobId(),
+                    job.getStandbyBucket(),
+                    job.getLoggingJobId(),
                     job.hasChargingConstraint(),
                     job.hasBatteryNotLowConstraint(),
                     job.hasStorageNotLowConstraint(),
@@ -498,7 +499,8 @@ public final class JobServiceContext implements ServiceConnection {
                     job.getEstimatedNetworkDownloadBytes(),
                     job.getEstimatedNetworkUploadBytes(),
                     job.getWorkCount(),
-                    ActivityManager.processStateAmToProto(mService.getUidProcState(job.getUid())));
+                    ActivityManager.processStateAmToProto(mService.getUidProcState(job.getUid())),
+                    job.getNamespaceHash());
             sEnqueuedJwiAtJobStart.logSampleWithUid(job.getUid(), job.getWorkCount());
             final String sourcePackage = job.getSourcePackageName();
             if (Trace.isTagEnabled(Trace.TRACE_TAG_SYSTEM_SERVER)) {
@@ -1329,7 +1331,7 @@ public final class JobServiceContext implements ServiceConnection {
                 // FINISHED/NO-RETRY.
                 onSlowAppResponseLocked(/* reschedule */ false, /* updateStopReasons */ true,
                         /* texCounterMetricId */
-                        "job_scheduler.value_cntr_w_uid_slow_app_response_onStartJob",
+                        "job_scheduler.value_cntr_w_uid_slow_app_response_on_start_job",
                         /* debugReason */ "timed out while starting",
                         /* anrMessage */ "No response to onStartJob",
                         CompatChanges.isChangeEnabled(ANR_PRE_UDC_APIS_ON_SLOW_RESPONSES,
@@ -1341,7 +1343,7 @@ public final class JobServiceContext implements ServiceConnection {
                 // other reason.
                 onSlowAppResponseLocked(/* reschedule */ true, /* updateStopReasons */ false,
                         /* texCounterMetricId */
-                        "job_scheduler.value_cntr_w_uid_slow_app_response_onStopJob",
+                        "job_scheduler.value_cntr_w_uid_slow_app_response_on_stop_job",
                         /* debugReason */ "timed out while stopping",
                         /* anrMessage */ "No response to onStopJob",
                         CompatChanges.isChangeEnabled(ANR_PRE_UDC_APIS_ON_SLOW_RESPONSES,
@@ -1398,7 +1400,7 @@ public final class JobServiceContext implements ServiceConnection {
                 } else if (mAwaitingNotification) {
                     onSlowAppResponseLocked(/* reschedule */ true, /* updateStopReasons */ true,
                             /* texCounterMetricId */
-                            "job_scheduler.value_cntr_w_uid_slow_app_response_setNotification",
+                            "job_scheduler.value_cntr_w_uid_slow_app_response_set_notification",
                             /* debugReason */ "timed out while stopping",
                             /* anrMessage */ "required notification not provided",
                             /* triggerAnr */ true);
@@ -1521,7 +1523,8 @@ public final class JobServiceContext implements ServiceConnection {
         FrameworkStatsLog.write_non_chained(FrameworkStatsLog.SCHEDULED_JOB_STATE_CHANGED,
                 completedJob.getSourceUid(), null, completedJob.getBatteryName(),
                 FrameworkStatsLog.SCHEDULED_JOB_STATE_CHANGED__STATE__FINISHED,
-                loggingInternalStopReason, completedJob.getStandbyBucket(), completedJob.getJobId(),
+                loggingInternalStopReason, completedJob.getStandbyBucket(),
+                completedJob.getLoggingJobId(),
                 completedJob.hasChargingConstraint(),
                 completedJob.hasBatteryNotLowConstraint(),
                 completedJob.hasStorageNotLowConstraint(),
@@ -1555,7 +1558,8 @@ public final class JobServiceContext implements ServiceConnection {
                 completedJob.getEstimatedNetworkUploadBytes(),
                 completedJob.getWorkCount(),
                 ActivityManager
-                        .processStateAmToProto(mService.getUidProcState(completedJob.getUid())));
+                        .processStateAmToProto(mService.getUidProcState(completedJob.getUid())),
+                completedJob.getNamespaceHash());
         if (Trace.isTagEnabled(Trace.TRACE_TAG_SYSTEM_SERVER)) {
             Trace.asyncTraceForTrackEnd(Trace.TRACE_TAG_SYSTEM_SERVER, "JobScheduler",
                     getId());

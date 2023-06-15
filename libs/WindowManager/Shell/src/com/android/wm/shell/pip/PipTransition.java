@@ -308,8 +308,9 @@ public class PipTransition extends PipTransitionController {
     @Override
     public void end() {
         Animator animator = mPipAnimationController.getCurrentAnimator();
-        if (animator == null) return;
-        animator.end();
+        if (animator != null && animator.isRunning()) {
+            animator.end();
+        }
     }
 
     @Override
@@ -815,6 +816,12 @@ public class PipTransition extends PipTransitionController {
         final ActivityManager.RunningTaskInfo taskInfo = pipChange.getTaskInfo();
         final SurfaceControl leash = pipChange.getLeash();
         final int startRotation = pipChange.getStartRotation();
+        // Check again in case some callers use startEnterAnimation directly so the flag was not
+        // set in startAnimation, e.g. from DefaultMixedHandler.
+        if (!mInFixedRotation) {
+            mEndFixedRotation = pipChange.getEndFixedRotation();
+            mInFixedRotation = mEndFixedRotation != ROTATION_UNDEFINED;
+        }
         final int endRotation = mInFixedRotation ? mEndFixedRotation : pipChange.getEndRotation();
 
         setBoundsStateForEntry(taskInfo.topActivity, taskInfo.pictureInPictureParams,
@@ -843,7 +850,7 @@ public class PipTransition extends PipTransitionController {
                 && taskInfo.pictureInPictureParams.isAutoEnterEnabled()
                 && mPipTransitionState.getInSwipePipToHomeTransition()) {
             handleSwipePipToHomeTransition(startTransaction, finishTransaction, leash,
-                    sourceHintRect, destinationBounds, rotationDelta, taskInfo);
+                    sourceHintRect, destinationBounds, taskInfo);
             return;
         }
 
@@ -934,8 +941,15 @@ public class PipTransition extends PipTransitionController {
             @NonNull SurfaceControl.Transaction startTransaction,
             @NonNull SurfaceControl.Transaction finishTransaction,
             @NonNull SurfaceControl leash, @Nullable Rect sourceHintRect,
-            @NonNull Rect destinationBounds, int rotationDelta,
+            @NonNull Rect destinationBounds,
             @NonNull ActivityManager.RunningTaskInfo pipTaskInfo) {
+        if (mInFixedRotation) {
+            // If rotation changes when returning to home, the transition should contain both the
+            // entering PiP and the display change (PipController#startSwipePipToHome has updated
+            // the display layout to new rotation). So it is not expected to see fixed rotation.
+            ProtoLog.w(ShellProtoLogGroup.WM_SHELL_TRANSITIONS,
+                    "%s: SwipePipToHome should not use fixed rotation %d", TAG, mEndFixedRotation);
+        }
         final SurfaceControl swipePipToHomeOverlay = mPipOrganizer.mSwipePipToHomeOverlay;
         if (swipePipToHomeOverlay != null) {
             // Launcher fade in the overlay on top of the fullscreen Task. It is possible we
@@ -946,12 +960,7 @@ public class PipTransition extends PipTransitionController {
             mPipOrganizer.mSwipePipToHomeOverlay = null;
         }
 
-        Rect sourceBounds = pipTaskInfo.configuration.windowConfiguration.getBounds();
-        if (!Transitions.SHELL_TRANSITIONS_ROTATION && rotationDelta % 2 == 1) {
-            // PipController#startSwipePipToHome has updated the display layout to new rotation,
-            // so flip the source bounds to match the same orientation.
-            sourceBounds = new Rect(0, 0, sourceBounds.height(), sourceBounds.width());
-        }
+        final Rect sourceBounds = pipTaskInfo.configuration.windowConfiguration.getBounds();
         final PipAnimationController.PipTransitionAnimator animator =
                 mPipAnimationController.getAnimator(pipTaskInfo, leash, sourceBounds, sourceBounds,
                         destinationBounds, sourceHintRect, TRANSITION_DIRECTION_TO_PIP,
@@ -1079,10 +1088,28 @@ public class PipTransition extends PipTransitionController {
         }
         final float alphaStart = show ? 0 : 1;
         final float alphaEnd = show ? 1 : 0;
+        final PipAnimationController.PipTransactionHandler transactionHandler =
+                new PipAnimationController.PipTransactionHandler() {
+            @Override
+            public boolean handlePipTransaction(SurfaceControl leash,
+                    SurfaceControl.Transaction tx, Rect destinationBounds, float alpha) {
+                if (alpha == 0) {
+                    if (show) {
+                        tx.setPosition(leash, destinationBounds.left, destinationBounds.top);
+                    } else {
+                        // Put PiP out of the display so it won't block touch when it is hidden.
+                        final Rect displayBounds = mPipDisplayLayoutState.getDisplayBounds();
+                        final int max = Math.max(displayBounds.width(), displayBounds.height());
+                        tx.setPosition(leash, max, max);
+                    }
+                }
+                return false;
+            }
+        };
         mPipAnimationController
                 .getAnimator(taskInfo, leash, mPipBoundsState.getBounds(), alphaStart, alphaEnd)
                 .setTransitionDirection(TRANSITION_DIRECTION_SAME)
-                .setPipAnimationCallback(mPipAnimationCallback)
+                .setPipTransactionHandler(transactionHandler)
                 .setDuration(mEnterExitAnimationDuration)
                 .start();
         mHasFadeOut = !show;

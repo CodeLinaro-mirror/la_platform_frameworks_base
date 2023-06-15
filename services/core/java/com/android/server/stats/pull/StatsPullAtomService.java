@@ -1007,7 +1007,8 @@ public class StatsPullAtomService extends SystemService {
     }
 
     private void initAndRegisterDeferredPullers() {
-        mUwbManager = mContext.getSystemService(UwbManager.class);
+        mUwbManager = mContext.getPackageManager().hasSystemFeature(PackageManager.FEATURE_UWB)
+            ? mContext.getSystemService(UwbManager.class) : null;
 
         registerUwbActivityInfo();
     }
@@ -2175,6 +2176,9 @@ public class StatsPullAtomService extends SystemService {
     }
 
     private void registerUwbActivityInfo() {
+        if (mUwbManager == null) {
+            return;
+        }
         int tagId = FrameworkStatsLog.UWB_ACTIVITY_INFO;
         mStatsManager.setPullAtomCallback(
                 tagId,

@@ -438,8 +438,7 @@ class RootWindowContainer extends WindowContainer<DisplayContent>
         mTaskSupervisor = mService.mTaskSupervisor;
         mTaskSupervisor.mRootWindowContainer = this;
         mDisplayOffTokenAcquirer = mService.new SleepTokenAcquirerImpl(DISPLAY_OFF_SLEEP_TOKEN_TAG);
-        mDeviceStateController = new DeviceStateController(service.mContext, service.mH,
-                service.mGlobalLock);
+        mDeviceStateController = new DeviceStateController(service.mContext, service.mGlobalLock);
         mDisplayRotationCoordinator = new DisplayRotationCoordinator();
     }
 
@@ -1281,6 +1280,15 @@ class RootWindowContainer extends WindowContainer<DisplayContent>
         defaultTaskDisplayArea.getOrCreateRootHomeTask(ON_TOP);
         positionChildAt(POSITION_TOP, defaultTaskDisplayArea.mDisplayContent,
                 false /* includingParents */);
+    }
+
+    /**
+     * Called just before display manager has applied the device state to the displays
+     * @param deviceState device state as defined by
+     *        {@link android.hardware.devicestate.DeviceStateManager}
+     */
+    void onDisplayManagerReceivedDeviceState(int deviceState) {
+        mDeviceStateController.onDeviceStateReceivedByDisplayManager(deviceState);
     }
 
     // TODO(multi-display): Look at all callpoints to make sure they make sense in multi-display.
@@ -2349,10 +2357,14 @@ class RootWindowContainer extends WindowContainer<DisplayContent>
                 final Transition transition = new Transition(TRANSIT_SLEEP, 0 /* flags */,
                         display.mTransitionController, mWmService.mSyncEngine);
                 final TransitionController.OnStartCollect sendSleepTransition = (deferred) -> {
-                    display.mTransitionController.requestStartTransition(transition,
-                            null /* trigger */, null /* remote */, null /* display */);
-                    // Force playing immediately so that unrelated ops can't be collected.
-                    transition.playNow();
+                    if (deferred && !display.shouldSleep()) {
+                        transition.abort();
+                    } else {
+                        display.mTransitionController.requestStartTransition(transition,
+                                null /* trigger */, null /* remote */, null /* display */);
+                        // Force playing immediately so that unrelated ops can't be collected.
+                        transition.playNow();
+                    }
                 };
                 if (!display.mTransitionController.isCollecting()) {
                     // Since this bypasses sync, submit directly ignoring whether sync-engine

@@ -2205,19 +2205,20 @@ import java.util.concurrent.atomic.AtomicBoolean;
         if (preferredCommunicationDevice == null) {
             AudioDeviceAttributes defaultDevice = getDefaultCommunicationDevice();
             if (defaultDevice != null) {
-                mDeviceInventory.setPreferredDevicesForStrategy(
+                mDeviceInventory.setPreferredDevicesForStrategyInt(
                         mCommunicationStrategyId, Arrays.asList(defaultDevice));
-                mDeviceInventory.setPreferredDevicesForStrategy(
+                mDeviceInventory.setPreferredDevicesForStrategyInt(
                         mAccessibilityStrategyId, Arrays.asList(defaultDevice));
             } else {
-                mDeviceInventory.removePreferredDevicesForStrategy(mCommunicationStrategyId);
-                mDeviceInventory.removePreferredDevicesForStrategy(mAccessibilityStrategyId);
+                mDeviceInventory.removePreferredDevicesForStrategyInt(mCommunicationStrategyId);
+                mDeviceInventory.removePreferredDevicesForStrategyInt(mAccessibilityStrategyId);
             }
             mDeviceInventory.applyConnectedDevicesRoles();
+            mDeviceInventory.reapplyExternalDevicesRoles();
         } else {
-            mDeviceInventory.setPreferredDevicesForStrategy(
+            mDeviceInventory.setPreferredDevicesForStrategyInt(
                     mCommunicationStrategyId, Arrays.asList(preferredCommunicationDevice));
-            mDeviceInventory.setPreferredDevicesForStrategy(
+            mDeviceInventory.setPreferredDevicesForStrategyInt(
                     mAccessibilityStrategyId, Arrays.asList(preferredCommunicationDevice));
         }
         onUpdatePhoneStrategyDevice(preferredCommunicationDevice);
