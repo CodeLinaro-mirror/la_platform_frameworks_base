@@ -132,6 +132,10 @@ final class HsumBootUserInitializer {
      * privileged apps have had the chance to set the boot user, if applicable.
      */
     public void systemRunning(TimingsTraceAndSlog t) {
+        // changes added for headless boot
+        if (android.os.SystemProperties.getInt("ro.config.headless", 0) == 1) {
+            return;
+        }
         observeDeviceProvisioning();
         unlockSystemUser(t);
 
