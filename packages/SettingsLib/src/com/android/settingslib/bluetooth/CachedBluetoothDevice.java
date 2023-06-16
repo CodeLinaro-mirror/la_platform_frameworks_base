@@ -14,11 +14,50 @@
  * limitations under the License.
  */
 
+/***********************************************************************************
+ * Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted (subject to the limitations in the
+ * disclaimer below) provided that the following conditions are met:
+ *
+ *      * Redistributions of source code must retain the above copyright
+ *        notice, this list of conditions and the following disclaimer.
+ *
+ *      * Redistributions in binary form must reproduce the above
+ *        copyright notice, this list of conditions and the following
+ *        disclaimer in the documentation and/or other materials provided
+ *        with the distribution.
+ *
+ *      * Neither the name of Qualcomm Innovation Center, Inc. nor the names of its
+ *        contributors may be used to endorse or promote products derived
+ *        from this software without specific prior written permission.
+ *
+ * NO EXPRESS OR IMPLIED LICENSES TO ANY PARTY'S PATENT RIGHTS ARE
+ * GRANTED BY THIS LICENSE. THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT
+ * HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED
+ * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+ * IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE
+ * GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER
+ * IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+ * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
+ * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE
+ *
+ **********************************************************************************/
+
 package com.android.settingslib.bluetooth;
 
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothAdapterUtil;
 import android.bluetooth.BluetoothClass;
+import android.bluetooth.IBluetoothGatt;
+import android.bluetooth.IBluetoothManager;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothHearingAid;
 import android.bluetooth.BluetoothProfile;
@@ -29,11 +68,15 @@ import android.content.res.Resources;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.net.Uri;
+import android.os.Binder;
+import android.os.IBinder;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
 import android.os.ParcelUuid;
+import android.os.RemoteException;
 import android.os.SystemClock;
+import android.os.ServiceManager;
 import android.text.TextUtils;
 import android.util.EventLog;
 import android.util.Log;
@@ -68,6 +111,9 @@ public class CachedBluetoothDevice implements Comparable<CachedBluetoothDevice> 
     private static final long MAX_HEARING_AIDS_DELAY_FOR_AUTO_CONNECT = 15000;
     private static final long MAX_HOGP_DELAY_FOR_AUTO_CONNECT = 30000;
     private static final long MAX_MEDIA_PROFILE_CONNECT_DELAY = 60000;
+
+    // Invalid Gatt Id
+    private static final int INVALID_GATT_ID = -1;
 
     private final Context mContext;
     private final BluetoothAdapter mLocalAdapter;
@@ -177,6 +223,18 @@ public class CachedBluetoothDevice implements Comparable<CachedBluetoothDevice> 
         return sb.toString();
     }
 
+    private void disconnectGATT(String address) {
+        // set serverIf as INVALID_GATT_ID for specific gatt server created in stack.
+        IBinder b = ServiceManager.getService(BluetoothAdapter.BLUETOOTH_MANAGER_SERVICE);
+        IBluetoothManager managerService = IBluetoothManager.Stub.asInterface(b);
+        try {
+            IBluetoothGatt iGatt = managerService.getBluetoothGatt();
+            iGatt.serverDisconnect(INVALID_GATT_ID , address, mLocalAdapter.getAttributionSource());
+        } catch (RemoteException e) {
+            Log.e(TAG, "", e);
+        }
+    }
+
     void onProfileStateChanged(LocalBluetoothProfile profile, int newProfileState) {
         if (BluetoothUtils.D) {
             Log.d(TAG, "onProfileStateChanged: profile " + profile + ", device "
@@ -186,9 +244,6 @@ public class CachedBluetoothDevice implements Comparable<CachedBluetoothDevice> 
             if (BluetoothUtils.D) {
                 Log.d(TAG, " BT Turninig Off...Profile conn state change ignored...");
             }
-            /* Ensure Bluetooth device's property (e.g. alias name) can be retrieved
-             * after Bluetooth is re-enabled. */
-            mDevice = mActiveDevice;
             return;
         }
 
@@ -251,6 +306,19 @@ public class CachedBluetoothDevice implements Comparable<CachedBluetoothDevice> 
         fetchActiveDevices();
     }
 
+    void onBluetoothStateChanged() {
+        Log.d(TAG, "onBluetoothStateChanged");
+        if (mLocalAdapter.getState() == BluetoothAdapter.STATE_TURNING_OFF) {
+            if (BluetoothUtils.D) {
+                Log.d(TAG, " BT Turninig Off...Set mDevice to mActiveDevice");
+            }
+            /* Ensure Bluetooth device's property (e.g. alias name) can be retrieved
+             * after Bluetooth is re-enabled. */
+            mDevice = mActiveDevice;
+            return;
+        }
+    }
+
     @VisibleForTesting
     void setProfileConnectedStatus(int profileId, boolean isFailed) {
         switch (profileId) {
@@ -281,6 +349,9 @@ public class CachedBluetoothDevice implements Comparable<CachedBluetoothDevice> 
         {
             PbapProfile.setEnabled(mDevice, false);
         }
+
+        // disconnect gatt server over BR/EDR
+        disconnectGATT(mDevice.getAddress());
     }
 
     public void disconnect(LocalBluetoothProfile profile) {
@@ -462,7 +533,7 @@ public class CachedBluetoothDevice implements Comparable<CachedBluetoothDevice> 
      * {@link BluetoothDevice#getAddress()}
      */
     public String getName() {
-        final String aliasName = mDevice.getAlias();
+        final String aliasName = getAlias();
         return TextUtils.isEmpty(aliasName) ? getAddress() : aliasName;
     }
 
@@ -520,7 +591,7 @@ public class CachedBluetoothDevice implements Comparable<CachedBluetoothDevice> 
      * @return true if device's alias name is not null nor empty, false otherwise
      */
     public boolean hasHumanReadableName() {
-        return !TextUtils.isEmpty(mDevice.getAlias());
+        return !TextUtils.isEmpty(getAlias());
     }
 
     /**
@@ -531,6 +602,11 @@ public class CachedBluetoothDevice implements Comparable<CachedBluetoothDevice> 
      */
     public int getBatteryLevel() {
         return mDevice.getBatteryLevel();
+    }
+
+    public void refreshBluetoothClass(){
+        initAdapterDevice(mDevice);
+        refresh();
     }
 
     void refresh() {
@@ -688,7 +764,7 @@ public class CachedBluetoothDevice implements Comparable<CachedBluetoothDevice> 
         }
 
         if (BluetoothUtils.D) {
-            Log.d(TAG, "updating profiles for " + mDevice.getAlias());
+            Log.d(TAG, "updating profiles for " + getAlias());
             BluetoothClass bluetoothClass = mDevice.getBluetoothClass();
 
             if (bluetoothClass != null) Log.v(TAG, "Class: " + bluetoothClass.toString());
@@ -1317,6 +1393,14 @@ public class CachedBluetoothDevice implements Comparable<CachedBluetoothDevice> 
                 adapter.getRemoteDevice(device.getAddress()) :
                 null;
     }
+
+    private String getAlias() {
+        String alias = mDevice.getAlias();
+
+       return alias != null ?
+              alias :
+              getCounterpartDevice(mDevice).getAlias();
+   }
 
     /**
      * [Dual Bluetooth] Get counterpart BluetoothDevice

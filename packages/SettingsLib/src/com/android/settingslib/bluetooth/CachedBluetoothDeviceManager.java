@@ -228,11 +228,15 @@ public class CachedBluetoothDeviceManager {
                 if (subDevice != null) {
                     if (subDevice.getBondState() != BluetoothDevice.BOND_BONDED) {
                         cachedDevice.setSubDevice(null);
+                    } else {
+                        subDevice.onBluetoothStateChanged();
                     }
                 }
                 if (cachedDevice.getBondState() != BluetoothDevice.BOND_BONDED) {
                     cachedDevice.setJustDiscovered(false);
                     mCachedDevices.remove(i);
+                } else {
+                    cachedDevice.onBluetoothStateChanged();
                 }
             }
         }

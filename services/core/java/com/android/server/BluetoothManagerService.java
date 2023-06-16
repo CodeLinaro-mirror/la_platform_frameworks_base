@@ -206,6 +206,9 @@ class BluetoothManagerService extends IBluetoothManager.Stub {
     private boolean mEnable;
     private boolean mShutdownInProgress = false;
 
+    // Indicate whether BLE is supported or not
+    private boolean mIsBleSupported;
+
     private static CharSequence timeToLog(long timestamp) {
         return android.text.format.DateFormat.format("MM-dd HH:mm:ss", timestamp);
     }
@@ -527,6 +530,10 @@ class BluetoothManagerService extends IBluetoothManager.Stub {
         mBinding = false;
         mUnbinding = false;
         mEnable = false;
+        mIsBleSupported = isBleSupported();
+        if (DBG) {
+            Slog.d(TAG, "mIsBleSupported is " + mIsBleSupported);
+        }
         mState = BluetoothAdapter.STATE_OFF;
         mQuietEnableExternal = false;
         mEnableExternal = false;
@@ -2211,6 +2218,19 @@ class BluetoothManagerService extends IBluetoothManager.Stub {
                             break;
                         } // else must be SERVICE_IBLUETOOTH
 
+                        if (!mIsBleSupported) {
+                            // Persisting Bluetooth setting to ON is done when adapter state is
+                            // transitioned into BluetoothAdapter.STATE_BLE_ON if BLE is supported.
+                            // BLE states are skipped if BLE is NOT supported.
+                            // So it's necessary to do adapter state persisting during turnning on
+                            // Bluetooth directly.
+                            if (DBG) {
+                                Slog.d(TAG, "Persisting Bluetooth Setting ON");
+                            }
+
+                            persistBluetoothSetting(BLUETOOTH_ON_BLUETOOTH);
+                        }
+
                         //Remove timeout
                         mHandler.removeMessages(MESSAGE_TIMEOUT_BIND);
 
@@ -2629,6 +2649,10 @@ class BluetoothManagerService extends IBluetoothManager.Stub {
     }
 
     private void sendBleStateChanged(int prevState, int newState) {
+        if (!mIsBleSupported) {
+            // Ignore to send BLE state changed, if BLE is disabled
+            return;
+        }
         if (DBG) {
             Slog.d(TAG,
                     "Sending BLE State Change: " + BluetoothAdapter.nameForState(prevState) + " > "
@@ -2676,14 +2700,16 @@ class BluetoothManagerService extends IBluetoothManager.Stub {
                 unbindAndFinish();
                 sendBleStateChanged(prevState, newState);
 
-                /* Currently, the OFF intent is broadcasted externally only when we transition
-                 * from TURNING_OFF to BLE_ON state. So if the previous state is a BLE state,
-                 * we are guaranteed that the OFF intent has been broadcasted earlier and we
-                 * can safely skip it.
-                 * Conversely, if the previous state is not a BLE state, it indicates that some
-                 * sort of crash has occurred, moving us directly to STATE_OFF without ever
-                 * passing through BLE_ON. We should broadcast the OFF intent in this case. */
-                isStandardBroadcast = !isBleState(prevState);
+                if (mIsBleSupported) {
+                    /* Currently, the OFF intent is broadcasted externally only when we transition
+                     * from TURNING_OFF to BLE_ON state. So if the previous state is a BLE state,
+                     * we are guaranteed that the OFF intent has been broadcasted earlier and we
+                     * can safely skip it.
+                     * Conversely, if the previous state is not a BLE state, it indicates that some
+                     * sort of crash has occurred, moving us directly to STATE_OFF without ever
+                     * passing through BLE_ON. We should broadcast the OFF intent in this case. */
+                    isStandardBroadcast = !isBleState(prevState);
+                }
 
             } else if (!intermediate_off) {
                 // connect to GattService
@@ -3183,5 +3209,11 @@ class BluetoothManagerService extends IBluetoothManager.Stub {
 
     private boolean validAdapter(int adapterIndex) {
         return BluetoothAdapterCommon.validAdapter(adapterIndex);
+    }
+
+    private boolean isBleSupported() {
+        return isAdapter1() ?
+                SystemProperties.getBoolean("vendor.bt.is_ble_supported1", true) :
+                SystemProperties.getBoolean("vendor.bt.is_ble_supported", true);
     }
 }
