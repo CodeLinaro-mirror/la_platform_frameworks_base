@@ -28,6 +28,7 @@ import android.os.PatternMatcher;
 import android.os.Process;
 import android.os.ResultReceiver;
 import android.os.ShellCallback;
+import android.os.SystemProperties;
 import android.os.UserHandle;
 import android.util.Slog;
 import android.webkit.IWebViewUpdateService;
@@ -50,6 +51,8 @@ public class WebViewUpdateService extends SystemService {
 
     private static final String TAG = "WebViewUpdateService";
 
+    private static boolean mIsBike = SystemProperties.getBoolean("ro.hw.vehicle.isbike", false);
+
     private BroadcastReceiver mWebViewUpdatedReceiver;
     private WebViewUpdateServiceImpl mImpl;
 
@@ -65,64 +68,130 @@ public class WebViewUpdateService extends SystemService {
 
     @Override
     public void onStart() {
-        mWebViewUpdatedReceiver = new BroadcastReceiver() {
-                @Override
-                public void onReceive(Context context, Intent intent) {
-                    int userId = intent.getIntExtra(Intent.EXTRA_USER_HANDLE, UserHandle.USER_NULL);
-                    switch (intent.getAction()) {
-                        case Intent.ACTION_PACKAGE_REMOVED:
-                            // When a package is replaced we will receive two intents, one
-                            // representing the removal of the old package and one representing the
-                            // addition of the new package.
-                            // In the case where we receive an intent to remove the old version of
-                            // the package that is being replaced we early-out here so that we don't
-                            // run the update-logic twice.
-                            if (intent.getExtras().getBoolean(Intent.EXTRA_REPLACING)) return;
-                            mImpl.packageStateChanged(packageNameFromIntent(intent),
-                                    PACKAGE_REMOVED, userId);
-                            break;
-                        case Intent.ACTION_PACKAGE_CHANGED:
-                            // Ensure that we only heed PACKAGE_CHANGED intents if they change an
-                            // entire package, not just a component
-                            if (entirePackageChanged(intent)) {
+        if (!mIsBike) {
+            mWebViewUpdatedReceiver = new BroadcastReceiver() {
+                    @Override
+                    public void onReceive(Context context, Intent intent) {
+                        int userId = intent.getIntExtra(Intent.EXTRA_USER_HANDLE, UserHandle.USER_NULL);
+                        switch (intent.getAction()) {
+                            case Intent.ACTION_PACKAGE_REMOVED:
+                                // When a package is replaced we will receive two intents, one
+                                // representing the removal of the old package and one representing the
+                                // addition of the new package.
+                                // In the case where we receive an intent to remove the old version of
+                                // the package that is being replaced we early-out here so that we don't
+                                // run the update-logic twice.
+                                if (intent.getExtras().getBoolean(Intent.EXTRA_REPLACING)) return;
                                 mImpl.packageStateChanged(packageNameFromIntent(intent),
-                                        PACKAGE_CHANGED, userId);
-                            }
-                            break;
-                        case Intent.ACTION_PACKAGE_ADDED:
-                            mImpl.packageStateChanged(packageNameFromIntent(intent),
-                                    (intent.getExtras().getBoolean(Intent.EXTRA_REPLACING)
-                                     ? PACKAGE_ADDED_REPLACED : PACKAGE_ADDED), userId);
-                            break;
-                        case Intent.ACTION_USER_STARTED:
-                            mImpl.handleNewUser(userId);
-                            break;
-                        case Intent.ACTION_USER_REMOVED:
-                            mImpl.handleUserRemoved(userId);
-                            break;
+                                        PACKAGE_REMOVED, userId);
+                                break;
+                            case Intent.ACTION_PACKAGE_CHANGED:
+                                // Ensure that we only heed PACKAGE_CHANGED intents if they change an
+                                // entire package, not just a component
+                                if (entirePackageChanged(intent)) {
+                                    mImpl.packageStateChanged(packageNameFromIntent(intent),
+                                            PACKAGE_CHANGED, userId);
+                                }
+                                break;
+                            case Intent.ACTION_PACKAGE_ADDED:
+                                mImpl.packageStateChanged(packageNameFromIntent(intent),
+                                        (intent.getExtras().getBoolean(Intent.EXTRA_REPLACING)
+                                        ? PACKAGE_ADDED_REPLACED : PACKAGE_ADDED), userId);
+                                break;
+                            case Intent.ACTION_USER_STARTED:
+                                mImpl.handleNewUser(userId);
+                                break;
+                            case Intent.ACTION_USER_REMOVED:
+                                mImpl.handleUserRemoved(userId);
+                                break;
+                        }
                     }
-                }
-        };
-        IntentFilter filter = new IntentFilter();
-        filter.addAction(Intent.ACTION_PACKAGE_ADDED);
-        filter.addAction(Intent.ACTION_PACKAGE_REMOVED);
-        filter.addAction(Intent.ACTION_PACKAGE_CHANGED);
-        filter.addDataScheme("package");
-        // Make sure we only receive intents for WebView packages from our config file.
-        for (WebViewProviderInfo provider : mImpl.getWebViewPackages()) {
-            filter.addDataSchemeSpecificPart(provider.packageName, PatternMatcher.PATTERN_LITERAL);
+            };
+            IntentFilter filter = new IntentFilter();
+            filter.addAction(Intent.ACTION_PACKAGE_ADDED);
+            filter.addAction(Intent.ACTION_PACKAGE_REMOVED);
+            filter.addAction(Intent.ACTION_PACKAGE_CHANGED);
+            filter.addDataScheme("package");
+            // Make sure we only receive intents for WebView packages from our config file.
+            for (WebViewProviderInfo provider : mImpl.getWebViewPackages()) {
+                filter.addDataSchemeSpecificPart(provider.packageName, PatternMatcher.PATTERN_LITERAL);
+            }
+
+            getContext().registerReceiverAsUser(mWebViewUpdatedReceiver, UserHandle.ALL, filter,
+                    null /* broadcast permission */, null /* handler */);
+
+            IntentFilter userAddedFilter = new IntentFilter();
+            userAddedFilter.addAction(Intent.ACTION_USER_STARTED);
+            userAddedFilter.addAction(Intent.ACTION_USER_REMOVED);
+            getContext().registerReceiverAsUser(mWebViewUpdatedReceiver, UserHandle.ALL,
+                    userAddedFilter, null /* broadcast permission */, null /* handler */);
         }
 
-        getContext().registerReceiverAsUser(mWebViewUpdatedReceiver, UserHandle.ALL, filter,
-                null /* broadcast permission */, null /* handler */);
-
-        IntentFilter userAddedFilter = new IntentFilter();
-        userAddedFilter.addAction(Intent.ACTION_USER_STARTED);
-        userAddedFilter.addAction(Intent.ACTION_USER_REMOVED);
-        getContext().registerReceiverAsUser(mWebViewUpdatedReceiver, UserHandle.ALL,
-                userAddedFilter, null /* broadcast permission */, null /* handler */);
-
         publishBinderService("webviewupdate", new BinderService(), true /*allowIsolated*/);
+    }
+
+    @Override
+    public void onBootPhase(int phase) {
+        if (mIsBike) {
+            if (phase == PHASE_BOOT_COMPLETED) {
+                mWebViewUpdatedReceiver = new BroadcastReceiver() {
+                    @Override
+                    public void onReceive(Context context, Intent intent) {
+                        int userId = intent.getIntExtra(Intent.EXTRA_USER_HANDLE, UserHandle.USER_NULL);
+                        switch (intent.getAction()) {
+                            case Intent.ACTION_PACKAGE_REMOVED:
+                                // When a package is replaced we will receive two intents, one
+                                // representing the removal of the old package and one representing the
+                                // addition of the new package.
+                                // In the case where we receive an intent to remove the old version of
+                                // the package that is being replaced we early-out here so that we don't
+                                // run the update-logic twice.
+                                if (intent.getExtras().getBoolean(Intent.EXTRA_REPLACING)) return;
+                                mImpl.packageStateChanged(packageNameFromIntent(intent),
+                                        PACKAGE_REMOVED, userId);
+                                break;
+                            case Intent.ACTION_PACKAGE_CHANGED:
+                                // Ensure that we only heed PACKAGE_CHANGED intents if they change an
+                                // entire package, not just a component
+                                if (entirePackageChanged(intent)) {
+                                    mImpl.packageStateChanged(packageNameFromIntent(intent),
+                                            PACKAGE_CHANGED, userId);
+                                }
+                                break;
+                            case Intent.ACTION_PACKAGE_ADDED:
+                                mImpl.packageStateChanged(packageNameFromIntent(intent),
+                                        (intent.getExtras().getBoolean(Intent.EXTRA_REPLACING)
+                                         ? PACKAGE_ADDED_REPLACED : PACKAGE_ADDED), userId);
+                                break;
+                            case Intent.ACTION_USER_STARTED:
+                                mImpl.handleNewUser(userId);
+                                break;
+                            case Intent.ACTION_USER_REMOVED:
+                                mImpl.handleUserRemoved(userId);
+                                break;
+                        }
+                    }
+                };
+                IntentFilter filter = new IntentFilter();
+                filter.addAction(Intent.ACTION_PACKAGE_ADDED);
+                filter.addAction(Intent.ACTION_PACKAGE_REMOVED);
+                filter.addAction(Intent.ACTION_PACKAGE_CHANGED);
+                filter.addDataScheme("package");
+                // Make sure we only receive intents for WebView packages from our config file.
+                for (WebViewProviderInfo provider : mImpl.getWebViewPackages()) {
+                    filter.addDataSchemeSpecificPart(provider.packageName, PatternMatcher.PATTERN_LITERAL);
+                }
+
+                getContext().registerReceiverAsUser(mWebViewUpdatedReceiver, UserHandle.ALL, filter,
+                    null /* broadcast permission */, null /* handler */);
+
+                IntentFilter userAddedFilter = new IntentFilter();
+                userAddedFilter.addAction(Intent.ACTION_USER_STARTED);
+                userAddedFilter.addAction(Intent.ACTION_USER_REMOVED);
+                getContext().registerReceiverAsUser(mWebViewUpdatedReceiver, UserHandle.ALL,
+                    userAddedFilter, null /* broadcast permission */, null /* handler */);
+            }
+        }
     }
 
     public void prepareWebViewInSystemServer() {
