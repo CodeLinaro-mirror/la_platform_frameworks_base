@@ -1321,7 +1321,9 @@ public class LocationManagerService extends ILocationManager.Stub implements
                     "setAutomotiveGnssSuspended only allowed on automotive devices");
         }
 
-        mGnssManagerService.setAutomotiveGnssSuspended(suspended);
+        if (mGnssManagerService != null) {
+                mGnssManagerService.setAutomotiveGnssSuspended(suspended);
+        }
     }
 
     @android.annotation.EnforcePermission(android.Manifest.permission.CONTROL_AUTOMOTIVE_GNSS)
