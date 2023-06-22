@@ -2675,6 +2675,10 @@ public class ActivityTaskSupervisor implements RecentTasks.Callbacks {
 
         @Override
         public void handleMessage(Message msg) {
+            // changes added for headless boot
+            if (android.os.SystemProperties.getInt("ro.config.headless", 0) == 1) {
+                return;
+            }
             synchronized (mService.mGlobalLock) {
                 if (handleMessageInner(msg)) {
                     return;
