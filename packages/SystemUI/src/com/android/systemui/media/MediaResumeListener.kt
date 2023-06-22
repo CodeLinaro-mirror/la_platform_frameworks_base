@@ -89,9 +89,16 @@ class MediaResumeListener @Inject constructor(
                 Log.e(TAG, "Error getting package information", e)
             }
 
-            Log.d(TAG, "Adding resume controls $desc")
-            mediaDataManager.addResumptionControls(currentUserId, desc, resumeAction, token,
-                appName.toString(), appIntent, component.packageName)
+            Log.d(TAG, "Adding resume controls for ${browser.userId}: $desc")
+            mediaDataManager.addResumptionControls(
+                browser.userId,
+                desc,
+                resumeAction,
+                token,
+                appName.toString(),
+                appIntent,
+                component.packageName
+            )
         }
     }
 
@@ -132,7 +139,11 @@ class MediaResumeListener @Inject constructor(
             val component = ComponentName(packageName, className)
             resumeComponents.add(component)
         }
-        Log.d(TAG, "loaded resume components ${resumeComponents.toArray().contentToString()}")
+        Log.d(
+            TAG,
+            "loaded resume components for $currentUserId: " +
+                "${resumeComponents.toArray().contentToString()}"
+        )
     }
 
     /**
@@ -143,9 +154,19 @@ class MediaResumeListener @Inject constructor(
             return
         }
 
+        val pm = context.packageManager
         resumeComponents.forEach {
-            val browser = mediaBrowserFactory.create(mediaBrowserCallback, it)
-            browser.findRecentMedia()
+            // Verify that the service exists for this user
+            val intent = Intent(MediaBrowserService.SERVICE_INTERFACE)
+            intent.component = it
+            val inf = pm.resolveServiceAsUser(intent, 0, currentUserId)
+            if (inf != null) {
+                val browser =
+                    mediaBrowserFactory.create(mediaBrowserCallback, it, currentUserId)
+                browser.findRecentMedia()
+            } else {
+                Log.d(TAG, "User $currentUserId does not have component $it")
+            }
         }
     }
 
@@ -160,7 +181,7 @@ class MediaResumeListener @Inject constructor(
                 Log.d(TAG, "Checking for service component for " + data.packageName)
                 val pm = context.packageManager
                 val serviceIntent = Intent(MediaBrowserService.SERVICE_INTERFACE)
-                val resumeInfo = pm.queryIntentServices(serviceIntent, 0)
+                val resumeInfo = pm.queryIntentServicesAsUser(serviceIntent, 0, currentUserId)
 
                 val inf = resumeInfo?.filter {
                     it.serviceInfo.packageName == data.packageName
@@ -201,13 +222,18 @@ class MediaResumeListener @Inject constructor(
                         browser: ResumeMediaBrowser
                     ) {
                         // Since this is a test, just save the component for later
-                        Log.d(TAG, "Can get resumable media from $componentName")
+                        Log.d(
+                            TAG,
+                            "Can get resumable media for ${browser.userId} from $componentName"
+                        )
                         mediaDataManager.setResumeAction(key, getResumeAction(componentName))
                         updateResumptionList(componentName)
                         mediaBrowser = null
                     }
                 },
-                componentName)
+                componentName,
+                currentUserId
+            )
         mediaBrowser?.testConnection()
     }
 
@@ -241,7 +267,7 @@ class MediaResumeListener @Inject constructor(
      */
     private fun getResumeAction(componentName: ComponentName): Runnable {
         return Runnable {
-            mediaBrowser = mediaBrowserFactory.create(null, componentName)
+            mediaBrowser = mediaBrowserFactory.create(null, componentName, currentUserId)
             mediaBrowser?.restart()
         }
     }
