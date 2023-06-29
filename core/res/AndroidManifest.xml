@@ -15,6 +15,11 @@
 ** WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 ** See the License for the specific language governing permissions and
 ** limitations under the License.
+**
+** Changes from Qualcomm Innovation Center are provided under the following license:
+**
+** Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+** SPDX-License-Identifier: BSD-3-Clause-Clear.
 */
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
@@ -151,11 +156,17 @@
 
     <protected-broadcast android:name="android.bluetooth.intent.DISCOVERABLE_TIMEOUT" />
     <protected-broadcast android:name="android.bluetooth.adapter.action.STATE_CHANGED" />
+    <protected-broadcast android:name="android.bluetooth.adapterext.action.STATE_CHANGED" />
     <protected-broadcast android:name="android.bluetooth.adapter.action.SCAN_MODE_CHANGED" />
+    <protected-broadcast android:name="android.bluetooth.adapterext.action.SCAN_MODE_CHANGED" />
     <protected-broadcast android:name="android.bluetooth.adapter.action.DISCOVERY_STARTED" />
+    <protected-broadcast android:name="android.bluetooth.adapterext.action.DISCOVERY_STARTED" />
     <protected-broadcast android:name="android.bluetooth.adapter.action.DISCOVERY_FINISHED" />
+    <protected-broadcast android:name="android.bluetooth.adapterext.action.DISCOVERY_FINISHED" />
     <protected-broadcast android:name="android.bluetooth.adapter.action.LOCAL_NAME_CHANGED" />
+    <protected-broadcast android:name="android.bluetooth.adapterext.action.LOCAL_NAME_CHANGED" />
     <protected-broadcast android:name="android.bluetooth.adapter.action.BLUETOOTH_ADDRESS_CHANGED" />
+    <protected-broadcast android:name="android.bluetooth.adapterext.action.BLUETOOTH_ADDRESS_CHANGED" />
     <protected-broadcast android:name="android.bluetooth.adapter.action.CONNECTION_STATE_CHANGED" />
     <protected-broadcast android:name="android.bluetooth.device.action.UUID" />
     <protected-broadcast android:name="android.bluetooth.device.action.MAS_INSTANCE" />
@@ -534,6 +545,7 @@
     <protected-broadcast android:name="android.app.action.MANAGED_PROFILE_PROVISIONED" />
 
     <protected-broadcast android:name="android.bluetooth.adapter.action.BLE_STATE_CHANGED" />
+    <protected-broadcast android:name="android.bluetooth.adapterext.action.BLE_STATE_CHANGED" />
     <protected-broadcast android:name="com.android.bluetooth.map.USER_CONFIRM_TIMEOUT" />
     <protected-broadcast android:name="com.android.bluetooth.BluetoothMapContentObserver.action.MESSAGE_SENT" />
     <protected-broadcast android:name="com.android.bluetooth.BluetoothMapContentObserver.action.MESSAGE_DELIVERY" />
@@ -629,7 +641,9 @@
     <protected-broadcast android:name="android.net.sip.action.START_SIP" />
 
     <protected-broadcast android:name="android.bluetooth.adapter.action.BLE_ACL_CONNECTED" />
+    <protected-broadcast android:name="android.bluetooth.adapterext.action.BLE_ACL_CONNECTED" />
     <protected-broadcast android:name="android.bluetooth.adapter.action.BLE_ACL_DISCONNECTED" />
+    <protected-broadcast android:name="android.bluetooth.adapterext.action.BLE_ACL_DISCONNECTED" />
 
     <protected-broadcast android:name="android.bluetooth.input.profile.action.HANDSHAKE" />
     <protected-broadcast android:name="android.bluetooth.input.profile.action.REPORT" />
