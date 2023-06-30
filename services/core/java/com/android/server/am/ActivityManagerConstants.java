@@ -115,7 +115,7 @@ final class ActivityManagerConstants extends ContentObserver {
     static final String KEY_FGS_START_DENIED_LOG_SAMPLE_RATE = "fgs_start_denied_log_sample_rate";
     static final String KEY_FGS_ALLOW_OPT_OUT = "fgs_allow_opt_out";
 
-    private static int DEFAULT_MAX_CACHED_PROCESSES = 32;
+    private static int DEFAULT_MAX_CACHED_PROCESSES = 10;
     private static final long DEFAULT_BACKGROUND_SETTLE_TIME = 60*1000;
     private static final long DEFAULT_FGSERVICE_MIN_SHOWN_TIME = 2*1000;
     private static final long DEFAULT_FGSERVICE_MIN_REPORT_TIME = 3*1000;
