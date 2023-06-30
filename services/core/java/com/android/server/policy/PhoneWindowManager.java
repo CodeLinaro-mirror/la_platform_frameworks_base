@@ -245,6 +245,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     static final boolean DEBUG_SPLASH_SCREEN = false;
     static final boolean DEBUG_WAKEUP = false;
     static final boolean SHOW_SPLASH_SCREENS = true;
+    static final boolean enable1GLowMem = true;
 
     // Whether to allow dock apps with METADATA_DOCK_HOME to temporarily take over the Home key.
     // No longer recommended for desk docks;
@@ -5191,8 +5192,10 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     @Override
     public boolean performHapticFeedback(int uid, String packageName, int effectId,
             boolean always, String reason) {
-        if (!mVibrator.hasVibrator()) {
-            return false;
+        if (!enable1GLowMem){
+            if (!mVibrator.hasVibrator()) {
+                return false;
+            }
         }
         final boolean hapticsDisabled = Settings.System.getIntForUser(mContext.getContentResolver(),
                 Settings.System.HAPTIC_FEEDBACK_ENABLED, 0, UserHandle.USER_CURRENT) == 0;
@@ -5204,10 +5207,10 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         if (effect == null) {
             return false;
         }
-
-        mVibrator.vibrate(uid, packageName, effect, reason, VIBRATION_ATTRIBUTES);
+        if (!enable1GLowMem)
+            mVibrator.vibrate(uid, packageName, effect, reason, VIBRATION_ATTRIBUTES);
         return true;
-    }
+        }
 
     private VibrationEffect getVibrationEffect(int effectId) {
         long[] pattern;
