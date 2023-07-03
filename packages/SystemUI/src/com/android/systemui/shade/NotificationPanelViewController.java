@@ -1653,10 +1653,9 @@ public final class NotificationPanelViewController implements ShadeSurface, Dump
                 Math.max(mIndicationBottomPadding, mAmbientIndicationBottomPadding));
         mKeyguardNotificationBottomPadding = bottomPadding;
 
-        float staticTopPadding = mClockPositionAlgorithm.getLockscreenMinStackScrollerPadding()
-                // getMinStackScrollerPadding is from the top of the screen,
-                // but we need it from the top of the NSSL.
-                - mNotificationStackScrollLayoutController.getTop();
+        float staticTopPadding = mClockPositionAlgorithm.getLockscreenNotifPadding(
+                mNotificationStackScrollLayoutController.getTop());
+
         mKeyguardNotificationTopPadding = staticTopPadding;
 
         // To debug the available space, enable debug lines in this class. If you change how the
@@ -1670,8 +1669,8 @@ public final class NotificationPanelViewController implements ShadeSurface, Dump
             Log.i(TAG, "\n");
             Log.i(TAG, "staticTopPadding[" + staticTopPadding
                     + "] = Clock.padding["
-                    + mClockPositionAlgorithm.getLockscreenMinStackScrollerPadding()
-                    + "] - NSSLC.top[" + mNotificationStackScrollLayoutController.getTop()
+                    + mClockPositionAlgorithm.getLockscreenNotifPadding(
+                            mNotificationStackScrollLayoutController.getTop())
                     + "]"
             );
             Log.i(TAG, "bottomPadding[" + bottomPadding
@@ -4814,7 +4813,9 @@ public final class NotificationPanelViewController implements ShadeSurface, Dump
 
             if (!mHeadsUpTouchHelper.isTrackingHeadsUp() && mQsController.handleTouch(
                     event, isFullyCollapsed(), isShadeOrQsHeightAnimationRunning())) {
-                mShadeLog.logMotionEvent(event, "onTouch: handleQsTouch handled event");
+                if (event.getActionMasked() != MotionEvent.ACTION_MOVE) {
+                    mShadeLog.logMotionEvent(event, "onTouch: handleQsTouch handled event");
+                }
                 return true;
             }
             if (event.getActionMasked() == MotionEvent.ACTION_DOWN && isFullyCollapsed()) {
@@ -4828,7 +4829,6 @@ public final class NotificationPanelViewController implements ShadeSurface, Dump
             }
 
             handled |= handleTouch(event);
-            mShadeLog.logOnTouchEventLastReturn(event, !mDozing, handled);
             return !mDozing || handled;
         }
 
@@ -5011,7 +5011,6 @@ public final class NotificationPanelViewController implements ShadeSurface, Dump
                     }
                     break;
             }
-            mShadeLog.logHandleTouchLastReturn(event, !mGestureWaitForTouchSlop, mTracking);
             return !mGestureWaitForTouchSlop || mTracking;
         }
 
