@@ -295,6 +295,7 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
             mLpChanged.flags &= ~LayoutParams.FLAG_SHOW_WALLPAPER;
         }
 
+        mLpChanged.flags &= ~LayoutParams.FLAG_SHOW_WALLPAPER;
         if (state.mDozing) {
             mLpChanged.privateFlags |= LayoutParams.SYSTEM_FLAG_HIDE_NON_SYSTEM_OVERLAY_WINDOWS;
         } else {
