@@ -5197,6 +5197,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                 return false;
             }
         }
+        
         final boolean hapticsDisabled = Settings.System.getIntForUser(mContext.getContentResolver(),
                 Settings.System.HAPTIC_FEEDBACK_ENABLED, 0, UserHandle.USER_CURRENT) == 0;
         if (hapticsDisabled && !always) {
@@ -5207,10 +5208,12 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         if (effect == null) {
             return false;
         }
+
         if (!enable1GLowMem)
             mVibrator.vibrate(uid, packageName, effect, reason, VIBRATION_ATTRIBUTES);
-        return true;
-        }
+        
+        return true; 
+    }
 
     private VibrationEffect getVibrationEffect(int effectId) {
         long[] pattern;

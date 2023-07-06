@@ -1529,7 +1529,6 @@ public final class SystemServer implements Dumpable {
                     t.traceEnd();
                 }
             }
-
             t.traceBegin("StartInputManager");
             inputManager.setWindowManagerCallbacks(wm.getInputManagerCallback());
             inputManager.start();
@@ -1949,6 +1948,8 @@ public final class SystemServer implements Dumpable {
                 reportWtf("starting VPN Manager Service", e);
             }
             t.traceEnd();
+            if(!enable1GLowMem)
+               enableWigig=false;
 
             t.traceBegin("StartVcnManagementService");
             try {
@@ -2073,7 +2074,6 @@ public final class SystemServer implements Dumpable {
                 } catch (Throwable e) {
                     reportWtf("starting GnssTimeUpdateService service", e);
                 }
-                t.traceEnd();
             }
 
             if(!enable1GLowMem){
@@ -2136,13 +2136,13 @@ public final class SystemServer implements Dumpable {
                 t.traceBegin("StartWiredAccessoryManager");
                 try {
                     // Listen for wired headset changes
-                    inputManager.setWiredAccessoryCallbacks(new WiredAccessoryManager(context, inputManager));
+                    inputManager.setWiredAccessoryCallbacks(
+                            new WiredAccessoryManager(context, inputManager));
                 } catch (Throwable e) {
                     reportWtf("starting WiredAccessoryManager", e);
                 }
+                t.traceEnd();
             }
-            t.traceEnd();
-
             if (mPackageManager.hasSystemFeature(PackageManager.FEATURE_MIDI)) {
                 // Start MIDI Manager service
                 if(!enable1GLowMem){
@@ -2431,7 +2431,7 @@ public final class SystemServer implements Dumpable {
                 mSystemServiceManager.startService(AuthService.class);
                 t.traceEnd();
             }
- 
+
             t.traceBegin("StartBackgroundDexOptService");
             try {
                 BackgroundDexOptService.schedule(context);
@@ -2578,9 +2578,11 @@ public final class SystemServer implements Dumpable {
         }
 
         // NOTE: ClipboardService depends on ContentCapture and Autofill
-        t.traceBegin("StartClipboardService");
-        mSystemServiceManager.startService(ClipboardService.class);
-        t.traceEnd();
+        if(!enable1GLowMem){
+            t.traceBegin("StartClipboardService");
+            mSystemServiceManager.startService(ClipboardService.class);
+            t.traceEnd();
+        }
 
         t.traceBegin("AppServiceManager");
         mSystemServiceManager.startService(AppBindingService.Lifecycle.class);
@@ -2616,6 +2618,7 @@ public final class SystemServer implements Dumpable {
         // limitations, send boot phase notification separately
         if(!enable1GLowMem)
             enableWigig=false;
+
         if (enableWigig) {
             try {
                 Slog.i(TAG, "calling onBootPhase for Wigig Services");

@@ -2334,7 +2334,6 @@ android.hardware.display.Time$1
 android.hardware.display.Time
 android.hardware.display.VirtualDisplayConfig$1
 android.hardware.display.VirtualDisplayConfig
-android.hardware.display.WifiDisplay$1
 android.hardware.hdmi.HdmiControlManager
 android.hardware.hdmi.HdmiPlaybackClient$DisplayStatusCallback
 android.hardware.input.IInputDevicesChangedListener$Stub$Proxy
