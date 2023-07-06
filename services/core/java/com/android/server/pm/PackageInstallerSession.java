@@ -51,6 +51,7 @@ import static com.android.server.pm.PackageInstallerService.prepareStageDir;
 import android.Manifest;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.app.BroadcastOptions;
 import android.app.Notification;
 import android.app.NotificationManager;
 import android.app.admin.DevicePolicyEventLogger;
@@ -1299,13 +1300,21 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
                         try {
                             intent.putExtra(PackageInstaller.EXTRA_SESSION_ID,
                                     PackageInstallerSession.this.sessionId);
-                            mStatusReceiver.sendIntent(mContext, 0, intent, null, null);
+                            final BroadcastOptions options = BroadcastOptions.makeBasic();
+                            options.setPendingIntentBackgroundActivityLaunchAllowed(false);
+                            mStatusReceiver.sendIntent(mContext, 0, intent,
+                                    null /* onFinished*/, null /* handler */,
+                                    null /* requiredPermission */, options.toBundle());
                         } catch (IntentSender.SendIntentException ignore) {
                         }
                     }
                 } else if (PackageInstaller.STATUS_PENDING_USER_ACTION == status) {
                     try {
-                        mStatusReceiver.sendIntent(mContext, 0, intent, null, null);
+                        final BroadcastOptions options = BroadcastOptions.makeBasic();
+                        options.setPendingIntentBackgroundActivityLaunchAllowed(false);
+                        mStatusReceiver.sendIntent(mContext, 0, intent,
+                                null /* onFinished*/, null /* handler */,
+                                null /* requiredPermission */, options.toBundle());
                     } catch (IntentSender.SendIntentException ignore) {
                     }
                 } else { // failure, let's forward and clean up this session.
@@ -1313,7 +1322,11 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
                             PackageInstallerSession.this.sessionId);
                     mChildSessionsRemaining.clear(); // we're done. Don't send any more.
                     try {
-                        mStatusReceiver.sendIntent(mContext, 0, intent, null, null);
+                        final BroadcastOptions options = BroadcastOptions.makeBasic();
+                        options.setPendingIntentBackgroundActivityLaunchAllowed(false);
+                        mStatusReceiver.sendIntent(mContext, 0, intent,
+                                null /* onFinished*/, null /* handler */,
+                                null /* requiredPermission */, options.toBundle());
                     } catch (IntentSender.SendIntentException ignore) {
                     }
                 }
@@ -3249,7 +3262,10 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
         fillIn.putExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_PENDING_USER_ACTION);
         fillIn.putExtra(Intent.EXTRA_INTENT, intent);
         try {
-            target.sendIntent(context, 0, fillIn, null, null);
+            final BroadcastOptions options = BroadcastOptions.makeBasic();
+            options.setPendingIntentBackgroundActivityLaunchAllowed(false);
+            target.sendIntent(context, 0, fillIn, null /* onFinished */,
+                    null /* handler */, null /* requiredPermission */, options.toBundle());
         } catch (IntentSender.SendIntentException ignored) {
         }
     }
@@ -3289,7 +3305,10 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
             }
         }
         try {
-            target.sendIntent(context, 0, fillIn, null, null);
+            final BroadcastOptions options = BroadcastOptions.makeBasic();
+            options.setPendingIntentBackgroundActivityLaunchAllowed(false);
+            target.sendIntent(context, 0, fillIn, null /* onFinished */,
+                    null /* handler */, null /* requiredPermission */, options.toBundle());
         } catch (IntentSender.SendIntentException ignored) {
         }
     }
@@ -3315,7 +3334,10 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
             intent.putExtra(PackageInstaller.EXTRA_STATUS_MESSAGE, "Staging Image Not Ready");
         }
         try {
-            statusReceiver.sendIntent(mContext, 0, intent, null, null);
+            final BroadcastOptions options = BroadcastOptions.makeBasic();
+            options.setPendingIntentBackgroundActivityLaunchAllowed(false);
+            statusReceiver.sendIntent(mContext, 0, intent, null /* onFinished*/,
+                    null /* handler */, null /* requiredPermission */, options.toBundle());
         } catch (IntentSender.SendIntentException ignored) {
         }
     }
