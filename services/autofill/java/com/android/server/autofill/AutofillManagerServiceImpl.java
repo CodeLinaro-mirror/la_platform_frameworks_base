@@ -1730,8 +1730,25 @@ final class AutofillManagerServiceImpl
         return mRemoteFieldClassificationService;
     }
 
+
+    public boolean isPccClassificationEnabled() {
+        boolean result = isPccClassificationEnabledInternal();
+        if (sVerbose) {
+            Slog.v(TAG, "pccEnabled: " + result);
+        }
+        return result;
+    }
+
+    public boolean isPccClassificationEnabledInternal() {
+        boolean flagEnabled = mMaster.isPccClassificationFlagEnabled();
+        if (!flagEnabled) return false;
+        synchronized (mLock) {
+            return getRemoteFieldClassificationServiceLocked() != null;
+        }
+    }
+
     /**
-     * Called when the {@link AutofillManagerService#mAugmentedAutofillResolver}
+     * Called when the {@link AutofillManagerService#mFieldClassificationResolver}
      * changed (among other places).
      */
     void updateRemoteFieldClassificationService() {
@@ -1742,7 +1759,6 @@ final class AutofillManagerServiceImpl
                             + "destroying old remote service");
                 }
                 mRemoteFieldClassificationService.unbind();
-
                 mRemoteFieldClassificationService = null;
                 mRemoteFieldClassificationServiceInfo = null;
             }

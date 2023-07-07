@@ -21,10 +21,10 @@ import android.testing.AndroidTestingRunner
 import android.testing.TestableLooper
 import androidx.test.filters.SmallTest
 import com.android.internal.logging.MetricsLogger
+import com.android.internal.statusbar.IStatusBarService
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.classifier.FalsingCollector
 import com.android.systemui.flags.FeatureFlags
-import com.android.systemui.flags.Flags
 import com.android.systemui.plugins.FalsingManager
 import com.android.systemui.plugins.PluginManager
 import com.android.systemui.plugins.statusbar.StatusBarStateController
@@ -93,6 +93,7 @@ class ExpandableNotificationRowControllerTest : SysuiTestCase() {
     private val bubblesManager: BubblesManager = mock()
     private val dragController: ExpandableNotificationRowDragController = mock()
     private val dismissibilityProvider: NotificationDismissibilityProvider = mock()
+    private val statusBarService: IStatusBarService = mock()
 
     private lateinit var controller: ExpandableNotificationRowController
 
@@ -130,7 +131,8 @@ class ExpandableNotificationRowControllerTest : SysuiTestCase() {
                 peopleNotificationIdentifier,
                 Optional.of(bubblesManager),
                 dragController,
-                dismissibilityProvider
+                dismissibilityProvider,
+                statusBarService
             )
         whenever(view.childrenContainer).thenReturn(childrenContainer)
     }
@@ -142,8 +144,6 @@ class ExpandableNotificationRowControllerTest : SysuiTestCase() {
 
     @Test
     fun offerKeepInParent_parentDismissed() {
-        whenever(featureFlags.isEnabled(Flags.NOTIFICATION_GROUP_DISMISSAL_ANIMATION))
-            .thenReturn(true)
         whenever(view.isParentDismissed).thenReturn(true)
 
         Assert.assertTrue(controller.offerToKeepInParentForAnimation())
@@ -152,9 +152,6 @@ class ExpandableNotificationRowControllerTest : SysuiTestCase() {
 
     @Test
     fun offerKeepInParent_parentNotDismissed() {
-        whenever(featureFlags.isEnabled(Flags.NOTIFICATION_GROUP_DISMISSAL_ANIMATION))
-            .thenReturn(true)
-
         Assert.assertFalse(controller.offerToKeepInParentForAnimation())
         Mockito.verify(view, never()).setKeepInParentForDismissAnimation(anyBoolean())
     }

@@ -33,6 +33,7 @@ import static android.content.Intent.FLAG_ACTIVITY_MULTIPLE_TASK;
 import static android.content.Intent.FLAG_ACTIVITY_NEW_DOCUMENT;
 import static android.content.Intent.FLAG_ACTIVITY_NEW_TASK;
 import static android.os.Process.SYSTEM_UID;
+import static android.view.MotionEvent.CLASSIFICATION_MULTI_FINGER_SWIPE;
 import static android.view.WindowManager.LayoutParams.FIRST_APPLICATION_WINDOW;
 import static android.view.WindowManager.LayoutParams.LAST_APPLICATION_WINDOW;
 
@@ -60,6 +61,7 @@ import android.content.pm.ParceledListSlice;
 import android.content.pm.UserInfo;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
+import android.os.DeviceIntegrationUtils;
 import android.os.Environment;
 import android.os.IBinder;
 import android.os.RemoteException;
@@ -211,7 +213,8 @@ class RecentTasks {
     private final PointerEventListener mListener = new PointerEventListener() {
         @Override
         public void onPointerEvent(MotionEvent ev) {
-            if (!mFreezeTaskListReordering || ev.getAction() != MotionEvent.ACTION_DOWN) {
+            if (!mFreezeTaskListReordering || ev.getAction() != MotionEvent.ACTION_DOWN
+                    || ev.getClassification() == CLASSIFICATION_MULTI_FINGER_SWIPE) {
                 // Skip if we aren't freezing or starting a gesture
                 return;
             }
@@ -340,7 +343,8 @@ class RecentTasks {
         synchronized (mService.mGlobalLock) {
             final Task focusedStack = mService.getTopDisplayFocusedRootTask();
             final Task topTask = focusedStack != null ? focusedStack.getTopMostTask() : null;
-            resetFreezeTaskListReordering(topTask);
+            final Task reorderToEndTask = topTask != null && topTask.hasChild() ? topTask : null;
+            resetFreezeTaskListReordering(reorderToEndTask);
         }
     }
 
@@ -684,10 +688,8 @@ class RecentTasks {
     void removeTasksByPackageName(String packageName, int userId) {
         for (int i = mTasks.size() - 1; i >= 0; --i) {
             final Task task = mTasks.get(i);
-            final String taskPackageName =
-                    task.getBaseIntent().getComponent().getPackageName();
             if (task.mUserId != userId) continue;
-            if (!taskPackageName.equals(packageName)) continue;
+            if (!task.getBasePackageName().equals(packageName)) continue;
 
             mSupervisor.removeTask(task, true, REMOVE_FROM_RECENTS, "remove-package-task");
         }
@@ -861,8 +863,7 @@ class RecentTasks {
             if (task.effectiveUid != callingUid) {
                 continue;
             }
-            Intent intent = task.getBaseIntent();
-            if (intent == null || !callingPackage.equals(intent.getComponent().getPackageName())) {
+            if (!callingPackage.equals(task.getBasePackageName())) {
                 continue;
             }
             AppTaskImpl taskImpl = new AppTaskImpl(mService, task.mTaskId, callingUid);
@@ -981,9 +982,10 @@ class RecentTasks {
 
             if (!task.mUserSetupComplete) {
                 // Don't include task launched while user is not done setting-up.
-                if (DEBUG_RECENTS) {
-                    Slog.d(TAG_RECENTS, "Skipping, user setup not complete: " + task);
-                }
+
+                // NOTE: not guarding with DEBUG_RECENTS as it's not frequent enough to spam logcat,
+                // but is useful when running CTS.
+                Slog.d(TAG_RECENTS, "Skipping, user setup not complete: " + task);
                 continue;
             }
 
@@ -1506,6 +1508,12 @@ class RecentTasks {
                 // after dismissing primary split screen.
                 continue;
             }
+            // Device Integration: We don't want to system remove our remote task while in home Activity idle scenario,
+            // skip this.
+            if (!DeviceIntegrationUtils.DISABLE_DEVICE_INTEGRATION
+                && mService.getRemoteTaskManager().anyTaskExist(hiddenTask)) {
+                continue;
+            }
             mHiddenTasks.remove(i);
             mSupervisor.removeTask(hiddenTask, false /* killProcess */,
                     !REMOVE_FROM_RECENTS, "remove-hidden-task");
@@ -1531,7 +1539,7 @@ class RecentTasks {
         // callbacks here.
         final Task removedTask = mTasks.remove(removeIndex);
         if (removedTask != task) {
-            if (removedTask.hasChild()) {
+            if (removedTask.hasChild() && !removedTask.isActivityTypeHome()) {
                 Slog.i(TAG, "Add " + removedTask + " to hidden list because adding " + task);
                 // A non-empty task is replaced by a new task. Because the removed task is no longer
                 // managed by the recent tasks list, add it to the hidden list to prevent the task

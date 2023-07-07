@@ -61,6 +61,7 @@ import android.os.BaseBundle;
 import android.os.Binder;
 import android.os.Build;
 import android.os.Debug;
+import android.os.DeviceIntegrationUtils;
 import android.os.Environment;
 import android.os.FactoryTest;
 import android.os.FileUtils;
@@ -126,6 +127,7 @@ import com.android.server.compat.PlatformCompatNative;
 import com.android.server.connectivity.PacProxyService;
 import com.android.server.contentcapture.ContentCaptureManagerInternal;
 import com.android.server.coverage.CoverageService;
+import com.android.server.cpu.CpuMonitorService;
 import com.android.server.devicepolicy.DevicePolicyManagerService;
 import com.android.server.devicestate.DeviceStateManagerService;
 import com.android.server.display.DisplayManagerService;
@@ -222,6 +224,7 @@ import com.android.server.vr.VrManagerService;
 import com.android.server.wearable.WearableSensingManagerService;
 import com.android.server.webkit.WebViewUpdateService;
 import com.android.server.wm.ActivityTaskManagerService;
+import com.android.server.wm.CrossDeviceService;
 import com.android.server.wm.WindowManagerGlobalLock;
 import com.android.server.wm.WindowManagerService;
 
@@ -594,8 +597,8 @@ public final class SystemServer implements Dumpable {
      * Spawn a thread that monitors for fd leaks.
      */
     private static void spawnFdLeakCheckThread() {
-        final int enableThreshold = SystemProperties.getInt(SYSPROP_FDTRACK_ENABLE_THRESHOLD, 1024);
-        final int abortThreshold = SystemProperties.getInt(SYSPROP_FDTRACK_ABORT_THRESHOLD, 2048);
+        final int enableThreshold = SystemProperties.getInt(SYSPROP_FDTRACK_ENABLE_THRESHOLD, 1600);
+        final int abortThreshold = SystemProperties.getInt(SYSPROP_FDTRACK_ABORT_THRESHOLD, 3000);
         final int checkInterval = SystemProperties.getInt(SYSPROP_FDTRACK_INTERVAL, 120);
 
         new Thread(() -> {
@@ -736,7 +739,7 @@ public final class SystemServer implements Dumpable {
                     final String name = args[1];
                     final Dumpable dumpable = mDumpables.get(name);
                     if (dumpable == null) {
-                        pw.printf("No dummpable named %s\n", name);
+                        pw.printf("No dumpable named %s\n", name);
                         return;
                     }
 
@@ -1407,6 +1410,15 @@ public final class SystemServer implements Dumpable {
         mSystemServiceManager.startService(RemoteProvisioningService.class);
         t.traceEnd();
 
+        // TODO(b/277600174): Start CpuMonitorService on all builds and not just on debuggable
+        // builds once the Android JobScheduler starts using this service.
+        if (Build.IS_DEBUGGABLE || Build.IS_ENG) {
+          // Service for CPU monitor.
+          t.traceBegin("CpuMonitorService");
+          mSystemServiceManager.startService(CpuMonitorService.class);
+          t.traceEnd();
+        }
+
         t.traceEnd(); // startCoreServices
     }
 
@@ -1564,7 +1576,7 @@ public final class SystemServer implements Dumpable {
             ServiceManager.addService("dynamic_system", dynamicSystem);
             t.traceEnd();
 
-            if (!isWatch) {
+            if (context.getPackageManager().hasSystemFeature(PackageManager.FEATURE_CONSUMER_IR)) {
                 t.traceBegin("StartConsumerIrService");
                 consumerIr = new ConsumerIrService(context);
                 ServiceManager.addService(Context.CONSUMER_IR_SERVICE, consumerIr);
@@ -2668,7 +2680,11 @@ public final class SystemServer implements Dumpable {
 
         // AdServicesManagerService (PP API service)
         t.traceBegin("StartAdServicesManagerService");
-        mSystemServiceManager.startService(AD_SERVICES_MANAGER_SERVICE_CLASS);
+        SystemService adServices = mSystemServiceManager
+                .startService(AD_SERVICES_MANAGER_SERVICE_CLASS);
+        if (adServices instanceof Dumpable) {
+            mDumper.addDumpable((Dumpable) adServices);
+        }
         t.traceEnd();
 
         // OnDevicePersonalizationSystemService
@@ -2836,6 +2852,12 @@ public final class SystemServer implements Dumpable {
         t.traceBegin("MakePackageManagerServiceReady");
         mPackageManagerService.systemReady();
         t.traceEnd();
+
+        if (!DeviceIntegrationUtils.DISABLE_DEVICE_INTEGRATION) {
+            t.traceBegin("StartCrossDeviceService");
+            ServiceManager.addService(Context.CROSS_DEVICE_SERVICE, new CrossDeviceService(mSystemContext, mActivityManagerService.mActivityTaskManager));
+            t.traceEnd();
+        }
 
         t.traceBegin("MakeDisplayManagerServiceReady");
         try {

@@ -21,6 +21,8 @@ import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Rect
 import android.os.PowerManager
+import android.os.Process
+import android.os.VibrationAttributes
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -31,12 +33,13 @@ import android.view.WindowManager
 import android.view.accessibility.AccessibilityManager
 import android.widget.ImageView
 import android.widget.TextView
+import androidx.annotation.DimenRes
 import androidx.annotation.IdRes
 import androidx.annotation.VisibleForTesting
+import com.android.app.animation.Interpolators
 import com.android.internal.widget.CachingIconView
 import com.android.systemui.Gefingerpoken
 import com.android.systemui.R
-import com.android.systemui.animation.Interpolators
 import com.android.systemui.classifier.FalsingCollector
 import com.android.systemui.common.shared.model.ContentDescription.Companion.loadContentDescription
 import com.android.systemui.common.shared.model.Text.Companion.loadText
@@ -180,8 +183,9 @@ constructor(
 
         // Button
         val buttonView = currentView.requireViewById<TextView>(R.id.end_button)
-        if (newInfo.endItem is ChipbarEndItem.Button) {
-            TextViewBinder.bind(buttonView, newInfo.endItem.text)
+        val hasButton = newInfo.endItem is ChipbarEndItem.Button
+        if (hasButton) {
+            TextViewBinder.bind(buttonView, (newInfo.endItem as ChipbarEndItem.Button).text)
 
             val onClickListener =
                 View.OnClickListener { clickedView ->
@@ -195,6 +199,12 @@ constructor(
         } else {
             buttonView.visibility = View.GONE
         }
+
+        currentView
+            .getInnerView()
+            .setEndPadding(
+                if (hasButton) R.dimen.chipbar_outer_padding_half else R.dimen.chipbar_outer_padding
+            )
 
         // ---- Overall accessibility ----
         val iconDesc = newInfo.startIcon.icon.contentDescription
@@ -218,7 +228,15 @@ constructor(
         maybeGetAccessibilityFocus(newInfo, currentView)
 
         // ---- Haptics ----
-        newInfo.vibrationEffect?.let { vibratorHelper.vibrate(it) }
+        newInfo.vibrationEffect?.let {
+            vibratorHelper.vibrate(
+                Process.myUid(),
+                context.getApplicationContext().getPackageName(),
+                it,
+                newInfo.windowTitle,
+                VIBRATION_ATTRIBUTES,
+            )
+        }
     }
 
     private fun maybeGetAccessibilityFocus(info: ChipbarInfo?, view: ViewGroup) {
@@ -309,6 +327,15 @@ constructor(
         viewUtil.setRectToViewWindowLocation(view, outRect)
     }
 
+    private fun View.setEndPadding(@DimenRes endPaddingDimen: Int) {
+        this.setPaddingRelative(
+            this.paddingStart,
+            this.paddingTop,
+            context.resources.getDimensionPixelSize(endPaddingDimen),
+            this.paddingBottom,
+        )
+    }
+
     private fun Boolean.visibleIfTrue(): Int {
         return if (this) {
             View.VISIBLE
@@ -335,6 +362,11 @@ constructor(
         val loadingView: View,
         val animator: ObjectAnimator,
     )
+
+    companion object {
+        val VIBRATION_ATTRIBUTES: VibrationAttributes =
+            VibrationAttributes.createForUsage(VibrationAttributes.USAGE_HARDWARE_FEEDBACK)
+    }
 }
 
 @IdRes private val INFO_TAG = R.id.tag_chipbar_info

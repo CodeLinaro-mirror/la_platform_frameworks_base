@@ -16,29 +16,30 @@
 
 package com.android.server.credentials.metrics;
 
-import static com.android.internal.util.FrameworkStatsLog.CREDENTIAL_MANAGER_API_CALLED__API_NAME__API_NAME_CLEAR_CREDENTIAL;
-import static com.android.internal.util.FrameworkStatsLog.CREDENTIAL_MANAGER_API_CALLED__API_NAME__API_NAME_CREATE_CREDENTIAL;
-import static com.android.internal.util.FrameworkStatsLog.CREDENTIAL_MANAGER_API_CALLED__API_NAME__API_NAME_GET_CREDENTIAL;
-import static com.android.internal.util.FrameworkStatsLog.CREDENTIAL_MANAGER_API_CALLED__API_NAME__API_NAME_IS_ENABLED_CREDENTIAL_PROVIDER_SERVICE;
-import static com.android.internal.util.FrameworkStatsLog.CREDENTIAL_MANAGER_API_CALLED__API_NAME__API_NAME_UNKNOWN;
+import static com.android.internal.util.FrameworkStatsLog.CREDENTIAL_MANAGER_FINAL_PHASE_REPORTED__CLICKED_ENTRIES__ACTION_ENTRY;
+import static com.android.internal.util.FrameworkStatsLog.CREDENTIAL_MANAGER_FINAL_PHASE_REPORTED__CLICKED_ENTRIES__AUTHENTICATION_ENTRY;
+import static com.android.internal.util.FrameworkStatsLog.CREDENTIAL_MANAGER_FINAL_PHASE_REPORTED__CLICKED_ENTRIES__CREDENTIAL_ENTRY;
+import static com.android.internal.util.FrameworkStatsLog.CREDENTIAL_MANAGER_FINAL_PHASE_REPORTED__CLICKED_ENTRIES__REMOTE_ENTRY;
+import static com.android.internal.util.FrameworkStatsLog.CREDENTIAL_MANAGER_FINAL_PHASE_REPORTED__CLICKED_ENTRIES__UNKNOWN;
 import static com.android.server.credentials.ProviderGetSession.ACTION_ENTRY_KEY;
 import static com.android.server.credentials.ProviderGetSession.AUTHENTICATION_ACTION_ENTRY_KEY;
 import static com.android.server.credentials.ProviderGetSession.CREDENTIAL_ENTRY_KEY;
 import static com.android.server.credentials.ProviderGetSession.REMOTE_ENTRY_KEY;
 
-import android.util.Log;
+import android.util.Slog;
+
+import com.android.server.credentials.ProviderCreateSession;
 
 import java.util.AbstractMap;
 import java.util.Map;
 
 public enum EntryEnum {
-    // TODO immediately, update with built entries
-    UNKNOWN(CREDENTIAL_MANAGER_API_CALLED__API_NAME__API_NAME_UNKNOWN),
-    ACTION_ENTRY(CREDENTIAL_MANAGER_API_CALLED__API_NAME__API_NAME_GET_CREDENTIAL),
-    CREDENTIAL_ENTRY(CREDENTIAL_MANAGER_API_CALLED__API_NAME__API_NAME_CREATE_CREDENTIAL),
-    REMOTE_ENTRY(CREDENTIAL_MANAGER_API_CALLED__API_NAME__API_NAME_CLEAR_CREDENTIAL),
+    UNKNOWN(CREDENTIAL_MANAGER_FINAL_PHASE_REPORTED__CLICKED_ENTRIES__UNKNOWN),
+    ACTION_ENTRY(CREDENTIAL_MANAGER_FINAL_PHASE_REPORTED__CLICKED_ENTRIES__ACTION_ENTRY),
+    CREDENTIAL_ENTRY(CREDENTIAL_MANAGER_FINAL_PHASE_REPORTED__CLICKED_ENTRIES__CREDENTIAL_ENTRY),
+    REMOTE_ENTRY(CREDENTIAL_MANAGER_FINAL_PHASE_REPORTED__CLICKED_ENTRIES__REMOTE_ENTRY),
     AUTHENTICATION_ENTRY(
-            CREDENTIAL_MANAGER_API_CALLED__API_NAME__API_NAME_IS_ENABLED_CREDENTIAL_PROVIDER_SERVICE
+            CREDENTIAL_MANAGER_FINAL_PHASE_REPORTED__CLICKED_ENTRIES__AUTHENTICATION_ENTRY
     );
 
     private static final String TAG = "EntryEnum";
@@ -53,11 +54,13 @@ public enum EntryEnum {
             new AbstractMap.SimpleEntry<>(REMOTE_ENTRY_KEY,
                     REMOTE_ENTRY.mInnerMetricCode),
             new AbstractMap.SimpleEntry<>(CREDENTIAL_ENTRY_KEY,
+                    CREDENTIAL_ENTRY.mInnerMetricCode),
+            new AbstractMap.SimpleEntry<>(ProviderCreateSession.SAVE_ENTRY_KEY,
                     CREDENTIAL_ENTRY.mInnerMetricCode)
     );
 
     EntryEnum(int innerMetricCode) {
-        this.mInnerMetricCode = innerMetricCode;
+        mInnerMetricCode = innerMetricCode;
     }
 
     /**
@@ -66,7 +69,7 @@ public enum EntryEnum {
      * @return a code corresponding to the west world metric name
      */
     public int getMetricCode() {
-        return this.mInnerMetricCode;
+        return mInnerMetricCode;
     }
 
     /**
@@ -78,7 +81,7 @@ public enum EntryEnum {
      */
     public static int getMetricCodeFromString(String stringKey) {
         if (!sKeyToEntryCode.containsKey(stringKey)) {
-            Log.w(TAG, "Attempted to use an unsupported string key entry type");
+            Slog.i(TAG, "Attempted to use an unsupported string key entry type");
             return UNKNOWN.mInnerMetricCode;
         }
         return sKeyToEntryCode.get(stringKey);

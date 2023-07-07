@@ -412,7 +412,10 @@ public final class SplitLayout implements DisplayInsetsController.OnInsetsChange
 
     /** Releases and re-inflates {@link DividerView} on the root surface. */
     public void update(SurfaceControl.Transaction t) {
-        if (!mInitialized) return;
+        if (!mInitialized) {
+            init();
+            return;
+        }
         mSplitWindowManager.release(t);
         mImePositionProcessor.reset();
         mSplitWindowManager.init(this, mInsetsState);
@@ -706,12 +709,17 @@ public final class SplitLayout implements DisplayInsetsController.OnInsetsChange
         return context.getSystemService(WindowManager.class)
                 .getMaximumWindowMetrics()
                 .getWindowInsets()
-                .getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout())
+                .getInsetsIgnoringVisibility(WindowInsets.Type.systemBars()
+                        | WindowInsets.Type.displayCutout())
                 .toRect();
     }
 
     private static boolean isLandscape(Rect bounds) {
         return bounds.width() > bounds.height();
+    }
+
+    public boolean isDensityChanged(int densityDpi) {
+        return mDensity != densityDpi;
     }
 
     /**
@@ -1116,7 +1124,7 @@ public final class SplitLayout implements DisplayInsetsController.OnInsetsChange
             setDividerInteractive(!mImeShown || !mHasImeFocus || isFloating, true,
                     "onImeStartPositioning");
 
-            return needOffset ? IME_ANIMATION_NO_ALPHA : 0;
+            return mTargetYOffset != mLastYOffset ? IME_ANIMATION_NO_ALPHA : 0;
         }
 
         @Override

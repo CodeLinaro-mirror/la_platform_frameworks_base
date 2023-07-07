@@ -16,9 +16,12 @@
 
 package com.android.server.credentials.metrics;
 
-import android.util.Log;
+import android.util.Slog;
 
 import com.android.server.credentials.MetricUtilities;
+import com.android.server.credentials.metrics.shared.ResponseCollective;
+
+import java.util.Map;
 
 /**
  * The central chosen provider metric object that mimics our defined metric setup. This is used
@@ -26,15 +29,15 @@ import com.android.server.credentials.MetricUtilities;
  * Some types are redundant across these metric collectors, but that has debug use-cases as
  * these data-types are available at different moments of the flow (and typically, one can feed
  * into the next).
- * TODO(b/270403549) - iterate on this in V3+
- * TODO(Immediately) - finalize V3 only types
  */
 public class ChosenProviderFinalPhaseMetric {
-
-    // TODO(b/270403549) - applies elsewhere, likely removed or replaced w/ some hashed/count index
     private static final String TAG = "ChosenFinalPhaseMetric";
-    // The session id associated with this API call, used to unite split emits
-    private long mSessionId = -1;
+    // The session id associated with this API call, used to unite split emits, for the flow
+    // where we know the calling app
+    private final int mSessionIdCaller;
+    // The session id associated with this API call, used to unite split emits, for the flow
+    // where we know the provider apps
+    private final int mSessionIdProvider;
     // Reveals if the UI was returned, false by default
     private boolean mUiReturned = false;
     private int mChosenUid = -1;
@@ -52,6 +55,8 @@ public class ChosenProviderFinalPhaseMetric {
     // The first query timestamp, which upon emit is normalized to microseconds using the reference
     // start timestamp
     private long mQueryStartTimeNanoseconds = -1;
+    // The timestamp at query end, which upon emit will be normalized to microseconds with reference
+    private long mQueryEndTimeNanoseconds = -1;
     // The UI call timestamp, which upon emit will be normalized to microseconds using reference
     private long mUiCallStartTimeNanoseconds = -1;
     // The UI return timestamp, which upon emit will be normalized to microseconds using reference
@@ -63,11 +68,21 @@ public class ChosenProviderFinalPhaseMetric {
     // Other General Information, such as final api status, provider status, entry info, etc...
 
     private int mChosenProviderStatus = -1;
-    // TODO add remaining properties based on the Atom ; specifically, migrate the candidate
-    // Entry information, and store final status here
+    // Indicates if an exception was thrown by this provider, false by default
+    private boolean mHasException = false;
+    // Indicates a framework only exception that occurs in the final phase of the flow
+    private String mFrameworkException = "";
+
+    // Stores the response credential information, as well as the response entry information which
+    // by default, contains empty info
+    private ResponseCollective mResponseCollective = new ResponseCollective(Map.of(), Map.of());
+    // Indicates if this chosen provider was the primary provider, false by default
+    private boolean mIsPrimary = false;
 
 
-    public ChosenProviderFinalPhaseMetric() {
+    public ChosenProviderFinalPhaseMetric(int sessionIdCaller, int sessionIdProvider) {
+        mSessionIdCaller = sessionIdCaller;
+        mSessionIdProvider = sessionIdProvider;
     }
 
     /* ------------------- UID ------------------- */
@@ -119,8 +134,8 @@ public class ChosenProviderFinalPhaseMetric {
     }
 
     public int getUiPhaseLatencyMicroseconds() {
-        return (int) ((this.mUiCallEndTimeNanoseconds
-                - this.mUiCallStartTimeNanoseconds) / 1000);
+        return (int) ((mUiCallEndTimeNanoseconds
+                - mUiCallStartTimeNanoseconds) / 1000);
     }
 
     /**
@@ -128,8 +143,8 @@ public class ChosenProviderFinalPhaseMetric {
      * start time to be provided, such as from {@link CandidatePhaseMetric}.
      */
     public int getEntireProviderLatencyMicroseconds() {
-        return (int) ((this.mFinalFinishTimeNanoseconds
-                - this.mQueryStartTimeNanoseconds) / 1000);
+        return (int) ((mFinalFinishTimeNanoseconds
+                - mQueryStartTimeNanoseconds) / 1000);
     }
 
     /**
@@ -137,8 +152,8 @@ public class ChosenProviderFinalPhaseMetric {
      * start time to be provided, such as from {@link InitialPhaseMetric}.
      */
     public int getEntireLatencyMicroseconds() {
-        return (int) ((this.mFinalFinishTimeNanoseconds
-                - this.mServiceBeganTimeNanoseconds) / 1000);
+        return (int) ((mFinalFinishTimeNanoseconds
+                - mServiceBeganTimeNanoseconds) / 1000);
     }
 
     /* ----- Timestamps for Latency ----- */
@@ -159,12 +174,16 @@ public class ChosenProviderFinalPhaseMetric {
         mQueryStartTimeNanoseconds = queryStartTimeNanoseconds;
     }
 
+    public void setQueryEndTimeNanoseconds(long queryEndTimeNanoseconds) {
+        mQueryEndTimeNanoseconds = queryEndTimeNanoseconds;
+    }
+
     public void setUiCallStartTimeNanoseconds(long uiCallStartTimeNanoseconds) {
-        this.mUiCallStartTimeNanoseconds = uiCallStartTimeNanoseconds;
+        mUiCallStartTimeNanoseconds = uiCallStartTimeNanoseconds;
     }
 
     public void setUiCallEndTimeNanoseconds(long uiCallEndTimeNanoseconds) {
-        this.mUiCallEndTimeNanoseconds = uiCallEndTimeNanoseconds;
+        mUiCallEndTimeNanoseconds = uiCallEndTimeNanoseconds;
     }
 
     public void setFinalFinishTimeNanoseconds(long finalFinishTimeNanoseconds) {
@@ -177,6 +196,10 @@ public class ChosenProviderFinalPhaseMetric {
 
     public long getQueryStartTimeNanoseconds() {
         return mQueryStartTimeNanoseconds;
+    }
+
+    public long getQueryEndTimeNanoseconds() {
+        return mQueryEndTimeNanoseconds;
     }
 
     public long getUiCallStartTimeNanoseconds() {
@@ -202,12 +225,12 @@ public class ChosenProviderFinalPhaseMetric {
      * @return the microsecond integer timestamp from service start to query began
      */
     public int getTimestampFromReferenceStartMicroseconds(long specificTimestamp) {
-        if (specificTimestamp < this.mServiceBeganTimeNanoseconds) {
-            Log.i(TAG, "The timestamp is before service started, falling back to default int");
+        if (specificTimestamp < mServiceBeganTimeNanoseconds) {
+            Slog.i(TAG, "The timestamp is before service started, falling back to default int");
             return MetricUtilities.DEFAULT_INT_32;
         }
         return (int) ((specificTimestamp
-                - this.mServiceBeganTimeNanoseconds) / 1000);
+                - mServiceBeganTimeNanoseconds) / 1000);
     }
 
     /* ----------- Provider Status -------------- */
@@ -222,12 +245,8 @@ public class ChosenProviderFinalPhaseMetric {
 
     /* ----------- Session ID -------------- */
 
-    public void setSessionId(long sessionId) {
-        mSessionId = sessionId;
-    }
-
-    public long getSessionId() {
-        return mSessionId;
+    public int getSessionIdProvider() {
+        return mSessionIdProvider;
     }
 
     /* ----------- UI Returned Successfully -------------- */
@@ -238,5 +257,49 @@ public class ChosenProviderFinalPhaseMetric {
 
     public boolean isUiReturned() {
         return mUiReturned;
+    }
+
+    /* -------------- Has Exception ---------------- */
+
+    public void setHasException(boolean hasException) {
+        mHasException = hasException;
+    }
+
+    public boolean isHasException() {
+        return mHasException;
+    }
+
+    /* -------------- The Entries and Responses Gathered ---------------- */
+
+    public void setResponseCollective(ResponseCollective responseCollective) {
+        mResponseCollective = responseCollective;
+    }
+
+    public ResponseCollective getResponseCollective() {
+        return mResponseCollective;
+    }
+
+    /* -------------- Framework Exception ---------------- */
+
+    public void setFrameworkException(String frameworkException) {
+        mFrameworkException = frameworkException;
+    }
+
+    public String getFrameworkException() {
+        return mFrameworkException;
+    }
+
+    /* -------------- Session ID for Track One (Known Calling App) ---------------- */
+
+    public int getSessionIdCaller() {
+        return mSessionIdCaller;
+    }
+
+    public void setPrimary(boolean primary) {
+        mIsPrimary = primary;
+    }
+
+    public boolean isPrimary() {
+        return mIsPrimary;
     }
 }

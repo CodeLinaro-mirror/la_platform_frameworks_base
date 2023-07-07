@@ -48,8 +48,10 @@ import android.content.pm.PackageManager;
 import android.content.pm.ParceledListSlice;
 import android.content.pm.UserInfo;
 import android.metrics.LogMaker;
+import android.net.Uri;
 import android.os.Binder;
 import android.os.Build;
+import android.os.Process;
 import android.os.UserHandle;
 import android.provider.Settings;
 import android.service.notification.ConversationChannelWrapper;
@@ -60,6 +62,7 @@ import android.text.format.DateUtils;
 import android.util.ArrayMap;
 import android.util.ArraySet;
 import android.util.IntArray;
+import android.util.Log;
 import android.util.Pair;
 import android.util.Slog;
 import android.util.SparseBooleanArray;
@@ -215,7 +218,7 @@ public class PreferencesHelper implements RankingConfig {
         updateBadgingEnabled();
         updateBubblesEnabled();
         updateMediaNotificationFilteringEnabled();
-        syncChannelsBypassingDnd();
+        syncChannelsBypassingDnd(Process.SYSTEM_UID, true);  // init comes from system
     }
 
     public void readXml(TypedXmlPullParser parser, boolean forRestore, int userId)
@@ -237,7 +240,6 @@ public class PreferencesHelper implements RankingConfig {
                     Settings.Global.REVIEW_PERMISSIONS_NOTIFICATION_STATE,
                     NotificationManagerService.REVIEW_NOTIF_STATE_SHOULD_SHOW);
         }
-        ArrayList<PermissionHelper.PackagePermission> pkgPerms = new ArrayList<>();
         synchronized (mPackagePreferences) {
             while ((type = parser.next()) != XmlPullParser.END_DOCUMENT) {
                 tag = parser.getName();
@@ -255,18 +257,9 @@ public class PreferencesHelper implements RankingConfig {
                         String name = parser.getAttributeValue(null, ATT_NAME);
                         if (!TextUtils.isEmpty(name)) {
                             restorePackage(parser, forRestore, userId, name, upgradeForBubbles,
-                                    migrateToPermission, pkgPerms);
+                                    migrateToPermission);
                         }
                     }
-                }
-            }
-        }
-        if (migrateToPermission) {
-            for (PackagePermission p : pkgPerms) {
-                try {
-                    mPermissionHelper.setNotificationPermission(p);
-                } catch (Exception e) {
-                    Slog.e(TAG, "could not migrate setting for " + p.packageName, e);
                 }
             }
         }
@@ -275,7 +268,7 @@ public class PreferencesHelper implements RankingConfig {
     @GuardedBy("mPackagePreferences")
     private void restorePackage(TypedXmlPullParser parser, boolean forRestore,
             @UserIdInt int userId, String name, boolean upgradeForBubbles,
-            boolean migrateToPermission, ArrayList<PermissionHelper.PackagePermission> pkgPerms) {
+            boolean migrateToPermission) {
         try {
             int uid = parser.getAttributeInt(null, ATT_UID, UNKNOWN_UID);
             if (forRestore) {
@@ -379,14 +372,6 @@ public class PreferencesHelper implements RankingConfig {
             if (migrateToPermission) {
                 r.importance = appImportance;
                 r.migrateToPm = true;
-                if (r.uid != UNKNOWN_UID) {
-                    // Don't call into permission system until we have a valid uid
-                    PackagePermission pkgPerm = new PackagePermission(
-                            r.pkg, UserHandle.getUserId(r.uid),
-                            r.importance != IMPORTANCE_NONE,
-                            hasUserConfiguredSettings(r));
-                    pkgPerms.add(pkgPerm);
-                }
             }
         } catch (Exception e) {
             Slog.w(TAG, "Failed to restore pkg", e);
@@ -405,7 +390,8 @@ public class PreferencesHelper implements RankingConfig {
                 NotificationChannel channel = new NotificationChannel(
                         id, channelName, channelImportance);
                 if (forRestore) {
-                    channel.populateFromXmlForRestore(parser, mContext);
+                    final boolean pkgInstalled = r.uid != UNKNOWN_UID;
+                    channel.populateFromXmlForRestore(parser, pkgInstalled, mContext);
                 } else {
                     channel.populateFromXml(parser);
                 }
@@ -849,7 +835,7 @@ public class PreferencesHelper implements RankingConfig {
 
     @Override
     public void createNotificationChannelGroup(String pkg, int uid, NotificationChannelGroup group,
-            boolean fromTargetApp) {
+            boolean fromTargetApp, int callingUid, boolean fromSystemOrSystemUi) {
         Objects.requireNonNull(pkg);
         Objects.requireNonNull(group);
         Objects.requireNonNull(group.getId());
@@ -895,13 +881,14 @@ public class PreferencesHelper implements RankingConfig {
             r.groups.put(group.getId(), group);
         }
         if (needsDndChange) {
-            updateChannelsBypassingDnd();
+            updateChannelsBypassingDnd(callingUid, fromSystemOrSystemUi);
         }
     }
 
     @Override
     public boolean createNotificationChannel(String pkg, int uid, NotificationChannel channel,
-            boolean fromTargetApp, boolean hasDndAccess) {
+            boolean fromTargetApp, boolean hasDndAccess, int callingUid,
+            boolean fromSystemOrSystemUi) {
         Objects.requireNonNull(pkg);
         Objects.requireNonNull(channel);
         Objects.requireNonNull(channel.getId());
@@ -1042,7 +1029,7 @@ public class PreferencesHelper implements RankingConfig {
         }
 
         if (needsDndChange) {
-            updateChannelsBypassingDnd();
+            updateChannelsBypassingDnd(callingUid, fromSystemOrSystemUi);
         }
 
         return needsPolicyFileChange;
@@ -1071,7 +1058,7 @@ public class PreferencesHelper implements RankingConfig {
 
     @Override
     public void updateNotificationChannel(String pkg, int uid, NotificationChannel updatedChannel,
-            boolean fromUser) {
+            boolean fromUser, int callingUid, boolean fromSystemOrSystemUi) {
         Objects.requireNonNull(updatedChannel);
         Objects.requireNonNull(updatedChannel.getId());
         boolean changed = false;
@@ -1127,7 +1114,7 @@ public class PreferencesHelper implements RankingConfig {
             }
         }
         if (needsDndChange) {
-            updateChannelsBypassingDnd();
+            updateChannelsBypassingDnd(callingUid, fromSystemOrSystemUi);
         }
         if (changed) {
             updateConfig();
@@ -1203,7 +1190,8 @@ public class PreferencesHelper implements RankingConfig {
     }
 
     @Override
-    public boolean deleteNotificationChannel(String pkg, int uid, String channelId) {
+    public boolean deleteNotificationChannel(String pkg, int uid, String channelId,
+            int callingUid, boolean fromSystemOrSystemUi) {
         boolean deletedChannel = false;
         boolean channelBypassedDnd = false;
         synchronized (mPackagePreferences) {
@@ -1218,7 +1206,7 @@ public class PreferencesHelper implements RankingConfig {
             }
         }
         if (channelBypassedDnd) {
-            updateChannelsBypassingDnd();
+            updateChannelsBypassingDnd(callingUid, fromSystemOrSystemUi);
         }
         return deletedChannel;
     }
@@ -1409,7 +1397,7 @@ public class PreferencesHelper implements RankingConfig {
     }
 
     public List<NotificationChannel> deleteNotificationChannelGroup(String pkg, int uid,
-            String groupId) {
+            String groupId, int callingUid, boolean fromSystemOrSystemUi) {
         List<NotificationChannel> deletedChannels = new ArrayList<>();
         boolean groupBypassedDnd = false;
         synchronized (mPackagePreferences) {
@@ -1435,7 +1423,7 @@ public class PreferencesHelper implements RankingConfig {
             }
         }
         if (groupBypassedDnd) {
-            updateChannelsBypassingDnd();
+            updateChannelsBypassingDnd(callingUid, fromSystemOrSystemUi);
         }
         return deletedChannels;
     }
@@ -1558,7 +1546,7 @@ public class PreferencesHelper implements RankingConfig {
     }
 
     public @NonNull List<String> deleteConversations(String pkg, int uid,
-            Set<String> conversationIds) {
+            Set<String> conversationIds, int callingUid, boolean fromSystemOrSystemUi) {
         List<String> deletedChannelIds = new ArrayList<>();
         synchronized (mPackagePreferences) {
             PackagePreferences r = getPackagePreferencesLocked(pkg, uid);
@@ -1583,7 +1571,7 @@ public class PreferencesHelper implements RankingConfig {
             }
         }
         if (!deletedChannelIds.isEmpty() && mAreChannelsBypassingDnd) {
-            updateChannelsBypassingDnd();
+            updateChannelsBypassingDnd(callingUid, fromSystemOrSystemUi);
         }
         return deletedChannelIds;
     }
@@ -1688,18 +1676,18 @@ public class PreferencesHelper implements RankingConfig {
      * Syncs {@link #mAreChannelsBypassingDnd} with the current user's notification policy before
      * updating
      */
-    private void syncChannelsBypassingDnd() {
+    private void syncChannelsBypassingDnd(int callingUid, boolean fromSystemOrSystemUi) {
         mAreChannelsBypassingDnd = (mZenModeHelper.getNotificationPolicy().state
                 & NotificationManager.Policy.STATE_CHANNELS_BYPASSING_DND) == 1;
 
-        updateChannelsBypassingDnd();
+        updateChannelsBypassingDnd(callingUid, fromSystemOrSystemUi);
     }
 
     /**
      * Updates the user's NotificationPolicy based on whether the current userId
      * has channels bypassing DND
      */
-    private void updateChannelsBypassingDnd() {
+    private void updateChannelsBypassingDnd(int callingUid, boolean fromSystemOrSystemUi) {
         ArraySet<Pair<String, Integer>> candidatePkgs = new ArraySet<>();
 
         final int currentUserId = getCurrentUser();
@@ -1729,7 +1717,7 @@ public class PreferencesHelper implements RankingConfig {
         boolean haveBypassingApps = candidatePkgs.size() > 0;
         if (mAreChannelsBypassingDnd != haveBypassingApps) {
             mAreChannelsBypassingDnd = haveBypassingApps;
-            updateZenPolicy(mAreChannelsBypassingDnd);
+            updateZenPolicy(mAreChannelsBypassingDnd, callingUid, fromSystemOrSystemUi);
         }
     }
 
@@ -1754,14 +1742,15 @@ public class PreferencesHelper implements RankingConfig {
         return true;
     }
 
-    public void updateZenPolicy(boolean areChannelsBypassingDnd) {
+    public void updateZenPolicy(boolean areChannelsBypassingDnd, int callingUid,
+            boolean fromSystemOrSystemUi) {
         NotificationManager.Policy policy = mZenModeHelper.getNotificationPolicy();
         mZenModeHelper.setNotificationPolicy(new NotificationManager.Policy(
                 policy.priorityCategories, policy.priorityCallSenders,
                 policy.priorityMessageSenders, policy.suppressedVisualEffects,
                 (areChannelsBypassingDnd ? NotificationManager.Policy.STATE_CHANNELS_BYPASSING_DND
                         : 0),
-                policy.priorityConversationSenders));
+                policy.priorityConversationSenders), callingUid, fromSystemOrSystemUi);
     }
 
     public boolean areChannelsBypassingDnd() {
@@ -2063,9 +2052,10 @@ public class PreferencesHelper implements RankingConfig {
                 // before the migration is enabled, this will simply default to false in all cases.
                 boolean importanceIsUserSet = false;
                 // Even if this package's data is not present, we need to write something;
-                // so default to IMPORTANCE_NONE, since if PM doesn't know about the package
-                // for some reason, notifications are not allowed.
-                int importance = IMPORTANCE_NONE;
+                // default to IMPORTANCE_UNSPECIFIED. If PM doesn't know about the package
+                // for some reason, notifications are not allowed, but in logged output we want
+                // to distinguish this case from the actually-banned packages.
+                int importance = IMPORTANCE_UNSPECIFIED;
                 Pair<Integer, String> key = new Pair<>(r.uid, r.pkg);
                 if (pkgPermissions != null && pkgsWithPermissionsToHandle.contains(key)) {
                     Pair<Boolean, Boolean> permissionPair = pkgPermissions.get(key);
@@ -2429,6 +2419,21 @@ public class PreferencesHelper implements RankingConfig {
                         mRestoredWithoutUids.remove(unrestoredPackageKey(pkg, changeUserId));
                         synchronized (mPackagePreferences) {
                             mPackagePreferences.put(packagePreferencesKey(r.pkg, r.uid), r);
+
+                            // Try to restore any unrestored sound resources
+                            for (NotificationChannel channel : r.channels.values()) {
+                                if (!channel.isSoundRestored()) {
+                                    Uri uri = channel.getSound();
+                                    Uri restoredUri = channel.restoreSoundUri(mContext, uri, true);
+                                    if (Settings.System.DEFAULT_NOTIFICATION_URI.equals(
+                                            restoredUri)) {
+                                        Log.w(TAG,
+                                                "Could not restore sound: " + uri + " for channel: "
+                                                        + channel);
+                                    }
+                                    channel.setSound(restoredUri, channel.getAudioAttributes());
+                                }
+                            }
                         }
                         if (r.migrateToPm) {
                             try {
@@ -2658,6 +2663,31 @@ public class PreferencesHelper implements RankingConfig {
                 final PackagePreferences r = mPackagePreferences.valueAt(i);
                 for (NotificationChannel channel : r.channels.values()) {
                     channel.unlockFields(USER_LOCKED_IMPORTANCE);
+                }
+            }
+        }
+    }
+
+    public void migrateNotificationPermissions(List<UserInfo> users) {
+        for (UserInfo user : users) {
+            List<PackageInfo> packages = mPm.getInstalledPackagesAsUser(
+                    PackageManager.PackageInfoFlags.of(PackageManager.MATCH_ALL),
+                    user.getUserHandle().getIdentifier());
+            for (PackageInfo pi : packages) {
+                synchronized (mPackagePreferences) {
+                    PackagePreferences p = getOrCreatePackagePreferencesLocked(
+                            pi.packageName, pi.applicationInfo.uid);
+                    if (p.migrateToPm && p.uid != UNKNOWN_UID) {
+                        try {
+                            PackagePermission pkgPerm = new PackagePermission(
+                                    p.pkg, UserHandle.getUserId(p.uid),
+                                    p.importance != IMPORTANCE_NONE,
+                                    hasUserConfiguredSettings(p));
+                            mPermissionHelper.setNotificationPermission(pkgPerm);
+                        } catch (Exception e) {
+                            Slog.e(TAG, "could not migrate setting for " + p.pkg, e);
+                        }
+                    }
                 }
             }
         }

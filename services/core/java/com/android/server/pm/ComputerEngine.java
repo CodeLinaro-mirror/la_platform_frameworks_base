@@ -571,6 +571,7 @@ public class ComputerEngine implements Computer {
                 if (!blockInstantResolution && !blockNormalResolution) {
                     final ResolveInfo ri = new ResolveInfo();
                     ri.activityInfo = ai;
+                    ri.userHandle = UserHandle.of(userId);
                     list = new ArrayList<>(1);
                     list.add(ri);
                     PackageManagerServiceUtils.applyEnforceIntentFilterMatching(
@@ -2307,6 +2308,9 @@ public class ComputerEngine implements Computer {
             return false;
         }
         if ((intent.getFlags() & Intent.FLAG_IGNORE_EPHEMERAL) != 0) {
+            return false;
+        }
+        if ((intent.getFlags() & Intent.FLAG_ACTIVITY_REQUIRE_NON_BROWSER) != 0) {
             return false;
         }
         if (!skipPackageCheck && intent.getPackage() != null) {
@@ -4297,6 +4301,11 @@ public class ComputerEngine implements Computer {
         if (Process.isSdkSandboxUid(uid)) {
             uid = getBaseSdkSandboxUid();
         }
+        if (Process.isIsolatedUid(uid)
+                && mPermissionManager.getHotwordDetectionServiceProvider() != null
+                && uid == mPermissionManager.getHotwordDetectionServiceProvider().getUid()) {
+            uid = getIsolatedOwner(uid);
+        }
         final int callingUserId = UserHandle.getUserId(callingUid);
         final int appId = UserHandle.getAppId(uid);
         final Object obj = mSettings.getSettingBase(appId);
@@ -4332,6 +4341,11 @@ public class ComputerEngine implements Computer {
             int uid = uids[i];
             if (Process.isSdkSandboxUid(uid)) {
                 uid = getBaseSdkSandboxUid();
+            }
+            if (Process.isIsolatedUid(uid)
+                    && mPermissionManager.getHotwordDetectionServiceProvider() != null
+                    && uid == mPermissionManager.getHotwordDetectionServiceProvider().getUid()) {
+                uid = getIsolatedOwner(uid);
             }
             final int appId = UserHandle.getAppId(uid);
             final Object obj = mSettings.getSettingBase(appId);
@@ -4982,9 +4996,11 @@ public class ComputerEngine implements Computer {
 
     @Override
     @Nullable
-    public InstallSourceInfo getInstallSourceInfo(@NonNull String packageName) {
+    public InstallSourceInfo getInstallSourceInfo(@NonNull String packageName,
+            @UserIdInt int userId) {
         final int callingUid = Binder.getCallingUid();
-        final int userId = UserHandle.getUserId(callingUid);
+        enforceCrossUserPermission(callingUid, userId, false /* requireFullPermission */,
+                false /* checkShell */, "getInstallSourceInfo");
 
         String installerPackageName;
         String initiatingPackageName;
@@ -5129,9 +5145,10 @@ public class ComputerEngine implements Computer {
 
     @Override
     public boolean isComponentEffectivelyEnabled(@NonNull ComponentInfo componentInfo,
-            @UserIdInt int userId) {
+            @NonNull UserHandle userHandle) {
         try {
             String packageName = componentInfo.packageName;
+            int userId = userHandle.getIdentifier();
             int appEnabledSetting =
                     mSettings.getApplicationEnabledSetting(packageName, userId);
             if (appEnabledSetting == COMPONENT_ENABLED_STATE_DEFAULT) {
@@ -5154,9 +5171,10 @@ public class ComputerEngine implements Computer {
 
     @Override
     public boolean isApplicationEffectivelyEnabled(@NonNull String packageName,
-            @UserIdInt int userId) {
+            @NonNull UserHandle userHandle) {
         try {
-            int appEnabledSetting = mSettings.getApplicationEnabledSetting(packageName, userId);
+            int appEnabledSetting = mSettings.getApplicationEnabledSetting(packageName,
+                    userHandle.getIdentifier());
             if (appEnabledSetting == COMPONENT_ENABLED_STATE_DEFAULT) {
                 final AndroidPackage pkg = getPackage(packageName);
                 if (pkg == null) {

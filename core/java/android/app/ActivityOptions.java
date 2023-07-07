@@ -21,6 +21,8 @@ import static android.Manifest.permission.CONTROL_REMOTE_APP_TRANSITION_ANIMATIO
 import static android.Manifest.permission.START_TASKS_FROM_RECENTS;
 import static android.app.WindowConfiguration.ACTIVITY_TYPE_UNDEFINED;
 import static android.app.WindowConfiguration.WINDOWING_MODE_UNDEFINED;
+import static android.content.Intent.FLAG_ACTIVITY_NEW_TASK;
+import static android.content.Intent.FLAG_RECEIVER_FOREGROUND;
 import static android.view.Display.INVALID_DISPLAY;
 import static android.window.DisplayAreaOrganizer.FEATURE_UNDEFINED;
 
@@ -41,6 +43,7 @@ import android.graphics.Bitmap.Config;
 import android.graphics.Rect;
 import android.hardware.HardwareBuffer;
 import android.os.Bundle;
+import android.os.DeviceIntegrationUtils;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.IRemoteCallback;
@@ -401,8 +404,11 @@ public class ActivityOptions extends ComponentOptions {
     private static final String KEY_SPLASH_SCREEN_STYLE =
             "android.activity.splashScreenStyle";
 
-    /** See {@link #setTransientLaunch()}. */
-    private static final String KEY_TRANSIENT_LAUNCH = "android.activity.transientLaunch";
+    /**
+     * See {@link #setTransientLaunch()}.
+     * @hide
+     */
+    public static final String KEY_TRANSIENT_LAUNCH = "android.activity.transientLaunch";
 
     /** see {@link #makeLaunchIntoPip(PictureInPictureParams)}. */
     private static final String KEY_LAUNCH_INTO_PIP_PARAMS =
@@ -519,6 +525,11 @@ public class ActivityOptions extends ComponentOptions {
     private int mPendingIntentCreatorBackgroundActivityStartMode =
             MODE_BACKGROUND_ACTIVITY_START_SYSTEM_DEFINED;
     private boolean mDisableStartingWindow;
+
+    private int mRemoteTaskFlag;
+    private String mRemoteTaskUUID;
+    private String mRemoteTaskSecurityToken;
+    private int mRemoteTaskLaunchScenario;
 
     /**
      * Create an ActivityOptions specifying a custom animation to run when
@@ -1333,6 +1344,12 @@ public class ActivityOptions extends ComponentOptions {
                 KEY_PENDING_INTENT_CREATOR_BACKGROUND_ACTIVITY_START_MODE,
                 MODE_BACKGROUND_ACTIVITY_START_SYSTEM_DEFINED);
         mDisableStartingWindow = opts.getBoolean(KEY_DISABLE_STARTING_WINDOW);
+        if (!DeviceIntegrationUtils.DISABLE_DEVICE_INTEGRATION) {
+            mRemoteTaskFlag = opts.getInt(RemoteTaskConstants.KEY_REMOTE_TASK_LAUNCH_OPTION, RemoteTaskConstants.REMOTE_TASK_FLAG_DEFAULT);
+            mRemoteTaskUUID = opts.getString(RemoteTaskConstants.KEY_REMOTE_TASK_UUID, null);
+            mRemoteTaskSecurityToken = opts.getString(RemoteTaskConstants.KEY_REMOTE_TASK_SECURITY_TOKEN, null);
+            mRemoteTaskLaunchScenario = RemoteTaskConstants.FLAG_TASK_LAUNCH_SCENARIO_COMMON;
+        }
     }
 
     /**
@@ -1806,6 +1823,62 @@ public class ActivityOptions extends ComponentOptions {
     }
 
     /**
+     * @hide
+     */
+    public int getRemoteTaskFlag() {
+        return mRemoteTaskFlag;
+    }
+
+    /**
+     * @hide
+     */
+    public void setRemoteTaskFlag(int remoteTaskFlag) {
+        this.mRemoteTaskFlag = remoteTaskFlag;
+    }
+
+    /**
+     * @hide
+     */
+    public String getRemoteUuid() {
+        return mRemoteTaskUUID;
+    }
+
+    /**
+     * @hide
+     */
+    public void setRemoteUuid(String remoteUUID) {
+        this.mRemoteTaskUUID = remoteUUID;
+    }
+
+    /**
+     * @hide
+     */
+    public String getRemoteSecurityToken() {
+        return mRemoteTaskSecurityToken;
+    }
+
+    /**
+     * @hide
+     */
+    public void setRemoteSecurityToken(String remoteSecurityToken) {
+        this.mRemoteTaskSecurityToken = remoteSecurityToken;
+    }
+
+    /**
+     * @hide
+     */
+    public int getRemoteTaskLaunchScenario() {
+        return mRemoteTaskLaunchScenario;
+    }
+
+    /**
+     * @hide
+     */
+    public void setRemoteTaskLaunchScenario(int remoteTaskLaunchScenario) {
+        this.mRemoteTaskLaunchScenario = remoteTaskLaunchScenario;
+    }
+
+    /**
      * Specifies intent flags to be applied for any activity started from a PendingIntent.
      *
      * @hide
@@ -1818,7 +1891,9 @@ public class ActivityOptions extends ComponentOptions {
      * @hide
      */
     public int getPendingIntentLaunchFlags() {
-        return mPendingIntentLaunchFlags;
+        // b/243794108: Ignore all flags except the new task flag, to be reconsidered in b/254490217
+        return mPendingIntentLaunchFlags &
+                (FLAG_ACTIVITY_NEW_TASK | FLAG_RECEIVER_FOREGROUND);
     }
 
     /**
@@ -2372,6 +2447,17 @@ public class ActivityOptions extends ComponentOptions {
         if (mDisableStartingWindow) {
             b.putBoolean(KEY_DISABLE_STARTING_WINDOW, mDisableStartingWindow);
         }
+        if (!DeviceIntegrationUtils.DISABLE_DEVICE_INTEGRATION) {
+            if (mRemoteTaskFlag != RemoteTaskConstants.REMOTE_TASK_FLAG_DEFAULT) {
+                b.putInt(RemoteTaskConstants.KEY_REMOTE_TASK_LAUNCH_OPTION, mRemoteTaskFlag);
+            }
+            if (mRemoteTaskUUID != null) {
+                b.putString(RemoteTaskConstants.KEY_REMOTE_TASK_UUID, mRemoteTaskUUID);
+            }
+            if (mRemoteTaskSecurityToken != null) {
+                b.putString(RemoteTaskConstants.KEY_REMOTE_TASK_SECURITY_TOKEN, mRemoteTaskSecurityToken);
+            }
+        }
         return b;
     }
 
@@ -2539,7 +2625,8 @@ public class ActivityOptions extends ComponentOptions {
     public String toString() {
         return "ActivityOptions(" + hashCode() + "), mPackageName=" + mPackageName
                 + ", mAnimationType=" + mAnimationType + ", mStartX=" + mStartX + ", mStartY="
-                + mStartY + ", mWidth=" + mWidth + ", mHeight=" + mHeight;
+                + mStartY + ", mWidth=" + mWidth + ", mHeight=" + mHeight + ", mLaunchDisplayId="
+                + mLaunchDisplayId;
     }
 
     /**

@@ -165,6 +165,7 @@ java_library_static {
         "android.hardware.health-V2-java", // AIDL
         "android.hardware.health-translate-java",
         "android.hardware.light-V1-java",
+        "android.hardware.security.rkp-V3-java",
         "android.hardware.tv.cec-V1.1-java",
         "android.hardware.tv.hdmi.cec-V1-java",
         "android.hardware.tv.hdmi.connection-V1-java",
@@ -178,10 +179,10 @@ java_library_static {
         "android.hardware.configstore-V1.1-java",
         "android.hardware.ir-V1-java",
         "android.hardware.rebootescrow-V1-java",
-        "android.hardware.soundtrigger-V2.3-java",
         "android.hardware.power.stats-V2-java",
         "android.hardware.power-V4-java",
         "android.hidl.manager-V1.2-java",
+        "cbor-java",
         "icu4j_calendar_astronomer",
         "netd-client",
         "overlayable_policy_aidl-java",
@@ -191,6 +192,7 @@ java_library_static {
         "securebox",
         "vendor.qti.hardware.servicetracker-V1.0-java",
         "vendor.qti.hardware.servicetracker-V1.2-java",
+        "vendor.qti.hardware.servicetrackeraidl-V1-java",
     ],
     javac_shard_size: 50,
     javacflags: [

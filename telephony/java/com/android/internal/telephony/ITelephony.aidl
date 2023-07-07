@@ -2677,6 +2677,21 @@ interface ITelephony {
     int getSimStateForSlotIndex(int slotIndex);
 
     /**
+     * Request telephony to persist state for debugging emergency call failures.
+     *
+     * @param dropBoxTag Tag to use when persisting data to dropbox service.
+     * @param enableLogcat whether to collect logcat output
+     * @param logcatStartTimestampMillis timestamp from when logcat buffers would be persisted
+     * @param enableTelecomDump whether to collect telecom dumpsys
+     * @param enableTelephonyDump whether to collect telephony dumpsys
+     *
+     * @hide
+     */
+    @JavaPassthrough(annotation="@android.annotation.RequiresPermission("
+            + "android.Manifest.permission.DUMP)")
+    void persistEmergencyCallDiagnosticData(String dropboxTag, boolean enableLogcat,
+        long logcatStartTimestampMillis, boolean enableTelecomDump, boolean enableTelephonyDump);
+    /**
      * Set whether the radio is able to connect with null ciphering or integrity
      * algorithms. This is a global setting and will apply to all active subscriptions
      * and all new subscriptions after this.
@@ -2808,15 +2823,15 @@ interface ITelephony {
      * @param subId The subId of the subscription to be provisioned.
      * @param token The token to be used as a unique identifier for provisioning with satellite
      *              gateway.
-     * @param regionId The region ID for the device's current location.
+     * @provisionData Data from the provisioning app that can be used by provisioning server
      * @param callback The callback to get the result of the request.
      *
      * @return The signal transport used by callers to cancel the provision request.
      */
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission("
             + "android.Manifest.permission.SATELLITE_COMMUNICATION)")
-    ICancellationSignal provisionSatelliteService(int subId, in String token, in String regionId,
-            in IIntegerConsumer callback);
+    ICancellationSignal provisionSatelliteService(int subId, in String token,
+            in byte[] provisionData, in IIntegerConsumer callback);
 
     /**
      * Unregister the subscription with the satellite provider.
@@ -2965,4 +2980,68 @@ interface ITelephony {
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission("
             + "android.Manifest.permission.SATELLITE_COMMUNICATION)")
     void requestTimeForNextSatelliteVisibility(int subId, in ResultReceiver receiver);
+
+    /**
+     * Inform whether the device is aligned with the satellite within in margin for demo mode.
+     *
+     * @param isAligned {@true} Device is aligned with the satellite for demo mode
+     *                  {@false} Device is not aligned with the satellite for demo mode
+     */
+    @JavaPassthrough(annotation="@android.annotation.RequiresPermission("
+            + "android.Manifest.permission.SATELLITE_COMMUNICATION)")
+    void onDeviceAlignedWithSatellite(int subId, in boolean isAligned);
+
+    /**
+     * This API can be used by only CTS to update satellite vendor service package name.
+     *
+     * @param servicePackageName The package name of the satellite vendor service.
+     * @return {@code true} if the satellite vendor service is set successfully,
+     * {@code false} otherwise.
+     */
+    boolean setSatelliteServicePackageName(in String servicePackageName);
+
+    /**
+     * This API can be used by only CTS to update satellite gateway service package name.
+     *
+     * @param servicePackageName The package name of the satellite gateway service.
+     * @return {@code true} if the satellite gateway service is set successfully,
+     * {@code false} otherwise.
+     */
+    boolean setSatelliteGatewayServicePackageName(in String servicePackageName);
+
+    /**
+     * This API can be used by only CTS to update the timeout duration in milliseconds that
+     * satellite should stay at listening mode to wait for the next incoming page before disabling
+     * listening mode.
+     *
+     * @param timeoutMillis The timeout duration in millisecond.
+     * @return {@code true} if the timeout duration is set successfully, {@code false} otherwise.
+     */
+    boolean setSatelliteListeningTimeoutDuration(in long timeoutMillis);
+
+    /**
+     * This API can be used by only CTS to update satellite pointing UI app package and class names.
+     *
+     * @param packageName The package name of the satellite pointing UI app.
+     * @param className The class name of the satellite pointing UI app.
+     * @return {@code true} if the satellite pointing UI app package and class is set successfully,
+     * {@code false} otherwise.
+     */
+    boolean setSatellitePointingUiClassName(in String packageName, in String className);
+
+    /**
+     * This API can be used by only CTS to update the timeout duration in milliseconds whether
+     * the device is aligned with the satellite for demo mode
+     *
+     * @param timeoutMillis The timeout duration in millisecond.
+     * @return {@code true} if the timeout duration is set successfully, {@code false} otherwise.
+     */
+    boolean setSatelliteDeviceAlignedTimeoutDuration(long timeoutMillis);
+
+    /**
+     * Test method to confirm the file contents are not altered.
+     */
+     @JavaPassthrough(annotation="@android.annotation.RequiresPermission("
+                 + "android.Manifest.permission.READ_PRIVILEGED_PHONE_STATE)")
+     List<String> getShaIdFromAllowList(String pkgName, int carrierId);
 }

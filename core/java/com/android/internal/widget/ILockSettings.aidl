@@ -56,6 +56,8 @@ interface ILockSettings {
     VerifyCredentialResponse verifyGatekeeperPasswordHandle(long gatekeeperPasswordHandle, long challenge, int userId);
     void removeGatekeeperPasswordHandle(long gatekeeperPasswordHandle);
     int getCredentialType(int userId);
+    int getPinLength(int userId);
+    boolean refreshStoredPinLength(int userId);
     byte[] getHashFactor(in LockscreenCredential currentCredential, int userId);
     void setSeparateProfileChallengeEnabled(int userId, boolean enabled, in LockscreenCredential managedUserPassword);
     boolean getSeparateProfileChallengeEnabled(int userId);

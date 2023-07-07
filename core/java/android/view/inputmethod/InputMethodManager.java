@@ -488,11 +488,19 @@ public final class InputMethodManager {
     private View mNextServedView;
 
     /**
-     * This is the root view of the overall window that currently has input
-     * method focus.
+     * The latest {@link ViewRootImpl} that has, or most recently had, input method focus.
+     *
+     * <p>This value will be cleared when it becomes inactive and no longer has window focus.
      */
+    @Nullable
     @GuardedBy("mH")
     ViewRootImpl mCurRootView;
+
+    /**
+     * Whether the {@link #mCurRootView} currently has window focus.
+     */
+    @GuardedBy("mH")
+    boolean mCurRootViewWindowFocused;
 
     /**
      * This is set when we are in the process of connecting, to determine
@@ -751,6 +759,7 @@ public final class InputMethodManager {
         public void onPreWindowGainedFocus(ViewRootImpl viewRootImpl) {
             synchronized (mH) {
                 setCurrentRootViewLocked(viewRootImpl);
+                mCurRootViewWindowFocused = true;
             }
         }
 
@@ -824,6 +833,17 @@ public final class InputMethodManager {
                         mCurRootView.mContext.getApplicationInfo().targetSdkVersion,
                         UserHandle.myUserId(), mImeDispatcher);
                 Trace.traceEnd(TRACE_TAG_WINDOW_MANAGER);
+            }
+        }
+
+        @Override
+        public void onWindowLostFocus(@NonNull ViewRootImpl viewRootImpl) {
+            synchronized (mH) {
+                if (mCurRootView == viewRootImpl) {
+                    mCurRootViewWindowFocused = false;
+
+                    clearCurRootViewIfNeeded();
+                }
             }
         }
 
@@ -1120,6 +1140,10 @@ public final class InputMethodManager {
                             // Note that finishComposingText() is allowed to run
                             // even when we are not active.
                             mFallbackInputConnection.finishComposingTextFromImm();
+
+                            if (clearCurRootViewIfNeeded()) {
+                                return;
+                            }
                         }
                         // Check focus again in case that "onWindowFocus" is called before
                         // handling this message.
@@ -1559,9 +1583,7 @@ public final class InputMethodManager {
         if (fallbackContext == null) {
             return false;
         }
-        if (!isStylusHandwritingEnabled(fallbackContext)) {
-            return false;
-        }
+
         return IInputMethodManagerGlobalInvoker.isStylusHandwritingAvailableAsUser(userId);
     }
 
@@ -1656,6 +1678,7 @@ public final class InputMethodManager {
      *
      * @param userId user ID to query
      * @return {@link List} of {@link InputMethodInfo}.
+     * @see #getEnabledInputMethodSubtypeListAsUser(String, boolean, int)
      * @hide
      */
     @RequiresPermission(value = Manifest.permission.INTERACT_ACROSS_USERS_FULL, conditional = true)
@@ -1681,6 +1704,27 @@ public final class InputMethodManager {
                 imi == null ? null : imi.getId(),
                 allowsImplicitlyEnabledSubtypes,
                 UserHandle.myUserId());
+    }
+
+    /**
+     * Returns a list of enabled input method subtypes for the specified input method info for the
+     * specified user.
+     *
+     * @param imeId IME ID to be queried about.
+     * @param allowsImplicitlyEnabledSubtypes {@code true} to include implicitly enabled subtypes.
+     * @param userId user ID to be queried about.
+     *               {@link Manifest.permission#INTERACT_ACROSS_USERS_FULL} is required if this is
+     *               different from the calling process user ID.
+     * @return {@link List} of {@link InputMethodSubtype}.
+     * @see #getEnabledInputMethodListAsUser(int)
+     * @hide
+     */
+    @NonNull
+    @RequiresPermission(value = Manifest.permission.INTERACT_ACROSS_USERS_FULL, conditional = true)
+    public List<InputMethodSubtype> getEnabledInputMethodSubtypeListAsUser(
+            @NonNull String imeId, boolean allowsImplicitlyEnabledSubtypes, @UserIdInt int userId) {
+        return IInputMethodManagerGlobalInvoker.getEnabledInputMethodSubtypeList(
+                Objects.requireNonNull(imeId), allowsImplicitlyEnabledSubtypes, userId);
     }
 
     /**
@@ -1742,8 +1786,7 @@ public final class InputMethodManager {
     }
 
     /**
-     * Return true if the given view is the currently active view for the
-     * input method.
+     * Return {@code true} if the given view is the currently active view for the input method.
      */
     public boolean isActive(View view) {
         // Re-dispatch if there is a context mismatch.
@@ -1759,12 +1802,26 @@ public final class InputMethodManager {
     }
 
     /**
-     * Return true if any view is currently active in the input method.
+     * Return {@code true} if any view is currently active for the input method.
      */
     public boolean isActive() {
         checkFocus();
         synchronized (mH) {
             return getServedViewLocked() != null && mCurrentEditorInfo != null;
+        }
+    }
+
+    /**
+     * Returns {@code true} if the given view's {@link ViewRootImpl} is the currently active one
+     * for the {@code InputMethodManager}.
+     *
+     * @hide
+     */
+    @TestApi
+    @RequiresPermission(Manifest.permission.TEST_INPUT_METHOD)
+    public boolean isCurrentRootView(@NonNull View attachedView) {
+        synchronized (mH) {
+            return mCurRootView == attachedView.getViewRootImpl();
         }
     }
 
@@ -1892,6 +1949,24 @@ public final class InputMethodManager {
         }
         // Clear the back callbacks held by the ime dispatcher to avoid memory leaks.
         mImeDispatcher.clear();
+    }
+
+    /**
+     * Clears the {@link #mCurRootView} if it's no longer window focused and the connection is
+     * no longer active.
+     *
+     * @return {@code} true iff it was cleared.
+     */
+    @GuardedBy("mH")
+    private boolean clearCurRootViewIfNeeded() {
+        if (!mActive && !mCurRootViewWindowFocused) {
+            finishInputLocked();
+            mDelegate.setCurrentRootViewLocked(null);
+
+            return true;
+        }
+
+        return false;
     }
 
     public void displayCompletions(View view, CompletionInfo[] completions) {
@@ -2250,11 +2325,6 @@ public final class InputMethodManager {
         }
 
         boolean useDelegation = !TextUtils.isEmpty(delegatorPackageName);
-        if (!isStylusHandwritingEnabled(view.getContext())) {
-            Log.w(TAG, "Stylus handwriting pref is disabled. "
-                    + "Ignoring calls to start stylus handwriting.");
-            return false;
-        }
 
         checkFocus();
         synchronized (mH) {
@@ -2270,21 +2340,13 @@ public final class InputMethodManager {
             }
             if (useDelegation) {
                 return IInputMethodManagerGlobalInvoker.acceptStylusHandwritingDelegation(
-                        mClient, view.getContext().getOpPackageName(), delegatorPackageName);
+                        mClient, UserHandle.myUserId(), view.getContext().getOpPackageName(),
+                        delegatorPackageName);
             } else {
                 IInputMethodManagerGlobalInvoker.startStylusHandwriting(mClient);
             }
             return false;
         }
-    }
-
-    private boolean isStylusHandwritingEnabled(@NonNull Context context) {
-        if (Settings.Global.getInt(context.getContentResolver(),
-                Settings.Global.STYLUS_HANDWRITING_ENABLED, 0) == 0) {
-            Log.d(TAG, "Stylus handwriting pref is disabled.");
-            return false;
-        }
-        return true;
     }
 
     /**
@@ -2350,13 +2412,9 @@ public final class InputMethodManager {
             fallbackImm.prepareStylusHandwritingDelegation(delegatorView, delegatePackageName);
         }
 
-        if (!isStylusHandwritingEnabled(delegatorView.getContext())) {
-            Log.w(TAG, "Stylus handwriting pref is disabled. "
-                    + "Ignoring prepareStylusHandwritingDelegation().");
-            return;
-        }
         IInputMethodManagerGlobalInvoker.prepareStylusHandwritingDelegation(
                 mClient,
+                UserHandle.myUserId(),
                 delegatePackageName,
                 delegatorView.getContext().getOpPackageName());
     }

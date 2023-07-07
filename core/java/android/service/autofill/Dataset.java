@@ -123,47 +123,50 @@ public final class Dataset implements Parcelable {
      */
     public static final int PICK_REASON_UNKNOWN = 0;
     /**
-     * This dataset is picked because of autofill provider detection was chosen.
+     * This dataset is picked because pcc wasn't enabled.
      * @hide
      */
-    public static final int PICK_REASON_AUTOFILL_PROVIDER_DETECTION = 1;
+    public static final int PICK_REASON_NO_PCC = 1;
+    /**
+     * This dataset is picked because provider gave this dataset.
+     * @hide
+     */
+    public static final int PICK_REASON_PROVIDER_DETECTION_ONLY = 2;
+    /**
+     * This dataset is picked because provider detection was preferred. However, provider also made
+     * this dataset available for PCC detected types, so they could've been picked up by PCC
+     * detection. This however doesn't imply that this dataset would've been chosen for sure. For
+     * eg, if PCC Detection was preferred, and PCC detected other field types, which wasn't
+     * applicable to this dataset, it wouldn't have been shown.
+     * @hide
+     */
+    public static final int PICK_REASON_PROVIDER_DETECTION_PREFERRED_WITH_PCC = 3;
     /**
      * This dataset is picked because of PCC detection was chosen.
      * @hide
      */
-    public static final int PICK_REASON_PCC_DETECTION = 2;
+    public static final int PICK_REASON_PCC_DETECTION_ONLY = 4;
     /**
-     * This dataset is picked because of Framework detection was chosen.
+     * This dataset is picked because of PCC Detection was preferred. However, Provider also gave
+     * this dataset, so if PCC wasn't enabled, this dataset would've been eligible anyway.
      * @hide
      */
-    public static final int PICK_REASON_FRAMEWORK_DETECTION = 3;
-    /**
-     * This dataset is picked because of Autofill Provider being a fallback.
-     * @hide
-     */
-    public static final int PICK_REASON_AUTOFILL_PROVIDER_FALLBACK = 4;
-    /**
-     * This dataset is picked because of PCC detection being a fallback.
-     * @hide
-     */
-    public static final int PICK_REASON_PCC_DETECTION_FALLBACK = 5;
-    /**
-     * This dataset is picked because of Framework detection being a fallback.
-     * @hide
-     */
-    public static final int PICK_REASON_FRAMEWORK_FALLBACK = 6;
+    public static final int PICK_REASON_PCC_DETECTION_PREFERRED_WITH_PROVIDER = 5;
 
+    /**
+     * Reason why the dataset was eligible for autofill.
+     * @hide
+     */
     @IntDef(prefix = { "PICK_REASON_" }, value = {
             PICK_REASON_UNKNOWN,
-            PICK_REASON_AUTOFILL_PROVIDER_DETECTION,
-            PICK_REASON_PCC_DETECTION,
-            PICK_REASON_FRAMEWORK_DETECTION,
-            PICK_REASON_AUTOFILL_PROVIDER_FALLBACK,
-            PICK_REASON_PCC_DETECTION_FALLBACK,
-            PICK_REASON_FRAMEWORK_FALLBACK,
+            PICK_REASON_NO_PCC,
+            PICK_REASON_PROVIDER_DETECTION_ONLY,
+            PICK_REASON_PROVIDER_DETECTION_PREFERRED_WITH_PCC,
+            PICK_REASON_PCC_DETECTION_ONLY,
+            PICK_REASON_PCC_DETECTION_PREFERRED_WITH_PROVIDER,
     })
     @Retention(RetentionPolicy.SOURCE)
-    @interface DatasetEligibleReason{}
+    public @interface DatasetEligibleReason{}
 
     private @DatasetEligibleReason int mEligibleReason;
 
@@ -1260,6 +1263,36 @@ public final class Dataset implements Parcelable {
             return mFieldIds.size() - 1;
         }
 
+        private void createFromParcel(
+                @Nullable AutofillId id, @Nullable String datatype,
+                @Nullable AutofillValue value, @Nullable RemoteViews presentation,
+                @Nullable InlinePresentation inlinePresentation,
+                @Nullable InlinePresentation tooltip,
+                @Nullable DatasetFieldFilter filter,
+                @Nullable RemoteViews dialogPresentation) {
+            if (id != null) {
+                final int existingIdx = mFieldIds.indexOf(id);
+                if (existingIdx >= 0) {
+                    mFieldValues.set(existingIdx, value);
+                    mFieldPresentations.set(existingIdx, presentation);
+                    mFieldDialogPresentations.set(existingIdx, dialogPresentation);
+                    mFieldInlinePresentations.set(existingIdx, inlinePresentation);
+                    mFieldInlineTooltipPresentations.set(existingIdx, tooltip);
+                    mFieldFilters.set(existingIdx, filter);
+                    return;
+                }
+            }
+            mFieldIds.add(id);
+            mAutofillDatatypes.add(datatype);
+            mFieldValues.add(value);
+            mFieldPresentations.add(presentation);
+            mFieldDialogPresentations.add(dialogPresentation);
+            mFieldInlinePresentations.add(inlinePresentation);
+            mFieldInlineTooltipPresentations.add(tooltip);
+            mFieldFilters.add(filter);
+            return;
+        }
+
         /**
          * Creates a new {@link Dataset} instance.
          *
@@ -1391,37 +1424,20 @@ public final class Dataset implements Parcelable {
                 builder.setContent(ids.get(0), fieldContent);
             }
             final int inlinePresentationsSize = inlinePresentations.size();
-
-            if (ids.size() == 0 && autofillDatatypes.size() > 0) {
-                for (int i = 0; i < autofillDatatypes.size(); i++) {
-                    final String datatype = autofillDatatypes.get(i);
-                    final AutofillValue value = values.get(i);
-                    final RemoteViews fieldPresentation = presentations.get(i);
-                    final RemoteViews fieldDialogPresentation = dialogPresentations.get(i);
-                    final InlinePresentation fieldInlinePresentation =
-                            i < inlinePresentationsSize ? inlinePresentations.get(i) : null;
-                    final InlinePresentation fieldInlineTooltipPresentation =
-                            i < inlinePresentationsSize ? inlineTooltipPresentations.get(i) : null;
-                    final DatasetFieldFilter filter = filters.get(i);
-                    builder.setLifeTheUniverseAndEverything(
-                            datatype, value, fieldPresentation, fieldInlinePresentation,
-                            fieldInlineTooltipPresentation, filter, fieldDialogPresentation);
-                }
-            } else {
-                for (int i = 0; i < ids.size(); i++) {
-                    final AutofillId id = ids.get(i);
-                    final AutofillValue value = values.get(i);
-                    final RemoteViews fieldPresentation = presentations.get(i);
-                    final RemoteViews fieldDialogPresentation = dialogPresentations.get(i);
-                    final InlinePresentation fieldInlinePresentation =
-                            i < inlinePresentationsSize ? inlinePresentations.get(i) : null;
-                    final InlinePresentation fieldInlineTooltipPresentation =
-                            i < inlinePresentationsSize ? inlineTooltipPresentations.get(i) : null;
-                    final DatasetFieldFilter filter = filters.get(i);
-                    builder.setLifeTheUniverseAndEverything(id, value, fieldPresentation,
-                            fieldInlinePresentation, fieldInlineTooltipPresentation, filter,
-                            fieldDialogPresentation);
-                }
+            for (int i = 0; i < ids.size(); i++) {
+                final AutofillId id = ids.get(i);
+                final String datatype = autofillDatatypes.get(i);
+                final AutofillValue value = values.get(i);
+                final RemoteViews fieldPresentation = presentations.get(i);
+                final RemoteViews fieldDialogPresentation = dialogPresentations.get(i);
+                final InlinePresentation fieldInlinePresentation =
+                        i < inlinePresentationsSize ? inlinePresentations.get(i) : null;
+                final InlinePresentation fieldInlineTooltipPresentation =
+                        i < inlinePresentationsSize ? inlineTooltipPresentations.get(i) : null;
+                final DatasetFieldFilter filter = filters.get(i);
+                builder.createFromParcel(id, datatype, value, fieldPresentation,
+                        fieldInlinePresentation, fieldInlineTooltipPresentation, filter,
+                        fieldDialogPresentation);
             }
             builder.setAuthentication(authentication);
             builder.setId(datasetId);

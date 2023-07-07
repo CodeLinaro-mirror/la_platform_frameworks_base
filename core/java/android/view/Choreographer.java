@@ -202,7 +202,7 @@ public final class Choreographer {
 
     private boolean mDebugPrintNextFrameTimeDelta;
     private int mFPSDivisor = 1;
-    private DisplayEventReceiver.VsyncEventData mLastVsyncEventData =
+    private final DisplayEventReceiver.VsyncEventData mLastVsyncEventData =
             new DisplayEventReceiver.VsyncEventData();
     private final FrameData mFrameData = new FrameData();
     private int mTouchMoveNum = -1;
@@ -860,13 +860,14 @@ public final class Choreographer {
             DisplayEventReceiver.VsyncEventData vsyncEventData) {
         final long startNanos;
         final long frameIntervalNanos = vsyncEventData.frameInterval;
+        boolean resynced = false;
         try {
             mIsDoFrameProcessing = true;
+            FrameTimeline timeline = mFrameData.update(frameTimeNanos, vsyncEventData);
             if (Trace.isTagEnabled(Trace.TRACE_TAG_VIEW)) {
-                Trace.traceBegin(Trace.TRACE_TAG_VIEW,
-                        "Choreographer#doFrame " + vsyncEventData.preferredFrameTimeline().vsyncId);
+                Trace.traceBegin(
+                        Trace.TRACE_TAG_VIEW, "Choreographer#doFrame " + timeline.mVsyncId);
             }
-            mFrameData.update(frameTimeNanos, vsyncEventData);
             synchronized (mLock) {
                 mIsVsyncScheduled = false;
                 if (!mFrameScheduled) {
@@ -905,7 +906,9 @@ public final class Choreographer {
                                     + " ms in the past.");
                         }
                     }
-                    mFrameData.update(frameTimeNanos, mDisplayEventReceiver, jitterNanos);
+                    timeline = mFrameData.update(
+                            frameTimeNanos, mDisplayEventReceiver, jitterNanos);
+                    resynced = true;
                 }
 
                 if (frameTimeNanos < mLastFrameTimeNanos) {
@@ -934,7 +937,7 @@ public final class Choreographer {
                 mFrameScheduled = false;
                 mLastFrameTimeNanos = frameTimeNanos;
                 mLastFrameIntervalNanos = frameIntervalNanos;
-                mLastVsyncEventData = vsyncEventData;
+                mLastVsyncEventData.copyFrom(vsyncEventData);
             }
 
             if (frameIntervalNanos > 0 && (Math.abs(frameIntervalNanos - mFrameIntervalNanos)
@@ -943,6 +946,12 @@ public final class Choreographer {
                 ScrollOptimizer.setFrameInterval(mFrameIntervalNanos);
             }
             ScrollOptimizer.setUITaskStatus(true);
+            if (resynced && Trace.isTagEnabled(Trace.TRACE_TAG_VIEW)) {
+                String message = String.format("Choreographer#doFrame - resynced to %d in %.1fms",
+                        timeline.mVsyncId, (timeline.mDeadlineNanos - startNanos) * 0.000001f);
+                Trace.traceBegin(Trace.TRACE_TAG_VIEW, message);
+            }
+
             AnimationUtils.lockAnimationClock(frameTimeNanos / TimeUtils.NANOS_PER_MS);
 
             mFrameInfo.markInputHandlingStart();
@@ -959,6 +968,9 @@ public final class Choreographer {
             ScrollOptimizer.setUITaskStatus(false);
         } finally {
             AnimationUtils.unlockAnimationClock();
+            if (resynced) {
+                Trace.traceEnd(Trace.TRACE_TAG_VIEW);
+            }
             Trace.traceEnd(Trace.TRACE_TAG_VIEW);
         }
 
@@ -1185,15 +1197,12 @@ public final class Choreographer {
      */
     public static class FrameData {
         private long mFrameTimeNanos;
-        private final FrameTimeline[] mFrameTimelines =
-                new FrameTimeline[DisplayEventReceiver.VsyncEventData.FRAME_TIMELINES_LENGTH];
+        private FrameTimeline[] mFrameTimelines;
         private int mPreferredFrameTimelineIndex;
         private boolean mInCallback = false;
 
         FrameData() {
-            for (int i = 0; i < mFrameTimelines.length; i++) {
-                mFrameTimelines[i] = new FrameTimeline();
-            }
+            allocateFrameTimelines(DisplayEventReceiver.VsyncEventData.FRAME_TIMELINES_CAPACITY);
         }
 
         /** The time in nanoseconds when the frame started being rendered. */
@@ -1231,25 +1240,34 @@ public final class Choreographer {
             }
         }
 
+        private void allocateFrameTimelines(int length) {
+            mFrameTimelines = new FrameTimeline[length];
+            for (int i = 0; i < mFrameTimelines.length; i++) {
+                mFrameTimelines[i] = new FrameTimeline();
+            }
+        }
+
         /**
          * Update the frame data with a {@code DisplayEventReceiver.VsyncEventData} received from
          * native.
          */
-        void update(long frameTimeNanos, DisplayEventReceiver.VsyncEventData vsyncEventData) {
-            if (vsyncEventData.frameTimelines.length != mFrameTimelines.length) {
-                throw new IllegalStateException(
-                        "Length of native frame timelines received does not match Java. Did "
-                                + "FRAME_TIMELINES_LENGTH or kFrameTimelinesLength (native) "
-                                + "change?");
+        FrameTimeline update(
+                long frameTimeNanos, DisplayEventReceiver.VsyncEventData vsyncEventData) {
+            // Even if the frame timelines length is 0, continue with allocation for API
+            // FrameData.getFrameTimelines consistency. The 0 length frame timelines code path
+            // should only occur when USE_VSYNC property is false.
+            if (mFrameTimelines.length != vsyncEventData.frameTimelinesLength) {
+                allocateFrameTimelines(vsyncEventData.frameTimelinesLength);
             }
             mFrameTimeNanos = frameTimeNanos;
             mPreferredFrameTimelineIndex = vsyncEventData.preferredFrameTimelineIndex;
-            for (int i = 0; i < vsyncEventData.frameTimelines.length; i++) {
+            for (int i = 0; i < mFrameTimelines.length; i++) {
                 DisplayEventReceiver.VsyncEventData.FrameTimeline frameTimeline =
                         vsyncEventData.frameTimelines[i];
                 mFrameTimelines[i].update(frameTimeline.vsyncId,
                         frameTimeline.expectedPresentationTime, frameTimeline.deadline);
             }
+            return mFrameTimelines[mPreferredFrameTimelineIndex];
         }
 
         /**
@@ -1257,7 +1275,7 @@ public final class Choreographer {
          *
          * @param jitterNanos currentTime - frameTime
          */
-        void update(
+        FrameTimeline update(
                 long frameTimeNanos, DisplayEventReceiver displayEventReceiver, long jitterNanos) {
             int newPreferredIndex = 0;
             final long minimumDeadline =
@@ -1278,6 +1296,7 @@ public final class Choreographer {
             } else {
                 update(frameTimeNanos, newPreferredIndex);
             }
+            return mFrameTimelines[mPreferredFrameTimelineIndex];
         }
 
         void update(long frameTimeNanos, int newPreferredFrameTimelineIndex) {
@@ -1333,7 +1352,7 @@ public final class Choreographer {
         private boolean mHavePendingVsync;
         private long mTimestampNanos;
         private int mFrame;
-        private VsyncEventData mLastVsyncEventData = new VsyncEventData();
+        private final VsyncEventData mLastVsyncEventData = new VsyncEventData();
 
         FrameDisplayEventReceiver(Looper looper, int vsyncSource, long layerHandle) {
             super(looper, vsyncSource, /* eventRegistration */ 0, layerHandle);
@@ -1373,7 +1392,7 @@ public final class Choreographer {
 
                 mTimestampNanos = timestampNanos;
                 mFrame = frame;
-                mLastVsyncEventData = vsyncEventData;
+                mLastVsyncEventData.copyFrom(vsyncEventData);
                 ScrollOptimizer.setVsyncTime(mTimestampNanos);
                 Message msg = Message.obtain(mHandler, this);
                 msg.setAsynchronous(true);

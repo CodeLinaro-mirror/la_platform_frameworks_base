@@ -45,14 +45,13 @@ const ui::Transform kIdentityTransform;
 // --- PointerController::DisplayInfoListener ---
 
 void PointerController::DisplayInfoListener::onWindowInfosChanged(
-        const std::vector<android::gui::WindowInfo>&,
-        const std::vector<android::gui::DisplayInfo>& displayInfos) {
+        const gui::WindowInfosUpdate& update) {
     std::scoped_lock lock(mLock);
     if (mPointerController == nullptr) return;
 
     // PointerController uses DisplayInfoListener's lock.
     base::ScopedLockAssertion assumeLocked(mPointerController->getLock());
-    mPointerController->onDisplayInfosChangedLocked(displayInfos);
+    mPointerController->onDisplayInfosChangedLocked(update.displayInfos);
 }
 
 void PointerController::DisplayInfoListener::onPointerControllerDestroyed() {
@@ -134,14 +133,6 @@ void PointerController::move(float deltaX, float deltaY) {
         transformed = transformWithoutTranslation(transform, {deltaX, deltaY});
     }
     mCursorController.move(transformed.x, transformed.y);
-}
-
-void PointerController::setButtonState(int32_t buttonState) {
-    mCursorController.setButtonState(buttonState);
-}
-
-int32_t PointerController::getButtonState() const {
-    return mCursorController.getButtonState();
 }
 
 void PointerController::setPosition(float x, float y) {

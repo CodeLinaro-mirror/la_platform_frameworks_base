@@ -34,7 +34,6 @@ import com.android.systemui.keyguard.ui.viewmodel.PrimaryBouncerToGoneTransition
 import com.android.systemui.lifecycle.repeatWhenAttached
 import com.android.systemui.plugins.ActivityStarter
 import kotlinx.coroutines.awaitCancellation
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 
@@ -110,30 +109,31 @@ object KeyguardBouncerViewBinder {
                 try {
                     viewModel.setBouncerViewDelegate(delegate)
                     launch {
-                        viewModel.show.collect {
-                            // Reset Security Container entirely.
-                            view.visibility = View.VISIBLE
-                            securityContainerController.onBouncerVisibilityChanged(
-                                /* isVisible= */ true
-                            )
-                            securityContainerController.reinflateViewFlipper()
-                            securityContainerController.showPrimarySecurityScreen(
-                                /* turningOff= */ false
-                            )
-                            securityContainerController.appear()
-                            securityContainerController.onResume(KeyguardSecurityView.SCREEN_ON)
-                        }
-                    }
-
-                    launch {
-                        viewModel.hide.collect {
-                            view.visibility = View.INVISIBLE
-                            securityContainerController.onBouncerVisibilityChanged(
-                                /* isVisible= */ false
-                            )
-                            securityContainerController.cancelDismissAction()
-                            securityContainerController.reset()
-                            securityContainerController.onPause()
+                        viewModel.isShowing.collect { isShowing ->
+                            view.visibility = if (isShowing) View.VISIBLE else View.INVISIBLE
+                            if (isShowing) {
+                                securityContainerController.reinflateViewFlipper {
+                                    // Reset Security Container entirely.
+                                    securityContainerController.onBouncerVisibilityChanged(
+                                        /* isVisible= */ true
+                                    )
+                                    securityContainerController.showPrimarySecurityScreen(
+                                        /* turningOff= */ false
+                                    )
+                                    securityContainerController.setInitialMessage()
+                                    securityContainerController.appear()
+                                    securityContainerController.onResume(
+                                        KeyguardSecurityView.SCREEN_ON
+                                    )
+                                }
+                            } else {
+                                securityContainerController.onBouncerVisibilityChanged(
+                                    /* isVisible= */ false
+                                )
+                                securityContainerController.cancelDismissAction()
+                                securityContainerController.reset()
+                                securityContainerController.onPause()
+                            }
                         }
                     }
 
@@ -191,7 +191,11 @@ object KeyguardBouncerViewBinder {
 
                     launch {
                         viewModel.bouncerShowMessage.collect {
-                            securityContainerController.showMessage(it.message, it.colorStateList)
+                            securityContainerController.showMessage(
+                                it.message,
+                                it.colorStateList,
+                                /* animated= */ true
+                            )
                             viewModel.onMessageShown()
                         }
                     }

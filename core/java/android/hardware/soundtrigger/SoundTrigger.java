@@ -28,6 +28,7 @@ import static android.system.OsConstants.EPIPE;
 
 import static java.util.Objects.requireNonNull;
 
+import android.annotation.ElapsedRealtimeLong;
 import android.annotation.IntDef;
 import android.annotation.IntRange;
 import android.annotation.NonNull;
@@ -36,17 +37,14 @@ import android.annotation.RequiresPermission;
 import android.annotation.SuppressLint;
 import android.annotation.SystemApi;
 import android.annotation.TestApi;
-import android.app.ActivityThread;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.Context;
 import android.media.AudioFormat;
-import android.media.permission.ClearCallingIdentityContext;
 import android.media.permission.Identity;
-import android.media.permission.SafeCloseable;
 import android.media.soundtrigger.Status;
+import android.media.soundtrigger_middleware.ISoundTriggerInjection;
 import android.media.soundtrigger_middleware.ISoundTriggerMiddlewareService;
 import android.media.soundtrigger_middleware.SoundTriggerModuleDescriptor;
-import android.os.Binder;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
@@ -56,6 +54,7 @@ import android.os.Parcelable;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.ServiceSpecificException;
+import android.os.SystemClock;
 import android.util.Log;
 
 import java.lang.annotation.Retention;
@@ -64,6 +63,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -79,9 +79,11 @@ public class SoundTrigger {
     }
 
     /**
+     * Model architecture associated with a fake STHAL which can be injected.
+     * Used for testing purposes.
      * @hide
      */
-    public static final String FAKE_HAL_ARCH = "injection";
+    public static final String FAKE_HAL_ARCH = ISoundTriggerInjection.FAKE_HAL_ARCH;
 
     /**
      * Status code used when the operation succeeded
@@ -1050,6 +1052,29 @@ public class SoundTrigger {
             return "ModelParamRange [start=" + mStart + ", end=" + mEnd + "]";
         }
     }
+    /**
+     * SoundTrigger model parameter types.
+     * @hide
+     */
+    @Retention(RetentionPolicy.SOURCE)
+    @IntDef(flag = true, prefix = { "MODEL_PARAM" }, value = {
+            MODEL_PARAM_INVALID,
+            MODEL_PARAM_THRESHOLD_FACTOR
+    })
+    public @interface ModelParamTypes {}
+
+    /**
+     * See {@link ModelParams.INVALID}
+     * @hide
+     */
+    @TestApi
+    public static final int MODEL_PARAM_INVALID = ModelParams.INVALID;
+    /**
+     * See {@link ModelParams.THRESHOLD_FACTOR}
+     * @hide
+     */
+    @TestApi
+    public static final int MODEL_PARAM_THRESHOLD_FACTOR = ModelParams.THRESHOLD_FACTOR;
 
     /**
      * Modes for key phrase recognition
@@ -1187,23 +1212,48 @@ public class SoundTrigger {
          * @hide
          */
         public final boolean recognitionStillActive;
+        /**
+         * Timestamp of when the trigger event from SoundTriggerHal was received by the
+         * framework.
+         *
+         * <p>Clock monotonic including suspend time or its equivalent on the system,
+         * in the same units and timebase as {@link SystemClock#elapsedRealtime()}.
+         *
+         * <p>Value represents elapsed realtime in milliseconds when the event was received from the
+         * HAL. The value will be -1 if the event was not generated from the HAL.
+         *
+         * @hide
+         */
+        @ElapsedRealtimeLong
+        public final long halEventReceivedMillis;
+
+        /**
+         * Binder token returned by {@link SoundTriggerModule#startRecognitionWithToken(
+         * int soundModelHandle, SoundTrigger.RecognitionConfig config)}
+         * @hide
+         */
+        public final IBinder token;
+
 
         /** @hide */
         @TestApi
         @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public RecognitionEvent(int status, int soundModelHandle, boolean captureAvailable,
                 int captureSession, int captureDelayMs, int capturePreambleMs,
-                boolean triggerInData, @NonNull AudioFormat captureFormat, @Nullable byte[] data) {
-            this(status, soundModelHandle, captureAvailable, captureSession, captureDelayMs,
-                    capturePreambleMs, triggerInData, captureFormat, data,
-                    status == RECOGNITION_STATUS_GET_STATE_RESPONSE);
+                boolean triggerInData, @NonNull AudioFormat captureFormat, @Nullable byte[] data,
+                @ElapsedRealtimeLong long halEventReceivedMillis) {
+            this(status, soundModelHandle, captureAvailable,
+                    captureSession, captureDelayMs, capturePreambleMs, triggerInData, captureFormat,
+                    data, status == RECOGNITION_STATUS_GET_STATE_RESPONSE, halEventReceivedMillis,
+                    null);
         }
 
         /** @hide */
         public RecognitionEvent(int status, int soundModelHandle, boolean captureAvailable,
                 int captureSession, int captureDelayMs, int capturePreambleMs,
                 boolean triggerInData, @NonNull AudioFormat captureFormat, @Nullable byte[] data,
-                boolean recognitionStillActive) {
+                boolean recognitionStillActive, @ElapsedRealtimeLong long halEventReceivedMillis,
+                IBinder token) {
             this.status = status;
             this.soundModelHandle = soundModelHandle;
             this.captureAvailable = captureAvailable;
@@ -1214,6 +1264,8 @@ public class SoundTrigger {
             this.captureFormat = requireNonNull(captureFormat);
             this.data = data != null ? data : new byte[0];
             this.recognitionStillActive = recognitionStillActive;
+            this.halEventReceivedMillis = halEventReceivedMillis;
+            this.token = token;
         }
 
         /**
@@ -1256,6 +1308,31 @@ public class SoundTrigger {
             return data;
         }
 
+        /**
+         * Timestamp of when the trigger event from SoundTriggerHal was received by the
+         * framework.
+         *
+         * Clock monotonic including suspend time or its equivalent on the system,
+         * in the same units and timebase as {@link SystemClock#elapsedRealtime()}.
+         *
+         * @return Elapsed realtime in milliseconds when the event was received from the HAL.
+         *      Returns -1 if the event was not generated from the HAL.
+         */
+        @ElapsedRealtimeLong
+        public long getHalEventReceivedMillis() {
+            return halEventReceivedMillis;
+        }
+
+        /**
+         * Get token associated with this recognition session returned by
+         *{@link SoundTriggerModule#startRecognitionWithToken(
+         * int soundModelHandle, SoundTrigger.RecognitionConfig config)}
+         * @hide
+         */
+        public IBinder getToken() {
+            return token;
+        }
+
         /** @hide */
         public static final @android.annotation.NonNull Parcelable.Creator<RecognitionEvent> CREATOR
                 = new Parcelable.Creator<RecognitionEvent>() {
@@ -1290,9 +1367,11 @@ public class SoundTrigger {
             }
             byte[] data = in.readBlob();
             boolean recognitionStillActive = in.readBoolean();
+            long halEventReceivedMillis = in.readLong();
+            IBinder token = in.readStrongBinder();
             return new RecognitionEvent(status, soundModelHandle, captureAvailable, captureSession,
                     captureDelayMs, capturePreambleMs, triggerInData, captureFormat, data,
-                    recognitionStillActive);
+                    recognitionStillActive, halEventReceivedMillis, token);
         }
 
         /** @hide */
@@ -1319,6 +1398,8 @@ public class SoundTrigger {
             }
             dest.writeBlob(data);
             dest.writeBoolean(recognitionStillActive);
+            dest.writeLong(halEventReceivedMillis);
+            dest.writeStrongBinder(token);
         }
         @Override
         public int hashCode() {
@@ -1338,6 +1419,8 @@ public class SoundTrigger {
             result = prime * result + soundModelHandle;
             result = prime * result + status;
             result = result + (recognitionStillActive ? 1289 : 1291);
+            result = prime * result + Long.hashCode(halEventReceivedMillis);
+            result = prime * result +  Objects.hashCode(token);
             return result;
         }
 
@@ -1364,6 +1447,12 @@ public class SoundTrigger {
                 return false;
             if (soundModelHandle != other.soundModelHandle)
                 return false;
+            if (halEventReceivedMillis != other.halEventReceivedMillis) {
+                return false;
+            }
+            if (!Objects.equals(token, other.token)) {
+                return false;
+            }
             if (status != other.status)
                 return false;
             if (triggerInData != other.triggerInData)
@@ -1400,8 +1489,9 @@ public class SoundTrigger {
                         (", channelMask=" + captureFormat.getChannelMask()))
                     + ", data=" + (data == null ? 0 : data.length)
                     + ", recognitionStillActive=" + recognitionStillActive
-                    + "]";
-        }
+                    + ", halEventReceivedMillis=" + halEventReceivedMillis
+                    + ", token=" + token
+                    + "]"; }
     }
 
     /**
@@ -1411,7 +1501,8 @@ public class SoundTrigger {
      *
      *  @hide
      */
-    public static class RecognitionConfig implements Parcelable {
+    @TestApi
+    public static final class RecognitionConfig implements Parcelable {
         /** True if the DSP should capture the trigger sound and make it available for further
          * capture. */
         @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
@@ -1425,6 +1516,7 @@ public class SoundTrigger {
          * options for each keyphrase. */
         @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         @NonNull
+        @SuppressLint("ArrayReturn")
         public final KeyphraseRecognitionExtra keyphrases[];
         /** Opaque data for use by system applications who know about voice engine internals,
          * typically during enrollment. */
@@ -1440,8 +1532,8 @@ public class SoundTrigger {
         public final int audioCapabilities;
 
         public RecognitionConfig(boolean captureRequested, boolean allowMultipleTriggers,
-                @Nullable KeyphraseRecognitionExtra[] keyphrases, @Nullable byte[] data,
-                int audioCapabilities) {
+                @SuppressLint("ArrayReturn") @Nullable KeyphraseRecognitionExtra[] keyphrases,
+                @Nullable byte[] data, int audioCapabilities) {
             this.captureRequested = captureRequested;
             this.allowMultipleTriggers = allowMultipleTriggers;
             this.keyphrases = keyphrases != null ? keyphrases : new KeyphraseRecognitionExtra[0];
@@ -1451,7 +1543,8 @@ public class SoundTrigger {
 
         @UnsupportedAppUsage
         public RecognitionConfig(boolean captureRequested, boolean allowMultipleTriggers,
-                @Nullable KeyphraseRecognitionExtra[] keyphrases, @Nullable byte[] data) {
+                @SuppressLint("ArrayReturn") @Nullable KeyphraseRecognitionExtra[] keyphrases,
+                @Nullable byte[] data) {
             this(captureRequested, allowMultipleTriggers, keyphrases, data, 0);
         }
 
@@ -1478,7 +1571,7 @@ public class SoundTrigger {
         }
 
         @Override
-        public void writeToParcel(Parcel dest, int flags) {
+        public void writeToParcel(@NonNull Parcel dest, int flags) {
             dest.writeByte((byte) (captureRequested ? 1 : 0));
             dest.writeByte((byte) (allowMultipleTriggers ? 1 : 0));
             dest.writeTypedArray(keyphrases, flags);
@@ -1820,19 +1913,25 @@ public class SoundTrigger {
         public KeyphraseRecognitionEvent(int status, int soundModelHandle, boolean captureAvailable,
                 int captureSession, int captureDelayMs, int capturePreambleMs,
                 boolean triggerInData, @NonNull AudioFormat captureFormat, @Nullable byte[] data,
-                @Nullable KeyphraseRecognitionExtra[] keyphraseExtras) {
+                @Nullable KeyphraseRecognitionExtra[] keyphraseExtras,
+                @ElapsedRealtimeLong long halEventReceivedMillis,
+                IBinder token) {
             this(status, soundModelHandle, captureAvailable, captureSession, captureDelayMs,
                     capturePreambleMs, triggerInData, captureFormat, data, keyphraseExtras,
-                    status == RECOGNITION_STATUS_GET_STATE_RESPONSE);
+                    status == RECOGNITION_STATUS_GET_STATE_RESPONSE, halEventReceivedMillis,
+                    token);
         }
 
-        public KeyphraseRecognitionEvent(int status, int soundModelHandle, boolean captureAvailable,
+        public KeyphraseRecognitionEvent(int status, int soundModelHandle,
+                boolean captureAvailable,
                 int captureSession, int captureDelayMs, int capturePreambleMs,
                 boolean triggerInData, @NonNull AudioFormat captureFormat, @Nullable byte[] data,
                 @Nullable KeyphraseRecognitionExtra[] keyphraseExtras,
-                boolean recognitionStillActive) {
-            super(status, soundModelHandle, captureAvailable, captureSession, captureDelayMs,
-                    capturePreambleMs, triggerInData, captureFormat, data, recognitionStillActive);
+                boolean recognitionStillActive, @ElapsedRealtimeLong long halEventReceivedMillis,
+                IBinder token) {
+            super(status, soundModelHandle, captureAvailable,
+                    captureSession, captureDelayMs, capturePreambleMs, triggerInData, captureFormat,
+                    data, recognitionStillActive, halEventReceivedMillis, token);
             this.keyphraseExtras =
                     keyphraseExtras != null ? keyphraseExtras : new KeyphraseRecognitionExtra[0];
         }
@@ -1869,11 +1968,14 @@ public class SoundTrigger {
             }
             byte[] data = in.readBlob();
             boolean recognitionStillActive = in.readBoolean();
+            long halEventReceivedMillis = in.readLong();
+            IBinder token = in.readStrongBinder();
             KeyphraseRecognitionExtra[] keyphraseExtras =
                     in.createTypedArray(KeyphraseRecognitionExtra.CREATOR);
-            return new KeyphraseRecognitionEvent(status, soundModelHandle, captureAvailable,
-                    captureSession, captureDelayMs, capturePreambleMs, triggerInData,
-                    captureFormat, data, keyphraseExtras, recognitionStillActive);
+            return new KeyphraseRecognitionEvent(status, soundModelHandle,
+                    captureAvailable, captureSession, captureDelayMs, capturePreambleMs,
+                    triggerInData, captureFormat, data, keyphraseExtras, recognitionStillActive,
+                    halEventReceivedMillis, token);
         }
 
         @Override
@@ -1895,6 +1997,8 @@ public class SoundTrigger {
             }
             dest.writeBlob(data);
             dest.writeBoolean(recognitionStillActive);
+            dest.writeLong(halEventReceivedMillis);
+            dest.writeStrongBinder(token);
             dest.writeTypedArray(keyphraseExtras, flags);
         }
 
@@ -1929,9 +2033,11 @@ public class SoundTrigger {
         public String toString() {
             return "KeyphraseRecognitionEvent [keyphraseExtras=" + Arrays.toString(keyphraseExtras)
                     + ", status=" + status
-                    + ", soundModelHandle=" + soundModelHandle + ", captureAvailable="
-                    + captureAvailable + ", captureSession=" + captureSession + ", captureDelayMs="
-                    + captureDelayMs + ", capturePreambleMs=" + capturePreambleMs
+                    + ", soundModelHandle=" + soundModelHandle
+                    + ", captureAvailable=" + captureAvailable
+                    + ", captureSession=" + captureSession
+                    + ", captureDelayMs=" + captureDelayMs
+                    + ", capturePreambleMs=" + capturePreambleMs
                     + ", triggerInData=" + triggerInData
                     + ((captureFormat == null) ? "" :
                         (", sampleRate=" + captureFormat.getSampleRate()))
@@ -1941,6 +2047,8 @@ public class SoundTrigger {
                         (", channelMask=" + captureFormat.getChannelMask()))
                     + ", data=" + (data == null ? 0 : data.length)
                     + ", recognitionStillActive=" + recognitionStillActive
+                    + ", halEventReceivedMillis=" + halEventReceivedMillis
+                    + ", token=" + token
                     + "]";
         }
     }
@@ -1953,21 +2061,26 @@ public class SoundTrigger {
      */
     public static class GenericRecognitionEvent extends RecognitionEvent implements Parcelable {
         @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
-        public GenericRecognitionEvent(int status, int soundModelHandle,
-                boolean captureAvailable, int captureSession, int captureDelayMs,
-                int capturePreambleMs, boolean triggerInData, @NonNull AudioFormat captureFormat,
-                @Nullable byte[] data) {
-            this(status, soundModelHandle, captureAvailable, captureSession, captureDelayMs,
+        public GenericRecognitionEvent(int status, int soundModelHandle, boolean captureAvailable,
+                int captureSession, int captureDelayMs, int capturePreambleMs,
+                boolean triggerInData, @NonNull AudioFormat captureFormat, @Nullable byte[] data,
+                @ElapsedRealtimeLong long halEventReceivedMillis,
+                IBinder token) {
+            this(status, soundModelHandle, captureAvailable,
+                    captureSession, captureDelayMs,
                     capturePreambleMs, triggerInData, captureFormat, data,
-                    status == RECOGNITION_STATUS_GET_STATE_RESPONSE);
+                    status == RECOGNITION_STATUS_GET_STATE_RESPONSE,
+                    halEventReceivedMillis, token);
         }
 
-        public GenericRecognitionEvent(int status, int soundModelHandle,
-                boolean captureAvailable, int captureSession, int captureDelayMs,
-                int capturePreambleMs, boolean triggerInData, @NonNull AudioFormat captureFormat,
-                @Nullable byte[] data, boolean recognitionStillActive) {
-            super(status, soundModelHandle, captureAvailable, captureSession, captureDelayMs,
-                    capturePreambleMs, triggerInData, captureFormat, data, recognitionStillActive);
+        public GenericRecognitionEvent(int status, int soundModelHandle, boolean captureAvailable,
+                int captureSession, int captureDelayMs, int capturePreambleMs,
+                boolean triggerInData, @NonNull AudioFormat captureFormat, @Nullable byte[] data,
+                boolean recognitionStillActive, @ElapsedRealtimeLong long halEventReceivedMillis,
+                IBinder token) {
+            super(status, soundModelHandle, captureAvailable,
+                    captureSession, captureDelayMs, capturePreambleMs, triggerInData, captureFormat,
+                    data, recognitionStillActive, halEventReceivedMillis, token);
         }
 
         public static final @android.annotation.NonNull Parcelable.Creator<GenericRecognitionEvent> CREATOR
@@ -1986,7 +2099,7 @@ public class SoundTrigger {
             return new GenericRecognitionEvent(event.status, event.soundModelHandle,
                     event.captureAvailable, event.captureSession, event.captureDelayMs,
                     event.capturePreambleMs, event.triggerInData, event.captureFormat, event.data,
-                    event.recognitionStillActive);
+                    event.recognitionStillActive, event.halEventReceivedMillis, event.token);
         }
 
         @Override
@@ -2016,7 +2129,7 @@ public class SoundTrigger {
      *
      * @hide
      */
-    static int handleException(Exception e) {
+    public static int handleException(Exception e) {
         Log.w(TAG, "Exception caught", e);
         if (e instanceof RemoteException) {
             return STATUS_DEAD_OBJECT;
@@ -2193,7 +2306,7 @@ public class SoundTrigger {
         Looper looper = handler != null ? handler.getLooper() : Looper.getMainLooper();
         try {
             return new SoundTriggerModule(getService(), moduleId, listener, looper,
-                    middlemanIdentity, originatorIdentity);
+                    middlemanIdentity, originatorIdentity, false);
         } catch (Exception e) {
             Log.e(TAG, "", e);
             return null;

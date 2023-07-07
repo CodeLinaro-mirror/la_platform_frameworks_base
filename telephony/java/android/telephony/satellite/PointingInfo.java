@@ -33,6 +33,7 @@ public final class PointingInfo implements Parcelable {
     /**
      * @hide
      */
+
     public PointingInfo(float satelliteAzimuthDegrees, float satelliteElevationDegrees) {
         mSatelliteAzimuthDegrees = satelliteAzimuthDegrees;
         mSatelliteElevationDegrees = satelliteElevationDegrees;

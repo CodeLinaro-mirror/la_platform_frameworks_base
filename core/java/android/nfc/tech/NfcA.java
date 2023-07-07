@@ -68,15 +68,8 @@ public final class NfcA extends BasicTagTechnology {
     /** @hide */
     public NfcA(Tag tag) throws RemoteException {
         super(tag, TagTechnology.NFC_A);
-        Bundle extras;
-        mSak = 0;
-        if(tag.hasTech(TagTechnology.MIFARE_CLASSIC))
-        {
-            extras = tag.getTechExtras(TagTechnology.MIFARE_CLASSIC);
-            mSak = extras.getShort(EXTRA_SAK);
-        }
-        extras = tag.getTechExtras(TagTechnology.NFC_A);
-        mSak |= extras.getShort(EXTRA_SAK);
+        Bundle extras = tag.getTechExtras(TagTechnology.NFC_A);
+        mSak = extras.getShort(EXTRA_SAK);
         mAtqa = extras.getByteArray(EXTRA_ATQA);
     }
 
@@ -150,6 +143,7 @@ public final class NfcA extends BasicTagTechnology {
      * <p class="note">Requires the {@link android.Manifest.permission#NFC} permission.
      *
      * @param timeout timeout value in milliseconds
+     * @throws SecurityException if the tag object is reused after the tag has left the field
      */
     public void setTimeout(int timeout) {
         try {
@@ -168,6 +162,7 @@ public final class NfcA extends BasicTagTechnology {
      * <p class="note">Requires the {@link android.Manifest.permission#NFC} permission.
      *
      * @return timeout value in milliseconds
+     * @throws SecurityException if the tag object is reused after the tag has left the field
      */
     public int getTimeout() {
         try {

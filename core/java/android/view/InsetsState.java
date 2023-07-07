@@ -40,6 +40,7 @@ import android.annotation.Nullable;
 import android.app.WindowConfiguration;
 import android.graphics.Insets;
 import android.graphics.Rect;
+import android.os.DeviceIntegrationUtils;
 import android.os.Parcel;
 import android.os.Parcelable;
 import android.util.SparseArray;
@@ -62,37 +63,6 @@ import java.util.StringJoiner;
  * @hide
  */
 public class InsetsState implements Parcelable {
-
-    /**
-     * Internal representation of inset source types. This is different from the public API in
-     * {@link WindowInsets.Type} as one type from the public API might indicate multiple windows
-     * at the same time.
-     */
-    @Retention(RetentionPolicy.SOURCE)
-    @IntDef(prefix = "ITYPE", value = {
-            ITYPE_CAPTION_BAR,
-            ITYPE_LEFT_TAPPABLE_ELEMENT,
-            ITYPE_TOP_TAPPABLE_ELEMENT,
-            ITYPE_RIGHT_TAPPABLE_ELEMENT,
-            ITYPE_BOTTOM_TAPPABLE_ELEMENT,
-            ITYPE_LEFT_GENERIC_OVERLAY,
-            ITYPE_TOP_GENERIC_OVERLAY,
-            ITYPE_RIGHT_GENERIC_OVERLAY,
-            ITYPE_BOTTOM_GENERIC_OVERLAY
-    })
-    public @interface InternalInsetsType {}
-
-    public static final int ITYPE_CAPTION_BAR = 0;
-
-    public static final int ITYPE_LEFT_TAPPABLE_ELEMENT = 1;
-    public static final int ITYPE_TOP_TAPPABLE_ELEMENT = 2;
-    public static final int ITYPE_RIGHT_TAPPABLE_ELEMENT = 3;
-    public static final int ITYPE_BOTTOM_TAPPABLE_ELEMENT = 4;
-
-    public static final int ITYPE_LEFT_GENERIC_OVERLAY = 5;
-    public static final int ITYPE_TOP_GENERIC_OVERLAY = 6;
-    public static final int ITYPE_RIGHT_GENERIC_OVERLAY = 7;
-    public static final int ITYPE_BOTTOM_GENERIC_OVERLAY = 8;
 
     @Retention(RetentionPolicy.SOURCE)
     @IntDef(prefix = "ISIDE", value = {
@@ -142,6 +112,9 @@ public class InsetsState implements Parcelable {
     /** The display shape */
     private DisplayShape mDisplayShape = DisplayShape.NONE;
 
+    private RemoteTaskWindowInsetHelper mRTWindowInsetHelper;
+
+
     public InsetsState() {
         mSources = new SparseArray<>();
     }
@@ -153,6 +126,10 @@ public class InsetsState implements Parcelable {
     public InsetsState(InsetsState copy, boolean copySources) {
         mSources = new SparseArray<>(copy.mSources.size());
         set(copy, copySources);
+    }
+
+    public void setRTWindowInsetHelper(RemoteTaskWindowInsetHelper helper) {
+        this.mRTWindowInsetHelper = helper;
     }
 
     /**
@@ -174,8 +151,19 @@ public class InsetsState implements Parcelable {
         boolean[] typeVisibilityMap = new boolean[Type.SIZE];
         final Rect relativeFrame = new Rect(frame);
         final Rect relativeFrameMax = new Rect(frame);
+        @InsetsType int suppressScrimTypes = 0;
         for (int i = mSources.size() - 1; i >= 0; i--) {
+            // Handle inset source updates if the task is moved from md to vd, or vd to md
+            if (!DeviceIntegrationUtils.DISABLE_DEVICE_INTEGRATION && mRTWindowInsetHelper != null) {
+                InsetsSource updateSource = mSources.valueAt(i);
+                updateSource = mRTWindowInsetHelper.updateInsetSourceIfNeeded(updateSource, new Rect(frame));
+                mSources.setValueAt(i, updateSource);
+            }
             final InsetsSource source = mSources.valueAt(i);
+
+            if ((source.getFlags() & InsetsSource.FLAG_SUPPRESS_SCRIM) != 0) {
+                suppressScrimTypes |= source.getType();
+            }
 
             processSource(source, relativeFrame, false /* ignoreVisibility */, typeInsetsMap,
                     idSideMap, typeVisibilityMap);
@@ -208,7 +196,7 @@ public class InsetsState implements Parcelable {
         }
 
         return new WindowInsets(typeInsetsMap, typeMaxInsetsMap, typeVisibilityMap, isScreenRound,
-                alwaysConsumeSystemBars, calculateRelativeCutout(frame),
+                alwaysConsumeSystemBars, suppressScrimTypes, calculateRelativeCutout(frame),
                 calculateRelativeRoundedCorners(frame),
                 calculateRelativePrivacyIndicatorBounds(frame),
                 calculateRelativeDisplayShape(frame),
@@ -675,30 +663,6 @@ public class InsetsState implements Parcelable {
         return (windowFlags & FLAG_LAYOUT_NO_LIMITS) != 0
                 && windowType != TYPE_WALLPAPER && windowType != TYPE_SYSTEM_ERROR
                 && !WindowConfiguration.inMultiWindowMode(windowingMode);
-    }
-
-    /**
-     * Converting a internal type to the public type.
-     * @param type internal insets type, {@code InternalInsetsType}.
-     * @return public insets type, {@code Type.InsetsType}.
-     */
-    public static @Type.InsetsType int toPublicType(@InternalInsetsType int type) {
-        switch (type) {
-            case ITYPE_LEFT_GENERIC_OVERLAY:
-            case ITYPE_TOP_GENERIC_OVERLAY:
-            case ITYPE_RIGHT_GENERIC_OVERLAY:
-            case ITYPE_BOTTOM_GENERIC_OVERLAY:
-                return Type.SYSTEM_OVERLAYS;
-            case ITYPE_CAPTION_BAR:
-                return Type.CAPTION_BAR;
-            case ITYPE_LEFT_TAPPABLE_ELEMENT:
-            case ITYPE_TOP_TAPPABLE_ELEMENT:
-            case ITYPE_RIGHT_TAPPABLE_ELEMENT:
-            case ITYPE_BOTTOM_TAPPABLE_ELEMENT:
-                return Type.TAPPABLE_ELEMENT;
-            default:
-                throw new IllegalArgumentException("Unknown type: " + type);
-        }
     }
 
     public void dump(String prefix, PrintWriter pw) {

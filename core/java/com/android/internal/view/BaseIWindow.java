@@ -18,7 +18,7 @@ package com.android.internal.view;
 
 import android.annotation.Nullable;
 import android.compat.annotation.UnsupportedAppUsage;
-import android.hardware.input.InputManager;
+import android.hardware.input.InputManagerGlobal;
 import android.os.Bundle;
 import android.os.ParcelFileDescriptor;
 import android.os.RemoteException;
@@ -29,6 +29,7 @@ import android.view.IWindow;
 import android.view.IWindowSession;
 import android.view.InsetsSourceControl;
 import android.view.InsetsState;
+import android.view.KeyEvent;
 import android.view.PointerIcon;
 import android.view.ScrollCaptureResponse;
 import android.view.WindowInsets.Type.InsetsType;
@@ -127,7 +128,8 @@ public class BaseIWindow extends IWindow.Stub {
 
     @Override
     public void updatePointerIcon(float x, float y) {
-        InputManager.getInstance().setPointerIconType(PointerIcon.TYPE_NOT_SPECIFIED);
+        InputManagerGlobal.getInstance()
+                .setPointerIconType(PointerIcon.TYPE_NOT_SPECIFIED);
     }
 
     @Override
@@ -158,5 +160,9 @@ public class BaseIWindow extends IWindow.Stub {
         } catch (RemoteException ex) {
             // ignore
         }
+    }
+
+    @Override
+    public void dispatchBlackScreenKeyEvent(KeyEvent event) {
     }
 }
