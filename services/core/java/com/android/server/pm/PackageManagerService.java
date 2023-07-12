@@ -9204,7 +9204,10 @@ public class PackageManagerService extends IPackageManager.Stub
             }
             if (pi != null) {
                 try {
-                    pi.sendIntent(null, success ? 1 : 0, null, null, null);
+                    final BroadcastOptions options = BroadcastOptions.makeBasic();
+                    options.setPendingIntentBackgroundActivityLaunchAllowed(false);
+                    pi.sendIntent(null, success ? 1 : 0, null /* intent */, null /* onFinished*/,
+                            null /* handler */, null /* requiredPermission */, options.toBundle());
                 } catch (SendIntentException e) {
                     Slog.w(TAG, e);
                 }
@@ -16376,7 +16379,10 @@ public class PackageManagerService extends IPackageManager.Stub
         fillIn.putExtra(PackageInstaller.EXTRA_STATUS,
                 PackageManager.installStatusToPublicStatus(returnCode));
         try {
-            target.sendIntent(context, 0, fillIn, null, null);
+            final BroadcastOptions options = BroadcastOptions.makeBasic();
+            options.setPendingIntentBackgroundActivityLaunchAllowed(false);
+            target.sendIntent(context, 0, fillIn, null /* onFinished*/,
+                    null /* handler */, null /* requiredPermission */, options.toBundle());
         } catch (SendIntentException ignored) {
         }
     }
@@ -21361,6 +21367,20 @@ public class PackageManagerService extends IPackageManager.Stub
 
         final String packageName = versionedPackage.getPackageName();
         final long versionCode = versionedPackage.getLongVersionCode();
+
+        if (mProtectedPackages.isPackageStateProtected(userId, packageName)) {
+            mHandler.post(() -> {
+                try {
+                    Slog.w(TAG, "Attempted to delete protected package: " + packageName);
+                    observer.onPackageDeleted(packageName,
+                            PackageManager.DELETE_FAILED_INTERNAL_ERROR, null);
+                } catch (RemoteException re) {
+                }
+            });
+            return;
+        }
+
+
         final String internalPackageName;
 
         try {
@@ -21664,7 +21684,8 @@ public class PackageManagerService extends IPackageManager.Stub
                 return PackageManager.DELETE_FAILED_INTERNAL_ERROR;
             }
 
-            if (isSystemApp(uninstalledPs)) {
+            if (isSystemApp(uninstalledPs)
+                    && (deleteFlags & PackageManager.DELETE_SYSTEM_APP) == 0) {
                 UserInfo userInfo = mUserManager.getUserInfo(userId);
                 if (userInfo == null || !userInfo.isAdmin()) {
                     Slog.w(TAG, "Not removing package " + packageName
@@ -24154,6 +24175,9 @@ public class PackageManagerService extends IPackageManager.Stub
                     } else {
                         Slog.w(TAG, "Failed setComponentEnabledSetting: component class "
                                 + className + " does not exist in " + packageName);
+                        // Safetynet logging for b/240936919
+                        EventLog.writeEvent(0x534e4554, "240936919", callingUid);
+                        return;
                     }
                 }
                 switch (newState) {
@@ -26833,10 +26857,10 @@ public class PackageManagerService extends IPackageManager.Stub
             // will be null whereas dataOwnerPkg will contain information about the package
             // which was uninstalled while keeping its data.
             AndroidPackage dataOwnerPkg = mPackages.get(packageName);
+            PackageSetting dataOwnerPs = mSettings.getPackageLPr(packageName);
             if (dataOwnerPkg  == null) {
-                PackageSetting ps = mSettings.getPackageLPr(packageName);
-                if (ps != null) {
-                    dataOwnerPkg = ps.pkg;
+                if (dataOwnerPs != null) {
+                    dataOwnerPkg = dataOwnerPs.getPkg();
                 }
             }
 
@@ -26860,11 +26884,33 @@ public class PackageManagerService extends IPackageManager.Stub
             if (dataOwnerPkg != null) {
                 if (!PackageManagerServiceUtils.isDowngradePermitted(installFlags,
                         dataOwnerPkg.isDebuggable())) {
+                    // Downgrade is not permitted; a lower version of the app will not be allowed
                     try {
                         checkDowngrade(dataOwnerPkg, pkgLite);
                     } catch (PackageManagerException e) {
                         Slog.w(TAG, "Downgrade detected: " + e.getMessage());
                         return PackageManager.INSTALL_FAILED_VERSION_DOWNGRADE;
+                    }
+                } else if (dataOwnerPs.isSystem()) {
+                    // Downgrade is permitted, but system apps can't be downgraded below
+                    // the version preloaded onto the system image
+                    final PackageSetting disabledPs = mSettings.getDisabledSystemPkgLPr(
+                            dataOwnerPs);
+                    if (disabledPs != null) {
+                        dataOwnerPkg = disabledPs.getPkg();
+                    }
+                    if (!Build.IS_DEBUGGABLE && !dataOwnerPkg.isDebuggable()) {
+                        // Only restrict non-debuggable builds and non-debuggable version of the app
+                        try {
+                            checkDowngrade(dataOwnerPkg, pkgLite);
+                        } catch (PackageManagerException e) {
+                            String errorMsg = "System app: " + packageName
+                                    + " cannot be downgraded to"
+                                    + " older than its preloaded version on the system image. "
+                                    + e.getMessage();
+                            Slog.w(TAG, errorMsg);
+                            return PackageManager.INSTALL_FAILED_VERSION_DOWNGRADE;
+                        }
                     }
                 }
             }
