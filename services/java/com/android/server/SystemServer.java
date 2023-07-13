@@ -2087,15 +2087,13 @@ public final class SystemServer implements Dumpable {
                 t.traceEnd();
             }
 
-            if (!isWatch) {
-                t.traceBegin("StartSearchManagerService");
-                try {
-                    mSystemServiceManager.startService(SEARCH_MANAGER_SERVICE_CLASS);
-                } catch (Throwable e) {
-                    reportWtf("starting Search Service", e);
-                }
-                t.traceEnd();
+            t.traceBegin("StartSearchManagerService");
+            try {
+                mSystemServiceManager.startService(SEARCH_MANAGER_SERVICE_CLASS);
+            } catch (Throwable e) {
+                reportWtf("starting Search Service", e);
             }
+            t.traceEnd();
 
             if (context.getResources().getBoolean(R.bool.config_enableWallpaperService)) {
                 t.traceBegin("StartWallpaperManagerService");
