@@ -84,6 +84,12 @@ public class UserManagerServiceTest extends AndroidTestCase {
         if (!TextUtils.isEmpty(result)) {
             fail("Command '" + cmd + " reported errors:\n" + result);
         }
+
+    public void testValidateName() {
+        assertNull(UserManagerService.validateName("android"));
+        assertNull(UserManagerService.validateName("com.company.myapp"));
+        assertNotNull(UserManagerService.validateName("/../../data"));
+        assertNotNull(UserManagerService.validateName("/dir"));
     }
 
     private Bundle createBundle() {
