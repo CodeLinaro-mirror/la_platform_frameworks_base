@@ -5060,6 +5060,17 @@
   <java-symbol type="bool" name="config_batteryStatsResetOnUnplugHighBatteryLevel" />
   <java-symbol type="bool" name="config_batteryStatsResetOnUnplugAfterSignificantCharge" />
 
+  <java-symbol type="string" name="config_defaultOffloadAlarmRingtoneFilePath"/>
+  <java-symbol type="integer" name="config_defaultOffloadAlarmSnoozeButtoneId" />
+  <java-symbol type="integer" name="config_defaultOffloadAlarmDismissButtoneId" />
+  <java-symbol type="integer" name="config_defaultOffloadAlarmVibrationId" />
+  <java-symbol type="integer" name="config_twm" />
+  <java-symbol type="integer" name="config_deepsleep" />
+  <java-symbol type="integer" name="config_offloadBrightenAlpha" />
+  <java-symbol type="integer" name="config_offloadDimmingAlpha" />
+  <java-symbol type="integer" name="config_autoTriggerTWMThreshold" />
+  <java-symbol type="integer" name="config_shutdownBehavior" />
+
   <java-symbol name="materialColorOnSecondaryFixedVariant" type="attr"/>
   <java-symbol name="materialColorOnTertiaryFixedVariant" type="attr"/>
   <java-symbol name="materialColorSurfaceContainerLowest" type="attr"/>
