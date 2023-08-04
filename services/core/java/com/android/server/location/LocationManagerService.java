@@ -1239,7 +1239,9 @@ public class LocationManagerService extends ILocationManager.Stub implements
                     "setAutomotiveGnssSuspended only allowed on automotive devices");
         }
 
-        mGnssManagerService.setAutomotiveGnssSuspended(suspended);
+        if (mGnssManagerService != null) {
+            mGnssManagerService.setAutomotiveGnssSuspended(suspended);
+        }
     }
 
     @Override
