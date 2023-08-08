@@ -251,8 +251,8 @@ public class BtHelper {
             if (AudioService.DEBUG_VOL) {
                 AudioService.sVolumeLogger.enqueue(new EventLogger.StringEvent(
                         "setAvrcpAbsoluteVolumeIndex: bailing due to null mA2dp").printLog(TAG));
-                return;
             }
+            return;
         }
         if (!mAvrcpAbsVolSupported) {
             AudioService.sVolumeLogger.enqueue(new EventLogger.StringEvent(
@@ -646,8 +646,8 @@ public class BtHelper {
         }
         mScoAudioState = SCO_STATE_INACTIVE;
         broadcastScoConnectionState(AudioManager.SCO_AUDIO_STATE_DISCONNECTED);
-        mDeviceBroker.clearA2dpSuspended();
-        mDeviceBroker.clearLeAudioSuspended();
+        mDeviceBroker.clearA2dpSuspended(false /* internalOnly */);
+        mDeviceBroker.clearLeAudioSuspended(false /* internalOnly */);
         mScoClientDevices.clear();
         mDeviceBroker.setBluetoothScoOn(false, "resetBluetoothSco");
     }
@@ -787,11 +787,14 @@ public class BtHelper {
             return new AudioDeviceAttributes(AudioSystem.DEVICE_OUT_BLUETOOTH_SCO, "");
         }
         String address = btDevice.getAddress();
-        String name = getName(btDevice);
+        String dummyAddress = "00:00:00:00:00:00";
+        String name = "";
+        if (!address.equals(dummyAddress)) {
+            name = getName(btDevice);
+        }
         if (!BluetoothAdapter.checkBluetoothAddress(address)) {
             address = "";
         }
-        String dummyAddress = "00:00:00:00:00:00";
         BluetoothClass btClass = dummyAddress.equals(address) ? null :
                                  btDevice.getBluetoothClass();
         int nativeType = AudioSystem.DEVICE_OUT_BLUETOOTH_SCO;

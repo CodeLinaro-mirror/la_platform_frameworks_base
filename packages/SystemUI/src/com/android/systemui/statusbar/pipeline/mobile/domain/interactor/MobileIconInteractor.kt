@@ -78,6 +78,9 @@ interface MobileIconInteractor {
     /** Only true if mobile is the default transport but is not validated, otherwise false */
     val isDefaultConnectionFailed: StateFlow<Boolean>
 
+    /** Only true if mobile is the cellular transport but is not validated, otherwise false */
+    val isConnectionFailed: StateFlow<Boolean>
+
     /** True if we consider this connection to be in service, i.e. can make calls */
     val isInService: StateFlow<Boolean>
 
@@ -126,6 +129,9 @@ interface MobileIconInteractor {
     /** See [MobileIconsInteractor.isForceHidden]. */
     val isForceHidden: Flow<Boolean>
 
+    /** True when in carrier network change mode */
+    val carrierNetworkChangeActive: StateFlow<Boolean>
+
     /** True if the rsrp level should be preferred over the primary level for LTE. */
     val alwaysUseRsrpLevelForLte: StateFlow<Boolean>
 
@@ -171,6 +177,9 @@ class MobileIconInteractorImpl(
     override val activity = connectionRepository.dataActivityDirection
 
     override val isDataEnabled: StateFlow<Boolean> = connectionRepository.dataEnabled
+
+    override val carrierNetworkChangeActive: StateFlow<Boolean> =
+        connectionRepository.carrierNetworkChangeActive
 
     // True if there exists _any_ icon override for this carrierId. Note that overrides can include
     // any or none of the icon groups defined in MobileMappings, so we still need to check on a
@@ -407,6 +416,8 @@ class MobileIconInteractorImpl(
             .stateIn(scope, SharingStarted.WhileSubscribed(), false)
 
     override val isInService = connectionRepository.isInService
+
+    override val isConnectionFailed: StateFlow<Boolean> = connectionRepository.isConnectionFailed
 
     private fun isLteCamped(mobileIconCustmization: MobileIconCustomizationMode): Boolean {
         return (mobileIconCustmization.dataNetworkType == TelephonyManager.NETWORK_TYPE_LTE
