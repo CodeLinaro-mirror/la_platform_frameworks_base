@@ -238,6 +238,8 @@ public final class SystemServer implements Dumpable {
 
     private static final String TAG = "SystemServer";
 
+    private static boolean sIsBike = SystemProperties.getBoolean("ro.hw.vehicle.isbike", false);
+
     private static final String ENCRYPTING_STATE = "trigger_restart_min_framework";
     private static final String ENCRYPTED_STATE = "1";
 
@@ -1374,9 +1376,8 @@ public final class SystemServer implements Dumpable {
         boolean isWatch = context.getPackageManager().hasSystemFeature(
                 PackageManager.FEATURE_WATCH);
 
-        boolean isBike = context.getPackageManager().hasSystemFeature(
+        boolean useBikeSvc = context.getPackageManager().hasSystemFeature(
                 PackageManager.FEATURE_BIKE);
-
 
         boolean isArc = context.getPackageManager().hasSystemFeature(
                 "org.chromium.arc");
@@ -1530,7 +1531,7 @@ public final class SystemServer implements Dumpable {
                 traceLog.traceEnd();
             }, START_HIDL_SERVICES);
 
-            if (!isBike && !isWatch && enableVrService) {
+            if (!sIsBike && !isWatch && enableVrService) {
                 t.traceBegin("StartVrManagerService");
                 mSystemServiceManager.startService(VrManagerService.class);
                 t.traceEnd();
@@ -2785,10 +2786,10 @@ public final class SystemServer implements Dumpable {
             }
 
             if (mPackageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE)) {
-                String traceLog = isBike ? "StartBikeServiceHelperService" : "StartCarServiceHelperService";
+                String traceLog = useBikeSvc ? "StartBikeServiceHelperService" : "StartCarServiceHelperService";
                 t.traceBegin(traceLog);
                 final SystemService cshs = mSystemServiceManager
-                        .startService(isBike ? BIKE_SERVICE_HELPER_SERVICE_CLASS : CAR_SERVICE_HELPER_SERVICE_CLASS);
+                        .startService(useBikeSvc ? BIKE_SERVICE_HELPER_SERVICE_CLASS : CAR_SERVICE_HELPER_SERVICE_CLASS);
                 if (cshs instanceof Dumpable) {
                     mDumper.addDumpable((Dumpable) cshs);
                 }
