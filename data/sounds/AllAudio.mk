@@ -25,6 +25,7 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/newwavelabs/Enter_the_Nexus.ogg:$(TARGET_COPY_OUT_PRODUCT)/media/audio/ringtones/Enter_the_Nexus.ogg \
     $(LOCAL_PATH)/ringtones/Eridani.ogg:$(TARGET_COPY_OUT_PRODUCT)/media/audio/ringtones/Eridani.ogg \
     $(LOCAL_PATH)/newwavelabs/EtherShake.ogg:$(TARGET_COPY_OUT_PRODUCT)/media/audio/ringtones/EtherShake.ogg \
+    $(LOCAL_PATH)/effects/ogg/camera_click_48k.ogg:$(TARGET_COPY_OUT_PRODUCT)/media/audio/ui/camera_click.ogg \
 
 
 ifneq ($(TARGET_BUILD_2W), true)
@@ -241,7 +242,6 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/effects/ogg/VideoRecord_48k.ogg:$(TARGET_COPY_OUT_PRODUCT)/media/audio/ui/VideoRecord.ogg \
     $(LOCAL_PATH)/effects/ogg/VideoStop_48k.ogg:$(TARGET_COPY_OUT_PRODUCT)/media/audio/ui/VideoStop.ogg \
     $(LOCAL_PATH)/effects/ogg/WirelessChargingStarted.ogg:$(TARGET_COPY_OUT_PRODUCT)/media/audio/ui/WirelessChargingStarted.ogg \
-    $(LOCAL_PATH)/effects/ogg/camera_click_48k.ogg:$(TARGET_COPY_OUT_PRODUCT)/media/audio/ui/camera_click.ogg \
     $(LOCAL_PATH)/effects/ogg/camera_focus.ogg:$(TARGET_COPY_OUT_PRODUCT)/media/audio/ui/camera_focus.ogg \
     $(LOCAL_PATH)/effects/ogg/ChargingStarted.ogg:$(TARGET_COPY_OUT_PRODUCT)/media/audio/ui/ChargingStarted.ogg \
     $(LOCAL_PATH)/effects/ogg/InCallNotification.ogg:$(TARGET_COPY_OUT_PRODUCT)/media/audio/ui/InCallNotification.ogg \
