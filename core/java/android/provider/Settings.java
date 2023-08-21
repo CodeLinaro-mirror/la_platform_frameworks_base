@@ -10797,6 +10797,14 @@ public final class Settings {
         public static final String DEFAULT_RESTRICT_BACKGROUND_DATA =
                 "default_restrict_background_data";
 
+        @Readable
+        @SuppressLint("NoSettingsProvider")
+        public static final String CURRENT_BATTERY_PROFILE = "current_battery_profile";
+
+        @Readable
+        @SuppressLint("NoSettingsProvider")
+        public static final String ENABLE_BATTERY_SAVER_FOR_POWER_PROFILE = "enable_battery_saver_for_power_profile";
+
         /** Inactivity timeout to track mobile data activity.
          *
          * If set to a positive integer, it indicates the inactivity timeout value in seconds to

@@ -35320,11 +35320,13 @@ package android.provider {
     field public static final String BOOT_COUNT = "boot_count";
     field public static final String CONTACT_METADATA_SYNC_ENABLED = "contact_metadata_sync_enabled";
     field public static final android.net.Uri CONTENT_URI;
+    field public static final String CURRENT_BATTERY_PROFILE = "current_battery_profile";
     field public static final String DATA_ROAMING = "data_roaming";
     field public static final String DEBUG_APP = "debug_app";
     field public static final String DEVELOPMENT_SETTINGS_ENABLED = "development_settings_enabled";
     field public static final String DEVICE_NAME = "device_name";
     field public static final String DEVICE_PROVISIONED = "device_provisioned";
+    field public static final String ENABLE_BATTERY_SAVER_FOR_POWER_PROFILE = "enable_battery_saver_for_power_profile";
     field public static final String HTTP_PROXY = "http_proxy";
     field @Deprecated public static final String INSTALL_NON_MARKET_APPS = "install_non_market_apps";
     field public static final String MODE_RINGER = "mode_ringer";

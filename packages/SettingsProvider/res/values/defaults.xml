@@ -158,6 +158,20 @@
          Override to disable immersive mode confirmation for certain packages. -->
     <string name="def_immersive_mode_confirmations" translatable="false"></string>
 
+    <!-- Default for Settings.Global.CURRENT_BATTERY_PROFILE.
+         values: VehicleBatteryProfile.BATTERY_PROFILE_NORMAL that is 1
+                 VehicleBatteryProfile.BATTERY_PROFILE_LOW that is 2
+                 VehicleBatteryProfile.BATTERY_PROFILE_CRITICAL that 3-->
+    <integer name="def_battery_profile">1</integer>
+
+     <!-- Default for Settings.Global.ENABLE_BATTERY_SAVER_FOR_POWER_PROFILE.
+          Enable battery saver mode automatically when battery profile changes.
+          values : 1 means never, battery saver should never enable based on battery profile.
+                   2 means low(default), enable battery saver when battery profile is switched to low.
+                   3 means critical, enable battery saver when battery profile switched to critical.
+           -->
+    <integer name="def_enable_battery_saver_for_power_profile">2</integer>
+
     <!-- Default for Settings.Global.WIFI_SCAN_ALWAYS_AVAILABLE -->
     <integer name="def_wifi_scan_always_available">0</integer>
 

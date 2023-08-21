@@ -2510,6 +2510,12 @@ class DatabaseHelper extends SQLiteOpenHelper {
             loadIntegerSetting(stmt, Settings.Global.WIFI_MAX_DHCP_RETRY_COUNT,
                     R.integer.def_max_dhcp_retries);
 
+            loadIntegerSetting(stmt, Settings.Global.CURRENT_BATTERY_PROFILE,
+                    R.integer.def_battery_profile);
+
+            loadIntegerSetting(stmt, Settings.Global.ENABLE_BATTERY_SAVER_FOR_POWER_PROFILE,
+                    R.integer.def_enable_battery_saver_for_power_profile);
+
             loadBooleanSetting(stmt, Settings.Global.WIFI_DISPLAY_ON,
                     R.bool.def_wifi_display_on);
 
