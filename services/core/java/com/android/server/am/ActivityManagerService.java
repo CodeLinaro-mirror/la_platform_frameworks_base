@@ -5179,10 +5179,6 @@ public class ActivityManagerService extends IActivityManager.Stub
         }
 
         if (enableScreen) {
-            // changes added for headless boot
-            if (android.os.SystemProperties.getInt("ro.config.headless", 0) == 1) {
-                return;
-            }
             mAtmInternal.enableScreenAfterBoot(mBooted);
         }
     }
