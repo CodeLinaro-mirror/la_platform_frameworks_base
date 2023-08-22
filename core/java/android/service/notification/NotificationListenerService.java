@@ -60,7 +60,6 @@ import android.widget.RemoteViews;
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.os.SomeArgs;
-import com.android.internal.R;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -1300,9 +1299,7 @@ public abstract class NotificationListenerService extends Service {
         INotificationManager noMan = getNotificationInterface();
         mHandler = new MyHandler(context.getMainLooper());
         mCurrentUser = currentUser;
-        if (!context.getResources().getBoolean(R.bool.config_enable_hypervisor)) {
         noMan.registerListener(mWrapper, componentName, currentUser);
-        }
     }
 
     /**

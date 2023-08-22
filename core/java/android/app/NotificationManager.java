@@ -64,8 +64,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
-import com.android.internal.R;
-
 /**
  * Class to notify the user of events that happen.  This is how you tell
  * the user that something has happened in the background.
@@ -789,7 +787,6 @@ public class NotificationManager {
     @UnsupportedAppUsage
     public void cancelAsUser(String tag, int id, UserHandle user)
     {
-        if (!mContext.getResources().getBoolean(R.bool.config_enable_hypervisor)) {
         INotificationManager service = getService();
         String pkg = mContext.getPackageName();
         if (localLOGV) Log.v(TAG, pkg + ": cancel(" + id + ")");
@@ -799,7 +796,6 @@ public class NotificationManager {
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
-        }
     }
 
     /**
@@ -808,7 +804,6 @@ public class NotificationManager {
      */
     public void cancelAll()
     {
-        if (!mContext.getResources().getBoolean(R.bool.config_enable_hypervisor)) {
         INotificationManager service = getService();
         String pkg = mContext.getPackageName();
         if (localLOGV) Log.v(TAG, pkg + ": cancelAll()");
@@ -816,7 +811,6 @@ public class NotificationManager {
             service.cancelAllNotifications(pkg, mContext.getUserId());
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
-        }
         }
     }
 
@@ -917,14 +911,12 @@ public class NotificationManager {
      * @param groups The list of groups to create
      */
     public void createNotificationChannelGroups(@NonNull List<NotificationChannelGroup> groups) {
-        if (!mContext.getResources().getBoolean(R.bool.config_enable_hypervisor)) {
         INotificationManager service = getService();
         try {
             service.createNotificationChannelGroups(mContext.getPackageName(),
                     new ParceledListSlice(groups));
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
-        }
         }
     }
 
@@ -962,14 +954,12 @@ public class NotificationManager {
      * @param channels the list of channels to attempt to create.
      */
     public void createNotificationChannels(@NonNull List<NotificationChannel> channels) {
-        if (!mContext.getResources().getBoolean(R.bool.config_enable_hypervisor)) {
         INotificationManager service = getService();
         try {
             service.createNotificationChannels(mContext.getPackageName(),
                     new ParceledListSlice(channels));
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
-        }
         }
     }
 
