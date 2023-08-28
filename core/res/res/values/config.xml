@@ -1817,6 +1817,13 @@
          specified -->
     <string name="default_wallpaper_component" translatable="false">@null</string>
 
+    <!-- enable Offload -->
+    <bool name="config_offloadEnabled">false</bool>
+
+    <!-- Whether Wrist Rotation is supported, used for DisplayRotation rotate per
+        mUserRotation. -->
+    <bool name="config_supportWristRotation">false</bool>
+
     <!-- By default a product has no distinct default lock wallpaper -->
     <item name="default_lock_wallpaper" type="drawable">@null</item>
 
