@@ -32,6 +32,7 @@ import android.os.BatterySaverPolicyConfig;
 import android.os.Handler;
 import android.os.PowerManager;
 import android.os.SystemClock;
+import android.os.SystemProperties;
 import android.os.UserHandle;
 import android.provider.Settings;
 import android.util.IndentingPrintWriter;
@@ -121,6 +122,8 @@ public class BatterySaverStateMachine {
     /** Turned on manually by the user and then plugged in. Will turn back on after unplug. */
     private static final int STATE_PENDING_STICKY_ON =
             BatterySaverStateMachineProto.STATE_PENDING_STICKY_ON;
+
+    private static boolean mIsBike = SystemProperties.getBoolean("ro.hw.vehicle.isbike", false);
 
     private final Context mContext;
     private final BatterySaverController mBatterySaverController;
@@ -289,8 +292,12 @@ public class BatterySaverStateMachine {
         if (DEBUG) {
             Slog.d(TAG, "onBootCompleted");
         }
-        // Just booted. We don't want LOW_POWER_MODE to be persisted, so just always clear it.
-        putGlobalSetting(Settings.Global.LOW_POWER_MODE, 0);
+        // TwoWheeler: Low power mode will be set/reset by twowheeler-systemui based on 
+        // current battery profile, Do not reset it on BootComplete.
+        if(!mIsBike) {
+            // Just booted. We don't want LOW_POWER_MODE to be persisted, so just always clear it.
+            putGlobalSetting(Settings.Global.LOW_POWER_MODE, 0);
+        }
 
         // This is called with the power manager lock held. Don't do anything that may call to
         // upper services. (e.g. don't call into AM directly)
