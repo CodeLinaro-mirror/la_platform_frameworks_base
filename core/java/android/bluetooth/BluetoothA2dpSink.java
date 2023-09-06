@@ -30,6 +30,7 @@ import android.compat.annotation.UnsupportedAppUsage;
 import android.content.Attributable;
 import android.content.AttributionSource;
 import android.content.Context;
+import android.media.AudioManager;
 import android.os.Binder;
 import android.os.Build;
 import android.os.IBinder;
@@ -293,6 +294,31 @@ public final class BluetoothA2dpSink implements BluetoothProfile {
         }
         if (service == null) Log.w(TAG, "Proxy not attached to service");
         return null;
+    }
+
+    /**
+     * Get the current Bluetooth Audio focus state
+     * @return AudioManger.AUDIOFOCUS_* states on success, or AudioManager.ERROR on error
+     *
+     * @hide
+     */
+    @RequiresLegacyBluetoothPermission
+    @RequiresBluetoothConnectPermission
+    @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
+
+    public int getFocusState() {
+        if (VDBG) log("getFocusState");
+        final IBluetoothA2dpSink service = getService();
+        if (service != null && isEnabled()) {
+            try {
+                return service.getFocusState(mAttributionSource);
+            } catch (RemoteException e) {
+                Log.e(TAG, "Stack:" + Log.getStackTraceString(new Throwable()));
+                return AudioManager.ERROR;
+            }
+        }
+        if (service == null) Log.w(TAG, "Proxy not attached to service");
+        return AudioManager.ERROR;
     }
 
     /**
