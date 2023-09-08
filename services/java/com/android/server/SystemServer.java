@@ -2108,10 +2108,9 @@ public final class SystemServer implements Dumpable {
             }
             t.traceEnd();
 
-            // Disabled for TwoWheeler as voice interaction is not supported
-            /*t.traceBegin("StartSoundTriggerMiddlewareService");
+            t.traceBegin("StartSoundTriggerMiddlewareService");
             mSystemServiceManager.startService(SoundTriggerMiddlewareService.Lifecycle.class);
-            t.traceEnd();*/
+            t.traceEnd();
 
             if (mPackageManager.hasSystemFeature(PackageManager.FEATURE_BROADCAST_RADIO)) {
                 t.traceBegin("StartBroadcastRadioService");
