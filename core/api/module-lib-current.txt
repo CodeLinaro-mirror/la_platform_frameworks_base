@@ -313,9 +313,13 @@ package android.os {
 
   public static final class BluetoothServiceManager.ServiceRegisterer {
     method @Nullable public android.os.IBinder get();
+    method @Nullable public android.os.IBinder getExt();
     method @NonNull public android.os.IBinder getOrThrow() throws android.os.BluetoothServiceManager.ServiceNotFoundException;
+    method @NonNull public android.os.IBinder getOrThrowExt() throws android.os.BluetoothServiceManager.ServiceNotFoundException;
     method public void register(@NonNull android.os.IBinder);
+    method public void register(@NonNull android.os.IBinder, @Nullable android.os.IBinder);
     method @Nullable public android.os.IBinder tryGet();
+    method @Nullable public android.os.IBinder tryGetExt();
   }
 
   public class Build {
@@ -436,8 +440,11 @@ package android.provider {
 
   public static final class Settings.Secure extends android.provider.Settings.NameValueTable {
     field public static final String BLUETOOTH_ADDRESS = "bluetooth_address";
+    field public static final String BLUETOOTH_ADDRESS1 = "bluetooth_address1";
     field public static final String BLUETOOTH_ADDR_VALID = "bluetooth_addr_valid";
+    field public static final String BLUETOOTH_ADDR_VALID1 = "bluetooth_addr_valid1";
     field public static final String BLUETOOTH_NAME = "bluetooth_name";
+    field public static final String BLUETOOTH_NAME1 = "bluetooth_name1";
   }
 
 }
