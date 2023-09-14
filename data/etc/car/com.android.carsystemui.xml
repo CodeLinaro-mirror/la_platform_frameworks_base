@@ -32,7 +32,10 @@
         <permission name="android.car.permission.CONTROL_CAR_APP_LAUNCH"/>
         <!-- additional permission for TwoWheeler SystemUI -->
         <permission name="android.car.permission.CAR_EXTERIOR_LIGHTS"/>
-	<permission name="vendor.vehicle.permission.TWO_WHEELER_CONTROLLER"/>
+        <permission name="vendor.vehicle.permission.TWO_WHEELER_CONTROLLER"/>
         <permission name="android.permission.SEND_CATEGORY_CAR_NOTIFICATIONS"/>
+
+        <permission name="android.car.permission.CAR_TIRES"/>
+        <permission name="android.car.permission.CAR_VENDOR_EXTENSION"/>
      </privapp-permissions>
 </permissions>
