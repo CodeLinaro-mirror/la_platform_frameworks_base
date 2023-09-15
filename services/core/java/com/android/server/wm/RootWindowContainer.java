@@ -1070,8 +1070,10 @@ public class RootWindowContainer extends WindowContainer<DisplayContent>
                 displayHasContent = true;
             } else if (displayContent != null &&
                     (!mObscureApplicationContentOnSecondaryDisplays
+                            || displayContent.isKeyguardAlwaysUnlocked()
                             || (obscured && type == TYPE_KEYGUARD_DIALOG))) {
-                // Allow full screen keyguard presentation dialogs to be seen.
+                // Allow full screen keyguard presentation dialogs to be seen, or simply ignore the
+                // keyguard if this display is always unlocked.
                 displayHasContent = true;
             }
             if ((privateflags & PRIVATE_FLAG_SUSTAINED_PERFORMANCE_MODE) != 0) {
@@ -3332,6 +3334,10 @@ public class RootWindowContainer extends WindowContainer<DisplayContent>
             if (resumedActivity == null || !resumedActivity.idle) {
                 ProtoLog.d(WM_DEBUG_STATES, "allResumedActivitiesIdle: rootTask=%d %s "
                         + "not idle", rootTask.getRootTaskId(), resumedActivity);
+                return false;
+            }
+            if (mTransitionController.isTransientLaunch(resumedActivity)) {
+                // Not idle if the transient transition animation is running.
                 return false;
             }
         }

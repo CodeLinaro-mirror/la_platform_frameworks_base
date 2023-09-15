@@ -447,7 +447,7 @@ public class PipTaskOrganizer implements ShellTaskOrganizer.TaskListener,
     }
 
     /**
-     * Callback when launcher finishes swipe-pip-to-home operation.
+     * Callback when launcher finishes preparation of swipe-pip-to-home operation.
      * Expect {@link #onTaskAppeared(ActivityManager.RunningTaskInfo, SurfaceControl)} afterwards.
      */
     public void stopSwipePipToHome(int taskId, ComponentName componentName, Rect destinationBounds,
@@ -1927,6 +1927,7 @@ public class PipTaskOrganizer implements ShellTaskOrganizer.TaskListener,
         pw.println(innerPrefix + "mLeash=" + mLeash);
         pw.println(innerPrefix + "mState=" + mPipTransitionState.getTransitionState());
         pw.println(innerPrefix + "mPictureInPictureParams=" + mPictureInPictureParams);
+        mPipTransitionController.dump(pw, innerPrefix);
     }
 
     @Override

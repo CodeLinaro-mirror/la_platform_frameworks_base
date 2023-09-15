@@ -2480,7 +2480,7 @@ public final class ActiveServices {
                     // Even if the service is already a FGS, we need to update the notification,
                     // so we need to call it again.
                     signalForegroundServiceObserversLocked(r);
-                    r.postNotification();
+                    r.postNotification(true);
                     if (r.app != null) {
                         updateServiceForegroundLocked(psr, true);
                     }
@@ -2538,7 +2538,7 @@ public final class ActiveServices {
                 } else if (r.appInfo.targetSdkVersion >= Build.VERSION_CODES.LOLLIPOP) {
                     // if it's been deferred, force to visibility
                     if (!r.mFgsNotificationShown) {
-                        r.postNotification();
+                        r.postNotification(false);
                     }
                     dropFgsNotificationStateLocked(r);
                     if ((flags & Service.STOP_FOREGROUND_DETACH) != 0) {
@@ -2982,7 +2982,7 @@ public final class ActiveServices {
                         // in the interval, so we lazy check whether we still need to show
                         // the notification.
                         if (r.isForeground && r.app != null) {
-                            r.postNotification();
+                            r.postNotification(true);
                             r.mFgsNotificationShown = true;
                         } else {
                             if (DEBUG_FOREGROUND_SERVICE) {
@@ -3841,9 +3841,7 @@ public final class ActiveServices {
             }
             clientPsr.addConnection(c);
             c.startAssociationIfNeeded();
-            // Don't set hasAboveClient if binding to self to prevent modifyRawOomAdj() from
-            // dropping the process' adjustment level.
-            if (b.client != s.app && c.hasFlag(Context.BIND_ABOVE_CLIENT)) {
+            if (c.hasFlag(Context.BIND_ABOVE_CLIENT)) {
                 clientPsr.setHasAboveClient(true);
             }
             if (c.hasFlag(BIND_ALLOW_WHITELIST_MANAGEMENT)) {
@@ -5587,7 +5585,7 @@ public final class ActiveServices {
             thread.scheduleCreateService(r, r.serviceInfo,
                     null /* compatInfo (unused but need to keep method signature) */,
                     app.mState.getReportedProcState());
-            r.postNotification();
+            r.postNotification(false);
             created = true;
 
             if (!isLowRamDevice) {
