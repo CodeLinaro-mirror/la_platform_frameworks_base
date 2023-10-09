@@ -12,6 +12,11 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Changes from Qualcomm Innovation Center are provided under the following license:
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ *
  */
 
 package com.android.server.wm;
@@ -129,6 +134,7 @@ import android.service.voice.IVoiceInteractionSession;
 import android.text.TextUtils;
 import android.util.Pair;
 import android.util.Pools.SynchronizedPool;
+import android.util.BoostFramework;
 import android.util.Slog;
 import android.widget.Toast;
 import android.window.RemoteTransition;
@@ -260,6 +266,10 @@ class ActivityStarter {
 
     private IVoiceInteractionSession mVoiceSession;
     private IVoiceInteractor mVoiceInteractor;
+
+    public BoostFramework mPerf = null;
+    public static final int PERF_HANDLE = -1;
+    public static final int PERF_HINT_TYPE = 1;
 
     // Last activity record we attempted to start
     private ActivityRecord mLastStartActivityRecord;
@@ -616,6 +626,7 @@ class ActivityStarter {
         mRootWindowContainer = service.mRootWindowContainer;
         mSupervisor = supervisor;
         mInterceptor = interceptor;
+        mPerf = new BoostFramework();
         reset(true);
     }
 
@@ -3078,6 +3089,24 @@ class ActivityStarter {
 
     /** Places {@link #mStartActivity} in {@code task} or an embedded {@link TaskFragment}. */
     private void addOrReparentStartingActivity(@NonNull Task task, String reason) {
+        String packageName= mService.mContext.getPackageName();
+        if (mPerf != null) {
+            if (mPerf.getPerfHalVersion() >= BoostFramework.PERF_HAL_V23) {
+                int pkgType = mPerf.perfGetFeedback(BoostFramework.VENDOR_FEEDBACK_WORKLOAD_TYPE,
+                                                packageName);
+                mStartActivity.perfActivityBoostHandler =
+                    mPerf.perfHintAcqRel(mStartActivity.perfActivityBoostHandler,
+                                    BoostFramework.VENDOR_HINT_FIRST_LAUNCH_BOOST, packageName,
+                                    PERF_HANDLE, BoostFramework.Launch.ACTIVITY_LAUNCH_BOOST, PERF_HINT_TYPE, pkgType);
+            } else {
+                if (mStartActivity.perfActivityBoostHandler > 0) {
+                   Slog.i(TAG, "Activity boosted, release it firstly");
+                   mPerf.perfLockReleaseHandler(mStartActivity.perfActivityBoostHandler);
+                }
+                mStartActivity.perfActivityBoostHandler = mPerf.perfHint(BoostFramework.VENDOR_HINT_FIRST_LAUNCH_BOOST,
+                                packageName, PERF_HANDLE, BoostFramework.Launch.BOOST_V1);
+            }
+        }
         TaskFragment newParent = task;
         if (mInTaskFragment != null) {
             int embeddingCheckResult = canEmbedActivity(mInTaskFragment, mStartActivity, task);
