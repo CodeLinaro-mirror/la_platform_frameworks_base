@@ -12,6 +12,11 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Changes from Qualcomm Innovation Center are provided under the following license:
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ *
  */
 
 package com.android.server.wm;
@@ -25,6 +30,7 @@ import static android.view.PointerIcon.TYPE_VERTICAL_DOUBLE_ARROW;
 import android.graphics.Rect;
 import android.graphics.Region;
 import android.hardware.input.InputManager;
+import android.util.BoostFramework;
 import android.view.InputDevice;
 import android.view.MotionEvent;
 import android.view.WindowManagerPolicyConstants.PointerEventListener;
@@ -42,11 +48,15 @@ public class TaskTapPointerEventListener implements PointerEventListener {
     private final DisplayContent mDisplayContent;
     private final Rect mTmpRect = new Rect();
     private int mPointerIconType = TYPE_NOT_SPECIFIED;
+    public BoostFramework mPerfObj = null;
 
     public TaskTapPointerEventListener(WindowManagerService service,
             DisplayContent displayContent) {
         mService = service;
         mDisplayContent = displayContent;
+        if (mPerfObj == null) {
+            mPerfObj = new BoostFramework();
+        }
     }
 
     private void restorePointerIcon(int x, int y) {
@@ -128,6 +138,28 @@ public class TaskTapPointerEventListener implements PointerEventListener {
                 restorePointerIcon(x, y);
             }
             break;
+        }
+        if (ActivityTaskSupervisor.sIsPerfBoostAcquired && (mPerfObj != null)) {
+            if (ActivityTaskSupervisor.sPerfHandle > 0) {
+               mPerfObj.perfLockReleaseHandler(ActivityTaskSupervisor.sPerfHandle);
+               ActivityTaskSupervisor.sPerfHandle = -1;
+            }
+            ActivityTaskSupervisor.sIsPerfBoostAcquired = false;
+        }
+        if (ActivityTaskSupervisor.sPerfSendTapHint && (mPerfObj != null)) {
+           mPerfObj.perfHint(BoostFramework.VENDOR_HINT_TAP_EVENT, null);
+           ActivityTaskSupervisor.sPerfSendTapHint = false;
+        }
+        if (RootWindowContainer.sIsPerfBoostAcquired && (mPerfObj != null)) {
+           if (RootWindowContainer.sPerfHandle > 0) {
+               mPerfObj.perfLockReleaseHandler(RootWindowContainer.sPerfHandle);
+               RootWindowContainer.sPerfHandle = -1;
+           }
+           RootWindowContainer.sIsPerfBoostAcquired = false;
+        }
+        if (RootWindowContainer.sPerfSendTapHint && (mPerfObj != null)) {
+            mPerfObj.perfHint(BoostFramework.VENDOR_HINT_TAP_EVENT, null);
+            RootWindowContainer.sPerfSendTapHint = false;
         }
     }
 

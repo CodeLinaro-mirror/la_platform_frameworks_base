@@ -12,6 +12,11 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License
+ *
+ * Changes from Qualcomm Innovation Center are provided under the following license:
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ *
  */
 
 package com.android.server.wm;
@@ -49,6 +54,7 @@ import static com.android.internal.protolog.ProtoLogGroup.WM_SHOW_TRANSACTIONS;
 import static com.android.server.policy.PhoneWindowManager.SYSTEM_DIALOG_REASON_ASSIST;
 import static com.android.server.policy.WindowManagerPolicy.FINISH_LAYOUT_REDO_LAYOUT;
 import static com.android.server.policy.WindowManagerPolicy.FINISH_LAYOUT_REDO_WALLPAPER;
+import static com.android.server.wm.ActivityRecord.State.DESTROYED;
 import static com.android.server.wm.ActivityRecord.State.FINISHING;
 import static com.android.server.wm.ActivityRecord.State.PAUSED;
 import static com.android.server.wm.ActivityRecord.State.RESUMED;
@@ -127,6 +133,7 @@ import android.provider.Settings;
 import android.service.voice.IVoiceInteractionSession;
 import android.util.ArrayMap;
 import android.util.ArraySet;
+import android.util.BoostFramework;
 import android.util.IntArray;
 import android.util.Pair;
 import android.util.Slog;
@@ -236,6 +243,15 @@ class RootWindowContainer extends WindowContainer<DisplayContent>
     WindowManagerService mWindowManager;
     DisplayManager mDisplayManager;
     private DisplayManagerInternal mDisplayManagerInternal;
+
+    public static boolean sPerfSendTapHint = false;
+    public static boolean sIsPerfBoostAcquired = false;
+    public static int sPerfHandle = -1;
+    public static final int PERF_HANDLE = -1;
+    public static final int PERF_DURATION = -1;
+    public static final int PERF_NUM_ARGS = 2;
+    public BoostFramework mPerfBoost = null;
+    public BoostFramework mUxPerf = null;
 
     /** Reference to default display so we can quickly look it up. */
     private DisplayContent mDefaultDisplay;
@@ -2175,15 +2191,95 @@ class RootWindowContainer extends WindowContainer<DisplayContent>
         }
     }
 
+    void acquireAppLaunchPerfLock(ActivityRecord r) {
+         /* Acquire perf lock during new app launch */
+         if (mPerfBoost == null) {
+             mPerfBoost = new BoostFramework();
+         }
+         if (mPerfBoost != null) {
+             int pkgType = mPerfBoost.perfGetFeedback(BoostFramework.VENDOR_FEEDBACK_WORKLOAD_TYPE,
+                                                      r.packageName);
+             int wpcPid = -1;
+             if (mService != null && r != null && r.info != null && r.info.applicationInfo !=null) {
+                 final WindowProcessController wpc =
+                         mService.getProcessController(r.processName, r.info.applicationInfo.uid);
+                 if (wpc != null && wpc.hasThread()) {
+                    //If target process didn't start yet,
+                    // this operation will be done when app call attach
+                    wpcPid = wpc.getPid();
+                 }
+             }
+             if (mPerfBoost.getPerfHalVersion() >= BoostFramework.PERF_HAL_V23 && r != null) {
+                 mPerfBoost.perfHintAcqRel(PERF_HANDLE, BoostFramework.VENDOR_HINT_FIRST_LAUNCH_BOOST,
+                     r.packageName, PERF_DURATION, BoostFramework.Launch.BOOST_V1, PERF_NUM_ARGS, pkgType, wpcPid);
+                 sPerfSendTapHint = true;
+                 mPerfBoost.perfHintAcqRel(PERF_HANDLE, BoostFramework.VENDOR_HINT_FIRST_LAUNCH_BOOST,
+                     r.packageName, PERF_DURATION, BoostFramework.Launch.BOOST_V2, PERF_NUM_ARGS, pkgType, wpcPid);
+                 if (wpcPid != -1) {
+                     mPerfBoost.perfHintAcqRel(PERF_HANDLE,
+                         BoostFramework.VENDOR_HINT_FIRST_LAUNCH_BOOST,
+                             r.packageName, wpcPid,
+                             BoostFramework.Launch.TYPE_ATTACH_APPLICATION, PERF_NUM_ARGS, pkgType, wpcPid);
+                 }
+
+                 if (pkgType  == BoostFramework.WorkloadType.GAME)
+                 {
+                     sPerfHandle = mPerfBoost.perfHintAcqRel(PERF_HANDLE,
+                         BoostFramework.VENDOR_HINT_FIRST_LAUNCH_BOOST,
+                            r.packageName, PERF_DURATION, BoostFramework.Launch.BOOST_GAME, PERF_NUM_ARGS, pkgType, wpcPid);
+                 } else {
+                     sPerfHandle = mPerfBoost.perfHintAcqRel(PERF_HANDLE,
+                         BoostFramework.VENDOR_HINT_FIRST_LAUNCH_BOOST,
+                             r.packageName, PERF_DURATION, BoostFramework.Launch.BOOST_V3, PERF_NUM_ARGS, pkgType, wpcPid);
+                 }
+         } else {
+                 mPerfBoost.perfHint(BoostFramework.VENDOR_HINT_FIRST_LAUNCH_BOOST, r.packageName,
+                                     PERF_DURATION, BoostFramework.Launch.BOOST_V1);
+                 sPerfSendTapHint = true;
+                 mPerfBoost.perfHint(BoostFramework.VENDOR_HINT_FIRST_LAUNCH_BOOST,
+                     r.packageName, PERF_DURATION, BoostFramework.Launch.BOOST_V2);
+                 if (wpcPid != -1) {
+                     mPerfBoost.perfHint(
+                         BoostFramework.VENDOR_HINT_FIRST_LAUNCH_BOOST,
+                             r.packageName, wpcPid,
+                             BoostFramework.Launch.TYPE_ATTACH_APPLICATION);
+                 }
+
+                 if (pkgType  == BoostFramework.WorkloadType.GAME) {
+                     sPerfHandle = mPerfBoost.perfHint(
+                         BoostFramework.VENDOR_HINT_FIRST_LAUNCH_BOOST,
+                             r.packageName, PERF_DURATION, BoostFramework.Launch.BOOST_GAME);
+                 } else {
+                     sPerfHandle = mPerfBoost.perfHint(
+                         BoostFramework.VENDOR_HINT_FIRST_LAUNCH_BOOST,
+                             r.packageName, PERF_DURATION, BoostFramework.Launch.BOOST_V3);
+                 }
+             }
+             if (sPerfHandle > 0) {
+                 sIsPerfBoostAcquired = true;
+             }
+             // Start IOP
+             if (r.info.applicationInfo != null &&
+                 r.info.applicationInfo.sourceDir != null) {
+                   if (mPerfBoost.board_first_api_lvl < BoostFramework.VENDOR_T_API_LEVEL &&
+                     mPerfBoost.board_api_lvl < BoostFramework.VENDOR_T_API_LEVEL) {
+                       mPerfBoost.perfIOPrefetchStart(-1,r.packageName,
+                       r.info.applicationInfo.sourceDir.substring(
+                         0, r.info.applicationInfo.sourceDir.lastIndexOf('/')));
+                   }
+             }
+         }
+    }
+
     @Nullable
     ActivityRecord findTask(ActivityRecord r, TaskDisplayArea preferredTaskDisplayArea) {
         return findTask(r.getActivityType(), r.taskAffinity, r.intent, r.info,
-                preferredTaskDisplayArea);
+                preferredTaskDisplayArea, r);
     }
 
     @Nullable
     ActivityRecord findTask(int activityType, String taskAffinity, Intent intent, ActivityInfo info,
-            TaskDisplayArea preferredTaskDisplayArea) {
+            TaskDisplayArea preferredTaskDisplayArea, ActivityRecord r) {
         ProtoLog.d(WM_DEBUG_TASKS, "Looking for task of type=%s, taskAffinity=%s, intent=%s"
                         + ", info=%s, preferredTDA=%s", activityType, taskAffinity, intent, info,
                 preferredTaskDisplayArea);
@@ -2194,10 +2290,32 @@ class RootWindowContainer extends WindowContainer<DisplayContent>
         if (preferredTaskDisplayArea != null) {
             mTmpFindTaskResult.process(preferredTaskDisplayArea);
             if (mTmpFindTaskResult.mIdealRecord != null) {
+                if (mTmpFindTaskResult.mIdealRecord.getState() == DESTROYED) {
+                     /*It's a new app launch */
+                     acquireAppLaunchPerfLock(r);
+                }
+                if (mTmpFindTaskResult.mIdealRecord.getState() == STOPPED) {
+                     /*Warm launch */
+                     mUxPerf = new BoostFramework();
+                     if (mUxPerf != null) {
+                        if (mUxPerf.board_first_api_lvl < BoostFramework.VENDOR_T_API_LEVEL &&
+                           mUxPerf.board_api_lvl < BoostFramework.VENDOR_T_API_LEVEL) {
+                           mUxPerf.perfUXEngine_events(BoostFramework.UXE_EVENT_SUB_LAUNCH, 0, r.packageName, 0);
+                        } else {
+                           mUxPerf.perfEvent(BoostFramework.VENDOR_HINT_WARM_LAUNCH, r.packageName, 2, 0, 0);
+                     }
+                  }
+                }
                 return mTmpFindTaskResult.mIdealRecord;
             } else if (mTmpFindTaskResult.mCandidateRecord != null) {
                 candidateActivity = mTmpFindTaskResult.mCandidateRecord;
             }
+        }
+
+        /* Acquire perf lock *only* during new app launch */
+        if ((mTmpFindTaskResult.mIdealRecord == null) ||
+            (mTmpFindTaskResult.mIdealRecord.getState() == DESTROYED)) {
+            acquireAppLaunchPerfLock(r);
         }
 
         final ActivityRecord idealMatchActivity = getItemFromTaskDisplayAreas(taskDisplayArea -> {

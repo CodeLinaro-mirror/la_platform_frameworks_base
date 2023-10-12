@@ -12,6 +12,11 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Changes from Qualcomm Innovation Center are provided under the following license:
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ *
  */
 
 package com.android.server.wm;
@@ -50,6 +55,7 @@ import static android.view.WindowManager.TRANSIT_TO_FRONT;
 
 import static com.android.internal.protolog.ProtoLogGroup.WM_DEBUG_STATES;
 import static com.android.internal.protolog.ProtoLogGroup.WM_DEBUG_TASKS;
+import static com.android.server.wm.ActivityRecord.State.DESTROYED;
 import static com.android.server.wm.ActivityRecord.State.PAUSED;
 import static com.android.server.wm.ActivityRecord.State.PAUSING;
 import static com.android.server.wm.ActivityRecord.State.RESTARTING_PROCESS;
@@ -111,6 +117,7 @@ import android.content.res.Configuration;
 import android.graphics.Rect;
 import android.hardware.SensorPrivacyManager;
 import android.hardware.SensorPrivacyManagerInternal;
+import android.os.AsyncTask;
 import android.os.Binder;
 import android.os.Build;
 import android.os.Bundle;
@@ -128,6 +135,7 @@ import android.os.UserManager;
 import android.os.WorkSource;
 import android.provider.MediaStore;
 import android.util.ArrayMap;
+import android.util.BoostFramework;
 import android.util.MergedConfiguration;
 import android.util.Slog;
 import android.util.SparseArray;
@@ -137,6 +145,7 @@ import android.view.Display;
 import com.android.internal.R;
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.internal.app.procstats.ProcessStats;
 import com.android.internal.content.ReferrerIntent;
 import com.android.internal.protolog.common.ProtoLog;
 import com.android.internal.util.ArrayUtils;
@@ -152,6 +161,7 @@ import com.android.server.wm.ActivityMetricsLogger.LaunchingState;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
+import java.util.Arrays;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
@@ -181,6 +191,15 @@ public class ActivityTaskSupervisor implements RecentTasks.Callbacks {
 
     /** How long we wait until giving up on the activity telling us it released the top state. */
     private static final int TOP_RESUMED_STATE_LOSS_TIMEOUT = 500;
+
+    public static boolean sPerfSendTapHint = false;
+    public static boolean sIsPerfBoostAcquired = false;
+    public static int sPerfHandle = -1;
+    public static final int PERF_HANDLE = -1;
+    public static final int PERF_DURATION = -1;
+    public static final int PERF_NUM_ARGS = 2;
+    public BoostFramework mPerfBoost = new BoostFramework();
+    public BoostFramework mUxPerf = new BoostFramework();
 
     private static final int IDLE_TIMEOUT_MSG = FIRST_SUPERVISOR_TASK_MSG;
     private static final int IDLE_NOW_MSG = FIRST_SUPERVISOR_TASK_MSG + 1;
@@ -664,7 +683,7 @@ public class ActivityTaskSupervisor implements RecentTasks.Callbacks {
         }
     }
 
-    ActivityInfo resolveActivity(Intent intent, ResolveInfo rInfo, int startFlags,
+    public ActivityInfo resolveActivity(Intent intent, ResolveInfo rInfo, int startFlags,
             ProfilerInfo profilerInfo) {
         final ActivityInfo aInfo = rInfo != null ? rInfo.activityInfo : null;
         if (aInfo != null) {
@@ -757,7 +776,7 @@ public class ActivityTaskSupervisor implements RecentTasks.Callbacks {
         }
     }
 
-    ActivityInfo resolveActivity(Intent intent, String resolvedType, int startFlags,
+    public ActivityInfo resolveActivity(Intent intent, String resolvedType, int startFlags,
             ProfilerInfo profilerInfo, int userId, int filterCallingUid) {
         final ResolveInfo rInfo = resolveIntent(intent, resolvedType, userId, 0, filterCallingUid);
         return resolveActivity(intent, rInfo, startFlags, profilerInfo);
@@ -1044,6 +1063,11 @@ public class ActivityTaskSupervisor implements RecentTasks.Callbacks {
         boolean knownToBeDead = false;
         if (wpc != null && wpc.hasThread()) {
             try {
+                if (mPerfBoost != null) {
+                      Slog.i(TAG, "The Process " + r.processName + " Already Exists in BG. So sending its PID: " + wpc.getPid());
+                      mPerfBoost.perfHint(BoostFramework.VENDOR_HINT_FIRST_LAUNCH_BOOST, r.processName,
+                      wpc.getPid(), BoostFramework.Launch.TYPE_START_APP_FROM_BG);
+                }
                 realStartActivityLocked(r, wpc, andResume, checkConfig);
                 return;
             } catch (RemoteException e) {
@@ -1427,6 +1451,13 @@ public class ActivityTaskSupervisor implements RecentTasks.Callbacks {
     void findTaskToMoveToFront(Task task, int flags, ActivityOptions options, String reason,
             boolean forceNonResizeable) {
         Task currentRootTask = task.getRootTask();
+        Task focusedStack = mRootWindowContainer.getTopDisplayFocusedRootTask();
+        ActivityRecord top_activity = focusedStack != null ? focusedStack.getTopNonFinishingActivity() : null;
+        //top_activity = task.stack.topRunningActivityLocked();
+        /* App is launching from recent apps and it's a new process */
+        if ((top_activity != null) && (top_activity.getState() == DESTROYED)) {
+           acquireAppLaunchPerfLock(top_activity);
+        }
         if (currentRootTask == null) {
             Slog.e(TAG, "findTaskToMoveToFront: can't move task="
                     + task + " to front. Root task is null");
@@ -1706,6 +1737,14 @@ public class ActivityTaskSupervisor implements RecentTasks.Callbacks {
         mService.mH.sendMessage(m);
     }
 
+    public void startPreferredApps() {
+        try {
+            new PreferredAppsTask().execute();
+        } catch (Exception e) {
+            Slog.v (TAG, "Exception while calling PreferredAppsTask: " + e);
+        }
+    }
+
     /**
      * Called to restore the state of the task into the root task that it's supposed to go into.
      *
@@ -1856,6 +1895,79 @@ public class ActivityTaskSupervisor implements RecentTasks.Callbacks {
         checkReadyForSleepLocked(false /* allowDelay */);
 
         return timedout;
+    }
+
+    void acquireAppLaunchPerfLock(ActivityRecord r) {
+        /* Acquire perf lock during new app launch */
+        if (mPerfBoost != null) {
+            int pkgType = mPerfBoost.perfGetFeedback(BoostFramework.VENDOR_FEEDBACK_WORKLOAD_TYPE,
+                                                     r.packageName);
+            int wpcPid = -1;
+            if (mService != null && r != null && r.info != null && r.info.applicationInfo !=null) {
+                final WindowProcessController wpc =
+                        mService.getProcessController(r.processName, r.info.applicationInfo.uid);
+                if (wpc != null && wpc.hasThread()) {
+                   //If target process didn't start yet, this operation will be done when app call attach
+                   wpcPid = wpc.getPid();
+                }
+            }
+            if (mPerfBoost.getPerfHalVersion() >= BoostFramework.PERF_HAL_V23 && r != null) {
+                mPerfBoost.perfHintAcqRel(PERF_HANDLE, BoostFramework.VENDOR_HINT_FIRST_LAUNCH_BOOST,
+                        r.packageName, PERF_DURATION, BoostFramework.Launch.BOOST_V1, PERF_NUM_ARGS, pkgType, wpcPid);
+                sPerfSendTapHint = true;
+                mPerfBoost.perfHintAcqRel(PERF_HANDLE, BoostFramework.VENDOR_HINT_FIRST_LAUNCH_BOOST,
+                        r.packageName, PERF_DURATION, BoostFramework.Launch.BOOST_V2, PERF_NUM_ARGS, pkgType, wpcPid);
+                if (wpcPid != -1) {
+                   mPerfBoost.perfHintAcqRel(PERF_HANDLE, BoostFramework.VENDOR_HINT_FIRST_LAUNCH_BOOST,
+                        r.packageName, wpcPid, BoostFramework.Launch.TYPE_ATTACH_APPLICATION,
+                        PERF_NUM_ARGS, pkgType, wpcPid);
+                }
+                if (pkgType == BoostFramework.WorkloadType.GAME) {
+                    sPerfHandle =
+                        mPerfBoost.perfHintAcqRel(PERF_HANDLE, BoostFramework.VENDOR_HINT_FIRST_LAUNCH_BOOST,
+                           r.packageName, PERF_DURATION, BoostFramework.Launch.BOOST_GAME, PERF_NUM_ARGS, pkgType, wpcPid);
+                } else {
+                    sPerfHandle =
+                        mPerfBoost.perfHintAcqRel(PERF_HANDLE, BoostFramework.VENDOR_HINT_FIRST_LAUNCH_BOOST,
+                            r.packageName, PERF_DURATION, BoostFramework.Launch.BOOST_V3, PERF_NUM_ARGS, pkgType, wpcPid);
+                }
+
+            } else {
+                mPerfBoost.perfHint(BoostFramework.VENDOR_HINT_FIRST_LAUNCH_BOOST, r.packageName,
+                                    PERF_DURATION, BoostFramework.Launch.BOOST_V1);
+                sPerfSendTapHint = true;
+                mPerfBoost.perfHint(BoostFramework.VENDOR_HINT_FIRST_LAUNCH_BOOST, r.packageName,
+                    -1, BoostFramework.Launch.BOOST_V2);
+                if (wpcPid != -1) {
+                    mPerfBoost.perfHint(BoostFramework.VENDOR_HINT_FIRST_LAUNCH_BOOST,
+                        r.packageName, wpcPid, BoostFramework.Launch.TYPE_ATTACH_APPLICATION);
+                }
+
+                if (pkgType == BoostFramework.WorkloadType.GAME) {
+                    sPerfHandle = mPerfBoost.perfHint(BoostFramework.VENDOR_HINT_FIRST_LAUNCH_BOOST,
+                                    r.packageName, PERF_DURATION, BoostFramework.Launch.BOOST_GAME);
+                } else {
+                    sPerfHandle = mPerfBoost.perfHint(BoostFramework.VENDOR_HINT_FIRST_LAUNCH_BOOST,
+                        r.packageName, PERF_DURATION, BoostFramework.Launch.BOOST_V3);
+                }
+            }
+            if (sPerfHandle > 0) {
+                sIsPerfBoostAcquired = true;
+            }
+            // Start IOP
+            if (r.info.applicationInfo != null && r.info.applicationInfo.sourceDir != null) {
+                if (mPerfBoost.board_first_api_lvl < BoostFramework.VENDOR_T_API_LEVEL &&
+                    mPerfBoost.board_api_lvl < BoostFramework.VENDOR_T_API_LEVEL) {
+                        mPerfBoost.perfIOPrefetchStart(-1, r.packageName,
+                           r.info.applicationInfo.sourceDir.substring(0,
+                           r.info.applicationInfo.sourceDir.lastIndexOf('/')));
+                }
+            }
+        }
+    }
+
+    public ActivityRecord getTopResumedActivity() {
+        return mTopResumedActivity;
     }
 
     void comeOutOfSleepIfNeededLocked() {
@@ -2718,6 +2830,45 @@ public class ActivityTaskSupervisor implements RecentTasks.Callbacks {
             pw.println(prefix + "  mTargetComponent=" + mTargetComponent);
             pw.println(prefix + "  mResult=");
             mResult.dump(pw, prefix + "    ");
+        }
+    }
+
+    class PreferredAppsTask extends AsyncTask<Void, Void, Void> {
+        @Override
+        protected Void doInBackground(Void... params) {
+            String res = null;
+            final Intent intent = new Intent(Intent.ACTION_MAIN);
+            int trimLevel = 0;
+            try {
+                trimLevel = ActivityManager.getService().getMemoryTrimLevel();
+            } catch (RemoteException e) {
+                return null;
+            }
+            if (mUxPerf != null
+                   && trimLevel < ProcessStats.ADJ_MEM_FACTOR_CRITICAL) {
+                if (mUxPerf.board_first_api_lvl < BoostFramework.VENDOR_T_API_LEVEL &&
+                    mUxPerf.board_api_lvl < BoostFramework.VENDOR_T_API_LEVEL) {
+                    res = mUxPerf.perfUXEngine_trigger(BoostFramework.UXE_TRIGGER);
+                } else {
+                    res = mUxPerf.perfSyncRequest(BoostFramework.VENDOR_FEEDBACK_PA_FW);
+                }
+                if (res == null) {
+                    return null;
+                }
+                String[] pApps = res.trim().split("/");
+                if (pApps.length != 0) {
+                    ArrayList<String> apps_l = new ArrayList(Arrays.asList(pApps));
+                    Bundle bParams = new Bundle();
+                    if (bParams == null) {
+                        return null;
+                    }
+                    bParams.putStringArrayList("start_empty_apps", apps_l);
+                    final Message msg = PooledLambda.obtainMessage(
+                                            ActivityManagerInternal::startActivityAsUserEmpty, mService.mAmInternal, bParams);
+                    mService.mH.sendMessage(msg);
+                }
+            }
+            return null;
         }
     }
 }
