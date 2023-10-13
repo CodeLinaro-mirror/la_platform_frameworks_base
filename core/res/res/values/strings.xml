@@ -584,8 +584,14 @@
     <!-- label for item that DeepSleep in phone options dialog [CHAR LIMIT=24] -->
     <string name="global_action_deepsleep">DeepSleep</string>
 
+    <!-- label for item that Hibernate in phone options dialog [CHAR LIMIT=24] -->
+    <string name="global_action_hibernate">Hibernate</string>
+
     <!-- Toast for trigger DeepSleep failed [CHAR LIMIT=100] -->
     <string name="global_action_deepsleep_failed_toast">Failed to trigger DeepSleep.</string>
+
+    <!-- Toast for trigger Hibernate failed [CHAR LIMIT=100] -->
+    <string name="global_action_hibernate_failed_toast">Failed to trigger Hibernate.</string>
 
     <!-- Take bug report menu title [CHAR LIMIT=30] -->
     <string name="bugreport_title">Bug report</string>

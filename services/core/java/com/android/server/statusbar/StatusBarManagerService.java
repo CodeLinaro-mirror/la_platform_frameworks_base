@@ -103,7 +103,10 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
     private boolean mTracingEnabled;
     private static final String ACTION_TRIGGER_DEEPSLEEP =
                "com.qualcomm.qti.intent.action.ACTION_TRIGGER_DEEPSLEEP";
+    private static final String ACTION_TRIGGER_HIBERNATE =
+            "com.qualcomm.qti.intent.action.ACTION_TRIGGER_HIBERNATE";
     private static final int SUSPEND_STATE_DEEPSLEEP = 1;
+    private static final int SUSPEND_STATE_HIBERNATE = 2;
     private boolean mCharging;
 
     private SparseArray<UiState> mDisplayUiState = new SparseArray<>();
@@ -536,13 +539,15 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
 
         @Override
         public void onEnterSuspendState(int suspendState, boolean result) {
-            if (suspendState == SUSPEND_STATE_DEEPSLEEP) {
-                if (result) {
+            if (result){
+                if (suspendState == SUSPEND_STATE_DEEPSLEEP){
                     Slog.i(TAG,"Enter DeepSleep success");
-                } else {
-                    Slog.i(TAG,"Enter DeepSleep failed");
-                    toastDeepSleepFailed();
                 }
+                if (suspendState == SUSPEND_STATE_HIBERNATE){
+                    Slog.i(TAG,"Enter Hibernate success");
+                }
+            } else {
+                toastEnterPowerStateFailed(suspendState);
             }
         }
 
@@ -550,6 +555,9 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
         public void onExitSuspendState(int suspendState) {
             if (suspendState == SUSPEND_STATE_DEEPSLEEP) {
                 Slog.i(TAG,"Exit DeepSleep");
+            }
+            if (suspendState == SUSPEND_STATE_HIBERNATE) {
+                Slog.i(TAG,"Exit Hibernate");
             }
         }
     };
@@ -1312,12 +1320,39 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
         }
     }
 
-    private void toastDeepSleepFailed() {
+    /**
+     * Allows the status bar to hibernate the device.
+     */
+    @Override
+    public boolean hibernate() {
+        enforceStatusBarService();
+        long identity = Binder.clearCallingIdentity();
+        try {
+            Intent intent = new Intent(ACTION_TRIGGER_HIBERNATE);
+            intent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY);
+            intent.setPackage("android");
+            Slog.i(TAG, "Send hibernate broadcast:" +intent);
+            mContext.sendBroadcastAsUser(intent, UserHandle.ALL);
+            return true;
+        } finally {
+            Binder.restoreCallingIdentity(identity);
+        }
+    }
+
+    private void toastEnterPowerStateFailed(int state) {
         Handler handler = new Handler(mContext.getMainLooper());
         handler.post(() -> {
-            Toast ts = Toast.makeText(
-                        mContext, R.string.global_action_deepsleep_failed_toast, Toast.LENGTH_LONG);
-            ts.show();
+            Toast ts;
+            if (state == SUSPEND_STATE_DEEPSLEEP) {
+                ts = Toast.makeText(
+                    mContext, R.string.global_action_deepsleep_failed_toast, Toast.LENGTH_LONG);
+                ts.show();
+            }
+            if (state == SUSPEND_STATE_HIBERNATE) {
+                ts = Toast.makeText(
+                    mContext, R.string.global_action_hibernate_failed_toast, Toast.LENGTH_LONG);
+                ts.show();
+            }
         });
     }
 

@@ -57,6 +57,10 @@ public class GlobalActionsComponent extends SystemUI implements Callbacks, Globa
     private static final String TAG = "GlobalActionsComponent";
     private static final String ACTION_FORCE_DEEPSLEEP =
                          "com.qualcomm.qti.intent.action.ACTION_FORCE_DEEPSLEEP";
+    private static final String ACTION_FORCE_HIBERNATE =
+            "com.qualcomm.qti.intent.action.ACTION_FORCE_HIBERNATE";
+    private static final int TYPE_DEEPSLEEP = 10;
+    private static final int TYPE_HIBERNATE = 20;
     private Context mContext;
     private Dialog mDialog;
     private final CommandQueue mCommandQueue;
@@ -94,7 +98,7 @@ public class GlobalActionsComponent extends SystemUI implements Callbacks, Globa
         boolean isWatch =
                 SystemProperties.getBoolean("ro.product.qti.qcom_watch", false);
         if (isWatch) {
-            registerForceDeepSleepBroadcast();
+            registerForcePowerBroadcast();
         }
     }
 
@@ -162,13 +166,24 @@ public class GlobalActionsComponent extends SystemUI implements Callbacks, Globa
         try {
             boolean result = mBarService.deepsleep();
             if (result) {
-                showDeepSleepUi();
+                showTriggerDialog(TYPE_DEEPSLEEP);
             }
         } catch (RemoteException e) {
         }
     }
 
-    private void showDeepSleepUi() {
+    @Override
+    public void hibernate() {
+        try {
+            boolean result = mBarService.hibernate();
+            if (result) {
+                showTriggerDialog(TYPE_HIBERNATE);
+            }
+        } catch (RemoteException e) {
+        }
+    }
+
+    private void showTriggerDialog(int type) {
         mDialog = new Dialog(mContext,
                 com.android.systemui.R.style.Theme_SystemUI_Dialog_GlobalActions);
         Window window = mDialog.getWindow();
@@ -199,25 +214,27 @@ public class GlobalActionsComponent extends SystemUI implements Callbacks, Globa
         bar.getIndeterminateDrawable().setTint(color);
         TextView messageView = mDialog.findViewById(R.id.text2);
         messageView.setTextColor(color);
-        messageView.setText("entering DeepSleep");
+        String triggerType = type==TYPE_DEEPSLEEP ? "entering DeepSleep" : "entering Hibernate";
+        messageView.setText(triggerType);
         mDialog.show();
     }
 
-    private void registerForceDeepSleepBroadcast() {
+    private void registerForcePowerBroadcast() {
         IntentFilter intentFilter = new IntentFilter();
         intentFilter.addAction(ACTION_FORCE_DEEPSLEEP);
+        intentFilter.addAction(ACTION_FORCE_HIBERNATE);
         intentFilter.setPriority(IntentFilter.SYSTEM_LOW_PRIORITY);
-        BroadcastReceiver br = new DeepSleepBroadcastReceiver();
+        BroadcastReceiver br = new PowerBroadcastReceiver();
         mContext.registerReceiver(br, intentFilter);
     }
 
-    private final class DeepSleepBroadcastReceiver extends BroadcastReceiver {
+    private final class PowerBroadcastReceiver extends BroadcastReceiver {
 
         @Override
         public void onReceive(Context context, Intent intent) {
             String action = intent.getAction();
-            if (ACTION_FORCE_DEEPSLEEP.equals(action)) {
-                Log.i(TAG, "Receive force DeepSleep broadcast");
+            if (ACTION_FORCE_DEEPSLEEP.equals(action) || ACTION_FORCE_HIBERNATE.equals(action)) {
+                Log.i(TAG, "Receive force power broadcast: "+action);
                 mDialog.dismiss();
             }
         }

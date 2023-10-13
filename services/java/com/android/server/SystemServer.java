@@ -846,9 +846,12 @@ public final class SystemServer {
         final int DEEPSLEEP_ENABLE = 1;
         final int deepsleepBehavior =
                       mSystemContext.getResources().getInteger(R.integer.config_deepsleep);
+        final int HIBERNATE_ENABLE = 1;
+        final int hibernateBehavior =
+                      mSystemContext.getResources().getInteger(R.integer.config_hibernate);
         //DeepSleep feature will be disabled when device is not watch
         final boolean startSuspendService =
-            (deepsleepBehavior == DEEPSLEEP_ENABLE) &&
+            ((deepsleepBehavior == DEEPSLEEP_ENABLE)||(hibernateBehavior == HIBERNATE_ENABLE)) &&
              SystemProperties.getBoolean("ro.product.qti.qcom_watch", false);
         final String SUSPEND_SERVICE_CLASS =
             "com.qualcomm.qti.server.suspendservice.SuspendManagerService";

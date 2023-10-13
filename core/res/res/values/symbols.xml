@@ -1821,6 +1821,8 @@
   <java-symbol type="string" name="global_action_twm_failed_toast" />
   <java-symbol type="string" name="global_action_deepsleep" />
   <java-symbol type="string" name="global_action_deepsleep_failed_toast" />
+  <java-symbol type="string" name="global_action_hibernate" />
+  <java-symbol type="string" name="global_action_hibernate_failed_toast" />
   <java-symbol type="string" name="invalidPuk" />
   <java-symbol type="string" name="lockscreen_carrier_default" />
   <java-symbol type="style" name="Animation.LockScreen" />
@@ -4110,4 +4112,6 @@
   <java-symbol type="integer" name="config_twm" />
   <!-- Auto trigger TWM if battery level drops below this value -->
   <java-symbol type="integer" name="config_autoTriggerTWMThreshold" />
+  <!-- For Hibernate feature -->
+  <java-symbol type="integer" name="config_hibernate" />
 </resources>
