@@ -1937,10 +1937,8 @@ public class PackageManagerService implements PackageSender, TestUtilityService 
         mSharedLibraries = mInjector.getSharedLibrariesImpl();
         mBackgroundHandler = injector.getBackgroundHandler();
 
-        if (!mContext.getResources().getBoolean(R.bool.config_enable_hypervisor)) {
         mContext.getSystemService(DisplayManager.class)
                 .getDisplay(Display.DEFAULT_DISPLAY).getMetrics(mMetrics);
-        }
 
         t.traceBegin("get system config");
         SystemConfig systemConfig = injector.getSystemConfig();

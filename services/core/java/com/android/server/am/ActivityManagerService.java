@@ -399,7 +399,6 @@ import android.view.WindowManager;
 import android.view.autofill.AutofillManagerInternal;
 import android.util.BoostFramework;
 
-import com.android.internal.R;
 import com.android.internal.annotations.CompositeRWLock;
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
@@ -8598,11 +8597,9 @@ public class ActivityManagerService extends IActivityManager.Stub
         watchDeviceProvisioning(mContext);
         t.traceEnd();
 
-        if (!ActivityManagerService.this.mContext.getResources().getBoolean(R.bool.config_enable_hypervisor)) {
         t.traceBegin("retrieveSettings");
         retrieveSettings();
         t.traceEnd();
-        }
 
         t.traceBegin("Ugm.onSystemReady");
         mUgmInternal.onSystemReady();
@@ -8652,11 +8649,9 @@ public class ActivityManagerService extends IActivityManager.Stub
         synchronized (this) {
             // Only start up encryption-aware persistent apps; once user is
             // unlocked we'll come back around and start unaware apps
-            if (!ActivityManagerService.this.mContext.getResources().getBoolean(R.bool.config_enable_hypervisor)) {
             t.traceBegin("startPersistentApps");
             startPersistentApps(PackageManager.MATCH_DIRECT_BOOT_AWARE);
             t.traceEnd();
-            }
 
             // Start up initial activity.
             mBooting = true;

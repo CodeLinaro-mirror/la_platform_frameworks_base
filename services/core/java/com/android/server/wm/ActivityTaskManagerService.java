@@ -6431,9 +6431,7 @@ public class ActivityTaskManagerService extends IActivityTaskManager.Stub {
         @Override
         public void resumeTopActivities(boolean scheduleIdle) {
             synchronized (mGlobalLock) {
-                if (!mContext.getResources().getBoolean(R.bool.config_enable_hypervisor)) {
                 mRootWindowContainer.resumeFocusedTasksTopActivities();
-                }
                 if (scheduleIdle) {
                     mTaskSupervisor.scheduleIdle();
                 }

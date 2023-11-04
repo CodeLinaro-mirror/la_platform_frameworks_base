@@ -783,10 +783,6 @@ public class LockTaskController {
             taskChanged = true;
         }
 
-        // TODO: To be removed, only for temporary headless boot changes
-        if (android.os.SystemProperties.getInt("ro.config.headless", 0) == 1) {
-            return;
-        }
         mSupervisor.mRootWindowContainer.forAllTasks(Task::setLockTaskAuth);
 
         final ActivityRecord r = mSupervisor.mRootWindowContainer.topRunningActivity();
