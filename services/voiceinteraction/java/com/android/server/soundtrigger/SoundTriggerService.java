@@ -97,7 +97,6 @@ import android.util.ArraySet;
 import android.util.SparseArray;
 import android.util.Slog;
 
-import com.android.internal.R;
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.app.ISoundTriggerService;
 import com.android.internal.app.ISoundTriggerSession;
@@ -260,11 +259,6 @@ public class SoundTriggerService extends SystemService {
 
     @Override
     public void onBootPhase(int phase) {
-        // changes added for headless boot
-        if (mContext.getResources().getBoolean(R.bool.config_enable_hypervisor)) {
-            Slog.d(TAG, "onBootPhase: " + phase + " : " + isSafeMode() + " Disabled SoundTriggerService");
-            return;
-        }
         Slog.d(TAG, "onBootPhase: " + phase + " : " + isSafeMode());
         if (PHASE_THIRD_PARTY_APPS_CAN_START == phase) {
             mDbHelper = new SoundTriggerDbHelper(mContext);
