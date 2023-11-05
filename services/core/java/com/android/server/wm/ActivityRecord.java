@@ -4549,7 +4549,7 @@ public final class ActivityRecord extends WindowToken implements WindowManagerSe
                     mTransitionChangeFlags |= FLAG_STARTING_WINDOW_TRANSFER_RECIPIENT;
                 }
                 // Post cleanup after the visibility and animation are transferred.
-                fromActivity.postWindowRemoveStartingWindowCleanup(tStartingWindow);
+                fromActivity.postWindowRemoveStartingWindowCleanup();
                 fromActivity.mVisibleSetFromTransferredStartingWindow = false;
 
                 mWmService.updateFocusedWindowLocked(
@@ -6244,12 +6244,13 @@ public final class ActivityRecord extends WindowToken implements WindowManagerSe
             }
             callServiceTrackeronActivityStatechange(STARTED, true);
             setState(STARTED, "makeActiveIfNeeded");
-
+            acquireActivityBoost();
             try {
                 mAtmService.getLifecycleManager().scheduleTransaction(app.getThread(), token,
                         StartActivityItem.obtain(takeOptions()));
             } catch (Exception e) {
                 Slog.w(TAG, "Exception thrown sending start: " + intent.getComponent(), e);
+                releaseActivityBoost();
             }
             // The activity may be waiting for stop, but that is no longer appropriate if we are
             // starting the activity again
@@ -6918,6 +6919,40 @@ public final class ActivityRecord extends WindowToken implements WindowManagerSe
         }
     }
 
+    protected void acquireActivityBoost() {
+        if (mPerf != null) {
+            if (mPerf.getPerfHalVersion() >= BoostFramework.PERF_HAL_V23) {
+                int pkgType = mPerf.perfGetFeedback(BoostFramework.VENDOR_FEEDBACK_WORKLOAD_TYPE,
+                        packageName);
+                int pid = -1;
+                WindowProcessController wpc = null;
+                if (app == null) {
+                    if (info != null && info.applicationInfo != null && mAtmService != null) {
+                        wpc = mAtmService.getProcessController(processName,
+                                info.applicationInfo.uid);
+                    }
+                } else {
+                    wpc = app;
+                }
+                if (wpc != null && wpc.hasThread()) {
+                    pid = wpc.getPid();
+                }
+                perfActivityBoostHandler =
+                        mPerf.perfHintAcqRel(perfActivityBoostHandler,
+                                BoostFramework.VENDOR_HINT_FIRST_LAUNCH_BOOST, packageName,
+                                -1, BoostFramework.Launch.ACTIVITY_LAUNCH_BOOST, 2, pkgType, pid);
+            } else {
+                if (perfActivityBoostHandler > 0) {
+                    Slog.i(TAG, "Activity boosted, release it firstly");
+                    mPerf.perfLockReleaseHandler(perfActivityBoostHandler);
+                }
+                perfActivityBoostHandler =
+                         mPerf.perfHint(BoostFramework.VENDOR_HINT_FIRST_LAUNCH_BOOST,
+                                 packageName, -1, BoostFramework.Launch.BOOST_V1);
+            }
+        }
+    }
+
     /** Called when the windows associated app window container are drawn. */
     private void onWindowsDrawn() {
         releaseActivityBoost();
@@ -7563,27 +7598,12 @@ public final class ActivityRecord extends WindowToken implements WindowManagerSe
         }
     }
 
-    void postWindowRemoveStartingWindowCleanup(WindowState win) {
-        // TODO: Something smells about the code below...Is there a better way?
-        if (mStartingWindow == win) {
-            ProtoLog.v(WM_DEBUG_STARTING_WINDOW, "Notify removed startingWindow %s", win);
-            removeStartingWindow();
-        } else if (mChildren.size() == 0) {
-            // If this is the last window and we had requested a starting transition window,
-            // well there is no point now.
-            ProtoLog.v(WM_DEBUG_STARTING_WINDOW, "Nulling last startingData");
-            mStartingData = null;
-            if (mVisibleSetFromTransferredStartingWindow) {
-                // We set the visible state to true for the token from a transferred starting
-                // window. We now reset it back to false since the starting window was the last
-                // window in the token.
-                setVisible(false);
-            }
-        } else if (mChildren.size() == 1 && mStartingSurface != null && !isRelaunching()) {
-            // If this is the last window except for a starting transition window,
-            // we need to get rid of the starting transition.
-            ProtoLog.v(WM_DEBUG_STARTING_WINDOW, "Last window, removing starting window %s", win);
-            removeStartingWindow();
+    void postWindowRemoveStartingWindowCleanup() {
+        if (mChildren.size() == 0 && mVisibleSetFromTransferredStartingWindow) {
+            // We set the visible state to true for the token from a transferred starting
+            // window. We now reset it back to false since the starting window was the last
+            // window in the token.
+            setVisible(false);
         }
     }
 
@@ -8123,6 +8143,9 @@ public final class ActivityRecord extends WindowToken implements WindowManagerSe
                 mLastReportedConfiguration.getMergedConfiguration())) {
             ensureActivityConfiguration(0 /* globalChanges */, false /* preserveWindow */,
                     false /* ignoreVisibility */, true /* isRequestedOrientationChanged */);
+            if (mTransitionController.inPlayingTransition(this)) {
+                mTransitionController.mValidateActivityCompat.add(this);
+            }
         }
 
         mAtmService.getTaskChangeNotificationController().notifyActivityRequestedOrientationChanged(
