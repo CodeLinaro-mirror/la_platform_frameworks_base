@@ -595,11 +595,6 @@ public final class DisplayManagerService extends SystemService {
 
     @Override
     public void onBootPhase(int phase) {
-        if (android.os.SystemProperties.getInt("ro.config.headless", 0) == 1) { // TODO: Temp android-u bringup changes
-        mDisplayModeDirector.onBootCompleted();
-        mLogicalDisplayMapper.onBootCompleted();
-        return;
-        }
         if (phase == PHASE_WAIT_FOR_DEFAULT_DISPLAY) {
             synchronized (mSyncRoot) {
                 long timeout = SystemClock.uptimeMillis()

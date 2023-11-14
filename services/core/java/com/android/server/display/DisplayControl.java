@@ -95,12 +95,7 @@ public class DisplayControl {
      * Gets all the physical display ids.
      */
     public static long[] getPhysicalDisplayIds() {
-        // TODO: Temp changes for android-u bringup
-        if (android.os.SystemProperties.getInt("ro.config.headless", 0) == 1) {
-        return new long[0]; //nativeGetPhysicalDisplayIds();
-        } else {
         return nativeGetPhysicalDisplayIds();
-        }
     }
 
     /**

@@ -176,7 +176,6 @@ import android.uwb.UwbActivityEnergyInfo;
 import android.uwb.UwbManager;
 import android.view.Display;
 
-import com.android.internal.R;
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.app.procstats.IProcessStats;
 import com.android.internal.app.procstats.ProcessStats;
@@ -788,14 +787,12 @@ public class StatsPullAtomService extends SystemService {
                 registerEventListeners();
             });
         } else if (phase == PHASE_THIRD_PARTY_APPS_CAN_START) {
-            if (!mContext.getResources().getBoolean(R.bool.config_enable_hypervisor)) {
             BackgroundThread.getHandler().post(() -> {
                 // Network stats related pullers can only be initialized after service is ready.
                 initAndRegisterNetworkStatsPullers();
                 // For services that are not ready at boot phase PHASE_SYSTEM_SERVICES_READY
                 initAndRegisterDeferredPullers();
             });
-            }
         }
     }
 
