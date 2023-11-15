@@ -110,6 +110,7 @@ import android.app.backup.IBackupManager;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.IntentSender;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.DataLoaderType;
@@ -119,7 +120,6 @@ import android.content.pm.PackageInstaller;
 import android.content.pm.PackageManager;
 import android.content.pm.PermissionGroupInfo;
 import android.content.pm.PermissionInfo;
-import android.content.pm.ResolveInfo;
 import android.content.pm.SharedLibraryInfo;
 import android.content.pm.Signature;
 import android.content.pm.SigningDetails;
@@ -167,6 +167,7 @@ import com.android.internal.util.CollectionUtils;
 import com.android.internal.util.FrameworkStatsLog;
 import com.android.server.EventLogTags;
 import com.android.server.LocalManagerRegistry;
+import com.android.server.SystemConfig;
 import com.android.server.art.model.DexoptParams;
 import com.android.server.art.model.DexoptResult;
 import com.android.server.pm.Installer.LegacyDexoptDisabledException;
@@ -185,12 +186,15 @@ import com.android.server.pm.pkg.PackageState;
 import com.android.server.pm.pkg.PackageStateInternal;
 import com.android.server.pm.pkg.SharedLibraryWrapper;
 import com.android.server.pm.pkg.component.ComponentMutateUtils;
+import com.android.server.pm.pkg.component.ParsedActivity;
 import com.android.server.pm.pkg.component.ParsedInstrumentation;
+import com.android.server.pm.pkg.component.ParsedIntentInfo;
 import com.android.server.pm.pkg.component.ParsedPermission;
 import com.android.server.pm.pkg.component.ParsedPermissionGroup;
 import com.android.server.pm.pkg.parsing.ParsingPackageUtils;
 import com.android.server.rollback.RollbackManagerInternal;
 import com.android.server.security.FileIntegrityService;
+import com.android.server.utils.TimingsTraceAndSlog;
 import com.android.server.utils.WatchedArrayMap;
 import com.android.server.utils.WatchedLongSparseArray;
 
@@ -198,6 +202,8 @@ import dalvik.system.VMRuntime;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileReader;
 import java.io.IOException;
 import java.security.DigestException;
 import java.security.DigestInputStream;
@@ -208,10 +214,16 @@ import java.security.cert.CertificateException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
+
+import org.xmlpull.v1.XmlPullParser;
+import org.xmlpull.v1.XmlPullParserException;
+import org.xmlpull.v1.XmlPullParserFactory;
 
 final class InstallPackageHelper {
     private final PackageManagerService mPm;
@@ -228,6 +240,13 @@ final class InstallPackageHelper {
     private final ViewCompiler mViewCompiler;
     private final SharedLibrariesImpl mSharedLibraries;
     private final PackageManagerServiceInjector mInjector;
+    private final UpdateOwnershipHelper mUpdateOwnershipHelper;
+    private static final String PROPERTY_NO_RIL = "ro.radio.noril";
+    /**
+     * Tracks packages that need to be disabled.
+     * Map of package name to its path on the file system.
+     */
+    final private HashMap<String, String> mPackagesToBeDisabled = new HashMap<>();
 
     // TODO(b/198166813): remove PMS dependency
     InstallPackageHelper(PackageManagerService pm, AppDataHelper appDataHelper) {
@@ -245,6 +264,7 @@ final class InstallPackageHelper {
         mPackageAbiHelper = pm.mInjector.getAbiHelper();
         mViewCompiler = pm.mInjector.getViewCompiler();
         mSharedLibraries = pm.mInjector.getSharedLibrariesImpl();
+        mUpdateOwnershipHelper = pm.mInjector.getUpdateOwnershipHelper();
     }
 
     InstallPackageHelper(PackageManagerService pm) {
@@ -330,6 +350,8 @@ final class InstallPackageHelper {
         final String updateOwnerFromSysconfig = isApex || !pkgSetting.isSystem() ? null
                 : mPm.mInjector.getSystemConfig().getSystemAppUpdateOwnerPackageName(
                         parsedPackage.getPackageName());
+        final boolean isUpdateOwnershipDenylisted =
+                mUpdateOwnershipHelper.isUpdateOwnershipDenylisted(parsedPackage.getPackageName());
         final boolean isUpdateOwnershipEnabled = oldUpdateOwner != null;
 
         // For standard install (install via session), the installSource isn't null.
@@ -365,6 +387,9 @@ final class InstallPackageHelper {
                         & PackageManager.INSTALL_REQUEST_UPDATE_OWNERSHIP) != 0;
                 final boolean isSameUpdateOwner =
                         TextUtils.equals(oldUpdateOwner, installSource.mInstallerPackageName);
+                final boolean isInstallerUpdateOwnerDenylistProvider =
+                        mUpdateOwnershipHelper.isUpdateOwnershipDenyListProvider(
+                                installSource.mUpdateOwnerPackageName);
 
                 // Here we handle the update owner for the package, and the rules are:
                 // -. Only enabling update ownership enforcement on initial installation if the
@@ -372,13 +397,16 @@ final class InstallPackageHelper {
                 // -. Once the installer changes and users agree to proceed, clear the update
                 //    owner (package state in other users are taken into account as well).
                 if (!isUpdate) {
-                    if (!isRequestUpdateOwnership) {
+                    if (!isRequestUpdateOwnership
+                            || isUpdateOwnershipDenylisted
+                            || isInstallerUpdateOwnerDenylistProvider) {
                         installSource = installSource.setUpdateOwnerPackageName(null);
                     } else if ((!isUpdateOwnershipEnabled && pkgAlreadyExists)
                             || (isUpdateOwnershipEnabled && !isSameUpdateOwner)) {
                         installSource = installSource.setUpdateOwnerPackageName(null);
                     }
-                } else if (!isSameUpdateOwner || !isUpdateOwnershipEnabled) {
+                } else if (!isSameUpdateOwner
+                        || !isUpdateOwnershipEnabled) {
                     installSource = installSource.setUpdateOwnerPackageName(null);
                 }
             }
@@ -469,6 +497,19 @@ final class InstallPackageHelper {
 
         if (!IncrementalManager.isIncrementalPath(pkgSetting.getPathString())) {
             pkgSetting.setLoadingProgress(1f);
+        }
+
+        ArraySet<String> listItems = mUpdateOwnershipHelper.readUpdateOwnerDenyList(pkgSetting);
+        if (listItems != null && !listItems.isEmpty()) {
+            mUpdateOwnershipHelper.addToUpdateOwnerDenyList(pkgSetting.getPackageName(), listItems);
+            for (String unownedPackage : listItems) {
+                PackageSetting unownedSetting = mPm.mSettings.getPackageLPr(unownedPackage);
+                SystemConfig config = SystemConfig.getInstance();
+                if (unownedSetting != null
+                        && config.getSystemAppUpdateOwnerPackageName(unownedPackage) == null) {
+                    unownedSetting.setUpdateOwnerPackage(null);
+                }
+            }
         }
 
         return pkg;
@@ -3722,6 +3763,15 @@ final class InstallPackageHelper {
                 Log.w(TAG, "Dropping cache of " + file.getAbsolutePath());
                 cacher.cleanCachedResult(file);
             }
+
+            if (mPackagesToBeDisabled.values() != null &&
+                    (mPackagesToBeDisabled.values().contains(file.toString()) ||
+                    mPackagesToBeDisabled.values().stream().anyMatch(file.toString()::contains))) {
+                // Ignore entries contained in {@link #mPackagesToBeDisabled}
+                Slog.d(TAG, "ignoring package: " + file);
+                continue;
+            }
+
             parallelPackageParser.submit(file, parseFlags);
             fileCount++;
         }
@@ -3762,6 +3812,75 @@ final class InstallPackageHelper {
                 logCriticalInfo(Log.WARN,
                         "Deleting invalid package at " + parseResult.scanFile);
                 mRemovePackageHelper.removeCodePath(parseResult.scanFile);
+            }
+        }
+    }
+
+    /**
+     * Read the list of packages that need to be disabled.
+     *
+     * For wifi-only devices (modem-less), telephony related applications do not need to run.
+     * This method will read the list of packages from a predefined file in the file system,
+     * and store it in {@link #mPackagesToBeDisabled}. These applications will be skipped when
+     * directories are scanned later.
+     */
+    protected void readListOfPackagesToBeDisabled() {
+        boolean wifiOnly = SystemProperties.getBoolean(PROPERTY_NO_RIL, false);
+        if (!wifiOnly) {
+            // Apps need to be disabled only for modem-less devices
+            return;
+        }
+
+        final String TELEPHONY_PACKAGES_PATH = "etc/telephony_packages.xml";
+        File telephonyPackagesFile =
+                new File(Environment.getVendorDirectory(), TELEPHONY_PACKAGES_PATH);
+        FileReader packagesReader = null;
+        Slog.d(TAG, "Disabling packages for wifi-only device, source: " + telephonyPackagesFile);
+
+        try {
+            XmlPullParserFactory factory = XmlPullParserFactory.newInstance();
+            factory.setNamespaceAware(true);
+            XmlPullParser packagesParser = factory.newPullParser();
+            packagesReader = new FileReader(telephonyPackagesFile);
+
+            if (packagesParser != null) {
+                packagesParser.setInput(packagesReader);
+                int eventType = packagesParser.getEventType();
+                while (eventType != XmlPullParser.END_DOCUMENT) {
+                    String tagName = packagesParser.getName();
+                    switch (eventType) {
+                        case XmlPullParser.START_TAG:
+                            if (TextUtils.equals(tagName, "packageinfo")) {
+                                String name = packagesParser.getAttributeValue(null, "name");
+                                String path = packagesParser.getAttributeValue(null, "path");
+                                mPackagesToBeDisabled.put(name, path);
+                            }
+                            break;
+                    }
+                    eventType = packagesParser.next();
+                }
+            }
+        } catch (XmlPullParserException e) {
+            Log.e(TAG, "XmlPullParserException parsing '"+ telephonyPackagesFile + "'", e);
+        } catch (IOException e) {
+            Log.e(TAG, "IOException parsing '" + telephonyPackagesFile + "'", e);
+        } catch (Exception e) {
+            Log.e(TAG, "Exception parsing '" + telephonyPackagesFile + "'", e);
+        }
+
+        if (packagesReader != null) {
+            try {
+                packagesReader.close();
+            } catch (IOException e) {
+                // do nothing
+            }
+        }
+
+        if (DEBUG_PACKAGE_SCANNING) {
+            for (String packageName : mPackagesToBeDisabled.keySet()) {
+                Slog.d(TAG, "readListOfPackagesToBeDisabled"
+                        + ", package: " + packageName
+                        + ", path: " + mPackagesToBeDisabled.get(packageName));
             }
         }
     }
@@ -3944,23 +4063,6 @@ final class InstallPackageHelper {
         if (shouldHideSystemApp) {
             synchronized (mPm.mLock) {
                 mPm.mSettings.disableSystemPackageLPw(parsedPackage.getPackageName(), true);
-            }
-        }
-
-        // If this is a system app we hadn't seen before, and this is a first boot or OTA,
-        // we need to unstop it if it doesn't have a launcher entry.
-        if (mPm.mShouldStopSystemPackagesByDefault && scanResult.mRequest.mPkgSetting == null
-                && ((scanFlags & SCAN_FIRST_BOOT_OR_UPGRADE) != 0)
-                && ((scanFlags & SCAN_AS_SYSTEM) != 0)) {
-            final Intent launcherIntent = new Intent(Intent.ACTION_MAIN);
-            launcherIntent.addCategory(Intent.CATEGORY_LAUNCHER);
-            launcherIntent.setPackage(parsedPackage.getPackageName());
-            final List<ResolveInfo> launcherActivities =
-                    mPm.snapshotComputer().queryIntentActivitiesInternal(launcherIntent, null,
-                            PackageManager.MATCH_DIRECT_BOOT_AWARE
-                            | PackageManager.MATCH_DIRECT_BOOT_UNAWARE, 0);
-            if (launcherActivities.isEmpty()) {
-                scanResult.mPkgSetting.setStopped(false, 0);
             }
         }
 
@@ -4336,6 +4438,8 @@ final class InstallPackageHelper {
         //   - It's an APEX or overlay package since stopped state does not affect them.
         //   - It is enumerated with a <initial-package-state> tag having the stopped attribute
         //     set to false
+        //   - It doesn't have an enabled and exported launcher activity, which means the user
+        //     wouldn't have a way to un-stop it
         final boolean isApexPkg = (scanFlags & SCAN_AS_APEX) != 0;
         if (mPm.mShouldStopSystemPackagesByDefault
                 && scanSystemPartition
@@ -4344,8 +4448,9 @@ final class InstallPackageHelper {
                 && !parsedPackage.isOverlayIsStatic()
         ) {
             String packageName = parsedPackage.getPackageName();
-            if (!mPm.mInitialNonStoppedSystemPackages.contains(packageName)
-                    && !"android".contentEquals(packageName)) {
+            if (!"android".contentEquals(packageName)
+                    && !mPm.mInitialNonStoppedSystemPackages.contains(packageName)
+                    && hasLauncherEntry(parsedPackage)) {
                 scanFlags |= SCAN_AS_STOPPED_SYSTEM_APP;
             }
         }
@@ -4353,6 +4458,26 @@ final class InstallPackageHelper {
         final ScanResult scanResult = scanPackageNewLI(parsedPackage, parseFlags,
                 scanFlags | SCAN_UPDATE_SIGNATURE, 0 /* currentTime */, user, null);
         return new Pair<>(scanResult, shouldHideSystemApp);
+    }
+
+    private static boolean hasLauncherEntry(ParsedPackage parsedPackage) {
+        final HashSet<String> categories = new HashSet<>();
+        categories.add(Intent.CATEGORY_LAUNCHER);
+        final List<ParsedActivity> activities = parsedPackage.getActivities();
+        for (int indexActivity = 0; indexActivity < activities.size(); indexActivity++) {
+            final ParsedActivity activity = activities.get(indexActivity);
+            if (!activity.isEnabled() || !activity.isExported()) {
+                continue;
+            }
+            final List<ParsedIntentInfo> intents = activity.getIntents();
+            for (int indexIntent = 0; indexIntent < intents.size(); indexIntent++) {
+                final IntentFilter intentFilter = intents.get(indexIntent).getIntentFilter();
+                if (intentFilter != null && intentFilter.matchCategories(categories) == null) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**
