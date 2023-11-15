@@ -136,7 +136,6 @@ import android.util.SparseIntArray;
 import android.util.TimeUtils;
 import android.util.Xml;
 
-import com.android.internal.R;
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.app.IAppOpsService;
 import com.android.internal.content.PackageMonitor;
@@ -4361,10 +4360,6 @@ class StorageManagerService extends IStorageManager.Stub
             // Get some easy cases out of the way first
             if (Process.isIsolated(uid) || Process.isSdkSandboxUid(uid)) {
                 return StorageManager.MOUNT_MODE_EXTERNAL_NONE;
-            }
-
-            if (mContext.getResources().getBoolean(R.bool.config_enable_hypervisor)) {
-            return StorageManager.MOUNT_MODE_EXTERNAL_NONE;
             }
 
             final String[] packagesForUid = mIPackageManager.getPackagesForUid(uid);

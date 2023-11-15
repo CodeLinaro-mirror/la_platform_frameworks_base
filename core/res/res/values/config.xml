@@ -6460,6 +6460,4 @@
          device. -->
     <bool name="config_enableAppCloningBuildingBlocks">true</bool>
 
-    <!-- android-u headless boot changes -->
-    <bool name="config_enable_hypervisor">false</bool>
 </resources>
