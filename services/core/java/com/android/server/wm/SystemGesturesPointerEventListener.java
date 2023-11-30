@@ -364,6 +364,12 @@ class SystemGesturesPointerEventListener implements PointerEventListener {
             if (duration > MAX_FLING_TIME_MILLIS) {
                 duration = MAX_FLING_TIME_MILLIS;
             }
+
+            if(Math.abs(velocityY) >= Math.abs(velocityX))
+                mCallbacks.onVerticalFling(duration);
+            else
+                mCallbacks.onHorizontalFling(duration);
+
             mLastFlingTime = now;
             mCallbacks.onFling(duration);
             return true;
