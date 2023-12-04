@@ -871,6 +871,7 @@
     <string name="media_transfer_receiver_content_description_unknown_app" msgid="7381771464846263667">"Prebacivanje medija"</string>
     <string name="media_transfer_receiver_content_description_with_app_name" msgid="8555975056850659389">"Prebacuje se <xliff:g id="APP_LABEL">%1$s</xliff:g>"</string>
     <string name="controls_error_timeout" msgid="794197289772728958">"Neaktivno. Vidite aplikaciju"</string>
+    <string name="controls_media_empty_title" msgid="8296102892421573325">"Aplikacija <xliff:g id="APP_NAME">%1$s</xliff:g> je pokrenuta"</string>
     <string name="controls_error_removed" msgid="6675638069846014366">"Nije pronađeno"</string>
     <string name="controls_error_removed_title" msgid="1207794911208047818">"Kontrola nije dostupna"</string>
     <string name="controls_error_removed_message" msgid="2885911717034750542">"Pristupanje uređaju <xliff:g id="DEVICE">%1$s</xliff:g> nije uspelo. Pogledajte aplikaciju <xliff:g id="APPLICATION">%2$s</xliff:g> da biste se uverili da je kontrola još uvek dostupna i da se podešavanja aplikacije nisu promenila."</string>
