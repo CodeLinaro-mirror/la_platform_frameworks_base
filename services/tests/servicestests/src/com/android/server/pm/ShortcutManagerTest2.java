@@ -1131,8 +1131,7 @@ public class ShortcutManagerTest2 extends BaseShortcutManagerTest {
         assertEquals(0, si.getRank());
         assertEquals(1, si.getExtras().getInt("k"));
 
-        assertEquals(ShortcutInfo.FLAG_PINNED | ShortcutInfo.FLAG_STRINGS_RESOLVED
-                | ShortcutInfo.FLAG_SHADOW , si.getFlags());
+        assertEquals(ShortcutInfo.FLAG_PINNED | ShortcutInfo.FLAG_STRINGS_RESOLVED, si.getFlags());
         assertNull(si.getBitmapPath()); // No icon.
         assertEquals(0, si.getIconResourceId());
 
@@ -1199,8 +1198,7 @@ public class ShortcutManagerTest2 extends BaseShortcutManagerTest {
         assertEquals(0, si.getRank());
         assertEquals(1, si.getExtras().getInt("k"));
 
-        assertEquals(ShortcutInfo.FLAG_PINNED | ShortcutInfo.FLAG_STRINGS_RESOLVED
-                | ShortcutInfo.FLAG_SHADOW , si.getFlags());
+        assertEquals(ShortcutInfo.FLAG_PINNED | ShortcutInfo.FLAG_STRINGS_RESOLVED, si.getFlags());
         assertNull(si.getBitmapPath()); // No icon.
         assertEquals(0, si.getIconResourceId());
         assertEquals(null, si.getIconResName());
