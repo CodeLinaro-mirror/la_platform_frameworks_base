@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020 The Android Open Source Project
+ * Copyright (C) 2020 The Android Open Source Promock(DeviceProvisionedController.class)ject
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -50,6 +50,7 @@ import com.android.systemui.R;
 import com.android.systemui.SysuiTestCase;
 import com.android.systemui.classifier.FalsingCollector;
 import com.android.systemui.statusbar.policy.ConfigurationController;
+import com.android.systemui.statusbar.policy.DeviceProvisionedController;
 import com.android.systemui.statusbar.policy.KeyguardStateController;
 
 import org.junit.Before;
@@ -143,7 +144,7 @@ public class KeyguardSecurityContainerControllerTest extends SysuiTestCase {
                 mView, mAdminSecondaryLockScreenControllerFactory, mLockPatternUtils,
                 mKeyguardUpdateMonitor, mKeyguardSecurityModel, mMetricsLogger, mUiEventLogger,
                 mKeyguardStateController, mKeyguardSecurityViewFlipperController,
-                mConfigurationController, mFalsingCollector)
+                mConfigurationController, mFalsingCollector, mock(DeviceProvisionedController.class))
                 .create(mSecurityCallback);
     }
 
