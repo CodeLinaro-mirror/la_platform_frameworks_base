@@ -1712,6 +1712,11 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
             mExternallyEnabled = enabled;
 
             if (!enabled && mShowing) {
+                if (mLockPatternUtils.isUserInLockdown(KeyguardUpdateMonitor.getCurrentUser())) {
+                    Log.d(TAG, "keyguardEnabled(false) overridden by user lockdown");
+                    return;
+                }
+
                 // hiding keyguard that is showing, remember to reshow later
                 if (DEBUG) Log.d(TAG, "remembering to reshow, hiding keyguard, "
                         + "disabling status bar expansion");
