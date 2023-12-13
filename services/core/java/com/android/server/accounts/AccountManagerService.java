@@ -3019,7 +3019,7 @@ public class AccountManagerService
                             }
                         }
 
-                        Intent intent = result.getParcelable(AccountManager.KEY_INTENT, Intent.class);
+                        Intent intent = result.getParcelable(AccountManager.KEY_INTENT);
                         if (intent != null && notifyOnAuthFailure && !customTokens) {
                             /*
                              * Make sure that the supplied intent is owned by the authenticator
@@ -4802,7 +4802,7 @@ public class AccountManagerService
             	EventLog.writeEvent(0x534e4554, "250588548", authUid, "");
                 return false;
             }
-            Intent intent = bundle.getParcelable(AccountManager.KEY_INTENT, Intent.class);
+            Intent intent = bundle.getParcelable(AccountManager.KEY_INTENT);
             if (intent == null) {
                 return true;
             }
@@ -4860,8 +4860,7 @@ public class AccountManagerService
             if (intent != null && intent.getClass() != Intent.class) {
                 return false;
             }
-            Intent simulateIntent = simulateBundle.getParcelable(AccountManager.KEY_INTENT,
-                    Intent.class);
+            Intent simulateIntent = simulateBundle.getParcelable(AccountManager.KEY_INTENT);
             if (intent == null) {
                 return (simulateIntent == null);
             }
