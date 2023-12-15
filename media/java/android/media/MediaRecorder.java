@@ -684,6 +684,8 @@ public class MediaRecorder implements AudioRouting,
         public static final int QCELP = 11;
         /** @hide Linear PCM audio codec */
         public static final int LPCM = 12;
+        /** High Efficiency AAC with Parametric Stereo coding (HE-AAC v2, object type PS) */
+        public static final int HE_AAC_PS = 8;
     }
 
     /**
@@ -695,6 +697,7 @@ public class MediaRecorder implements AudioRouting,
         AudioEncoder.AMR_WB,
         AudioEncoder.AAC,
         AudioEncoder.HE_AAC,
+        AudioEncoder.HE_AAC_PS,
         AudioEncoder.AAC_ELD,
         AudioEncoder.VORBIS,
         AudioEncoder.OPUS,
