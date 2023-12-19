@@ -1325,6 +1325,11 @@ public class KeyguardViewMediator extends SystemUI implements Dumpable,
             mExternallyEnabled = enabled;
 
             if (!enabled && mShowing) {
+                if (mLockPatternUtils.isUserInLockdown(KeyguardUpdateMonitor.getCurrentUser())) {
+                    Log.d(TAG, "keyguardEnabled(false) overridden by user lockdown");
+                    return;
+                }
+
                 if (mExitSecureCallback != null) {
                     if (DEBUG) Log.d(TAG, "in process of verifyUnlock request, ignoring");
                     // we're in the process of handling a request to verify the user
