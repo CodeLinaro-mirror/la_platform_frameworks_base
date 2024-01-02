@@ -74,6 +74,7 @@ public class PreferencesHelper implements RankingConfig {
 
     @VisibleForTesting
     static final int NOTIFICATION_CHANNEL_COUNT_LIMIT = 5000;
+    static final int NOTIFICATION_CHANNEL_GROUP_COUNT_LIMIT = 6000;
 
     @VisibleForTesting
     static final String TAG_RANKING = "ranking";
