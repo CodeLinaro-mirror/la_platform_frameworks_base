@@ -309,10 +309,6 @@ public class Dialog implements DialogInterface, Window.Callback,
      * that in {@link #onStart}.
      */
     public void show() {
-        // changes added for headless boot
-        if (android.os.SystemProperties.getInt("ro.config.headless", 0) == 1) {
-            return;
-        }
         if (mShowing) {
             if (mDecor != null) {
                 if (mWindow.hasFeature(Window.FEATURE_ACTION_BAR)) {

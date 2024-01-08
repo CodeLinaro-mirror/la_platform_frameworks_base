@@ -1072,10 +1072,6 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
      * in this process.
      */
     public void getDisplayContextsWithErrorDialogs(List<Context> displayContexts) {
-        // changes added for headless boot
-        if (android.os.SystemProperties.getInt("ro.config.headless", 0) == 1) {
-            return;
-        }
         if (displayContexts == null) {
             return;
         }

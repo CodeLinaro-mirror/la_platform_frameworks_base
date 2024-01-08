@@ -2242,16 +2242,9 @@ public final class SurfaceControl implements Parcelable {
      * @hide
      */
     public static ColorSpace[] getCompositionColorSpaces() {
+        int[] dataspaces = nativeGetCompositionDataspaces();
         ColorSpace srgb = ColorSpace.get(ColorSpace.Named.SRGB);
         ColorSpace[] colorSpaces = { srgb, srgb };
-        if (android.os.SystemProperties.getInt("ro.config.headless", 0) == 1) {
-        // TODO: Temp android-u bringup changes
-        colorSpaces[0] = ColorSpace.get(ColorSpace.Named.EXTENDED_SRGB);
-        colorSpaces[1] = ColorSpace.get(ColorSpace.Named.EXTENDED_SRGB);
-        } else { // TODO: Added for android-u bringup changes
-        int[] dataspaces = nativeGetCompositionDataspaces();
-        //ColorSpace srgb = ColorSpace.get(ColorSpace.Named.SRGB);
-        //ColorSpace[] colorSpaces = { srgb, srgb };
         if (dataspaces.length == 2) {
             for (int i = 0; i < 2; ++i) {
                 ColorSpace cs = ColorSpace.getFromDataSpace(dataspaces[i]);
@@ -2259,7 +2252,6 @@ public final class SurfaceControl implements Parcelable {
                     colorSpaces[i] = cs;
                 }
             }
-        }
         }
         return colorSpaces;
     }
@@ -2269,23 +2261,14 @@ public final class SurfaceControl implements Parcelable {
      * @hide
      */
     public static OverlayProperties getOverlaySupport() {
-        if (android.os.SystemProperties.getInt("ro.config.headless", 0) == 1) {
-        return null;
-        } else {
         return nativeGetOverlaySupport();
-        }
     }
 
     /**
      * @hide
      */
     public static boolean getBootDisplayModeSupport() {
-        // TODO: Temp android-u bringup changes
-        if (android.os.SystemProperties.getInt("ro.config.headless", 0) == 1) {
-        return false; //nativeGetBootDisplayModeSupport();
-        } else {
         return nativeGetBootDisplayModeSupport();
-        }
     }
 
     /** There is no associated getter for this method.  When this is set, the display is expected

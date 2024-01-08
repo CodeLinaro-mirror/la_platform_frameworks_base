@@ -127,16 +127,12 @@ public abstract class DisplayEventReceiver {
         }
 
         mMessageQueue = looper.getQueue();
-        // TODO: Temp changes for Android U headless bringup
-        mReceiverPtr = 0;
-        if (android.os.SystemProperties.getInt("ro.config.headless", 0) != 1) { // for headless set to 1
         mReceiverPtr = nativeInit(new WeakReference<DisplayEventReceiver>(this),
                 new WeakReference<VsyncEventData>(mVsyncEventData),
                 mMessageQueue,
                 vsyncSource, eventRegistration, layerHandle);
         mFreeNativeResources = sNativeAllocationRegistry.registerNativeAllocation(this,
                 mReceiverPtr);
-        }
     }
 
     /**
