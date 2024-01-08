@@ -242,8 +242,6 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     static final boolean DEBUG_INPUT = false;
     static final boolean DEBUG_KEYGUARD = false;
     static final boolean DEBUG_WAKEUP = false;
-    static final boolean SHOW_SPLASH_SCREENS = true;
-    static final boolean enable1GLowMem = true;
 
     // Whether to allow dock apps with METADATA_DOCK_HOME to temporarily take over the Home key.
     // No longer recommended for desk docks;
@@ -5584,26 +5582,22 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     @Override
     public boolean performHapticFeedback(int uid, String packageName, int effectId,
             boolean always, String reason) {
-        if (!enable1GLowMem){
-            if (!mVibrator.hasVibrator()) {
-                return false;
-            }
+        if (!mVibrator.hasVibrator()) {
+            return false;
         }
         VibrationEffect effect = getVibrationEffect(effectId);
         if (effect == null) {
             return false;
         }
-        if (!enable1GLowMem){
-            VibrationAttributes attrs = getVibrationAttributes(effectId);
-            if (always) {
-                attrs = new VibrationAttributes.Builder(attrs)
-                        .setFlags(VibrationAttributes.FLAG_BYPASS_USER_VIBRATION_INTENSITY_OFF)
-                        .build();
-            }
-            mVibrator.vibrate(uid, packageName, effect, reason, attrs);
+        VibrationAttributes attrs = getVibrationAttributes(effectId);
+        if (always) {
+            attrs = new VibrationAttributes.Builder(attrs)
+                    .setFlags(VibrationAttributes.FLAG_BYPASS_USER_VIBRATION_INTENSITY_OFF)
+                    .build();
         }
+        mVibrator.vibrate(uid, packageName, effect, reason, attrs);
         return true;
-    }  
+    }
 
     private VibrationEffect getVibrationEffect(int effectId) {
         long[] pattern;
