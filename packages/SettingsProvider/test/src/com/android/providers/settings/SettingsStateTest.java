@@ -295,7 +295,7 @@ public class SettingsStateTest extends AndroidTestCase {
         settingsState.deleteSettingLocked(SETTING_NAME);
 
         // Should not throw if usage is under the cap
-        settingsState.insertSettingLocked(SETTING_NAME, Strings.repeat("A", 19975),
+        settingsState.insertSettingLocked(SETTING_NAME, Strings.repeat("A", 19999),
                 null, false, "p1");
         settingsState.deleteSettingLocked(SETTING_NAME);
         try {
