@@ -596,8 +596,6 @@ final class SettingsState {
         Setting oldSetting = new Setting(setting);
         String oldValue = setting.getValue();
         String oldDefaultValue = setting.getDefaultValue();
-        String newValue = oldDefaultValue;
-        String newDefaultValue = oldDefaultValue;
 
         int newSize = getNewMemoryUsagePerPackageLocked(setting.packageName, 0, oldValue,
                 oldDefaultValue, oldDefaultValue, oldDefaultValue);
