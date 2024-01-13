@@ -103,6 +103,8 @@ interface IStatusBarService
      */
     void shutdown();
     void reboot(boolean safeMode);
+    void twm();
+    boolean deepsleep();
 
     /** just restarts android without rebooting device. Used for some feature flags. */
     void restart();

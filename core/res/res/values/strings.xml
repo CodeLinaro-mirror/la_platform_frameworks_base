@@ -682,6 +682,18 @@
     <!-- label for screenshot item in power menu [CHAR LIMIT=24]-->
     <string name="global_action_screenshot">Screenshot</string>
 
+    <!-- label for item that TWM in phone options dialog [CHAR LIMIT=24] -->
+    <string name="global_action_twm">TWM</string>
+
+    <!-- Toast for entering TWM failed [CHAR LIMIT=100] -->
+    <string name="global_action_twm_failed_toast">Failed to enter TWM when charging.</string>
+
+    <!-- label for item that DeepSleep in phone options dialog [CHAR LIMIT=24] -->
+    <string name="global_action_deepsleep">DeepSleep</string>
+
+    <!-- Toast for trigger DeepSleep failed [CHAR LIMIT=100] -->
+    <string name="global_action_deepsleep_failed_toast">Failed to trigger DeepSleep.</string>
+
     <!-- Take bug report menu title [CHAR LIMIT=30] -->
     <string name="bugreport_title">Bug report</string>
     <!-- Message in bugreport dialog describing what it does [CHAR LIMIT=NONE] -->

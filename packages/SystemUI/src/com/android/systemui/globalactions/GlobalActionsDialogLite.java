@@ -183,6 +183,8 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
     private static final String GLOBAL_ACTION_KEY_LOGOUT = "logout";
     static final String GLOBAL_ACTION_KEY_EMERGENCY = "emergency";
     static final String GLOBAL_ACTION_KEY_SCREENSHOT = "screenshot";
+    static final String GLOBAL_ACTION_KEY_TWM = "twm";
+    static final String GLOBAL_ACTION_KEY_DEEPSLEEP = "deepsleep";
 
     // See NotificationManagerService#scheduleDurationReachedLocked
     private static final long TOAST_FADE_TIME = 333;
@@ -592,6 +594,8 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
 
         ShutDownAction shutdownAction = new ShutDownAction();
         RestartAction restartAction = new RestartAction();
+        TWMAction twmAction = new TWMAction();
+        DeepSleepAction deepsleepAction = new DeepSleepAction();
         ArraySet<String> addedKeys = new ArraySet<>();
         List<Action> tempActions = new ArrayList<>();
         CurrentUserProvider currentUser = new CurrentUserProvider();
@@ -650,6 +654,18 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
             } else if (GLOBAL_ACTION_KEY_EMERGENCY.equals(actionKey)) {
                 if (shouldDisplayEmergency()) {
                     addIfShouldShowAction(tempActions, new EmergencyDialerAction());
+                }
+            } else if (GLOBAL_ACTION_KEY_TWM.equals(actionKey)) {
+                boolean isWatch =
+                            SystemProperties.getBoolean("ro.product.qti.qcom_watch", false);
+                if (isWatch) {
+                    addIfShouldShowAction(tempActions, twmAction);
+                }
+            } else if (GLOBAL_ACTION_KEY_DEEPSLEEP.equals(actionKey)) {
+                boolean isWatch =
+                            SystemProperties.getBoolean("ro.product.qti.qcom_watch", false);
+                if (isWatch) {
+                    addIfShouldShowAction(tempActions, deepsleepAction);
                 }
             } else {
                 Log.e(TAG, "Invalid global action key " + actionKey);
@@ -970,6 +986,60 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
             }
             mUiEventLogger.log(GlobalActionsEvent.GA_REBOOT_PRESS);
             mWindowManagerFuncs.reboot(false);
+        }
+    }
+
+    @VisibleForTesting
+    final class TWMAction extends SinglePressAction implements LongPressAction {
+        private TWMAction() {
+            super(R.drawable.ic_restart, R.string.global_action_twm);
+        }
+
+        @Override
+        public boolean onLongPress() {
+             return false;
+        }
+
+        @Override
+        public boolean showDuringKeyguard() {
+            return true;
+        }
+
+        @Override
+        public boolean showBeforeProvisioning() {
+            return true;
+        }
+
+        @Override
+        public void onPress() {
+            mWindowManagerFuncs.twm();
+        }
+    }
+
+     @VisibleForTesting
+     final class DeepSleepAction extends SinglePressAction implements LongPressAction {
+        private DeepSleepAction() {
+            super(R.drawable.ic_restart, R.string.global_action_deepsleep);
+        }
+
+        @Override
+        public boolean onLongPress() {
+             return false;
+        }
+
+        @Override
+        public boolean showDuringKeyguard() {
+            return true;
+        }
+
+        @Override
+        public boolean showBeforeProvisioning() {
+            return true;
+        }
+
+        @Override
+        public void onPress() {
+            mWindowManagerFuncs.deepsleep();
         }
     }
 

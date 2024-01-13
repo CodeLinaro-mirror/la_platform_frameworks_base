@@ -875,6 +875,9 @@
     <protected-broadcast android:name="android.app.admin.action.DEVICE_POLICY_SET_RESULT" />
     <protected-broadcast android:name="android.app.admin.action.DEVICE_POLICY_CHANGED" />
 
+    <!-- For DeepSleep -->
+    <protected-broadcast android:name="com.qualcomm.qti.intent.action.ACTION_FORCE_DEEPSLEEP" />
+    <protected-broadcast android:name="com.qualcomm.qti.intent.action.ACTION_TRIGGER_DEEPSLEEP" />
     <!-- ====================================================================== -->
     <!--                          RUNTIME PERMISSIONS                           -->
     <!-- ====================================================================== -->

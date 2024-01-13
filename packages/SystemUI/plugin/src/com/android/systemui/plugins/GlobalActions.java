@@ -41,5 +41,7 @@ public interface GlobalActions extends Plugin {
 
         void shutdown();
         void reboot(boolean safeMode);
+        void twm();
+        void deepsleep();
     }
 }

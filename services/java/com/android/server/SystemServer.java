@@ -1208,6 +1208,26 @@ public final class SystemServer implements Dumpable {
         }
         t.traceEnd();
 
+        //DeepSleep feature can be disabled with overlay
+        final int DEEPSLEEP_ENABLE = 1;
+        final int deepsleepBehavior =
+                      mSystemContext.getResources().getInteger(R.integer.config_deepsleep);
+        //DeepSleep feature will be disabled when device is not watch
+        final boolean startSuspendService =
+            (deepsleepBehavior == DEEPSLEEP_ENABLE) &&
+             SystemProperties.getBoolean("ro.product.qti.qcom_watch", false);
+        final String SUSPEND_SERVICE_CLASS =
+            "com.qualcomm.qti.server.suspendservice.SuspendManagerService";
+        if (startSuspendService) {
+            try {
+                t.traceBegin("StartSuspendService");
+                mSystemServiceManager.startService(SUSPEND_SERVICE_CLASS);
+                t.traceEnd();
+            } catch (Throwable e) {
+                reportWtf("starting SuspendService", e);
+            }
+        }
+
         t.traceBegin("StartSidekickService");
         // Package manager isn't started yet; need to use SysProp not hardware feature
         if (SystemProperties.getBoolean("config.enable_sidekick_graphics", false)) {

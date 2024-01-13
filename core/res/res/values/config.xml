@@ -1817,6 +1817,58 @@
          specified -->
     <string name="default_wallpaper_component" translatable="false">@null</string>
 
+    <!-- enable Offload -->
+    <bool name="config_offloadEnabled">false</bool>
+
+    <!-- Whether Wrist Rotation is supported, used for DisplayRotation rotate per
+        mUserRotation. -->
+    <bool name="config_supportWristRotation">false</bool>
+
+    <!-- The file path of default alarm ringtone for offloading. -->
+    <string translatable="false" name="config_defaultOffloadAlarmRingtoneFilePath"></string>
+
+    <!-- default snooze button id for AON Alarm.
+         0 means the power key id
+         1 means the volume down button id.
+         2 means the volume up button id. -->
+    <integer name="config_defaultOffloadAlarmSnoozeButtoneId">1</integer>
+
+    <!-- default dismiss button id for AON Alarm.
+         0 means the power key id
+         1 means the volume down button id.
+         2 means the volume up button id. -->
+    <integer name="config_defaultOffloadAlarmDismissButtoneId">2</integer>
+
+    <!-- default vibration id for AON Alarm.
+         -1 means invalid. -->
+    <integer name="config_defaultOffloadAlarmVibrationId">-1</integer>
+
+    <!-- The number of config used to decide TWM behavior.
+          A value of 0 means no TWM behavior.
+          A value of 1 means an auto trigger or user trigger TWM power off behavior.
+          A value of 2 means an auto trigger or user trigger TWM Hibernate behavior.-->
+    <integer name="config_twm">0</integer>
+
+    <!-- The number of config used to decide DeepSleep behavior.
+          A value of 0 means no DeepSleep behavior.
+          A value of 1 means an auto trigger or user trigger DeepSleep behavior.-->
+    <integer name="config_deepsleep">0</integer>
+
+    <!-- Offload brightness alpha used to display the slate while tracker mode. -->
+    <integer name="config_offloadBrightenAlpha">0</integer>
+
+    <!-- Offload dimming alpha used to dimming the slate while tracker mode. -->
+    <integer name="config_offloadDimmingAlpha">0</integer>
+
+    <!-- Auto trigger TWM if battery level drops below this value.
+         This value must be between 0 and 100. -->
+    <integer name="config_autoTriggerTWMThreshold">0</integer>
+
+    <!-- The number of config used to decide shutdown behavior.
+         A value of 0 means no change by default.
+         A value of 1 means enter TWM power off mode after shutdown.-->
+    <integer name="config_shutdownBehavior">0</integer>
+
     <!-- By default a product has no distinct default lock wallpaper -->
     <item name="default_lock_wallpaper" type="drawable">@null</item>
 

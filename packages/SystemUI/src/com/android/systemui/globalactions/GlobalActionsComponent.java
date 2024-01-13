@@ -32,12 +32,33 @@ import com.android.systemui.statusbar.policy.ExtensionController.Extension;
 import javax.inject.Inject;
 import javax.inject.Provider;
 
+import android.content.IntentFilter;
+import android.content.BroadcastReceiver;
+import android.content.Intent;
+import android.app.Dialog;
+import android.view.Window;
+import android.view.WindowManager;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.ProgressBar;
+import android.widget.TextView;
+import com.android.settingslib.Utils;
+import com.android.internal.R;
+import android.util.Log;
+import static android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
+import android.os.SystemProperties;
+
 /**
  * Manages power menu plugins and communicates power menu actions to the CentralSurfaces.
  */
 @SysUISingleton
 public class GlobalActionsComponent implements CoreStartable, Callbacks, GlobalActionsManager {
 
+    private static final String TAG = "GlobalActionsComponent";
+    private static final String ACTION_FORCE_DEEPSLEEP =
+                         "com.qualcomm.qti.intent.action.ACTION_FORCE_DEEPSLEEP";
+    private Context mContext;
+    private Dialog mDialog;
     private final CommandQueue mCommandQueue;
     private final ExtensionController mExtensionController;
     private final Provider<GlobalActions> mGlobalActionsProvider;
@@ -47,7 +68,7 @@ public class GlobalActionsComponent implements CoreStartable, Callbacks, GlobalA
     private StatusBarKeyguardViewManager mStatusBarKeyguardViewManager;
 
     @Inject
-    public GlobalActionsComponent(CommandQueue commandQueue,
+    public GlobalActionsComponent(Context context,CommandQueue commandQueue,
             ExtensionController extensionController,
             Provider<GlobalActions> globalActionsProvider,
             StatusBarKeyguardViewManager statusBarKeyguardViewManager) {
@@ -55,6 +76,7 @@ public class GlobalActionsComponent implements CoreStartable, Callbacks, GlobalA
         mExtensionController = extensionController;
         mGlobalActionsProvider = globalActionsProvider;
         mStatusBarKeyguardViewManager = statusBarKeyguardViewManager;
+        mContext = context;
     }
 
     @Override
@@ -68,6 +90,11 @@ public class GlobalActionsComponent implements CoreStartable, Callbacks, GlobalA
                 .build();
         mPlugin = mExtension.get();
         mCommandQueue.addCallback(this);
+        boolean isWatch =
+                SystemProperties.getBoolean("ro.product.qti.qcom_watch", false);
+        if (isWatch) {
+            registerForceDeepSleepBroadcast();
+        }
     }
 
     private void onExtensionCallback(GlobalActions newPlugin) {
@@ -118,6 +145,80 @@ public class GlobalActionsComponent implements CoreStartable, Callbacks, GlobalA
         try {
             mBarService.reboot(safeMode);
         } catch (RemoteException e) {
+        }
+    }
+
+    @Override
+    public void twm() {
+        try {
+            mBarService.twm();
+        } catch (RemoteException e) {
+        }
+    }
+
+    @Override
+    public void deepsleep() {
+        try {
+            boolean result = mBarService.deepsleep();
+            if (result) {
+                showDeepSleepUi();
+            }
+        } catch (RemoteException e) {
+        }
+    }
+
+    private void showDeepSleepUi() {
+        mDialog = new Dialog(mContext,
+                com.android.systemui.R.style.Theme_SystemUI_Dialog_GlobalActions);
+        Window window = mDialog.getWindow();
+        window.requestFeature(Window.FEATURE_NO_TITLE);
+        window.getAttributes().systemUiVisibility |= View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
+        window.getDecorView();
+        window.getAttributes().width = ViewGroup.LayoutParams.MATCH_PARENT;
+        window.getAttributes().height = ViewGroup.LayoutParams.MATCH_PARENT;
+        window.getAttributes().layoutInDisplayCutoutMode = LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
+        window.setType(WindowManager.LayoutParams.TYPE_VOLUME_OVERLAY);
+        window.getAttributes().setFitInsetsTypes(0);
+        window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+        window.addFlags(
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                        | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_INSET_DECOR
+                        | WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
+                        | WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
+                        | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED);
+        window.setWindowAnimations(com.android.systemui.R.style.Animation_ShutdownUi);
+        mDialog.setContentView(R.layout.shutdown_dialog);
+        mDialog.setCancelable(false);
+        int color = Utils.getColorAttrDefaultColor(mContext,
+                com.android.systemui.R.attr.wallpaperTextColor);
+        ProgressBar bar = mDialog.findViewById(R.id.progress);
+        bar.getIndeterminateDrawable().setTint(color);
+        TextView messageView = mDialog.findViewById(R.id.text2);
+        messageView.setTextColor(color);
+        messageView.setText("entering DeepSleep");
+        mDialog.show();
+    }
+
+    private void registerForceDeepSleepBroadcast() {
+        IntentFilter intentFilter = new IntentFilter();
+        intentFilter.addAction(ACTION_FORCE_DEEPSLEEP);
+        intentFilter.setPriority(IntentFilter.SYSTEM_LOW_PRIORITY);
+        BroadcastReceiver br = new DeepSleepBroadcastReceiver();
+        mContext.registerReceiver(br, intentFilter);
+    }
+
+    private final class DeepSleepBroadcastReceiver extends BroadcastReceiver {
+
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            String action = intent.getAction();
+            if (ACTION_FORCE_DEEPSLEEP.equals(action)) {
+                Log.i(TAG, "Receive force DeepSleep broadcast");
+                mDialog.dismiss();
+            }
         }
     }
 }

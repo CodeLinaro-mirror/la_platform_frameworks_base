@@ -342,6 +342,8 @@
   <java-symbol type="bool" name="config_useVolumeKeySounds" />
   <java-symbol type="bool" name="config_enableWallpaperService" />
   <java-symbol type="bool" name="config_checkWallpaperAtBoot" />
+  <java-symbol type="bool" name="config_offloadEnabled" />
+  <java-symbol type="bool" name="config_supportWristRotation" />
   <java-symbol type="string" name="config_wallpaperManagerServiceName" />
   <java-symbol type="string" name="config_inputEventCompatProcessorOverrideClassName" />
   <java-symbol type="string" name="config_defaultHealthConnectApp" />
@@ -1859,6 +1861,8 @@
   <java-symbol type="string" name="fp_power_button_enrollment_message" />
   <java-symbol type="string" name="fp_power_button_enrollment_button_text" />
   <java-symbol type="string" name="global_actions" />
+  <java-symbol type="string" name="global_action_deepsleep" />
+  <java-symbol type="string" name="global_action_deepsleep_failed_toast" />
   <java-symbol type="string" name="global_action_power_off" />
   <java-symbol type="string" name="global_action_power_options" />
   <java-symbol type="string" name="global_action_restart" />
@@ -1874,6 +1878,8 @@
   <java-symbol type="string" name="global_action_voice_assist" />
   <java-symbol type="string" name="global_action_assist" />
   <java-symbol type="string" name="global_action_screenshot" />
+  <java-symbol type="string" name="global_action_twm" />
+  <java-symbol type="string" name="global_action_twm_failed_toast" />
   <java-symbol type="string" name="invalidPuk" />
   <java-symbol type="string" name="lockscreen_carrier_default" />
   <java-symbol type="style" name="Animation.LockScreen" />
@@ -5058,6 +5064,17 @@
   <java-symbol type="bool" name="config_batteryStatsResetOnUnplugHighBatteryLevel" />
   <java-symbol type="bool" name="config_batteryStatsResetOnUnplugAfterSignificantCharge" />
 
+  <java-symbol type="string" name="config_defaultOffloadAlarmRingtoneFilePath"/>
+  <java-symbol type="integer" name="config_defaultOffloadAlarmSnoozeButtoneId" />
+  <java-symbol type="integer" name="config_defaultOffloadAlarmDismissButtoneId" />
+  <java-symbol type="integer" name="config_defaultOffloadAlarmVibrationId" />
+  <java-symbol type="integer" name="config_twm" />
+  <java-symbol type="integer" name="config_deepsleep" />
+  <java-symbol type="integer" name="config_offloadBrightenAlpha" />
+  <java-symbol type="integer" name="config_offloadDimmingAlpha" />
+  <java-symbol type="integer" name="config_autoTriggerTWMThreshold" />
+  <java-symbol type="integer" name="config_shutdownBehavior" />
+
   <java-symbol name="materialColorOnSecondaryFixedVariant" type="attr"/>
   <java-symbol name="materialColorOnTertiaryFixedVariant" type="attr"/>
   <java-symbol name="materialColorSurfaceContainerLowest" type="attr"/>
@@ -5169,4 +5186,5 @@
 
   <java-symbol type="drawable" name="focus_event_pressed_key_background" />
   <java-symbol type="string" name="lockscreen_too_many_failed_attempts_countdown" />
+
 </resources>
