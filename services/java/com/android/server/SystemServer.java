@@ -1208,6 +1208,30 @@ public final class SystemServer implements Dumpable {
         }
         t.traceEnd();
 
+        //create new property for offload power test, we can disable offload feature when power test
+        boolean disableOffload =
+            SystemProperties.getBoolean("persist.sys.offload.debug.disable", false);
+        //offload feature can be disabled with overlay
+        //offload feature will be disabled when device is not watch
+        final boolean startOffloadService =
+            mSystemContext.getResources().getBoolean(R.bool.config_offloadEnabled) &&
+            SystemProperties.getBoolean("ro.product.qti.qcom_watch", false);
+        final String OFFLOAD_SERVICE_CLASS =
+            "com.qualcomm.qti.server.offloadservice.OffloadManagerService";
+        Slog.i(TAG, "disableOffload: "+disableOffload+" , startOffloadService: "+startOffloadService);
+        if (!disableOffload && startOffloadService) {
+            try {
+                t.traceBegin("StartOffloadService");
+                mSystemServiceManager.startService(OFFLOAD_SERVICE_CLASS);
+                t.traceEnd();
+            } catch (Throwable e) {
+                reportWtf("starting OffloadService", e);
+            }
+        }
+
+        //create new property for power test, we can disable ds feature when power test
+        boolean disableDeepSleep =
+            SystemProperties.getBoolean("persist.sys.suspend.debug.disable", false);
         //DeepSleep feature can be disabled with overlay
         final int DEEPSLEEP_ENABLE = 1;
         final int deepsleepBehavior =
@@ -1218,7 +1242,7 @@ public final class SystemServer implements Dumpable {
              SystemProperties.getBoolean("ro.product.qti.qcom_watch", false);
         final String SUSPEND_SERVICE_CLASS =
             "com.qualcomm.qti.server.suspendservice.SuspendManagerService";
-        if (startSuspendService) {
+        if (!disableDeepSleep && startSuspendService) {
             try {
                 t.traceBegin("StartSuspendService");
                 mSystemServiceManager.startService(SUSPEND_SERVICE_CLASS);
