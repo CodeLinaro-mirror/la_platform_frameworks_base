@@ -1014,6 +1014,13 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
         public void onPress() {
             mWindowManagerFuncs.twm();
         }
+
+        @Override
+        public boolean shouldShow() {
+            boolean isTwmEnable = (
+                    mContext.getResources().getInteger(R.integer.config_twm) == 1);
+            return isTwmEnable;
+        }
     }
 
      @VisibleForTesting
@@ -1041,6 +1048,13 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
         public void onPress() {
             mWindowManagerFuncs.deepsleep();
         }
+
+         @Override
+         public boolean shouldShow() {
+             boolean isDeepSleepEnable = (
+                     mContext.getResources().getInteger(R.integer.config_deepsleep) == 1);
+             return isDeepSleepEnable;
+         }
     }
 
     @VisibleForTesting
