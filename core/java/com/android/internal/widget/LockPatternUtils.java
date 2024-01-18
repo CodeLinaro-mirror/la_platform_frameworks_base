@@ -1725,8 +1725,8 @@ public class LockPatternUtils {
     }
 
     public boolean isUserInLockdown(int userId) {
-        return getStrongAuthForUser(userId)
-                == StrongAuthTracker.STRONG_AUTH_REQUIRED_AFTER_USER_LOCKDOWN;
+        return (getStrongAuthForUser(userId)
+                & StrongAuthTracker.STRONG_AUTH_REQUIRED_AFTER_USER_LOCKDOWN) != 0;
     }
 
     private ICheckCredentialProgressCallback wrapCallback(
