@@ -16,15 +16,48 @@
   -->
 <permissions>
     <privapp-permissions package="com.android.dialer">
-        <permission name="android.permission.ALLOW_ANY_CODEC_FOR_PLAYBACK"/>
-        <permission name="android.permission.CONTROL_INCALL_EXPERIENCE"/>
+        <permission name="android.permission.POST_NOTIFICATIONS"/>
+        <permission name="android.permission.CALL_PHONE"/>
+        <permission name="android.permission.READ_CONTACTS"/>
+        <permission name="android.permission.WRITE_CONTACTS"/>
+        <permission name="android.permission.READ_CALL_LOG"/>
+        <permission name="android.permission.WRITE_CALL_LOG"/>
+        <permission name="android.permission.READ_PROFILE"/>
+        <permission name="android.permission.MANAGE_ACCOUNTS"/>
+        <permission name="android.permission.GET_ACCOUNTS"/>
         <permission name="android.permission.GET_ACCOUNTS_PRIVILEGED"/>
+        <permission name="android.permission.ACCESS_FINE_LOCATION"/>
+        <permission name="android.permission.ACCESS_COARSE_LOCATION"/>
+        <permission name="android.permission.INTERNET"/>
+        <permission name="android.permission.PROCESS_OUTGOING_CALLS"/>
+        <permission name="android.permission.NFC"/>
+        <permission name="android.permission.READ_PHONE_STATE"/>
+        <permission name="android.permission.MODIFY_AUDIO_SETTINGS"/>
         <permission name="android.permission.MODIFY_PHONE_STATE"/>
-        <permission name="android.permission.STATUS_BAR"/>
-        <permission name="android.permission.STOP_APP_SWITCHES"/>
-        <permission name="com.android.voicemail.permission.READ_VOICEMAIL"/>
+        <permission name="android.permission.WAKE_LOCK"/>
+        <permission name="android.permission.WRITE_EXTERNAL_STORAGE"/>
+        <permission name="android.permission.WRITE_SETTINGS"/>
+        <permission name="android.permission.USE_CREDENTIALS"/>
+        <permission name="android.permission.VIBRATE"/>
+        <permission name="android.permission.BLUETOOTH"/>
+        <permission name="android.permission.READ_SYNC_SETTINGS"/>
+        <permission name="com.android.voicemail.permission.ADD_VOICEMAIL"/>
         <permission name="com.android.voicemail.permission.WRITE_VOICEMAIL"/>
+        <permission name="com.android.voicemail.permission.READ_VOICEMAIL"/>
+        <permission name="android.permission.ALLOW_ANY_CODEC_FOR_PLAYBACK"/>
+        <permission name="com.android.launcher.permission.INSTALL_SHORTCUT"/>
+        <permission name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+        <permission name="android.permission.BROADCAST_STICKY"/>
+        <permission name="android.permission.ACCESS_WIFI_STATE"/>
+        <permission name="android.permission.SEND_SMS"/>
+        <permission name="android.permission.SYSTEM_ALERT_WINDOW"/>
         <permission name="android.permission.CONNECTIVITY_USE_RESTRICTED_NETWORKS"/>
+        <permission name="android.permission.USE_FULL_SCREEN_INTENT"/>
         <permission name="android.permission.READ_PRIVILEGED_PHONE_STATE"/>
+        <permission name="android.permission.CONTROL_INCALL_EXPERIENCE"/>
+        <permission name="android.permission.STATUS_BAR"/>
+        <permission name="android.permission.CAMERA"/>
+        <permission name="android.permission.STOP_APP_SWITCHES"/>
+        <permission name="android.permission.DIALER_ORIGIN"/>
     </privapp-permissions>
 </permissions>
