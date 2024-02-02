@@ -11411,7 +11411,8 @@ public class DevicePolicyManager {
 
     /**
      * Called by a device admin to set the long support message. This will be displayed to the user
-     * in the device administators settings screen.
+     * in the device administrators settings screen. If the message is longer than 20000 characters
+     * it may be truncated.
      * <p>
      * If the long support message needs to be localized, it is the responsibility of the
      * {@link DeviceAdminReceiver} to listen to the {@link Intent#ACTION_LOCALE_CHANGED} broadcast
@@ -13573,7 +13574,8 @@ public class DevicePolicyManager {
 
     /**
      * Called by Device owner to disable user control over apps. User will not be able to clear
-     * app data or force-stop packages.
+     * app data or force-stop packages. Packages with user control disabled are exempted from
+     * App Standby Buckets.
      *
      * @param admin which {@link DeviceAdminReceiver} this request is associated with
      * @param packages The package names for the apps.
