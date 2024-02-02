@@ -40,6 +40,7 @@ import android.content.ServiceConnection;
 import android.content.pm.ActivityInfo;
 import android.content.pm.ActivityPresentationInfo;
 import android.content.pm.ApplicationInfo;
+import android.content.pm.IPackageDataObserver;
 import android.content.pm.UserInfo;
 import android.net.Uri;
 import android.os.Bundle;
@@ -1232,4 +1233,13 @@ public abstract class ActivityManagerInternal {
      */
     @NonNull
     public abstract StatsEvent getCachedAppsHighWatermarkStats(int atomTag, boolean resetAfterPull);
+
+    /**
+     * Internal method for clearing app data, with the extra param that is used to indicate restore.
+     * Used by Backup service during restore operation.
+     *
+     * @hide
+     */
+    public abstract boolean clearApplicationUserData(String packageName, boolean keepState,
+            boolean isRestore, IPackageDataObserver observer, int userId);
 }

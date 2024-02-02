@@ -23,6 +23,7 @@ import static android.os.UserManager.DISALLOW_USER_SWITCH;
 import static android.os.UserManager.SYSTEM_USER_MODE_EMULATION_PROPERTY;
 import static android.os.UserManager.USER_OPERATION_ERROR_UNKNOWN;
 
+import static com.android.internal.util.ConcurrentUtils.DIRECT_EXECUTOR;
 import static com.android.server.pm.UserJourneyLogger.ERROR_CODE_ABORTED;
 import static com.android.server.pm.UserJourneyLogger.ERROR_CODE_UNSPECIFIED;
 import static com.android.server.pm.UserJourneyLogger.ERROR_CODE_USER_ALREADY_AN_ADMIN;
@@ -283,6 +284,8 @@ public class UserManagerService extends IUserManager.Stub {
     static final int MAX_RECENTLY_REMOVED_IDS_SIZE = 100;
 
     private static final int USER_VERSION = 11;
+
+    private static final int MAX_USER_STRING_LENGTH = 500;
 
     private static final long EPOCH_PLUS_30_YEARS = 30L * 365 * 24 * 60 * 60 * 1000L; // ms
 
@@ -1037,7 +1040,7 @@ public class UserManagerService extends IUserManager.Stub {
                 final UserData userData = mUsers.valueAt(i);
                 final int userId = userData.info.id;
                 if (userId != currentUser && userData.info.isFull() && !userData.info.partial
-                        && !mRemovingUserIds.get(userId)) {
+                        && userData.info.isEnabled() && !mRemovingUserIds.get(userId)) {
                     final long userEnteredTime = userData.mLastEnteredForegroundTimeMillis;
                     if (userEnteredTime > latestEnteredTime) {
                         latestEnteredTime = userEnteredTime;
@@ -2650,22 +2653,23 @@ public class UserManagerService extends IUserManager.Stub {
     @Override
     public void setDefaultGuestRestrictions(Bundle restrictions) {
         checkManageUsersPermission("setDefaultGuestRestrictions");
+        final List<UserInfo> guests = getGuestUsers();
+        synchronized (mRestrictionsLock) {
+            for (int i = 0; i < guests.size(); i++) {
+                updateUserRestrictionsInternalLR(restrictions, guests.get(i).id);
+            }
+        }
         synchronized (mGuestRestrictions) {
             mGuestRestrictions.clear();
             mGuestRestrictions.putAll(restrictions);
-            final List<UserInfo> guests = getGuestUsers();
-            for (int i = 0; i < guests.size(); i++) {
-                synchronized (mRestrictionsLock) {
-                    updateUserRestrictionsInternalLR(mGuestRestrictions, guests.get(i).id);
-                }
-            }
         }
         synchronized (mPackagesLock) {
             writeUserListLP();
         }
     }
 
-    private void setUserRestrictionInner(int userId, @NonNull String key, boolean value) {
+    @VisibleForTesting
+    void setUserRestrictionInner(int userId, @NonNull String key, boolean value) {
         if (!UserRestrictionsUtils.isValidRestriction(key)) {
             Slog.e(LOG_TAG, "Setting invalid restriction " + key);
             return;
@@ -2927,14 +2931,14 @@ public class UserManagerService extends IUserManager.Stub {
             Preconditions.checkState(mCachedEffectiveUserRestrictions.getRestrictions(userId)
                     != newBaseRestrictions);
 
-            if (mBaseUserRestrictions.updateRestrictions(userId, newBaseRestrictions)) {
+            if (mBaseUserRestrictions.updateRestrictions(userId, new Bundle(newBaseRestrictions))) {
                 scheduleWriteUser(userId);
             }
         }
 
         final Bundle effective = computeEffectiveUserRestrictionsLR(userId);
 
-        mCachedEffectiveUserRestrictions.updateRestrictions(userId, effective);
+        mCachedEffectiveUserRestrictions.updateRestrictions(userId, new Bundle(effective));
 
         // Apply the new restrictions.
         if (DBG) {
@@ -3702,7 +3706,8 @@ public class UserManagerService extends IUserManager.Stub {
                     if (type == XmlPullParser.START_TAG) {
                         final String name = parser.getName();
                         if (name.equals(TAG_USER)) {
-                            UserData userData = readUserLP(parser.getAttributeInt(null, ATTR_ID));
+                            UserData userData = readUserLP(parser.getAttributeInt(null, ATTR_ID),
+                                    mUserVersion);
 
                             if (userData != null) {
                                 synchronized (mUsersLock) {
@@ -4256,15 +4261,17 @@ public class UserManagerService extends IUserManager.Stub {
         // Write seed data
         if (userData.persistSeedData) {
             if (userData.seedAccountName != null) {
-                serializer.attribute(null, ATTR_SEED_ACCOUNT_NAME, userData.seedAccountName);
+                serializer.attribute(null, ATTR_SEED_ACCOUNT_NAME,
+                        truncateString(userData.seedAccountName));
             }
             if (userData.seedAccountType != null) {
-                serializer.attribute(null, ATTR_SEED_ACCOUNT_TYPE, userData.seedAccountType);
+                serializer.attribute(null, ATTR_SEED_ACCOUNT_TYPE,
+                        truncateString(userData.seedAccountType));
             }
         }
         if (userInfo.name != null) {
             serializer.startTag(null, TAG_NAME);
-            serializer.text(userInfo.name);
+            serializer.text(truncateString(userInfo.name));
             serializer.endTag(null, TAG_NAME);
         }
         synchronized (mRestrictionsLock) {
@@ -4273,11 +4280,11 @@ public class UserManagerService extends IUserManager.Stub {
 
             UserRestrictionsUtils.writeRestrictions(serializer,
                     mDevicePolicyUserRestrictions.getRestrictions(UserHandle.USER_ALL),
-                    TAG_DEVICE_POLICY_RESTRICTIONS);
+                    TAG_DEVICE_POLICY_GLOBAL_RESTRICTIONS);
 
             UserRestrictionsUtils.writeRestrictions(serializer,
                     mDevicePolicyUserRestrictions.getRestrictions(userInfo.id),
-                    TAG_DEVICE_POLICY_RESTRICTIONS);
+                    TAG_DEVICE_POLICY_LOCAL_RESTRICTIONS);
         }
 
         if (userData.account != null) {
@@ -4311,6 +4318,13 @@ public class UserManagerService extends IUserManager.Stub {
         serializer.endTag(null, TAG_USER);
 
         serializer.endDocument();
+    }
+
+    private String truncateString(String original) {
+        if (original == null || original.length() <= MAX_USER_STRING_LENGTH) {
+            return original;
+        }
+        return original.substring(0, MAX_USER_STRING_LENGTH);
     }
 
     /*
@@ -4374,7 +4388,7 @@ public class UserManagerService extends IUserManager.Stub {
     }
 
     @GuardedBy({"mPackagesLock"})
-    private UserData readUserLP(int id) {
+    private UserData readUserLP(int id, int userVersion) {
         try (ResilientAtomicFile file = getUserFile(id)) {
             FileInputStream fis = null;
             try {
@@ -4383,19 +4397,19 @@ public class UserManagerService extends IUserManager.Stub {
                     Slog.e(LOG_TAG, "User info not found, returning null, user id: " + id);
                     return null;
                 }
-                return readUserLP(id, fis);
+                return readUserLP(id, fis, userVersion);
             } catch (Exception e) {
                 // Remove corrupted file and retry.
                 Slog.e(LOG_TAG, "Error reading user info, user id: " + id);
                 file.failRead(fis, e);
-                return readUserLP(id);
+                return readUserLP(id, userVersion);
             }
         }
     }
 
     @GuardedBy({"mPackagesLock"})
     @VisibleForTesting
-    UserData readUserLP(int id, InputStream is) throws IOException,
+    UserData readUserLP(int id, InputStream is, int userVersion) throws IOException,
             XmlPullParserException {
         int flags = 0;
         String userType = null;
@@ -4488,7 +4502,17 @@ public class UserManagerService extends IUserManager.Stub {
                 } else if (TAG_DEVICE_POLICY_RESTRICTIONS.equals(tag)) {
                     legacyLocalRestrictions = UserRestrictionsUtils.readRestrictions(parser);
                 } else if (TAG_DEVICE_POLICY_LOCAL_RESTRICTIONS.equals(tag)) {
-                    localRestrictions = UserRestrictionsUtils.readRestrictions(parser);
+                    if (userVersion < 10) {
+                        // Prior to version 10, the local user restrictions were stored as sub tags
+                        // grouped by the user id of the source user. The source is no longer stored
+                        // on versions 10+ as this is now stored in the DevicePolicyEngine.
+                        RestrictionsSet oldLocalRestrictions =
+                                RestrictionsSet.readRestrictions(
+                                    parser, TAG_DEVICE_POLICY_LOCAL_RESTRICTIONS);
+                        localRestrictions = oldLocalRestrictions.mergeAll();
+                    } else {
+                        localRestrictions = UserRestrictionsUtils.readRestrictions(parser);
+                    }
                 } else if (TAG_DEVICE_POLICY_GLOBAL_RESTRICTIONS.equals(tag)) {
                     globalRestrictions = UserRestrictionsUtils.readRestrictions(parser);
                 } else if (TAG_ACCOUNT.equals(tag)) {
@@ -4748,7 +4772,7 @@ public class UserManagerService extends IUserManager.Stub {
             @UserIdInt int parentId, boolean preCreate, @Nullable String[] disallowedPackages,
             @NonNull TimingsTraceAndSlog t, @Nullable Object token)
             throws UserManager.CheckedUserOperationException {
-
+        String truncatedName = truncateString(name);
         final UserTypeDetails userTypeDetails = mUserTypes.get(userType);
         if (userTypeDetails == null) {
             throwCheckedUserOperationException(
@@ -4783,8 +4807,8 @@ public class UserManagerService extends IUserManager.Stub {
 
         // Try to use a pre-created user (if available).
         if (!preCreate && parentId < 0 && isUserTypeEligibleForPreCreation(userTypeDetails)) {
-            final UserInfo preCreatedUser = convertPreCreatedUserIfPossible(userType, flags, name,
-                    token);
+            final UserInfo preCreatedUser = convertPreCreatedUserIfPossible(userType, flags,
+                    truncatedName, token);
             if (preCreatedUser != null) {
                 return preCreatedUser;
             }
@@ -4871,7 +4895,7 @@ public class UserManagerService extends IUserManager.Stub {
                         flags |= UserInfo.FLAG_EPHEMERAL_ON_CREATE;
                     }
 
-                    userInfo = new UserInfo(userId, name, null, flags, userType);
+                    userInfo = new UserInfo(userId, truncatedName, null, flags, userType);
                     userInfo.serialNumber = mNextSerialNumber++;
                     userInfo.creationTime = getCreationTime();
                     userInfo.partial = true;
@@ -5233,12 +5257,12 @@ public class UserManagerService extends IUserManager.Stub {
         statsManager.setPullAtomCallback(
                 FrameworkStatsLog.USER_INFO,
                 null, // use default PullAtomMetadata values
-                BackgroundThread.getExecutor(),
+                DIRECT_EXECUTOR,
                 this::onPullAtom);
         statsManager.setPullAtomCallback(
                 FrameworkStatsLog.MULTI_USER_INFO,
                 null, // use default PullAtomMetadata values
-                BackgroundThread.getExecutor(),
+                DIRECT_EXECUTOR,
                 this::onPullAtom);
     }
 
@@ -5589,8 +5613,14 @@ public class UserManagerService extends IUserManager.Stub {
         }
     }
 
-    @GuardedBy("mUsersLock")
     @VisibleForTesting
+    void addRemovingUserId(@UserIdInt int userId) {
+        synchronized (mUsersLock) {
+            addRemovingUserIdLocked(userId);
+        }
+    }
+
+    @GuardedBy("mUsersLock")
     void addRemovingUserIdLocked(@UserIdInt int userId) {
         // We remember deleted user IDs to prevent them from being
         // reused during the current boot; they can still be reused
@@ -6349,8 +6379,8 @@ public class UserManagerService extends IUserManager.Stub {
                     Slog.e(LOG_TAG, "No such user for settings seed data u=" + userId);
                     return;
                 }
-                userData.seedAccountName = accountName;
-                userData.seedAccountType = accountType;
+                userData.seedAccountName = truncateString(accountName);
+                userData.seedAccountType = truncateString(accountType);
                 userData.seedAccountOptions = accountOptions;
                 userData.persistSeedData = persist;
             }

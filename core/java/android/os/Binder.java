@@ -642,6 +642,32 @@ public class Binder implements IBinder {
      */
     public static final native void blockUntilThreadAvailable();
 
+
+    /**
+     * TODO (b/308179628): Move this to libbinder for non-Java usages.
+     */
+    private static IBinderCallback sBinderCallback = null;
+
+    /**
+     * Set callback function for unexpected binder transaction errors.
+     *
+     * @hide
+     */
+    public static final void setTransactionCallback(IBinderCallback callback) {
+        sBinderCallback = callback;
+    }
+
+    /**
+     * Execute the callback function if it's already set.
+     *
+     * @hide
+     */
+    public static final void transactionCallback(int pid, int code, int flags, int err) {
+        if (sBinderCallback != null) {
+            sBinderCallback.onTransactionError(pid, code, flags, err);
+        }
+    }
+
     /**
      * Default constructor just initializes the object.
      *
@@ -926,16 +952,19 @@ public class Binder implements IBinder {
      * @hide
      */
     @VisibleForTesting
-    public final @NonNull String getTransactionTraceName(int transactionCode) {
+    public final @Nullable String getTransactionTraceName(int transactionCode) {
+        final boolean isInterfaceUserDefined = getMaxTransactionId() == 0;
         if (mTransactionTraceNames == null) {
-            final int highestId = Math.min(getMaxTransactionId(), TRANSACTION_TRACE_NAME_ID_LIMIT);
+            final int highestId = isInterfaceUserDefined ? TRANSACTION_TRACE_NAME_ID_LIMIT
+                    : Math.min(getMaxTransactionId(), TRANSACTION_TRACE_NAME_ID_LIMIT);
             mSimpleDescriptor = getSimpleDescriptor();
             mTransactionTraceNames = new AtomicReferenceArray(highestId + 1);
         }
 
-        final int index = transactionCode - FIRST_CALL_TRANSACTION;
-        if (index < 0 || index >= mTransactionTraceNames.length()) {
-            return mSimpleDescriptor + "#" + transactionCode;
+        final int index = isInterfaceUserDefined
+                ? transactionCode : transactionCode - FIRST_CALL_TRANSACTION;
+        if (index >= mTransactionTraceNames.length() || index < 0) {
+            return null;
         }
 
         String transactionTraceName = mTransactionTraceNames.getAcquire(index);
@@ -1300,18 +1329,8 @@ public class Binder implements IBinder {
         final boolean hasFullyQualifiedName = getMaxTransactionId() > 0;
         final String transactionTraceName;
 
-        if (tagEnabled && hasFullyQualifiedName) {
+        if (tagEnabled) {
             // If tracing enabled and we have a fully qualified name, fetch the name
-            transactionTraceName = getTransactionTraceName(code);
-        } else if (tagEnabled && isStackTrackingEnabled()) {
-            // If tracing is enabled and we *don't* have a fully qualified name, fetch the
-            // 'best effort' name only for stack tracking. This works around noticeable perf impact
-            // on low latency binder calls (<100us). The tracing call itself is between (1-10us) and
-            // the perf impact can be quite noticeable while benchmarking such binder calls.
-            // The primary culprits are ContentProviders and Cursors which convenienty don't
-            // autogenerate their AIDL and hence will not have a fully qualified name.
-            //
-            // TODO(b/253426478): Relax this constraint after a more robust fix
             transactionTraceName = getTransactionTraceName(code);
         } else {
             transactionTraceName = null;
