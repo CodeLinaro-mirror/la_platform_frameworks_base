@@ -1817,10 +1817,10 @@
     <string name="image_wallpaper_component" translatable="false">com.android.systemui/com.android.systemui.wallpapers.ImageWallpaper</string>
 
     <!-- True if WallpaperService is enabled -->
-    <bool name="config_enableWallpaperService">true</bool>
+    <bool name="config_enableWallpaperService">false</bool>
 
     <!-- True if the device should block turning display on at boot until wallpaper is ready -->
-    <bool name="config_checkWallpaperAtBoot">true</bool>
+    <bool name="config_checkWallpaperAtBoot">false</bool>
 
     <!-- Class name of WallpaperManagerService. -->
     <string name="config_wallpaperManagerServiceName" translatable="false">com.android.server.wallpaper.WallpaperManagerService</string>

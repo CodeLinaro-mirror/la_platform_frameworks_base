@@ -2179,6 +2179,10 @@ public class WallpaperManager {
      * @hide
      */
     public boolean lockScreenWallpaperExists() {
+        if (sGlobals == null) {
+            Log.w(TAG, "WallpaperService not enabled");
+            return false;
+        }
         if (sGlobals.mService == null) {
             Log.w(TAG, "WallpaperService not running");
             throw new RuntimeException(new DeadSystemException());
