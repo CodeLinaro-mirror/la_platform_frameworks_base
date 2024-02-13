@@ -40,9 +40,6 @@ public final class RecordingCanvas extends DisplayListCanvas {
     // view hierarchy because display lists are generated recursively.
     private static final int POOL_LIMIT = 25;
 
-    /** @hide */
-    public static final int MAX_BITMAP_SIZE = 100 * 1024 * 1024; // 100 MB
-
     private static final SynchronizedPool<RecordingCanvas> sPool =
             new SynchronizedPool<>(POOL_LIMIT);
 
@@ -53,7 +50,7 @@ public final class RecordingCanvas extends DisplayListCanvas {
     private int mWidth;
     private int mHeight;
 
-    /** @hide */
+    /*package*/
     static RecordingCanvas obtain(@NonNull RenderNode node, int width, int height) {
         if (node == null) throw new IllegalArgumentException("node cannot be null");
         RecordingCanvas canvas = sPool.acquire();
@@ -69,13 +66,13 @@ public final class RecordingCanvas extends DisplayListCanvas {
         return canvas;
     }
 
-    /** @hide */
+    /*package*/
     void recycle() {
         mNode = null;
         sPool.release(this);
     }
 
-    /** @hide */
+    /*package*/
     long finishRecording() {
         return nFinishRecording(mNativeCanvasWrapper);
     }
@@ -270,18 +267,6 @@ public final class RecordingCanvas extends DisplayListCanvas {
                 rx.getNativeContainer(), ry.getNativeContainer(),
                 paint.getNativeContainer());
     }
-
-    /** @hide */
-    @Override
-    protected void throwIfCannotDraw(Bitmap bitmap) {
-        super.throwIfCannotDraw(bitmap);
-        int bitmapSize = bitmap.getByteCount();
-        if (bitmapSize > MAX_BITMAP_SIZE) {
-            throw new RuntimeException(
-                    "Canvas: trying to draw too large(" + bitmapSize + "bytes) bitmap.");
-        }
-    }
-
 
     // ------------------ Fast JNI ------------------------
 
