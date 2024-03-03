@@ -43,6 +43,8 @@ interface ISessionManager {
     String getMediaKeyEventSessionPackageName(String packageName);
     void dispatchMediaKeyEvent(String packageName, boolean asSystemService, in KeyEvent keyEvent,
             boolean needWakeLock);
+    void dispatchMediaKeyEventToMediaPlayer(String packageName, boolean asSystemService, in KeyEvent keyEvent,
+            boolean needWakeLock, String mediaPlayerPackagename);
     boolean dispatchMediaKeyEventToSessionAsSystemService(String packageName,
             in KeyEvent keyEvent, in MediaSession.Token sessionToken);
     void dispatchVolumeKeyEvent(String packageName, String opPackageName, boolean asSystemService,

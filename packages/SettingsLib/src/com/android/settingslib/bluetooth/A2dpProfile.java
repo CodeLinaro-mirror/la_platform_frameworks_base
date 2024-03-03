@@ -12,6 +12,11 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear.
  */
 
 package com.android.settingslib.bluetooth;
@@ -280,6 +285,27 @@ public class A2dpProfile implements LocalBluetoothProfile {
         } else {
             mService.disableOptionalCodecs(bluetoothDevice);
         }
+    }
+
+    public String getMediaPlayer(BluetoothDevice device) {
+        if (device == null) {
+            return "";
+        }
+        return mService.getMediaPlayer(device);
+    }
+
+    public boolean setMediaPlayer(BluetoothDevice device, String mediaPlayer) {
+        if (device == null) {
+            return false;
+        }
+        if (!isConnected(device)) {
+            return false;
+        }
+        return mService.setMediaPlayer(device, mediaPlayer);
+    }
+
+    private boolean isConnected(BluetoothDevice device) {
+        return getConnectionStatus(device) == BluetoothProfile.STATE_CONNECTED;
     }
 
     /**

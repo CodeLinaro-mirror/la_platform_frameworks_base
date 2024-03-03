@@ -12,6 +12,11 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear.
  */
 package android.os;
 
@@ -33,6 +38,10 @@ public class BluetoothServiceManager {
 
     /** @hide */
     public static final String BLUETOOTH_MANAGER_SERVICE = "bluetooth_manager";
+
+    /** @hide */
+    public static final String BLUETOOTH_MANAGER_EXT_SERVICE = "bluetooth_manager_ext";
+
     /**
      * @hide
      */
@@ -44,12 +53,22 @@ public class BluetoothServiceManager {
      */
     public static final class ServiceRegisterer {
         private final String mServiceName;
+        private final String mExtServiceName;
 
         /**
          * @hide
          */
         public ServiceRegisterer(String serviceName) {
             mServiceName = serviceName;
+            mExtServiceName = BLUETOOTH_MANAGER_EXT_SERVICE;
+        }
+
+        /**
+         * @hide
+         */
+        public ServiceRegisterer(String serviceName, String extServiceName) {
+            mServiceName = serviceName;
+            mExtServiceName = extServiceName;
         }
 
         /**
@@ -60,6 +79,21 @@ public class BluetoothServiceManager {
         }
 
         /**
+         * Register a system server binding object for a service.
+         */
+        public void register(@NonNull IBinder service, @Nullable IBinder extService) {
+            register(service);
+            if (extService != null) {
+                ServiceManager.addService(mExtServiceName, extService);
+            }
+        }
+
+        @Nullable
+        private IBinder get(String name) {
+            return ServiceManager.getService(name);
+        }
+
+        /**
          * Get the system server binding object for a service.
          *
          * <p>This blocks until the service instance is ready,
@@ -67,7 +101,18 @@ public class BluetoothServiceManager {
          */
         @Nullable
         public IBinder get() {
-            return ServiceManager.getService(mServiceName);
+            return get(mServiceName);
+        }
+
+        /**
+         * Get the system server binding object for a service.
+         *
+         * <p>This blocks until the service instance is ready,
+         * or a timeout happens, in which case it returns null.
+         */
+        @Nullable
+        public IBinder getExt() {
+            return get(mExtServiceName);
         }
 
         /**
@@ -86,12 +131,41 @@ public class BluetoothServiceManager {
         }
 
         /**
+         * Get the system server binding object for a service.
+         *
+         * <p>This blocks until the service instance is ready,
+         * or a timeout happens, in which case it throws {@link ServiceNotFoundException}.
+         */
+        @NonNull
+        public IBinder getOrThrowExt() throws ServiceNotFoundException {
+            try {
+                return ServiceManager.getServiceOrThrow(mExtServiceName);
+            } catch (ServiceManager.ServiceNotFoundException e) {
+                throw new ServiceNotFoundException(mExtServiceName);
+            }
+        }
+
+        @Nullable
+        private IBinder tryGet(String name) {
+            return ServiceManager.checkService(mServiceName);
+        }
+
+        /**
          * Get the system server binding object for a service. If the specified service is
          * not available, it returns null.
          */
         @Nullable
         public IBinder tryGet() {
-            return ServiceManager.checkService(mServiceName);
+            return tryGet(mServiceName);
+        }
+
+        /**
+         * Get the system server binding object for a service. If the specified service is
+         * not available, it returns null.
+         */
+        @Nullable
+        public IBinder tryGetExt() {
+            return tryGet(mExtServiceName);
         }
     }
 

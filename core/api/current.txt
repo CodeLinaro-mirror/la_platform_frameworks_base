@@ -25041,6 +25041,7 @@ package android.media.session {
     method public void addOnMediaKeyEventSessionChangedListener(@NonNull java.util.concurrent.Executor, @NonNull android.media.session.MediaSessionManager.OnMediaKeyEventSessionChangedListener);
     method public void addOnSession2TokensChangedListener(@NonNull android.media.session.MediaSessionManager.OnSession2TokensChangedListener);
     method public void addOnSession2TokensChangedListener(@NonNull android.media.session.MediaSessionManager.OnSession2TokensChangedListener, @NonNull android.os.Handler);
+    method public void dispatchMediaKeyEvent(@NonNull android.view.KeyEvent, @NonNull String);
     method @NonNull public java.util.List<android.media.session.MediaController> getActiveSessions(@Nullable android.content.ComponentName);
     method @Nullable public android.media.session.MediaSession.Token getMediaKeyEventSession();
     method @NonNull public String getMediaKeyEventSessionPackageName();

@@ -1253,8 +1253,10 @@ public class LocationManagerService extends ILocationManager.Stub implements
             throw new IllegalStateException(
                     "isAutomotiveGnssSuspended only allowed on automotive devices");
         }
-
-        return mGnssManagerService.isAutomotiveGnssSuspended();
+        if (mGnssManagerService != null) {
+             return mGnssManagerService.isAutomotiveGnssSuspended();
+        }
+        return false;
     }
 
     @Override

@@ -12,6 +12,11 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Changes from Qualcomm Innovation Center are provided under the following license:
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ *
  */
 
 package com.android.server.wm;
@@ -316,6 +321,7 @@ import android.util.TimeUtils;
 import android.util.TypedXmlPullParser;
 import android.util.TypedXmlSerializer;
 import android.util.proto.ProtoOutputStream;
+import android.util.BoostFramework;
 import android.view.AppTransitionAnimationSpec;
 import android.view.DisplayInfo;
 import android.view.IAppTransitionAnimationSpecsFuture;
@@ -479,6 +485,7 @@ final class ActivityRecord extends WindowToken implements WindowManagerService.A
     private int labelRes;           // the label information from the package mgr.
     private int icon;               // resource identifier of activity's icon.
     private int theme;              // resource identifier of activity's theme.
+    public int perfActivityBoostHandler = -1;
     private Task task;              // the task this is in.
     private long createTime = System.currentTimeMillis();
     long lastVisibleTime;         // last time this activity became visible
@@ -634,6 +641,8 @@ final class ActivityRecord extends WindowToken implements WindowManagerService.A
 
     boolean pendingVoiceInteractionStart;   // Waiting for activity-invoked voice session
     IVoiceInteractionSession voiceSession;  // Voice interaction session for this activity
+
+    public BoostFramework mPerf = null; // Creating the BoostFramework object
 
     boolean mVoiceInteraction;
 
@@ -2162,6 +2171,10 @@ final class ActivityRecord extends WindowToken implements WindowManagerService.A
         mActivityRecordInputSink = new ActivityRecordInputSink(this, sourceRecord);
 
         updateEnterpriseThumbnailDrawable(mAtmService.getUiContext());
+
+        if (mPerf == null) {
+            mPerf = new BoostFramework();
+        }
     }
 
     /**
@@ -6669,6 +6682,12 @@ final class ActivityRecord extends WindowToken implements WindowManagerService.A
 
     /** Called when the windows associated app window container are drawn. */
     private void onWindowsDrawn(long timestampNs) {
+        if (mPerf != null && perfActivityBoostHandler > 0) {
+                mPerf.perfLockReleaseHandler(perfActivityBoostHandler);
+                perfActivityBoostHandler = -1;
+        } else if (perfActivityBoostHandler > 0) {
+                Slog.w(TAG, "activity boost didn't release as expected");
+        }
         final TransitionInfoSnapshot info = mTaskSupervisor
                 .getActivityMetricsLogger().notifyWindowsDrawn(this, timestampNs);
         final boolean validInfo = info != null;
