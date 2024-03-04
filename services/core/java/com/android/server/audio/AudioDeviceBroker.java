@@ -56,6 +56,7 @@ import android.os.RemoteException;
 import android.os.SystemClock;
 import android.os.SystemProperties;
 import android.os.UserHandle;
+import android.provider.Settings;
 import android.text.TextUtils;
 import android.util.Log;
 import android.util.PrintWriterPrinter;
@@ -75,8 +76,11 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 
-/** @hide */
-/*package*/ final class AudioDeviceBroker {
+/**
+ * @hide
+ * (non final for mocking/spying)
+ */
+public class AudioDeviceBroker {
 
     private static final String TAG = "AS.AudioDeviceBroker";
 
@@ -1191,8 +1195,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
     }
 
     /*package*/ void registerStrategyPreferredDevicesDispatcher(
-            @NonNull IStrategyPreferredDevicesDispatcher dispatcher) {
-        mDeviceInventory.registerStrategyPreferredDevicesDispatcher(dispatcher);
+            @NonNull IStrategyPreferredDevicesDispatcher dispatcher, boolean isPrivileged) {
+        mDeviceInventory.registerStrategyPreferredDevicesDispatcher(dispatcher, isPrivileged);
     }
 
     /*package*/ void unregisterStrategyPreferredDevicesDispatcher(
@@ -1201,8 +1205,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
     }
 
     /*package*/ void registerStrategyNonDefaultDevicesDispatcher(
-            @NonNull IStrategyNonDefaultDevicesDispatcher dispatcher) {
-        mDeviceInventory.registerStrategyNonDefaultDevicesDispatcher(dispatcher);
+            @NonNull IStrategyNonDefaultDevicesDispatcher dispatcher, boolean isPrivileged) {
+        mDeviceInventory.registerStrategyNonDefaultDevicesDispatcher(dispatcher, isPrivileged);
     }
 
     /*package*/ void unregisterStrategyNonDefaultDevicesDispatcher(
@@ -1220,13 +1224,18 @@ import java.util.concurrent.atomic.AtomicBoolean;
     }
 
     /*package*/ void registerCapturePresetDevicesRoleDispatcher(
-            @NonNull ICapturePresetDevicesRoleDispatcher dispatcher) {
-        mDeviceInventory.registerCapturePresetDevicesRoleDispatcher(dispatcher);
+            @NonNull ICapturePresetDevicesRoleDispatcher dispatcher, boolean isPrivileged) {
+        mDeviceInventory.registerCapturePresetDevicesRoleDispatcher(dispatcher, isPrivileged);
     }
 
     /*package*/ void unregisterCapturePresetDevicesRoleDispatcher(
             @NonNull ICapturePresetDevicesRoleDispatcher dispatcher) {
         mDeviceInventory.unregisterCapturePresetDevicesRoleDispatcher(dispatcher);
+    }
+
+    /* package */ List<AudioDeviceAttributes> anonymizeAudioDeviceAttributesListUnchecked(
+            List<AudioDeviceAttributes> devices) {
+        return mAudioService.anonymizeAudioDeviceAttributesListUnchecked(devices);
     }
 
     /*package*/ void registerCommunicationDeviceDispatcher(
@@ -1916,6 +1925,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
                     final BluetoothDevice btDevice = (BluetoothDevice) msg.obj;
                     BtHelper.onNotifyPreferredAudioProfileApplied(btDevice);
                 } break;
+                case MSG_PERSIST_AUDIO_DEVICE_SETTINGS:
+                    onPersistAudioDeviceSettings();
+                    break;
                 default:
                     Log.wtf(TAG, "Invalid message " + msg.what);
             }
@@ -1996,6 +2008,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
     private static final int MSG_IL_BTLEAUDIO_TIMEOUT = 49;
 
     private static final int MSG_L_NOTIFY_PREFERRED_AUDIOPROFILE_APPLIED = 52;
+
+    private static final int MSG_PERSIST_AUDIO_DEVICE_SETTINGS = 54;
 
     private static boolean isMessageHandledUnderWakelock(int msgId) {
         switch(msgId) {
@@ -2294,6 +2308,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
                         requestedDevice.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_SCO) {
                     Log.w(TAG, "onUpdateCommunicationRoute, defaultDevice is null, set it to active BLE device");
                     defaultDevice = mDeviceInventory.getDeviceOfType(AudioSystem.DEVICE_OUT_BLE_HEADSET);
+                } else if (defaultDevice != null && requestedDevice == null &&
+                        defaultDevice.getType() == AudioDeviceInfo.TYPE_BLE_HEADSET) {
+                    Log.w(TAG, "onUpdateCommunicationRoute, requestedDevice is null, clear default BLE device");
+                    defaultDevice = null;
                 }
             }
 
@@ -2394,7 +2412,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
     }
 
     @GuardedBy("mDeviceStateLock")
-    private boolean communnicationDeviceCompatOn() {
+    // LE Audio: For system server (Telecom) and APKs targeting S and above, we let the audio
+    // policy routing rules select the default communication device.
+    // For older APKs, we force LE Audio headset when connected as those APKs cannot select a LE
+    // Audiodevice explicitly.
+    private boolean communnicationDeviceLeAudioCompatOn() {
         return mAudioModeOwner.mMode == AudioSystem.MODE_IN_COMMUNICATION
                 && !(CompatChanges.isChangeEnabled(
                         USE_SET_COMMUNICATION_DEVICE, mAudioModeOwner.mUid)
@@ -2402,19 +2424,25 @@ import java.util.concurrent.atomic.AtomicBoolean;
     }
 
     @GuardedBy("mDeviceStateLock")
+    // Hearing Aid: For system server (Telecom) and IN_CALL mode we let the audio
+    // policy routing rules select the default communication device.
+    // For 3p apps and IN_COMMUNICATION mode we force Hearing aid when connected to maintain
+    // backwards compatibility
+    private boolean communnicationDeviceHaCompatOn() {
+        return mAudioModeOwner.mMode == AudioSystem.MODE_IN_COMMUNICATION
+                && !(mAudioModeOwner.mUid == android.os.Process.SYSTEM_UID);
+    }
+
+    @GuardedBy("mDeviceStateLock")
     AudioDeviceAttributes getDefaultCommunicationDevice() {
-        // For system server (Telecom) and APKs targeting S and above, we let the audio
-        // policy routing rules select the default communication device.
-        // For older APKs, we force Hearing Aid or LE Audio headset when connected as
-        // those APKs cannot select a LE Audio or Hearing Aid device explicitly.
         AudioDeviceAttributes device = null;
-        if (communnicationDeviceCompatOn()) {
-            // If both LE and Hearing Aid are active (thie should not happen),
-            // priority to Hearing Aid.
+        // If both LE and Hearing Aid are active (thie should not happen),
+        // priority to Hearing Aid.
+        if (communnicationDeviceHaCompatOn()) {
             device = mDeviceInventory.getDeviceOfType(AudioSystem.DEVICE_OUT_HEARING_AID);
-            if (device == null) {
-                device = mDeviceInventory.getDeviceOfType(AudioSystem.DEVICE_OUT_BLE_HEADSET);
-            }
+        }
+        if (device == null && communnicationDeviceLeAudioCompatOn()) {
+            device = mDeviceInventory.getDeviceOfType(AudioSystem.DEVICE_OUT_BLE_HEADSET);
         }
         return device;
     }
@@ -2432,5 +2460,96 @@ import java.util.concurrent.atomic.AtomicBoolean;
                         .setUsage(AudioAttributes.USAGE_MEDIA).build(),
                 info.getId(),
                 null /*mixerAttributes*/);
+    }
+
+    /**
+     * post a message to persist the audio device settings.
+     * Message is delayed by 1s on purpose in case of successive changes in quick succession (at
+     * init time for instance)
+     * Note this method is made public to work around a Mockito bug where it needs to be public
+     * in order to be mocked by a test a the same package
+     * (see https://code.google.com/archive/p/mockito/issues/127)
+     */
+    public void persistAudioDeviceSettings() {
+        sendMsg(MSG_PERSIST_AUDIO_DEVICE_SETTINGS, SENDMSG_REPLACE, /*delay*/ 1000);
+    }
+
+    void onPersistAudioDeviceSettings() {
+        final String deviceSettings = mDeviceInventory.getDeviceSettings();
+        Log.v(TAG, "saving audio device settings: " + deviceSettings);
+        final SettingsAdapter settings = mAudioService.getSettings();
+        boolean res = settings.putSecureStringForUser(mAudioService.getContentResolver(),
+                Settings.Secure.AUDIO_DEVICE_INVENTORY,
+                deviceSettings, UserHandle.USER_CURRENT);
+        if (!res) {
+            Log.e(TAG, "error saving audio device settings: " + deviceSettings);
+        }
+    }
+
+    void onReadAudioDeviceSettings() {
+        final SettingsAdapter settingsAdapter = mAudioService.getSettings();
+        final ContentResolver contentResolver = mAudioService.getContentResolver();
+        String settings = settingsAdapter.getSecureStringForUser(contentResolver,
+                Settings.Secure.AUDIO_DEVICE_INVENTORY, UserHandle.USER_CURRENT);
+        if (settings == null) {
+            Log.i(TAG, "reading spatial audio device settings from legacy key"
+                    + Settings.Secure.SPATIAL_AUDIO_ENABLED);
+            // legacy string format for key SPATIAL_AUDIO_ENABLED has the same order of fields like
+            // the strings for key AUDIO_DEVICE_INVENTORY. This will ensure to construct valid
+            // device settings when calling {@link #setDeviceSettings()}
+            settings = settingsAdapter.getSecureStringForUser(contentResolver,
+                    Settings.Secure.SPATIAL_AUDIO_ENABLED, UserHandle.USER_CURRENT);
+            if (settings == null) {
+                Log.i(TAG, "no spatial audio device settings stored with legacy key");
+            } else if (!settings.equals("")) {
+                // Delete old key value and update the new key
+                if (!settingsAdapter.putSecureStringForUser(contentResolver,
+                        Settings.Secure.SPATIAL_AUDIO_ENABLED,
+                        /*value=*/"",
+                        UserHandle.USER_CURRENT)) {
+                    Log.w(TAG, "cannot erase the legacy audio device settings with key "
+                            + Settings.Secure.SPATIAL_AUDIO_ENABLED);
+                }
+                if (!settingsAdapter.putSecureStringForUser(contentResolver,
+                        Settings.Secure.AUDIO_DEVICE_INVENTORY,
+                        settings,
+                        UserHandle.USER_CURRENT)) {
+                    Log.e(TAG, "error updating the new audio device settings with key "
+                            + Settings.Secure.AUDIO_DEVICE_INVENTORY);
+                }
+            }
+        }
+
+        if (settings != null && !settings.equals("")) {
+            setDeviceSettings(settings);
+        }
+    }
+
+    void setDeviceSettings(String settings) {
+        mDeviceInventory.setDeviceSettings(settings);
+    }
+
+    /** Test only method. */
+    String getDeviceSettings() {
+        return mDeviceInventory.getDeviceSettings();
+    }
+
+    List<AdiDeviceState> getImmutableDeviceInventory() {
+        return mDeviceInventory.getImmutableDeviceInventory();
+    }
+
+    void addDeviceStateToInventory(AdiDeviceState deviceState) {
+        mDeviceInventory.addDeviceStateToInventory(deviceState);
+    }
+
+    AdiDeviceState findDeviceStateForAudioDeviceAttributes(AudioDeviceAttributes ada,
+            int canonicalType) {
+        return mDeviceInventory.findDeviceStateForAudioDeviceAttributes(ada, canonicalType);
+    }
+
+    //------------------------------------------------
+    // for testing purposes only
+    void clearDeviceInventory() {
+        mDeviceInventory.clearDeviceInventory();
     }
 }
