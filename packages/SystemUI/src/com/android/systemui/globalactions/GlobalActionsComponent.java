@@ -63,8 +63,8 @@ public class GlobalActionsComponent extends SystemUI implements Callbacks, Globa
     private static final int TYPE_DEEPSLEEP = 10;
     private static final int TYPE_HIBERNATE = 20;
     private static final String TWM_TYPE = "twm_type";
-    private final int TWM_HIBERNATE = 1;
-    private final int TWM_SHUTDOWN = 0;
+    private final int TWM_HIBERNATE = 0;
+    private final int TWM_SHUTDOWN = 1;
     private Context mContext;
     private Dialog mDialog;
     private final CommandQueue mCommandQueue;
@@ -74,7 +74,7 @@ public class GlobalActionsComponent extends SystemUI implements Callbacks, Globa
     private Extension<GlobalActions> mExtension;
     private IStatusBarService mBarService;
     private StatusBarKeyguardViewManager mStatusBarKeyguardViewManager;
-    private final int CONFIG_HIBERNATE;
+    private final int CONFIG_SHUTDOWN;
 
     @Inject
     public GlobalActionsComponent(Context context, CommandQueue commandQueue,
@@ -87,8 +87,8 @@ public class GlobalActionsComponent extends SystemUI implements Callbacks, Globa
         mGlobalActionsProvider = globalActionsProvider;
         mStatusBarKeyguardViewManager = statusBarKeyguardViewManager;
         mContext = context;
-        CONFIG_HIBERNATE = mContext.getResources()
-                .getInteger(com.android.internal.R.integer.config_hibernate);
+        CONFIG_SHUTDOWN = mContext.getResources()
+                .getInteger(com.android.internal.R.integer.config_twm);
     }
 
     @Override
@@ -162,7 +162,7 @@ public class GlobalActionsComponent extends SystemUI implements Callbacks, Globa
 
     @Override
     public void twm() {
-        boolean  tWMIsHibernateType =Settings.Global.getInt(mContext.getContentResolver(), TWM_TYPE,CONFIG_HIBERNATE) == TWM_HIBERNATE;
+        boolean  tWMIsHibernateType =Settings.Global.getInt(mContext.getContentResolver(), TWM_TYPE,CONFIG_SHUTDOWN) == TWM_HIBERNATE;
         try {
             if(tWMIsHibernateType){
                 hibernate();
