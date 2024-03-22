@@ -24,6 +24,7 @@ import android.bluetooth.BluetoothCodecConfig;
 import android.bluetooth.BluetoothCodecStatus;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothHeadset;
+import android.bluetooth.BluetoothHeadsetClient;
 import android.bluetooth.BluetoothHearingAid;
 import android.bluetooth.BluetoothLeAudio;
 import android.bluetooth.BluetoothProfile;
@@ -66,8 +67,12 @@ public class BtHelper {
     // BluetoothHeadset API to control SCO connection
     private @Nullable BluetoothHeadset mBluetoothHeadset;
 
+    private @Nullable BluetoothHeadsetClient mBluetoothHeadsetClient;
+
     // Bluetooth headset device
     private @Nullable BluetoothDevice mBluetoothHeadsetDevice;
+
+    private @Nullable BluetoothDevice mBluetoothHeadsetClientDevice;
 
     private @Nullable BluetoothDevice mBluetoothHeadsetDummyDevice;
 
@@ -222,6 +227,8 @@ public class BtHelper {
 
         BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
         if (adapter != null) {
+            adapter.getProfileProxy(mDeviceBroker.getContext(),
+                    mBluetoothProfileServiceListener, BluetoothProfile.HEADSET_CLIENT);
             adapter.getProfileProxy(mDeviceBroker.getContext(),
                     mBluetoothProfileServiceListener, BluetoothProfile.A2DP);
             adapter.getProfileProxy(mDeviceBroker.getContext(),
@@ -633,6 +640,7 @@ public class BtHelper {
         mDeviceBroker.postBtProfileDisconnected(BluetoothProfile.A2DP);
         mDeviceBroker.postBtProfileDisconnected(BluetoothProfile.A2DP_SINK);
         mDeviceBroker.postBtProfileDisconnected(BluetoothProfile.HEADSET);
+        mDeviceBroker.postBtProfileDisconnected(BluetoothProfile.HEADSET_CLIENT);
         mDeviceBroker.postBtProfileDisconnected(BluetoothProfile.HEARING_AID);
         mDeviceBroker.postBtProfileDisconnected(BluetoothProfile.LE_AUDIO);
         mDeviceBroker.postBtProfileDisconnected(BluetoothProfile.LE_AUDIO_BROADCAST);
@@ -691,6 +699,10 @@ public class BtHelper {
     /*package*/ synchronized void onBtProfileConnected(int profile, BluetoothProfile proxy) {
         if (profile == BluetoothProfile.HEADSET) {
             onHeadsetProfileConnected((BluetoothHeadset) proxy);
+            return;
+        }
+        if (profile == BluetoothProfile.HEADSET_CLIENT) {
+            onHeadsetClientProfileConnected((BluetoothHeadsetClient) proxy);
             return;
         }
         if (profile == BluetoothProfile.A2DP) {
@@ -780,6 +792,32 @@ public class BtHelper {
             return null;
         }
         return btHeadsetDeviceToAudioDevice(mBluetoothHeadsetDummyDevice);
+    }
+
+     @GuardedBy("AudioDeviceBroker.mDeviceStateLock")
+    /*package*/ synchronized void onHeadsetClientProfileConnected(BluetoothHeadsetClient headsetclient) {
+        mBluetoothHeadsetClient = headsetclient;
+        return;
+    }
+
+    boolean isHeadsetClientScoOn() {
+        List<BluetoothDevice> Device = Collections.emptyList();
+
+        if (mBluetoothHeadsetClient != null) {
+            Device = mBluetoothHeadsetClient.getConnectedDevices();
+
+            if (Device.size() > 0) {
+                mBluetoothHeadsetClientDevice = Device.get(0);
+                Log.i(TAG, "mBluetoothHeadsetClientDevice " + mBluetoothHeadsetClientDevice);
+            }
+        }
+
+        if ((mBluetoothHeadsetClient != null) && (mBluetoothHeadsetClientDevice != null)) {
+            return mBluetoothHeadsetClient.getAudioState(mBluetoothHeadsetClientDevice) ==
+                    BluetoothHeadsetClient.STATE_AUDIO_CONNECTED;
+        } else {
+            return false;
+        }
     }
 
     private static AudioDeviceAttributes btHeadsetDeviceToAudioDevice(BluetoothDevice btDevice) {
@@ -900,7 +938,9 @@ public class BtHelper {
         if (mBluetoothHeadsetDevice == null) {
             mBluetoothHeadsetDummyDevice = null;
             Log.i(TAG, "In setBtScoActiveDevice(), calling resetBluetoothSco()");
-            resetBluetoothSco();
+            if (!isHeadsetClientScoOn()) {
+                resetBluetoothSco();
+            }
         }
     }
 
@@ -918,6 +958,7 @@ public class BtHelper {
                         case BluetoothProfile.HEADSET:
                         case BluetoothProfile.HEARING_AID:
                         case BluetoothProfile.LE_AUDIO:
+                        case BluetoothProfile.HEADSET_CLIENT:
                             AudioService.sDeviceLogger.enqueue(new EventLogger.StringEvent(
                                     "BT profile service: connecting "
                                     + BluetoothProfile.getProfileName(profile) + " profile"));
@@ -939,6 +980,7 @@ public class BtHelper {
                         case BluetoothProfile.HEADSET:
                         case BluetoothProfile.HEARING_AID:
                         case BluetoothProfile.LE_AUDIO:
+                        case BluetoothProfile.HEADSET_CLIENT:
                             AudioService.sDeviceLogger.enqueue(new EventLogger.StringEvent(
                                     "BT profile service: disconnecting "
                                         + BluetoothProfile.getProfileName(profile) + " profile"));
