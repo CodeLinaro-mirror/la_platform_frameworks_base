@@ -607,7 +607,6 @@ public class GlobalActionsDialog implements DialogInterface.OnDismissListener,
         RestartAction restartAction = new RestartAction();
         TWMAction twmAction = new TWMAction();
         DeepSleepAction deepsleepAction = new DeepSleepAction();
-        HibernateAction hibernateAction = new HibernateAction();
         ArraySet<String> addedKeys = new ArraySet<String>();
         List<Action> tempActions = new ArrayList<>();
         CurrentUserProvider currentUser = new CurrentUserProvider();
@@ -673,12 +672,6 @@ public class GlobalActionsDialog implements DialogInterface.OnDismissListener,
                             SystemProperties.getBoolean("ro.product.qti.qcom_watch", false);
                 if (isWatch) {
                     addIfShouldShowAction(tempActions, deepsleepAction);
-                }
-            }  else if (GLOBAL_ACTION_KEY_HIBERNATE.equals(actionKey)) {
-                boolean isWatch =
-                        SystemProperties.getBoolean("ro.product.qti.qcom_watch", false);
-                if (isWatch) {
-                    addIfShouldShowAction(tempActions, hibernateAction);
                 }
             } else {
                 Log.e(TAG, "Invalid global action key " + actionKey);
@@ -1035,33 +1028,6 @@ public class GlobalActionsDialog implements DialogInterface.OnDismissListener,
         @Override
         public void onPress() {
             mWindowManagerFuncs.deepsleep();
-        }
-    }
-
-    @VisibleForTesting
-    final class HibernateAction extends SinglePressAction implements LongPressAction {
-        private HibernateAction() {
-            super(R.drawable.ic_restart, R.string.global_action_hibernate);
-        }
-
-        @Override
-        public boolean onLongPress() {
-            return false;
-        }
-
-        @Override
-        public boolean showDuringKeyguard() {
-            return true;
-        }
-
-        @Override
-        public boolean showBeforeProvisioning() {
-            return true;
-        }
-
-        @Override
-        public void onPress() {
-            mWindowManagerFuncs.hibernate();
         }
     }
 
