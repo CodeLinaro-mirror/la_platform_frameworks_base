@@ -26,6 +26,8 @@
     <!-- ================================================ -->
     <eat-comment />
 
+    <protected-broadcast android:name="android.intent.action.TOGGLE_POWER_DIALOG" />
+
     <protected-broadcast android:name="android.intent.action.SCREEN_OFF" />
     <protected-broadcast android:name="android.intent.action.SCREEN_ON" />
     <protected-broadcast android:name="android.intent.action.USER_PRESENT" />
