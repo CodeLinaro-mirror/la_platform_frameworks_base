@@ -21738,7 +21738,7 @@ public class PackageManagerService extends IPackageManager.Stub
             return true;
         }
 
-        return false;
+        return true;
     }
 
     private int[] getBlockUninstallForUsers(String packageName, int[] userIds) {
