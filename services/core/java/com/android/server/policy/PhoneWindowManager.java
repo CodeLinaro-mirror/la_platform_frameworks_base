@@ -3512,6 +3512,14 @@ public class PhoneWindowManager implements WindowManagerPolicy {
 
         // Handle special keys.
         switch (keyCode) {
+            case KeyEvent.KEYCODE_FUNCTION:
+		if (down) {
+                    Intent intent = new Intent();
+                    intent.setAction("android.intent.action.TOGGLE_SEE_THROUGH");
+                    mContext.sendBroadcastAsUser(intent, new UserHandle(UserHandle.USER_CURRENT), SHUTDOWN);
+                    Slog.d(TAG, "onBroadcast of SEE_THROUGH");
+                }
+		break;
             case KeyEvent.KEYCODE_BACK: {
                 if (down) {
                     mBackKeyHandled = false;
