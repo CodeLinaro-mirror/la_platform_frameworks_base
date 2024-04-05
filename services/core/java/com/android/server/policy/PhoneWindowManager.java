@@ -2643,12 +2643,13 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                 // can never break it, although if keyguard is on, we do let
                 // it handle it, because that gives us the correct 5 second
                 // timeout.
-                DisplayHomeButtonHandler handler = mDisplayHomeButtonHandlers.get(displayId);
-                if (handler == null) {
-                    handler = new DisplayHomeButtonHandler(displayId);
-                    mDisplayHomeButtonHandlers.put(displayId, handler);
-                }
-                return handler.handleHomeButton(focusedToken, event);
+                //DisplayHomeButtonHandler handler = mDisplayHomeButtonHandlers.get(displayId);
+                //if (handler == null) {
+                  //  handler = new DisplayHomeButtonHandler(displayId);
+                  //  mDisplayHomeButtonHandlers.put(displayId, handler);
+                //}
+                //return handler.handleHomeButton(focusedToken, event);
+                return -1;
             case KeyEvent.KEYCODE_MENU:
                 // Hijack modified menu keys for debugging features
                 final int chordBug = KeyEvent.META_SHIFT_ON;
