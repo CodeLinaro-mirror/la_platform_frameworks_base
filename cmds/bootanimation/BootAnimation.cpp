@@ -104,6 +104,7 @@ static constexpr size_t FONT_NUM_ROWS = FONT_NUM_CHARS / FONT_NUM_COLS;
 static const int TEXT_CENTER_VALUE = INT_MAX;
 static const int TEXT_MISSING_VALUE = INT_MIN;
 static const char EXIT_PROP_NAME[] = "service.bootanim.exit";
+static const char EXIT_XR_PROP_NAME[] = "debug.bootanimxr.exit";
 static const char PROGRESS_PROP_NAME[] = "service.bootanim.progress";
 static const char DISPLAYS_PROP_NAME[] = "persist.service.bootanim.displays";
 static const int ANIM_ENTRY_NAME_MAX = ANIM_PATH_MAX + 1;
@@ -867,7 +868,12 @@ void BootAnimation::checkExit() {
     char value[PROPERTY_VALUE_MAX];
     property_get(EXIT_PROP_NAME, value, "0");
     int exitnow = atoi(value);
-    if (exitnow) {
+    //if the property not set by the system, then follow as before
+    property_get(EXIT_XR_PROP_NAME, value, "1");
+    int xr_exitnow = atoi(value);
+
+    SLOGI("checkExit(), exitnow:%d, xr_exitnow:%d\n", exitnow, xr_exitnow);
+    if (exitnow && xr_exitnow) {
         requestExit();
     }
 }
