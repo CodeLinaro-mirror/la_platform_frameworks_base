@@ -3167,6 +3167,34 @@ public class NotificationManagerServiceTest extends UiServiceTestCase {
     }
 
     @Test
+    public void testSetListenerAccessForUser_grantWithNameTooLong_throws() throws Exception {
+        UserHandle user = UserHandle.of(mContext.getUserId() + 10);
+        ComponentName c = new ComponentName("com.example.package",
+                com.google.common.base.Strings.repeat("Blah", 150));
+
+        try {
+            mBinderService.setNotificationListenerAccessGrantedForUser(c, user.getIdentifier(),
+                    /* enabled= */ true);
+            fail("Should've thrown IllegalArgumentException");
+        } catch (IllegalArgumentException e) {
+            // Good!
+        }
+    }
+
+    @Test
+    public void testSetListenerAccessForUser_revokeWithNameTooLong_okay() throws Exception {
+        UserHandle user = UserHandle.of(mContext.getUserId() + 10);
+        ComponentName c = new ComponentName("com.example.package",
+                com.google.common.base.Strings.repeat("Blah", 150));
+
+        mBinderService.setNotificationListenerAccessGrantedForUser(
+                c, user.getIdentifier(), /* enabled= */ false);
+
+        verify(mListeners).setPackageOrComponentEnabled(
+                c.flattenToString(), user.getIdentifier(), true, /* enabled= */ false);
+    }
+
+    @Test
     public void testSetAssistantAccessForUser() throws Exception {
         UserHandle user = UserHandle.of(10);
         List<UserInfo> uis = new ArrayList<>();
@@ -4308,6 +4336,13 @@ public class NotificationManagerServiceTest extends UiServiceTestCase {
                 .addExtras(extras)
                 .build();
 
+        // Serialize and deserialize the notification to make sure nothing breaks in the process,
+        // since that's what will usually happen before we get to call visitUris.
+        Parcel parcel = Parcel.obtain();
+        n.writeToParcel(parcel, 0);
+        parcel.setDataPosition(0);
+        n = new Notification(parcel);
+
         Consumer<Uri> visitor = (Consumer<Uri>) spy(Consumer.class);
         n.visitUris(visitor);
         verify(visitor, times(1)).accept(eq(audioContents));
@@ -4383,6 +4418,60 @@ public class NotificationManagerServiceTest extends UiServiceTestCase {
         verify(visitor, times(1)).accept(eq(personIcon1.getUri()));
         verify(visitor, times(1)).accept(eq(personIcon2.getUri()));
         verify(visitor, times(1)).accept(eq(personIcon3.getUri()));
+    }
+
+    @Test
+    public void testVisitUris_styleExtrasWithoutStyle() {
+        Notification notification = new Notification.Builder(mContext, "a")
+                .setSmallIcon(android.R.drawable.sym_def_app_icon)
+                .build();
+
+        Notification.MessagingStyle messagingStyle = new Notification.MessagingStyle(
+                personWithIcon("content://user"))
+                .addHistoricMessage(new Notification.MessagingStyle.Message("Heyhey!",
+                                System.currentTimeMillis(),
+                                personWithIcon("content://historicalMessenger")))
+                .addMessage(new Notification.MessagingStyle.Message("Are you there",
+                                System.currentTimeMillis(),
+                                personWithIcon("content://messenger")))
+                        .setShortcutIcon(
+                                Icon.createWithContentUri("content://conversationShortcut"));
+        messagingStyle.addExtras(notification.extras); // Instead of Builder.setStyle(style).
+
+        Consumer<Uri> visitor = (Consumer<Uri>) spy(Consumer.class);
+        notification.visitUris(visitor);
+
+        verify(visitor).accept(eq(Uri.parse("content://user")));
+        verify(visitor).accept(eq(Uri.parse("content://historicalMessenger")));
+        verify(visitor).accept(eq(Uri.parse("content://messenger")));
+        verify(visitor).accept(eq(Uri.parse("content://conversationShortcut")));
+    }
+
+    private static Person personWithIcon(String iconUri) {
+        return new Person.Builder()
+                .setName("Mr " + iconUri)
+                .setIcon(Icon.createWithContentUri(iconUri))
+                .build();
+    }
+
+    @Test
+    public void testVisitUris_wearableExtender() {
+        Icon actionIcon = Icon.createWithContentUri("content://media/action");
+        Icon wearActionIcon = Icon.createWithContentUri("content://media/wearAction");
+        PendingIntent intent = PendingIntent.getActivity(mContext, 0, new Intent(),
+                PendingIntent.FLAG_IMMUTABLE);
+        Notification n = new Notification.Builder(mContext, "a")
+                .setSmallIcon(android.R.drawable.sym_def_app_icon)
+                .addAction(new Notification.Action.Builder(actionIcon, "Hey!", intent).build())
+                .extend(new Notification.WearableExtender().addAction(
+                        new Notification.Action.Builder(wearActionIcon, "Wear!", intent).build()))
+                .build();
+
+        Consumer<Uri> visitor = (Consumer<Uri>) spy(Consumer.class);
+        n.visitUris(visitor);
+
+        verify(visitor).accept(eq(actionIcon.getUri()));
+        verify(visitor).accept(eq(wearActionIcon.getUri()));
     }
 
     @Test
