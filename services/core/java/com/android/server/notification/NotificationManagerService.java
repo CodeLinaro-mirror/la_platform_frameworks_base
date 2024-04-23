@@ -1819,7 +1819,6 @@ public class NotificationManagerService extends SystemService {
                 if (userHandle >= 0) {
                     cancelAllNotificationsInt(MY_UID, MY_PID, null, null, 0, 0, true, userHandle,
                             REASON_PROFILE_TURNED_OFF, null);
-                    mSnoozeHelper.clearData(userHandle);
                 }
             } else if (action.equals(Intent.ACTION_USER_PRESENT)) {
                 // turn off LED when user passes through lock screen
@@ -4712,8 +4711,10 @@ public class NotificationManagerService extends SystemService {
                             for (int userId : mUm.getProfileIds(info.userid, false)) {
                                 try {
                                     int uid = getUidForPackageAndUser(pkg, UserHandle.of(userId));
-                                    VersionedPackage vp = new VersionedPackage(pkg, uid);
-                                    nlf.addPackage(vp);
+                                    if (uid != INVALID_UID) {
+                                        VersionedPackage vp = new VersionedPackage(pkg, uid);
+                                        nlf.addPackage(vp);
+                                    }
                                 } catch (Exception e) {
                                     // pkg doesn't exist on that user; skip
                                 }
