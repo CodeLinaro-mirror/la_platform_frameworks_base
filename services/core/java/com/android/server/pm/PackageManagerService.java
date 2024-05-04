@@ -28421,8 +28421,7 @@ public class PackageManagerService extends IPackageManager.Stub
         @Override
         public boolean isPermissionUpgradeNeeded(int userId) {
             synchronized (mLock) {
-              //  return mSettings.isPermissionUpgradeNeededLPr(userId);
-                return true;
+                return mSettings.isPermissionUpgradeNeededLPr(userId);
             }
         }
 
