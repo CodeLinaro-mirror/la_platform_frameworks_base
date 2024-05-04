@@ -16,7 +16,6 @@
 
 package com.android.server.policy;
 
-import static android.Manifest.permission.SHUTDOWN;
 import static android.Manifest.permission.INTERNAL_SYSTEM_WINDOW;
 import static android.Manifest.permission.SYSTEM_ALERT_WINDOW;
 import static android.Manifest.permission.SYSTEM_APPLICATION_OVERLAY;
@@ -1106,14 +1105,42 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         final int behavior = getResolvedLongPressOnPowerBehavior();
         Slog.d(TAG, "powerLongPress: eventTime=" + eventTime
                 + " mLongPressOnPowerBehavior=" + mLongPressOnPowerBehavior);
-	mPowerKeyHandled = true;
-	performHapticFeedback(HapticFeedbackConstants.LONG_PRESS, false, "Power - Long Press - VR Global Actions");
-	Intent intent = new Intent();
-        intent.setAction("android.intent.action.TOGGLE_POWER_DIALOG");
-        intent.putExtra("title", "Power Overlay");
-        intent.putExtra("message", "Choose: Power Off, Reboot, Exit");
-        intent.putExtra("id", 0);
-        mContext.sendBroadcast(intent, SHUTDOWN);
+
+        switch (behavior) {
+            case LONG_PRESS_POWER_NOTHING:
+                break;
+            case LONG_PRESS_POWER_GLOBAL_ACTIONS:
+                mPowerKeyHandled = true;
+                performHapticFeedback(HapticFeedbackConstants.LONG_PRESS, false,
+                        "Power - Long Press - Global Actions");
+                showGlobalActions();
+                break;
+            case LONG_PRESS_POWER_SHUT_OFF:
+            case LONG_PRESS_POWER_SHUT_OFF_NO_CONFIRM:
+                mPowerKeyHandled = true;
+                performHapticFeedback(HapticFeedbackConstants.LONG_PRESS, false,
+                        "Power - Long Press - Shut Off");
+                sendCloseSystemWindows(SYSTEM_DIALOG_REASON_GLOBAL_ACTIONS);
+                mWindowManagerFuncs.shutdown(behavior == LONG_PRESS_POWER_SHUT_OFF);
+                break;
+            case LONG_PRESS_POWER_GO_TO_VOICE_ASSIST:
+                mPowerKeyHandled = true;
+                performHapticFeedback(HapticFeedbackConstants.LONG_PRESS, false,
+                        "Power - Long Press - Go To Voice Assist");
+                // Some devices allow the voice assistant intent during setup (and use that intent
+                // to launch something else, like Settings). So we explicitly allow that via the
+                // config_allowStartActivityForLongPressOnPowerInSetup resource in config.xml.
+                launchVoiceAssist(mAllowStartActivityForLongPressOnPowerDuringSetup);
+                break;
+            case LONG_PRESS_POWER_ASSISTANT:
+                mPowerKeyHandled = true;
+                performHapticFeedback(HapticFeedbackConstants.ASSISTANT_BUTTON, false,
+                        "Power - Long Press - Go To Assistant");
+                final int powerKeyDeviceId = Integer.MIN_VALUE;
+                launchAssistAction(null, powerKeyDeviceId, eventTime,
+                        AssistUtils.INVOCATION_TYPE_POWER_BUTTON_LONG_PRESS);
+                break;
+        }
     }
 
     private void powerVeryLongPress() {
