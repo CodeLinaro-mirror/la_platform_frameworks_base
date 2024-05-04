@@ -38,7 +38,7 @@ public class VolumeUI extends SystemUI {
 
     private final Handler mHandler = new Handler();
 
-    private boolean mEnabled = false;
+    private boolean mEnabled;
     private VolumeDialogComponent mVolumeComponent;
 
     @Inject
@@ -52,8 +52,7 @@ public class VolumeUI extends SystemUI {
         boolean enableVolumeUi = mContext.getResources().getBoolean(R.bool.enable_volume_ui);
         boolean enableSafetyWarning =
             mContext.getResources().getBoolean(R.bool.enable_safety_warning);
-        //mEnabled = enableVolumeUi || enableSafetyWarning;
-        mEnabled = false;
+        mEnabled = enableVolumeUi || enableSafetyWarning;
         if (!mEnabled) return;
 
         mVolumeComponent.setEnableDialogs(enableVolumeUi, enableSafetyWarning);
