@@ -606,7 +606,7 @@ public class NotificationManager {
      */
     public void notify(int id, Notification notification)
     {
-        //notify(null, id, notification);
+        notify(null, id, notification);
     }
 
     /**
@@ -630,7 +630,7 @@ public class NotificationManager {
      */
     public void notify(String tag, int id, Notification notification)
     {
-        //notifyAsUser(tag, id, notification, mContext.getUser());
+        notifyAsUser(tag, id, notification, mContext.getUser());
     }
 
     /**
@@ -660,13 +660,13 @@ public class NotificationManager {
         INotificationManager service = getService();
         String sender = mContext.getPackageName();
 
-        //try {
+        try {
             if (localLOGV) Log.v(TAG, sender + ": notify(" + id + ", " + notification + ")");
-            //service.enqueueNotificationWithTag(targetPackage, sender, tag, id,
-              //      fixNotification(notification), mContext.getUser().getIdentifier());
-        //} catch (RemoteException e) {
-          //  throw e.rethrowFromSystemServer();
-        //}
+            service.enqueueNotificationWithTag(targetPackage, sender, tag, id,
+                    fixNotification(notification), mContext.getUser().getIdentifier());
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
     }
 
     /**
@@ -678,13 +678,13 @@ public class NotificationManager {
         INotificationManager service = getService();
         String pkg = mContext.getPackageName();
 
-        //try {
+        try {
             if (localLOGV) Log.v(TAG, pkg + ": notify(" + id + ", " + notification + ")");
-            //service.enqueueNotificationWithTag(pkg, mContext.getOpPackageName(), tag, id,
-              //      fixNotification(notification), user.getIdentifier());
-       // } catch (RemoteException e) {
-         //   throw e.rethrowFromSystemServer();
-        //}
+            service.enqueueNotificationWithTag(pkg, mContext.getOpPackageName(), tag, id,
+                    fixNotification(notification), user.getIdentifier());
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
     }
 
     private Notification fixNotification(Notification notification) {
