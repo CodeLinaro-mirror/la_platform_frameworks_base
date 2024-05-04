@@ -1179,9 +1179,7 @@ public abstract class Window {
      */
     @SystemApi
     public void addSystemFlags(@WindowManager.LayoutParams.SystemFlags int flags) {
-        if (flags != SYSTEM_FLAG_HIDE_NON_SYSTEM_OVERLAY_WINDOWS) {
-            addPrivateFlags(flags);
-        }
+        addPrivateFlags(flags);
     }
 
     /**
