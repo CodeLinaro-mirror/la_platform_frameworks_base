@@ -19510,9 +19510,8 @@ public class PackageManagerService extends IPackageManager.Stub
                 final PermissionManagerServiceInternal.PackageInstalledParams.Builder
                         permissionParamsBuilder =
                         new PermissionManagerServiceInternal.PackageInstalledParams.Builder();
-                //final boolean grantPermissions = (installArgs.installFlags
-                //      & PackageManager.INSTALL_GRANT_RUNTIME_PERMISSIONS) != 0;
-                final boolean grantPermissions = true;
+                final boolean grantPermissions = (installArgs.installFlags
+                        & PackageManager.INSTALL_GRANT_RUNTIME_PERMISSIONS) != 0;
                 if (grantPermissions) {
                     final List<String> grantedPermissions =
                             installArgs.installGrantPermissions != null
