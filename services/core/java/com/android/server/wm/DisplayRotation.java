@@ -126,6 +126,7 @@ public class DisplayRotation {
     private final boolean overrideMirroring;
     private final boolean isBuiltin;
     /* QTI_END */
+    private final boolean mSupportWristRotation;
     @Nullable
     private final DisplayRotationImmersiveAppCompatPolicy mCompatPolicyForImmersiveApps;
 
@@ -306,6 +307,8 @@ public class DisplayRotation {
 
         mSupportAutoRotation =
                 mContext.getResources().getBoolean(R.bool.config_supportAutoRotation);
+        mSupportWristRotation =
+                mContext.getResources().getBoolean(R.bool.config_supportWristRotation);
         mAllowRotationResolver =
                 mContext.getResources().getBoolean(R.bool.config_allowRotationResolver);
         mLidOpenRotation = readRotation(R.integer.config_lidOpenRotation);
@@ -1379,9 +1382,16 @@ public class DisplayRotation {
             // Application just wants to remain locked in the last rotation.
             preferredRotation = lastRotation;
         } else if (!mSupportAutoRotation) {
-            // If we don't support auto-rotation then bail out here and ignore
-            // the sensor and any rotation lock settings.
-            preferredRotation = -1;
+            boolean watchProduct = SystemProperties.getBoolean("ro.product.qti.qcom_watch", false);
+            if (mUserRotationMode == WindowManagerPolicy.USER_ROTATION_LOCKED
+                    && mSupportWristRotation && watchProduct) {
+                // Prefer mUserRotation, when wrist roation is supported
+                preferredRotation = mUserRotation;
+            } else {
+                // If we don't support auto-rotation then bail out here and ignore
+                // the sensor and any rotation lock settings.
+                preferredRotation = -1;
+            }
         } else if (((mUserRotationMode == WindowManagerPolicy.USER_ROTATION_FREE
                             || isTabletopAutoRotateOverrideEnabled())
                         && (orientation == ActivityInfo.SCREEN_ORIENTATION_USER
