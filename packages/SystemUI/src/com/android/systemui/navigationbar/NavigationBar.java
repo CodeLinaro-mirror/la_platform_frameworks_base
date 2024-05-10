@@ -785,7 +785,12 @@ public class NavigationBar extends ViewController<NavigationBarView> implements 
 
             // Reset user rotation pref to match that of the WindowManager if starting in locked
             // mode. This will automatically happen when switching from auto-rotate to locked mode.
-            if (display != null && rotationButtonController.isRotationLocked()) {
+            boolean wristRotation = getContext().getResources().getBoolean(
+                    com.android.internal.R.bool.config_supportWristRotation);
+            boolean isQcWatch = android.os.SystemProperties.getBoolean(
+                    "ro.product.qti.qcom_watch", false);
+            if (display != null && rotationButtonController.isRotationLocked()
+                    && !(wristRotation && isQcWatch)) {
                 rotationButtonController.setRotationLockedAtAngle(display.getRotation());
             }
         } else {
