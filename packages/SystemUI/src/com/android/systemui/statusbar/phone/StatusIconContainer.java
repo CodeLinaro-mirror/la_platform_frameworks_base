@@ -226,10 +226,13 @@ public class StatusIconContainer extends AlphaOptimizedLinearLayout {
      * @param slots names of the icons to ignore
      */
     public void addIgnoredSlots(List<String> slots) {
-        for (String slot : slots) {
-            addIgnoredSlotInternal(slot);
+        try {
+            for (String slot : slots) {
+                addIgnoredSlotInternal(slot);
+            }
+        } catch(NullPointerException e) {
+            Log.e(TAG, "Attempted to add ignored slots off of null list");
         }
-
         requestLayout();
     }
 
