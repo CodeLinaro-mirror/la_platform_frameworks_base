@@ -567,6 +567,14 @@ final class DefaultPermissionGrantPolicy {
                     pm, setupWizardPackage, userId, NEARBY_DEVICES_PERMISSIONS);
         }
 
+        // Launcher
+        if (pm.getPackageInfo("com.qualcomm.qti.spaces.home") != null) {
+                grantPermissionsToSystemPackage(pm, "com.qualcomm.qti.spaces.home", userId, PHONE_PERMISSIONS, 
+                        CONTACTS_PERMISSIONS, ALWAYS_LOCATION_PERMISSIONS, MICROPHONE_PERMISSIONS, CAMERA_PERMISSIONS, STORAGE_PERMISSIONS, NEARBY_DEVICES_PERMISSIONS);
+        } else {
+                Slog.i(TAG, "Spaces Home not Installed");
+        }
+
         // Camera
         grantPermissionsToSystemPackage(pm,
                 getDefaultSystemHandlerActivityPackage(pm, MediaStore.ACTION_IMAGE_CAPTURE, userId),
