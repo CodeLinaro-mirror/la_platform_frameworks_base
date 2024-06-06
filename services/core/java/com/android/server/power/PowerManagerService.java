@@ -153,6 +153,7 @@ import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.concurrent.Executor;
+import com.android.server.power.ShutdownThread;
 
 /**
  * The power manager service is responsible for coordinating power management
@@ -258,6 +259,7 @@ public final class PowerManagerService extends SystemService
     private static final String REASON_THERMAL_SHUTDOWN = "shutdown,thermal";
     private static final String REASON_LOW_BATTERY = "shutdown,battery";
     private static final String REASON_BATTERY_THERMAL_STATE = "shutdown,thermal,battery";
+    private static final String REASON_TWM = "twm";
 
     static final String TRACE_SCREEN_ON = "Screen turning on";
 
@@ -2132,7 +2134,11 @@ public final class PowerManagerService extends SystemService
                     + ", groupId=" + powerGroup.getGroupId()
                     + ", reason=" + PowerManager.wakeReasonToString(reason) + ", uid=" + uid);
         }
-        if (mForceSuspendActive || !mSystemReady) {
+
+        //Not allow waking up once twm shutdown starts.
+        boolean isTWM  = mSystemProperties.get(ShutdownThread.SHUTDOWN_ACTION_PROPERTY, "")
+                .equals(PowerManager.SHUTDOWN_REASON_SHUTDOWN + REASON_TWM);
+        if (isTWM || mForceSuspendActive || !mSystemReady) {
             return;
         }
         powerGroup.wakeUpLocked(eventTime, reason, details, uid, opPackageName, opUid,
