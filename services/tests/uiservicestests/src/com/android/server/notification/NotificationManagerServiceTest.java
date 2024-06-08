@@ -84,6 +84,7 @@ import static junit.framework.Assert.assertNull;
 import static junit.framework.Assert.assertTrue;
 import static junit.framework.Assert.fail;
 
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertThrows;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Matchers.anyBoolean;
@@ -3311,6 +3312,69 @@ public class NotificationManagerServiceTest extends UiServiceTestCase {
         }
 
         verify(mPreferencesHelper, never()).updateNotificationChannel(
+                anyString(), anyInt(), any(), anyBoolean());
+
+        verify(mListeners, never()).notifyNotificationChannelChanged(eq(PKG),
+                eq(Process.myUserHandle()), eq(mTestNotificationChannel),
+                eq(NotificationListenerService.NOTIFICATION_CHANNEL_OR_GROUP_UPDATED));
+    }
+
+    @Test
+    public void testUpdateNotificationChannelFromPrivilegedListener_noSoundUriPermission()
+            throws Exception {
+        mService.setPreferencesHelper(mPreferencesHelper);
+        when(mCompanionMgr.getAssociations(PKG, UserHandle.getUserId(mUid)))
+                .thenReturn(singletonList(mock(AssociationInfo.class)));
+        when(mPreferencesHelper.getNotificationChannel(eq(PKG), anyInt(),
+                eq(mTestNotificationChannel.getId()), anyBoolean()))
+                .thenReturn(mTestNotificationChannel);
+
+        final Uri soundUri = Uri.parse("content://media/test/sound/uri");
+        final NotificationChannel updatedNotificationChannel = new NotificationChannel(
+                TEST_CHANNEL_ID, TEST_CHANNEL_ID, IMPORTANCE_DEFAULT);
+        updatedNotificationChannel.setSound(soundUri,
+                updatedNotificationChannel.getAudioAttributes());
+
+        doThrow(new SecurityException("no access")).when(mUgmInternal)
+                .checkGrantUriPermission(eq(Process.myUid()), any(), eq(soundUri),
+                anyInt(), eq(Process.myUserHandle().getIdentifier()));
+
+        assertThrows(SecurityException.class,
+                () -> mBinderService.updateNotificationChannelFromPrivilegedListener(null, PKG,
+                Process.myUserHandle(), updatedNotificationChannel));
+
+        verify(mPreferencesHelper, never()).updateNotificationChannel(
+                anyString(), anyInt(), any(), anyBoolean());
+
+        verify(mListeners, never()).notifyNotificationChannelChanged(eq(PKG),
+                eq(Process.myUserHandle()), eq(mTestNotificationChannel),
+                eq(NotificationListenerService.NOTIFICATION_CHANNEL_OR_GROUP_UPDATED));
+    }
+
+    @Test
+    public void testUpdateNotificationChannelFromPrivilegedListener_noSoundUriPermission_sameSound()
+            throws Exception {
+        mService.setPreferencesHelper(mPreferencesHelper);
+        when(mCompanionMgr.getAssociations(PKG, UserHandle.getUserId(mUid)))
+                .thenReturn(singletonList(mock(AssociationInfo.class)));
+        when(mPreferencesHelper.getNotificationChannel(eq(PKG), anyInt(),
+                eq(mTestNotificationChannel.getId()), anyBoolean()))
+                .thenReturn(mTestNotificationChannel);
+
+        final Uri soundUri = Settings.System.DEFAULT_NOTIFICATION_URI;
+        final NotificationChannel updatedNotificationChannel = new NotificationChannel(
+                TEST_CHANNEL_ID, TEST_CHANNEL_ID, IMPORTANCE_DEFAULT);
+        updatedNotificationChannel.setSound(soundUri,
+                updatedNotificationChannel.getAudioAttributes());
+
+        doThrow(new SecurityException("no access")).when(mUgmInternal)
+                .checkGrantUriPermission(eq(Process.myUid()), any(), eq(soundUri),
+                    anyInt(), eq(Process.myUserHandle().getIdentifier()));
+
+        mBinderService.updateNotificationChannelFromPrivilegedListener(
+                null, PKG, Process.myUserHandle(), updatedNotificationChannel);
+
+        verify(mPreferencesHelper, times(1)).updateNotificationChannel(
                 anyString(), anyInt(), any(), anyBoolean());
 
         verify(mListeners, never()).notifyNotificationChannelChanged(eq(PKG),
@@ -9709,6 +9773,40 @@ public class NotificationManagerServiceTest extends UiServiceTestCase {
 
         // hypothetical other user untouched
         assertTrue(captor.getValue().isPackageAllowed(new VersionedPackage("apples", 10000)));
+    }
+
+    @Test
+    public void testMigrateNotificationFilter_invalidPackage() throws Exception {
+        int[] userIds = new int[] {UserHandle.getUserId(mUid), 1000};
+        when(mUm.getProfileIds(anyInt(), anyBoolean())).thenReturn(userIds);
+        List<String> disallowedApps = ImmutableList.of("apples", "bananas", "cherries");
+        for (int userId : userIds) {
+            when(mPackageManager.getPackageUid("apples", 0, userId)).thenThrow(
+                    new RemoteException(""));
+            when(mPackageManager.getPackageUid("bananas", 0, userId)).thenReturn(9000);
+            when(mPackageManager.getPackageUid("cherries", 0, userId)).thenReturn(9001);
+        }
+
+        when(mListeners.getNotificationListenerFilter(any())).thenReturn(
+                new NotificationListenerFilter());
+
+        mBinderService.migrateNotificationFilter(null,
+                FLAG_FILTER_TYPE_CONVERSATIONS | FLAG_FILTER_TYPE_ONGOING,
+                disallowedApps);
+
+        ArgumentCaptor<NotificationListenerFilter> captor =
+                ArgumentCaptor.forClass(NotificationListenerFilter.class);
+        verify(mListeners).setNotificationListenerFilter(any(), captor.capture());
+
+        assertEquals(FLAG_FILTER_TYPE_CONVERSATIONS | FLAG_FILTER_TYPE_ONGOING,
+                captor.getValue().getTypes());
+        // valid values stay
+        assertFalse(captor.getValue().isPackageAllowed(new VersionedPackage("bananas", 9000)));
+        assertFalse(captor.getValue().isPackageAllowed(new VersionedPackage("cherries", 9001)));
+        // don't store invalid values
+        for (VersionedPackage vp : captor.getValue().getDisallowedPackages()) {
+            assertNotEquals("apples", vp.getPackageName());
+        }
     }
 
     @Test
