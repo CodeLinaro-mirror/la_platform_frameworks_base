@@ -1849,6 +1849,11 @@
           A value of 2 means an auto trigger or user trigger TWM Hibernate behavior.-->
     <integer name="config_twm">0</integer>
 
+    <!-- The number of config used to decide Hibernate behavior.
+         A value of 0 means no Hibernate behavior.
+         A value of 1 means an auto trigger or user trigger Hibernate behavior.-->
+    <integer name="config_hibernate">0</integer>
+
     <!-- The number of config used to decide DeepSleep behavior.
           A value of 0 means no DeepSleep behavior.
           A value of 1 means an auto trigger or user trigger DeepSleep behavior.-->
