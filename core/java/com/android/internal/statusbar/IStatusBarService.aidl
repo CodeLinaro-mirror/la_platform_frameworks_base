@@ -105,6 +105,7 @@ interface IStatusBarService
     void reboot(boolean safeMode);
     void twm();
     boolean deepsleep();
+    boolean hibernate();
 
     /** just restarts android without rebooting device. Used for some feature flags. */
     void restart();
