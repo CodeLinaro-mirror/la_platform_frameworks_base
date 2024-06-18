@@ -60,6 +60,7 @@ import java.util.Optional;
 import java.util.Set;
 
 import javax.inject.Inject;
+import android.os.SystemProperties;
 
 /**
  * Retrieve doze information
@@ -299,8 +300,12 @@ public class DozeParameters implements
 
     public void updateControlScreenOff() {
         if (!getDisplayNeedsBlanking()) {
+            boolean isQcomWatch = SystemProperties.getBoolean("ro.product.qti.qcom_watch", false);
             final boolean controlScreenOff =
-                    getAlwaysOn() && (mKeyguardVisible || shouldControlUnlockedScreenOff());
+                    getAlwaysOn() && (mKeyguardVisible || shouldControlUnlockedScreenOff())
+                    // Offload requires controlling the screen off state to seamlessly switch
+                    // screen control to the MCU.
+                    || (isQcomWatch && mResources.getBoolean(com.android.internal.R.bool.config_offloadEnabled));
             setControlScreenOffAnimation(controlScreenOff);
         }
     }

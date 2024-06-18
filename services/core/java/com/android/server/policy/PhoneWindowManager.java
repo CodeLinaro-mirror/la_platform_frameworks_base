@@ -3675,8 +3675,11 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         args.putLong(Intent.EXTRA_TIME, eventTime);
         args.putInt(AssistUtils.INVOCATION_TYPE_KEY, invocationType);
 
-        ((SearchManager) mContext.createContextAsUser(UserHandle.of(mCurrentUserId), 0)
-                .getSystemService(Context.SEARCH_SERVICE)).launchAssist(args);
+	SearchManager sm = (SearchManager)mContext.createContextAsUser(UserHandle.of(mCurrentUserId), 0)
+                .getSystemService(Context.SEARCH_SERVICE);
+	if (sm != null){
+	   sm.launchAssist(args);
+	}
     }
 
     /**
