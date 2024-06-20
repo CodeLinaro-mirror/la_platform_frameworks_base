@@ -66,6 +66,7 @@ import com.android.systemui.log.SessionTracker;
 import com.android.systemui.plugins.FalsingManager;
 import com.android.systemui.shared.system.SysUiStatsLog;
 import com.android.systemui.statusbar.policy.ConfigurationController;
+import com.android.systemui.statusbar.policy.DeviceProvisionedController;
 import com.android.systemui.statusbar.policy.KeyguardStateController;
 import com.android.systemui.statusbar.policy.UserSwitcherController;
 import com.android.systemui.util.ViewController;
@@ -267,7 +268,7 @@ public class KeyguardSecurityContainerController extends ViewController<Keyguard
                     updateSideFpsVisibility();
                 }
             };
-
+    private final DeviceProvisionedController mDeviceProvisionedController;
     private KeyguardSecurityContainerController(KeyguardSecurityContainer view,
             AdminSecondaryLockScreenController.Factory adminSecondaryLockScreenControllerFactory,
             LockPatternUtils lockPatternUtils,
@@ -285,6 +286,7 @@ public class KeyguardSecurityContainerController extends ViewController<Keyguard
             FeatureFlags featureFlags,
             GlobalSettings globalSettings,
             SessionTracker sessionTracker,
+            DeviceProvisionedController deviceProvisionedController,
             Optional<SidefpsController> sidefpsController) {
         super(view);
         mLockPatternUtils = lockPatternUtils;
@@ -305,6 +307,7 @@ public class KeyguardSecurityContainerController extends ViewController<Keyguard
         mFeatureFlags = featureFlags;
         mGlobalSettings = globalSettings;
         mSessionTracker = sessionTracker;
+        mDeviceProvisionedController = deviceProvisionedController;
         mSidefpsController = sidefpsController;
     }
 
@@ -516,8 +519,11 @@ public class KeyguardSecurityContainerController extends ViewController<Keyguard
                 case SimPuk:
                     // Shortcut for SIM PIN/PUK to go to directly to user's security screen or home
                     SecurityMode securityMode = mSecurityModel.getSecurityMode(targetUserId);
-                    if (securityMode == SecurityMode.None || mLockPatternUtils.isLockScreenDisabled(
-                            KeyguardUpdateMonitor.getCurrentUser())) {
+                    boolean isLockscreenDisabled = mLockPatternUtils.isLockScreenDisabled(
+                            KeyguardUpdateMonitor.getCurrentUser())
+                            || !mDeviceProvisionedController.isUserSetup(targetUserId);
+
+                    if (securityMode == SecurityMode.None && isLockscreenDisabled) {
                         finish = true;
                         eventSubtype = BOUNCER_DISMISS_SIM;
                         uiEvent = BouncerUiEvent.BOUNCER_DISMISS_SIM;
@@ -723,6 +729,7 @@ public class KeyguardSecurityContainerController extends ViewController<Keyguard
         private final FeatureFlags mFeatureFlags;
         private final UserSwitcherController mUserSwitcherController;
         private final SessionTracker mSessionTracker;
+        private final DeviceProvisionedController mDeviceProvisionedController;
         private final Optional<SidefpsController> mSidefpsController;
 
         @Inject
@@ -743,6 +750,7 @@ public class KeyguardSecurityContainerController extends ViewController<Keyguard
                 FeatureFlags featureFlags,
                 GlobalSettings globalSettings,
                 SessionTracker sessionTracker,
+                DeviceProvisionedController deviceProvisionedController,
                 Optional<SidefpsController> sidefpsController) {
             mView = view;
             mAdminSecondaryLockScreenControllerFactory = adminSecondaryLockScreenControllerFactory;
@@ -760,6 +768,7 @@ public class KeyguardSecurityContainerController extends ViewController<Keyguard
             mGlobalSettings = globalSettings;
             mUserSwitcherController = userSwitcherController;
             mSessionTracker = sessionTracker;
+            mDeviceProvisionedController = deviceProvisionedController;
             mSidefpsController = sidefpsController;
         }
 
@@ -770,8 +779,8 @@ public class KeyguardSecurityContainerController extends ViewController<Keyguard
                     mKeyguardUpdateMonitor, mKeyguardSecurityModel, mMetricsLogger, mUiEventLogger,
                     mKeyguardStateController, securityCallback, mSecurityViewFlipperController,
                     mConfigurationController, mFalsingCollector, mFalsingManager,
-                    mUserSwitcherController, mFeatureFlags, mGlobalSettings, mSessionTracker,
-                    mSidefpsController);
+                    mUserSwitcherController, mFeatureFlags, mGlobalSettings, mSessionTracker, 
+                    mDeviceProvisionedController, mSidefpsController);
         }
     }
 }
