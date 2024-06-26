@@ -1018,7 +1018,7 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
         @Override
         public boolean shouldShow() {
             boolean isTwmEnable = (
-                    mContext.getResources().getInteger(R.integer.config_twm) == 1);
+                    mContext.getResources().getInteger(R.integer.config_twm) != 0);
             return isTwmEnable;
         }
     }

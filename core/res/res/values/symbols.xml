@@ -1863,6 +1863,8 @@
   <java-symbol type="string" name="global_actions" />
   <java-symbol type="string" name="global_action_deepsleep" />
   <java-symbol type="string" name="global_action_deepsleep_failed_toast" />
+  <java-symbol type="string" name="global_action_hibernate" />
+  <java-symbol type="string" name="global_action_hibernate_failed_toast" />
   <java-symbol type="string" name="global_action_power_off" />
   <java-symbol type="string" name="global_action_power_options" />
   <java-symbol type="string" name="global_action_restart" />
@@ -5069,6 +5071,7 @@
   <java-symbol type="integer" name="config_defaultOffloadAlarmDismissButtoneId" />
   <java-symbol type="integer" name="config_defaultOffloadAlarmVibrationId" />
   <java-symbol type="integer" name="config_twm" />
+  <java-symbol type="integer" name="config_hibernate" />
   <java-symbol type="integer" name="config_deepsleep" />
   <java-symbol type="integer" name="config_offloadBrightenAlpha" />
   <java-symbol type="integer" name="config_offloadDimmingAlpha" />
