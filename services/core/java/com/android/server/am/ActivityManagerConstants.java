@@ -542,6 +542,7 @@ final class ActivityManagerConstants extends ContentObserver {
 
     public static BoostFramework mPerf = new BoostFramework();
 
+    static int COMPACTION_DELAY_MS = 300 * 1000;
     static boolean USE_TRIM_SETTINGS = true;
     static int EMPTY_APP_PERCENT = 50;
     static int TRIM_EMPTY_PERCENT = 100;
@@ -813,6 +814,7 @@ final class ActivityManagerConstants extends ContentObserver {
                                                  mPerf.perfGetProp("ro.vendor.qti.sys.fw.bg_apps_limit", "32"));
 
             //Trim Settings
+	    COMPACTION_DELAY_MS = Integer.valueOf(mPerf.perfGetProp("ro.vendor.qti.sys.fw.compaction_delay_sec", "300")) * 1000;
             USE_TRIM_SETTINGS = Boolean.parseBoolean(mPerf.perfGetProp("ro.vendor.qti.sys.fw.use_trim_settings", "true"));
             EMPTY_APP_PERCENT = Integer.valueOf(mPerf.perfGetProp("ro.vendor.qti.sys.fw.empty_app_percent", "50"));
             TRIM_EMPTY_PERCENT = Integer.valueOf(mPerf.perfGetProp("ro.vendor.qti.sys.fw.trim_empty_percent", "100"));
