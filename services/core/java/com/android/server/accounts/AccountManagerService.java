@@ -183,6 +183,7 @@ public class AccountManagerService
 
     final MessageHandler mHandler;
 
+    private static final int TIMEOUT_DELAY_MS = 1000 * 60 * 15;
     // Messages that can be sent on mHandler
     private static final int MESSAGE_TIMED_OUT = 3;
     private static final int MESSAGE_COPY_SHARED_ACCOUNT = 4;
@@ -3557,6 +3558,11 @@ public class AccountManagerService
 
             // Strip auth token from result.
             result.remove(AccountManager.KEY_AUTHTOKEN);
+            if (!checkKeyIntent(Binder.getCallingUid(), result)) {
+                onError(AccountManager.ERROR_CODE_INVALID_RESPONSE,
+                        "invalid intent in bundle returned");
+                return;
+            }
 
             if (Log.isLoggable(TAG, Log.VERBOSE)) {
                 Log.v(TAG,
@@ -4839,6 +4845,7 @@ public class AccountManagerService
             synchronized (mSessions) {
                 mSessions.put(toString(), this);
             }
+            scheduleTimeout();
             if (response != null) {
                 try {
                     response.asBinder().linkToDeath(this, 0 /* flags */);
@@ -5005,6 +5012,11 @@ public class AccountManagerService
             }
         }
 
+        private void scheduleTimeout() {
+            mHandler.sendMessageDelayed(
+                    mHandler.obtainMessage(MESSAGE_TIMED_OUT, this), TIMEOUT_DELAY_MS);
+        }
+
         public void cancelTimeout() {
             mHandler.removeMessages(MESSAGE_TIMED_OUT, this);
         }
@@ -5041,6 +5053,9 @@ public class AccountManagerService
 
         public void onTimedOut() {
             IAccountManagerResponse response = getResponseAndClose();
+            if (Log.isLoggable(TAG, Log.VERBOSE)) {
+                Log.v(TAG, "Session.onTimedOut");
+            }
             if (response != null) {
                 try {
                     response.onError(AccountManager.ERROR_CODE_REMOTE_EXCEPTION,
@@ -5125,6 +5140,11 @@ public class AccountManagerService
                     } else {
                         if (mStripAuthTokenFromResult) {
                             result.remove(AccountManager.KEY_AUTHTOKEN);
+                            if (!checkKeyIntent(Binder.getCallingUid(), result)) {
+                                onError(AccountManager.ERROR_CODE_INVALID_RESPONSE,
+                                        "invalid intent in bundle returned");
+                                return;
+                            }
                         }
                         if (Log.isLoggable(TAG, Log.VERBOSE)) {
                             Log.v(TAG, getClass().getSimpleName()
