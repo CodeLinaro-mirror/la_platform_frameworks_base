@@ -53,6 +53,7 @@ import com.android.systemui.shade.ShadeViewController;
 import com.android.systemui.shared.system.RemoteAnimationRunnerCompat;
 import com.android.systemui.statusbar.LightRevealScrim;
 import com.android.systemui.statusbar.NotificationPresenter;
+import com.android.systemui.statusbar.NotificationShadeWindowController;
 import com.android.systemui.statusbar.notification.row.ExpandableNotificationRow;
 import com.android.systemui.util.Compile;
 
@@ -221,6 +222,7 @@ public interface CentralSurfaces extends Dumpable, LifecycleOwner {
 
     NotificationShadeWindowViewController getNotificationShadeWindowViewController();
 
+    NotificationShadeWindowController getNotificationShadeWindowController();
     /** */
     ShadeViewController getShadeViewController();
 
