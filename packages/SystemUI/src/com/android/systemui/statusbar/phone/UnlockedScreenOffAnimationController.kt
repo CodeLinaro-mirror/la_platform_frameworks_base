@@ -7,6 +7,7 @@ import android.content.Context
 import android.database.ContentObserver
 import android.os.Handler
 import android.os.PowerManager
+import android.os.SystemProperties
 import android.provider.Settings
 import android.view.Display
 import android.view.Surface
@@ -251,10 +252,15 @@ class UnlockedScreenOffAnimationController @Inject constructor(
             // the StatusBarState. This ensures that the UI definitely reflects the desired state.
             mCentralSurfaces.updateIsKeyguard(true /* forceStateChange */)
         }
+        if (shouldSkipAnimation()) {
+            // when light reveal and aod UI animation are skipped, the notification shade window
+            // should be set invisible forcely, or touch will be intercepted
+            mCentralSurfaces.notificationShadeWindowController.setPanelVisible(false)
+        }
     }
 
     override fun startAnimation(): Boolean {
-        if (shouldPlayUnlockedScreenOffAnimation()) {
+        if (shouldPlayUnlockedScreenOffAnimation() && !shouldSkipAnimation()) {
             decidedToAnimateGoingToSleep = true
 
             shouldAnimateInKeyguard = true
@@ -383,4 +389,15 @@ class UnlockedScreenOffAnimationController @Inject constructor(
     fun isScreenOffLightRevealAnimationPlaying(): Boolean {
         return lightRevealAnimationPlaying
     }
+
+    fun shouldSkipAnimation(): Boolean {
+        // when offload is enabled, display will switch to MCU when entering AOD
+        // per UI experience, light and aod ui animation would be redundant and confused
+        val isOffloadEnabled: Boolean = context.resources.getBoolean(
+            com.android.internal.R.bool.config_offloadEnabled)
+        val isQcomWatch: Boolean = SystemProperties.getBoolean(
+            "ro.product.qti.qcom_watch", false)
+        return isQcomWatch && isOffloadEnabled
+    }
+
 }
