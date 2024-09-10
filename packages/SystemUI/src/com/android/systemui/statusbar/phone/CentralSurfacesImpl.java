@@ -1761,6 +1761,11 @@ public class CentralSurfacesImpl implements CoreStartable, CentralSurfaces {
     }
 
     @Override
+    public NotificationShadeWindowController getNotificationShadeWindowController() {
+        return mNotificationShadeWindowController;
+    }
+
+    @Override
     public ShadeViewController getShadeViewController() {
         return mShadeSurface;
     }
