@@ -256,9 +256,6 @@ public class AudioService extends IAudioService.Stub
     /** Debug communication route */
     protected static final boolean DEBUG_COMM_RTE = false;
 
-    /** debug SCO modes */
-    protected static final boolean DEBUG_SCO = true;
-
     /** Debug log sound fx (touchsounds...) in dumpsys */
     protected static final boolean DEBUG_LOG_SOUND_FX = false;
 

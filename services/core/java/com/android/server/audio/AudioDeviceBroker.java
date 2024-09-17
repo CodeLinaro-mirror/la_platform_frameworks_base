@@ -1979,7 +1979,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
             // what has been communicated to audio policy manager. The device
             // returned by requestedCommunicationDevice() can be a dummy SCO device if legacy
             // APIs are used to start SCO audio.
-            AudioDeviceAttributes device = mBtHelper.getHeadsetAudioDummyDevice();
+            AudioDeviceAttributes device = mBtHelper.getHeadsetAudioDevice();
             if (device != null) {
                 return device;
             }

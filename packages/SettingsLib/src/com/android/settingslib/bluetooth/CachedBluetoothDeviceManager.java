@@ -27,7 +27,6 @@ import com.android.internal.annotations.VisibleForTesting;
 
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -88,8 +87,7 @@ public class CachedBluetoothDeviceManager {
                 return cachedDevice;
             }
             // Check the member devices for the coordinated set if it exists
-            final Set<CachedBluetoothDevice> memberDevices =
-                    new HashSet<CachedBluetoothDevice>(cachedDevice.getMemberDevice());
+            final Set<CachedBluetoothDevice> memberDevices = cachedDevice.getMemberDevice();
             if (!memberDevices.isEmpty()) {
                 for (CachedBluetoothDevice memberDevice : memberDevices) {
                     if (memberDevice.getDevice().equals(device)) {
@@ -253,13 +251,6 @@ public class CachedBluetoothDeviceManager {
         }
     }
 
-    public synchronized void clearAllDevices() {
-        for (int i = mCachedDevices.size() - 1; i >= 0; i--) {
-            CachedBluetoothDevice cachedDevice = mCachedDevices.get(i);
-                mCachedDevices.remove(i);
-        }
-    }
-
     public synchronized void onScanningStateChanged(boolean started) {
         if (!started) return;
         // If starting a new scan, clear old visibility
@@ -306,9 +297,6 @@ public class CachedBluetoothDeviceManager {
                     cachedDevice.setJustDiscovered(false);
                     mCachedDevices.remove(i);
                 }
-                //Clear if there any Tws battery info on BT turning OFF
-                cachedDevice.mTwspBatteryState = -1;
-                cachedDevice.mTwspBatteryLevel = -1;
             }
 
             // To clear the SetMemberPair flag when the Bluetooth is turning off.

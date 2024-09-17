@@ -120,7 +120,6 @@ filegroup {
         ":installd_aidl",
         ":libaudioclient_aidl",
         ":libbinder_aidl",
-	":libbluetooth-binder-aidl",
         ":libcamera_client_aidl",
         ":libcamera_client_framework_aidl",
         ":libupdate_engine_aidl",
@@ -259,34 +258,11 @@ filegroup {
     visibility: ["//visibility:public"],
 }
 
-soong_config_module_type_import {
-    from: "device/qcom/qssi/Android.bp",
-    module_types: [
-         "bredr_vs_btadva_java_defaults",
-    ],
-}
-
-bredr_vs_btadva_java_defaults {
-    name: "btadva_fwk_java_defaults",
-
-    soong_config_variables: {
-        bredr_or_btadva: {
-           btadva: {
-              srcs: [
-                 ":framework-bluetooth-adva-srcs",
-                 ":libbluetooth-binder-aidl-adva",
-              ],
-           }
-       }
-   }
-}
-
 java_defaults {
     name: "framework-minus-apex-defaults",
-    defaults: ["framework-aidl-export-defaults", "btadva_fwk_java_defaults"],
+    defaults: ["framework-aidl-export-defaults"],
     srcs: [
         ":framework-non-updatable-sources",
-        ":framework-bluetooth-sources", // TODO(b/214988855) : Remove once framework-bluetooth jar is ready
         "core/java/**/*.logtags",
         ":apex-info-list",
     ],
@@ -298,6 +274,7 @@ java_defaults {
         include_dirs: [
             "frameworks/av/aidl",
             "frameworks/native/libs/permission/aidl",
+            "packages/modules/Bluetooth/framework/aidl-export",
             "packages/modules/Connectivity/framework/aidl-export",
             "packages/modules/Media/apex/aidl/stable",
             "hardware/interfaces/graphics/common/aidl",
@@ -555,6 +532,7 @@ stubs_defaults {
         include_dirs: [
             "frameworks/av/aidl",
             "frameworks/native/libs/permission/aidl",
+            "packages/modules/Bluetooth/framework/aidl-export",
             "packages/modules/Connectivity/framework/aidl-export",
             "packages/modules/Media/apex/aidl/stable",
             "hardware/interfaces/graphics/common/aidl",
@@ -594,6 +572,7 @@ stubs_defaults {
     name: "module-classpath-stubs-defaults",
     aidl: {
         include_dirs: [
+            "packages/modules/Bluetooth/framework/aidl-export",
             "packages/modules/Connectivity/framework/aidl-export",
             "packages/modules/Media/apex/aidl/stable",
         ],
