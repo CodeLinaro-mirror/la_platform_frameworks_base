@@ -1593,6 +1593,23 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
         }
     }
 
+    private boolean isPlugged(BatteryManager batteryManager){
+        int batteryStatus = batteryManager.getIntProperty(
+                BatteryManager.BATTERY_PROPERTY_STATUS);
+        Slog.w(TAG, "battery status: " + batteryStatus);
+        switch (batteryStatus) {
+            case BatteryManager.BATTERY_STATUS_CHARGING:
+            case BatteryManager.BATTERY_STATUS_FULL:
+            case BatteryManager.BATTERY_STATUS_NOT_CHARGING:
+                return true;
+            case BatteryManager.BATTERY_STATUS_DISCHARGING:
+                return false;
+            default:
+                Slog.w(TAG, "unexpected battery status: " + batteryStatus);
+        }
+        return false;
+    }
+
     /**
      * Allows the status bar to twm the device.
      */
@@ -1604,7 +1621,7 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
             mNotificationDelegate.prepareForPossibleShutdown();
             BatteryManager batteryManager =
                     (BatteryManager) mContext.getSystemService(Context.BATTERY_SERVICE);
-            if ((batteryManager == null) || batteryManager.isCharging()) {
+            if ((batteryManager == null) || isPlugged(batteryManager)) {
                 Slog.i(TAG, "Can't enter TWM when charging ");
                 Handler handler = new Handler(mContext.getMainLooper());
                 handler.post(() -> {
