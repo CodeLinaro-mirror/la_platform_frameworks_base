@@ -33,6 +33,8 @@ import java.util.List;
 
 import androidx.annotation.RequiresApi;
 
+import com.android.settingslib.R;
+
 /**
  * VolumeControlProfile handles Bluetooth Volume Control Controller role
  */
@@ -194,7 +196,7 @@ public class VolumeControlProfile implements LocalBluetoothProfile {
 
     @Override
     public int getNameResource(BluetoothDevice device) {
-        return 0; // VCP profile not displayed in UI
+        return R.string.summary_empty; // VCP profile not displayed in UI
     }
 
     @Override
