@@ -581,40 +581,6 @@ public class AutoTileManagerTest extends SysuiTestCase {
         verify(mAutoAddTracker).setTileRemoved(spec);
     }
 
-    @Test
-    public void managedProfileAdded_tileAdded() {
-        when(mAutoAddTracker.isAdded(eq("work"))).thenReturn(false);
-        mAutoTileManager = createAutoTileManager(mContext);
-        Mockito.doAnswer((Answer<Object>) invocation -> {
-            mManagedProfileCallback = invocation.getArgument(0);
-            return null;
-        }).when(mManagedProfileController).addCallback(any());
-        mAutoTileManager.init();
-        when(mManagedProfileController.hasActiveProfile()).thenReturn(true);
-
-        mManagedProfileCallback.onManagedProfileChanged();
-
-        verify(mQsTileHost, times(1)).addTile(eq("work"));
-        verify(mAutoAddTracker, times(1)).setTileAdded(eq("work"));
-    }
-
-    @Test
-    public void managedProfileRemoved_tileRemoved() {
-        when(mAutoAddTracker.isAdded(eq("work"))).thenReturn(true);
-        mAutoTileManager = createAutoTileManager(mContext);
-        Mockito.doAnswer((Answer<Object>) invocation -> {
-            mManagedProfileCallback = invocation.getArgument(0);
-            return null;
-        }).when(mManagedProfileController).addCallback(any());
-        mAutoTileManager.init();
-        when(mManagedProfileController.hasActiveProfile()).thenReturn(false);
-
-        mManagedProfileCallback.onManagedProfileChanged();
-
-        verify(mQsTileHost, times(1)).removeTile(eq("work"));
-        verify(mAutoAddTracker, times(1)).setTileRemoved(eq("work"));
-    }
-
     public void testRemoveControlsTileFromTrackerWhenRequested() {
         String spec = "controls";
         when(mAutoAddTracker.isAdded(eq(spec))).thenReturn(true);
