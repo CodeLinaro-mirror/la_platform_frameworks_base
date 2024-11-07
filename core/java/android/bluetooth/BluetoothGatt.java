@@ -1659,6 +1659,19 @@ public final class BluetoothGatt implements BluetoothProfile {
      *
      * <p>This function will send an LE connection parameters update request to the remote device.
      *
+     * @param minConnectionInterval Minimum value for the connection interval. This shall be less
+     * than or equal to maxConnectionInterval.
+     * @param maxConnectionInterval Maximum value for the connection interval. This shall be
+     * greater than or equal to minConnectionInterval.
+     * @param slaveLatency Maximum Peripheral latency for the connection in number
+     * of subrated connection events.
+     * @param supervisionTimeout Supervision timeout for the LE Link.
+     * @param minConnectionEventLen  minimum length of connection event
+     * needed for this LE connection.
+     * @param maxConnectionEventLen  Maximum length of connection event
+     * needed for this LE connection.
+     *
+     * @throws IllegalArgumentException, if parameters are not valid.
      * @return true, if the request is send to the Bluetooth stack.
      * @hide
      */
@@ -1671,11 +1684,51 @@ public final class BluetoothGatt implements BluetoothProfile {
             Log.d(TAG, "requestLeConnectionUpdate() - min=(" + minConnectionInterval
                         + ")" + (1.25 * minConnectionInterval)
                         + "msec, max=(" + maxConnectionInterval + ")"
-                        + (1.25 * maxConnectionInterval) + "msec, latency=" + slaveLatency
-                        + ", timeout=" + supervisionTimeout + "msec" + ", min_ce="
+                        + (1.25 * maxConnectionInterval) + "msec, slaveLatency =" + slaveLatency
+                        + ", timeout=" + (supervisionTimeout * 10) + "msec" + ", min_ce="
                         + minConnectionEventLen + ", max_ce=" + maxConnectionEventLen);
         }
         if (mService == null || mClientIf == 0) return false;
+
+        if (minConnectionInterval < 0x0006
+                || minConnectionInterval > 0x0C80) {
+            throw new IllegalArgumentException("minConnectionInterval not within valid range");
+        }
+
+        if (maxConnectionInterval < 0x0006
+                || maxConnectionInterval > 0x0C80) {
+            throw new IllegalArgumentException("maxConnectionInterval not within valid range");
+        }
+
+        if (slaveLatency < 0x0000
+                || slaveLatency > 0x01F3) {
+            throw new IllegalArgumentException("slaveLatency not within valid range");
+        }
+
+        if (supervisionTimeout < 0x000A
+                || supervisionTimeout > 0x0C80) {
+            throw new IllegalArgumentException("supervisionTimeout not within valid range");
+        }
+
+        if (minConnectionEventLen < 0x0000
+                || minConnectionEventLen > 0xFFFF) {
+            throw new IllegalArgumentException("minConnectionEventLen not within valid range");
+        }
+
+        if (maxConnectionEventLen < 0x0000
+                || maxConnectionEventLen > 0xFFFF) {
+            throw new IllegalArgumentException("maxConnectionEventLen not within valid range");
+        }
+
+        if (minConnectionInterval > maxConnectionInterval) {
+            throw new IllegalArgumentException(
+                    "minConnectionInterval is greater than maxConnectionInterval");
+        }
+
+        if (minConnectionEventLen > maxConnectionEventLen) {
+            throw new IllegalArgumentException(
+                    "minConnectionEventLen is greater than maxConnectionEventLen");
+        }
 
         try {
             mService.leConnectionUpdate(mClientIf, mDevice.getAddress(),
