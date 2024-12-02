@@ -6599,4 +6599,8 @@
 
     <!-- Whether the system uses auto-suspend mode. -->
     <bool name="config_useAutoSuspend">true</bool>
+
+    <!-- List of protected packages that require biometric authentication for modification
+         (Disable, force-stop or uninstalling updates). -->
+    <string-array name="config_biometric_protected_package_names" translatable="false" />
 </resources>
