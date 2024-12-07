@@ -3272,6 +3272,22 @@ public class ActivityManagerService extends IActivityManager.Stub
         }
     }
 
+    /**
+     * Enforces that the uid of the caller matches the uid of the package.
+     *
+     * @param packageName the name of the package to match uid against.
+     * @param callingUid the uid of the caller.
+     * @throws SecurityException if the calling uid doesn't match uid of the package.
+     */
+    private void enforceCallingPackage(String packageName, int callingUid) {
+        final int userId = UserHandle.getUserId(callingUid);
+        final int packageUid = getPackageManagerInternalLocked().getPackageUid(packageName,
+                /*flags=*/ 0, userId);
+        if (packageUid != callingUid) {
+            throw new SecurityException(packageName + " does not belong to uid " + callingUid);
+        }
+    }
+
     @Override
     public void setPackageScreenCompatMode(String packageName, int mode) {
         mActivityTaskManager.setPackageScreenCompatMode(packageName, mode);
@@ -4363,8 +4379,20 @@ public class ActivityManagerService extends IActivityManager.Stub
             Slog.w(TAG, msg);
             throw new SecurityException(msg);
         }
+        final int callingUid = Binder.getCallingUid();
+        final int callingPid = Binder.getCallingPid();
+        final int callingAppId = UserHandle.getAppId(callingUid);
 
-        userId = mUserController.handleIncomingUser(Binder.getCallingPid(), Binder.getCallingUid(),
+        ProcessRecord proc;
+        synchronized (mPidsSelfLocked) {
+            proc = mPidsSelfLocked.get(callingPid);
+        }
+        final boolean hasKillAllPermission = PERMISSION_GRANTED == checkPermission(
+                android.Manifest.permission.FORCE_STOP_PACKAGES, callingPid, callingUid)
+                || UserHandle.isCore(callingUid)
+                || (proc != null && proc.info.isSystemApp());
+
+        userId = mUserController.handleIncomingUser(callingPid, callingUid,
                 userId, true, ALLOW_FULL_ONLY, "killBackgroundProcesses", null);
         final int[] userIds = mUserController.expandUserId(userId);
 
@@ -4379,7 +4407,7 @@ public class ActivityManagerService extends IActivityManager.Stub
                                     targetUserId));
                 } catch (RemoteException e) {
                 }
-                if (appId == -1) {
+                if (appId == -1 || (!hasKillAllPermission && appId != callingAppId)) {
                     Slog.w(TAG, "Invalid packageName: " + packageName);
                     return;
                 }
@@ -4403,6 +4431,22 @@ public class ActivityManagerService extends IActivityManager.Stub
                     + " requires " + android.Manifest.permission.KILL_BACKGROUND_PROCESSES;
             Slog.w(TAG, msg);
             throw new SecurityException(msg);
+        }
+
+        final int callingUid = Binder.getCallingUid();
+        final int callingPid = Binder.getCallingPid();
+
+        ProcessRecord proc;
+        synchronized (mPidsSelfLocked) {
+            proc = mPidsSelfLocked.get(callingPid);
+        }
+        if (callingUid >= FIRST_APPLICATION_UID
+                && (proc == null || !proc.info.isSystemApp())) {
+            final String msg = "Permission Denial: killAllBackgroundProcesses() from pid="
+                    + callingPid + ", uid=" + callingUid + " is not allowed";
+            Slog.w(TAG, msg);
+            // Silently return to avoid existing apps from crashing.
+            return;
         }
 
         final long callingId = Binder.clearCallingIdentity();
@@ -15422,13 +15466,16 @@ public class ActivityManagerService extends IActivityManager.Stub
     // A backup agent has just come up
     @Override
     public void backupAgentCreated(String agentPackageName, IBinder agent, int userId) {
+        final int callingUid = Binder.getCallingUid();
+        enforceCallingPackage(agentPackageName, callingUid);
+
         // Resolve the target user id and enforce permissions.
-        userId = mUserController.handleIncomingUser(Binder.getCallingPid(), Binder.getCallingUid(),
+        userId = mUserController.handleIncomingUser(Binder.getCallingPid(), callingUid,
                 userId, /* allowAll */ false, ALLOW_FULL_ONLY, "backupAgentCreated", null);
         if (DEBUG_BACKUP) {
             Slog.v(TAG_BACKUP, "backupAgentCreated: " + agentPackageName + " = " + agent
                     + " callingUserId = " + UserHandle.getCallingUserId() + " userId = " + userId
-                    + " callingUid = " + Binder.getCallingUid() + " uid = " + Process.myUid());
+                    + " callingUid = " + callingUid + " uid = " + Process.myUid());
         }
 
         synchronized(this) {
