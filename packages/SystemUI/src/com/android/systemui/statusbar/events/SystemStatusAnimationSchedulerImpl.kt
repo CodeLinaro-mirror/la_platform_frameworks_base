@@ -187,7 +187,9 @@ constructor(
         if (animationState.value == ANIMATING_OUT) {
             coroutineScope.launch {
                 withTimeout(DISAPPEAR_ANIMATION_DURATION) {
-                    animationState.first { it == SHOWING_PERSISTENT_DOT || it == ANIMATION_QUEUED }
+                    animationState.first {
+                        it == SHOWING_PERSISTENT_DOT || it == IDLE || it == ANIMATION_QUEUED
+                    }
                     notifyHidePersistentDot()
                 }
             }
