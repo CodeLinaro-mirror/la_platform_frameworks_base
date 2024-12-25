@@ -218,7 +218,7 @@ public class LockTaskControllerTest {
         mLockTaskController.startLockTaskMode(tr, false, TEST_UID);
 
         // THEN a pinning request should be shown
-        verify(mStatusBarManagerInternal).showScreenPinningRequest(anyInt());
+        verify(mStatusBarManagerInternal).showScreenPinningRequest(anyInt(), anyInt());
     }
 
     @Test
