@@ -359,6 +359,7 @@ public class DevicePolicyManagerServiceMigrationTest extends DpmTestBase {
         // Check that default restrictions were applied.
         DpmTestUtils.assertRestrictions(
                 DpmTestUtils.newRestrictions(
+                        UserManager.DISALLOW_DEBUGGING_FEATURES,
                         UserManager.DISALLOW_INSTALL_UNKNOWN_SOURCES,
                         UserManager.DISALLOW_BLUETOOTH_SHARING
                 ),
@@ -366,8 +367,9 @@ public class DevicePolicyManagerServiceMigrationTest extends DpmTestBase {
 
         final Set<String> alreadySet =
                 dpms.getProfileOwnerAdminLocked(10).defaultEnabledRestrictionsAlreadySet;
-        assertThat(alreadySet).hasSize(1);
+        assertThat(alreadySet).hasSize(2);
         assertThat(alreadySet.contains(UserManager.DISALLOW_BLUETOOTH_SHARING)).isTrue();
+        assertThat(alreadySet.contains(UserManager.DISALLOW_DEBUGGING_FEATURES)).isTrue();
     }
 
     @SmallTest
