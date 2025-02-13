@@ -33,6 +33,7 @@ import com.android.systemui.statusbar.policy.KeyguardStateController
 import com.android.systemui.util.TraceUtils
 import com.android.systemui.util.settings.GlobalSettings
 import javax.inject.Inject
+import android.util.Log
 
 /**
  * When to show the keyguard (AOD) view. This should be once the light reveal scrim is barely
@@ -346,6 +347,14 @@ class UnlockedScreenOffAnimationController @Inject constructor(
         // animate in the keyguard AOD UI sideways or upside down.
         if (!keyguardStateController.isKeyguardScreenRotationAllowed &&
             context.display.rotation != Surface.ROTATION_0) {
+            // Adapt for lefty mode
+            val settingVal: Int = Settings.System.getInt(
+                context.contentResolver, "offload_lefty_mode", 0)
+            val isLeftyMode: Boolean = (settingVal % 2 != 0)
+            if ((context.display.rotation == Surface.ROTATION_180) && isLeftyMode) {
+                Log.w("UnlockedScreenOffAnimationController", "It's lefty mode, return true here")
+                return true
+            }
             return false
         }
 
