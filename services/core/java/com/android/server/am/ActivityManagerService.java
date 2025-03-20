@@ -12717,8 +12717,8 @@ public class ActivityManagerService extends IActivityManager.Stub
                 proto.write(ProcessOomProto.Detail.HAS_ABOVE_CLIENT, r.hasAboveClient);
 
                 if (r.setProcState >= ActivityManager.PROCESS_STATE_SERVICE) {
-                    if (r.lastCpuTime != 0) {
-                        long uptimeSince = curUptime - service.mLastPowerCheckUptime;
+                    long uptimeSince = curUptime - service.mLastPowerCheckUptime;
+                    if (r.lastCpuTime != 0 && uptimeSince > 0) {
                         long timeUsed = r.curCpuTime - r.lastCpuTime;
                         long cpuTimeToken = proto.start(ProcessOomProto.Detail.SERVICE_RUN_TIME);
                         proto.write(ProcessOomProto.Detail.CpuRunTime.OVER_MS, uptimeSince);
@@ -12850,7 +12850,7 @@ public class ActivityManagerService extends IActivityManager.Stub
                 pw.print(" hasAboveClient="); pw.println(r.hasAboveClient);
 
                 if (r.setProcState >= ActivityManager.PROCESS_STATE_SERVICE) {
-                    if (r.lastCpuTime != 0) {
+                    if (r.lastCpuTime != 0 && uptimeSince > 0) {
                         long timeUsed = r.curCpuTime - r.lastCpuTime;
                         pw.print(prefix);
                         pw.print("    ");
@@ -17790,7 +17790,7 @@ public class ActivityManagerService extends IActivityManager.Stub
                     continue;
                 }
                 long cputimeUsed = app.curCpuTime - app.lastCpuTime;
-                if (DEBUG_POWER) {
+                if (DEBUG_POWER && (uptimeSince > 0)) {
                     StringBuilder sb = new StringBuilder(128);
                     sb.append("CPU for ");
                     app.toShortString(sb);
