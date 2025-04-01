@@ -30,6 +30,7 @@ import android.os.UserHandle;
 import android.telephony.TelephonyManager;
 import android.util.Log;
 
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
@@ -187,19 +188,19 @@ public class BluetoothEventManager {
         return deviceAdded;
     }
 
-    void dispatchDeviceAdded(CachedBluetoothDevice cachedDevice) {
+    void dispatchDeviceAdded(@NonNull CachedBluetoothDevice cachedDevice) {
         for (BluetoothCallback callback : mCallbacks) {
             callback.onDeviceAdded(cachedDevice);
         }
     }
 
-    void dispatchDeviceRemoved(CachedBluetoothDevice cachedDevice) {
+    void dispatchDeviceRemoved(@NonNull CachedBluetoothDevice cachedDevice) {
         for (BluetoothCallback callback : mCallbacks) {
             callback.onDeviceDeleted(cachedDevice);
         }
     }
 
-    void dispatchProfileConnectionStateChanged(CachedBluetoothDevice device, int state,
+    void dispatchProfileConnectionStateChanged(@NonNull CachedBluetoothDevice device, int state,
             int bluetoothProfile) {
         for (BluetoothCallback callback : mCallbacks) {
             callback.onProfileConnectionStateChanged(device, state, bluetoothProfile);
@@ -222,7 +223,8 @@ public class BluetoothEventManager {
     }
 
     @VisibleForTesting
-    void dispatchActiveDeviceChanged(CachedBluetoothDevice activeDevice,
+    void dispatchActiveDeviceChanged(
+            @Nullable CachedBluetoothDevice activeDevice,
             int bluetoothProfile) {
         for (CachedBluetoothDevice cachedDevice : mDeviceManager.getCachedDevicesCopy()) {
             boolean isActive = Objects.equals(cachedDevice, activeDevice);
@@ -233,7 +235,7 @@ public class BluetoothEventManager {
         }
     }
 
-    private void dispatchAclStateChanged(CachedBluetoothDevice activeDevice, int state) {
+    private void dispatchAclStateChanged(@NonNull CachedBluetoothDevice activeDevice, int state) {
         for (BluetoothCallback callback : mCallbacks) {
             callback.onAclConnectionStateChanged(activeDevice, state);
         }
@@ -432,6 +434,7 @@ public class BluetoothEventManager {
                 Log.w(TAG, "ActiveDeviceChangedHandler: action is null");
                 return;
             }
+            @Nullable
             CachedBluetoothDevice activeDevice = mDeviceManager.findDevice(device);
             int bluetoothProfile = 0;
             if (Objects.equals(action, BluetoothA2dp.ACTION_ACTIVE_DEVICE_CHANGED)) {
