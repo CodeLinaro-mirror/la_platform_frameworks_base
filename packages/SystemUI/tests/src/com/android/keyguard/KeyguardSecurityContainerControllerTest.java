@@ -209,7 +209,7 @@ public class KeyguardSecurityContainerControllerTest extends SysuiTestCase {
                 mConfigurationController, mFalsingCollector, mFalsingManager,
                 mUserSwitcherController, mFeatureFlags, mGlobalSettings,
                 mSessionTracker, Optional.of(mSideFpsController), mFalsingA11yDelegate,
-                mTelephonyManager, mViewMediatorCallback, mAudioManager, mock(DeviceprovisionedController.class);
+                mTelephonyManager, mViewMediatorCallback, mAudioManager, mock(DeviceProvisionedController.class));
     }
 
     @Test
