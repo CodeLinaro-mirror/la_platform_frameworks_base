@@ -2825,9 +2825,7 @@ public class Notification implements Parcelable
                     }
                 }
             }
-        }
 
-        if (isStyle(MessagingStyle.class) && extras != null) {
             // Extras for MessagingStyle. We visit them even if not isStyle(MessagingStyle), since
             // Notification Listeners might use directly (without the isStyle check).
             final Person person = extras.getParcelable(EXTRA_MESSAGING_PERSON);
