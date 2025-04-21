@@ -5243,7 +5243,7 @@ public final class Parcel {
 
     private void readArrayMapInternal(@NonNull ArrayMap<? super String, Object> outVal,
             int size, @Nullable ClassLoader loader) {
-        readArrayMap(outVal, size, /* sorted */ true, /* lazy */ false, loader);
+        readArrayMap(outVal, size, /* sorted */ true, /* lazy */ false, loader, null);
     }
 
     /**
@@ -5253,17 +5253,16 @@ public final class Parcel {
      * @param lazy   Whether to populate the map with lazy {@link Supplier} objects for
      *               length-prefixed values. See {@link Parcel#readLazyValue(ClassLoader)} for more
      *               details.
-     * @return whether the parcel can be recycled or not.
+     * @param lazyValueCount number of lazy values added here
      * @hide
      */
-    boolean readArrayMap(ArrayMap<? super String, Object> map, int size, boolean sorted,
-            boolean lazy, @Nullable ClassLoader loader) {
-        boolean recycle = true;
+    void readArrayMap(ArrayMap<? super String, Object> map, int size, boolean sorted,
+            boolean lazy, @Nullable ClassLoader loader, int[] lazyValueCount) {
         while (size > 0) {
             String key = readString();
             Object value = (lazy) ? readLazyValue(loader) : readValue(loader);
             if (value instanceof LazyValue) {
-                recycle = false;
+                lazyValueCount[0]++;
             }
             if (sorted) {
                 map.append(key, value);
@@ -5275,7 +5274,6 @@ public final class Parcel {
         if (sorted) {
             map.validate();
         }
-        return recycle;
     }
 
     /**
