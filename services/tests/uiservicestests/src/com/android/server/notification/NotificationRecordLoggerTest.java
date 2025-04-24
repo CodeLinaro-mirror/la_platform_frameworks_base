@@ -30,6 +30,15 @@ import static com.android.server.notification.NotificationRecordLogger.Notificat
 import static com.android.server.notification.NotificationRecordLogger.NotificationReportedEvent.NOTIFICATION_UPDATED;
 import static com.google.common.truth.Truth.assertThat;
 
+import static android.service.notification.NotificationListenerService.REASON_CANCEL;
+import static android.service.notification.NotificationListenerService.REASON_GROUP_SUMMARY_CANCELED;
+import static android.service.notification.NotificationStats.DISMISSAL_BUBBLE;
+import static android.service.notification.NotificationStats.DISMISSAL_OTHER;
+
+import static com.android.server.notification.NotificationRecordLogger.NotificationCancelledEvent.NOTIFICATION_CANCEL_CLICK;
+import static com.android.server.notification.NotificationRecordLogger.NotificationCancelledEvent.NOTIFICATION_CANCEL_GROUP_SUMMARY_CANCELED;
+import static com.android.server.notification.NotificationRecordLogger.NotificationCancelledEvent.NOTIFICATION_CANCEL_USER_OTHER;
+
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
