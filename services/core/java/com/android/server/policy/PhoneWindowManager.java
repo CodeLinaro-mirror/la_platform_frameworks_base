@@ -2831,7 +2831,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                 }
                 break;
             case KeyEvent.KEYCODE_I:
-                if (down && event.isMetaPressed() && isUserSetupComplete() && !keyguardOn) {
+                if (down && event.isMetaPressed()) {
                     showSystemSettings();
                     return key_consumed;
                 }
