@@ -1888,10 +1888,11 @@ public class DevicePolicyManagerService extends BaseIDevicePolicyManager {
     }
 
     private Owners makeOwners(Injector injector, PolicyPathProvider pathProvider) {
-        return new Owners(injector.getUserManager(), injector.getUserManagerInternal(),
+        return new Owners(
+                injector.getUserManager(), injector.getUserManagerInternal(),
                 injector.getPackageManagerInternal(),
                 injector.getActivityTaskManagerInternal(),
-                injector.getActivityManagerInternal(), pathProvider);
+                injector.getActivityManagerInternal(), mStateCache, pathProvider);
     }
 
     /**
@@ -13113,7 +13114,7 @@ public class DevicePolicyManagerService extends BaseIDevicePolicyManager {
             CallerIdentity caller = new CallerIdentity(callerUid, null, null);
             if (isUserAffiliatedWithDevice(UserHandle.getUserId(callerUid))
                     && (isActiveProfileOwner(callerUid)
-                        || isDefaultDeviceOwner(caller) || isFinancedDeviceOwner(caller))) {
+                    || isDefaultDeviceOwner(caller) || isFinancedDeviceOwner(caller))) {
                 // device owner or a profile owner affiliated with the device owner
                 return true;
             }
@@ -13410,6 +13411,11 @@ public class DevicePolicyManagerService extends BaseIDevicePolicyManager {
             return getDefaultCrossProfilePackages().contains(packageName)
                     ? AppOpsManager.MODE_ALLOWED
                     : AppOpsManager.opToDefaultMode(AppOpsManager.OP_INTERACT_ACROSS_PROFILES);
+        }
+
+        @Override
+        public boolean isUserOrganizationManaged(@UserIdInt int userHandle) {
+            return getDeviceStateCache().isUserOrganizationManaged(userHandle);
         }
     }
 
@@ -14244,7 +14250,7 @@ public class DevicePolicyManagerService extends BaseIDevicePolicyManager {
             // Bail out if we are trying to provision a work profile but one already exists.
             if (!mUserManager.canAddMoreManagedProfiles(
                     callingUserId, /* allowedToRemoveOne= */ false)) {
-                Slogf.i(LOG_TAG, "A work profile already exists.");
+                Slogf.i(LOG_TAG, "Cannot add more managed profiles.");
                 return STATUS_CANNOT_ADD_MANAGED_PROFILE;
             }
         } finally {
