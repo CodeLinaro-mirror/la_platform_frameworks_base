@@ -106,6 +106,8 @@ import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
+import com.android.qcomfeatureconfig.QcomLowRamConfig;
+
 /**
  * Provides access to the system wallpaper. With WallpaperManager, you can
  * get the current wallpaper, get the desired dimensions for the wallpaper, set
@@ -2522,6 +2524,12 @@ public class WallpaperManager {
      * @hide
      */
     public boolean lockScreenWallpaperExists() {
+        if (QcomLowRamConfig.TARGET_QCOM_IOT_LOW_RAM) {
+            if (sGlobals == null) {
+                Log.w(TAG, "WallpaperService not enabled");
+                return false;
+            }
+        }
         if (sGlobals.mService == null) {
             Log.w(TAG, "WallpaperService not running");
             throw new RuntimeException(new DeadSystemException());
