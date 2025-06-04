@@ -31,6 +31,7 @@ public abstract class StartingData {
      * {@link android.view.WindowManager.LayoutParams#SOFT_INPUT_IS_FORWARD_NAVIGATION}.
      */
     boolean mIsTransitionForward;
+    boolean mRemoveAfterTransition;
 
     /**
      * Non-null if the starting window should cover the bounds of associated task. It is assigned
