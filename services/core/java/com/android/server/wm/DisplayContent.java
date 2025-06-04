@@ -6021,6 +6021,13 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
         return (flags & FLAG_CAN_SHOW_WITH_INSECURE_KEYGUARD) != 0;
     }
 
+    /**
+     * @return whether keyguard is locked for this display
+     */
+    boolean isKeyguardLocked() {
+        return mRootWindowContainer.mTaskSupervisor.getKeyguardController().isKeyguardLocked();
+    }
+
     @VisibleForTesting
     void removeAllTasks() {
         forAllTasks((t) -> { t.getRootTask().removeChild(t, "removeAllTasks"); });
