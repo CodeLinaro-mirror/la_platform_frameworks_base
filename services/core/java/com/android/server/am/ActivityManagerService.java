@@ -5170,8 +5170,12 @@ public class ActivityManagerService extends IActivityManager.Stub
                         public void performReceive(Intent intent, int resultCode,
                                 String data, Bundle extras, boolean ordered,
                                 boolean sticky, int sendingUser) {
+                            mHandler.postDelayed(() -> {
+                                synchronized (mProcLock) {
+                                    mOomAdjuster.mCachedAppOptimizer.compactAllSystem();
+                                }
+                            }, mConstants.COMPACTION_DELAY_MS);
                             synchronized (mProcLock) {
-                                mOomAdjuster.mCachedAppOptimizer.compactAllSystem();
                                 mAppProfiler.requestPssAllProcsLPr(
                                         SystemClock.uptimeMillis(), true, false);
                             }
