@@ -51,6 +51,7 @@ import android.util.Slog;
 import com.android.internal.annotations.GuardedBy;
 
 import dalvik.annotation.optimization.NeverCompile;
+import com.android.qcomfeatureconfig.QcomLowRamConfig;
 
 import java.io.PrintWriter;
 import java.util.Arrays;
@@ -156,7 +157,12 @@ final class ActivityManagerConstants extends ContentObserver {
     static final String KEY_TIERED_CACHED_ADJ_DECAY_TIME = "tiered_cached_adj_decay_time";
     static final String KEY_USE_MODERN_TRIM = "use_modern_trim";
 
-    private static int DEFAULT_MAX_CACHED_PROCESSES = 1024;
+    private static int DEFAULT_MAX_CACHED_PROCESSES;
+
+    static {
+        DEFAULT_MAX_CACHED_PROCESSES = QcomLowRamConfig.TARGET_QCOM_IOT_LOW_RAM ? 10 : 1024;
+    }
+
     private static final boolean DEFAULT_PRIORITIZE_ALARM_BROADCASTS = true;
     private static final long DEFAULT_FGSERVICE_MIN_SHOWN_TIME = 2*1000;
     private static final long DEFAULT_FGSERVICE_MIN_REPORT_TIME = 3*1000;
