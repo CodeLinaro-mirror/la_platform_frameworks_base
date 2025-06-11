@@ -80,6 +80,8 @@ import java.util.stream.Collectors;
 
 import javax.inject.Inject;
 
+import com.android.qcomfeatureconfig.QcomLowRamConfig;
+
 /**
  * Encapsulates all logic for the notification shade window state management.
  */
@@ -313,6 +315,10 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
         } else {
             mLpChanged.flags &= ~LayoutParams.FLAG_SHOW_WALLPAPER;
         }
+
+        if (QcomLowRamConfig.TARGET_QCOM_IOT_LOW_RAM) {
+            mLpChanged.flags &= ~LayoutParams.FLAG_SHOW_WALLPAPER;
+	}
 
         if (state.dozing) {
             mLpChanged.privateFlags |= LayoutParams.SYSTEM_FLAG_HIDE_NON_SYSTEM_OVERLAY_WINDOWS;

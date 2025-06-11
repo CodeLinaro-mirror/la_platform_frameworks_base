@@ -435,6 +435,7 @@ java_defaults {
         "audiopolicy-aidl-java",
         "sounddose-aidl-java",
         "modules-utils-expresslog",
+        "qcomFeatureConfigLib",
     ],
 }
 
