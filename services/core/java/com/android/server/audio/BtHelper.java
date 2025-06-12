@@ -274,7 +274,8 @@ public class BtHelper {
     /*package*/ synchronized @AudioSystem.AudioFormatNativeEnumForBtCodec int getA2dpCodec(
             @NonNull BluetoothDevice device) {
         if (mA2dp == null) {
-            return AudioSystem.AUDIO_FORMAT_DEFAULT;
+            Log.e(TAG, "mA2DP is null, returning SBC format " + device);
+            return AudioSystem.AUDIO_FORMAT_SBC;
         }
         BluetoothCodecStatus btCodecStatus = null;
         try {
