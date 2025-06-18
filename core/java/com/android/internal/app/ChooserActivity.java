@@ -1315,8 +1315,8 @@ public class ChooserActivity extends ResolverActivity implements
                             SELECTION_TYPE_EDIT,
                             "",
                             -1);
-                    // Action bar is user-independent, always start as primary
-                    safelyStartActivityAsUser(ti, getPersonalProfileUserHandle());
+                    // Action bar is user-independent, always start as the launching user
+                    safelyStartActivityAsUser(ti, UserHandle.of(UserHandle.myUserId()));
                     finish();
                 }
         );
