@@ -14299,6 +14299,11 @@ public class BatteryStatsImpl extends BatteryStats {
                         // discharging.
                         changed |= setChargingLocked(false);
                     }
+                    if (plugType == BATTERY_PLUGGED_NONE &&
+                            status == BatteryManager.BATTERY_STATUS_UNKNOWN && level == 0) {
+                        Slog.d(TAG, "No battery and charger present: charging state false");
+                        changed |= setChargingLocked(false);
+                    }
                 }
                 if (mLastChargeStepLevel != level && mMaxChargeStepLevel < level) {
                     mChargeStepTracker.addLevelSteps(level - mLastChargeStepLevel,
