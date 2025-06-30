@@ -4952,4 +4952,8 @@
   <java-symbol type="bool" name="config_lockscreenWeatherEnabledByDefault" />
 
   <java-symbol type="integer" name="config_maximumDelayTimeToDeactivateDataCall" />
+
+  <!-- List of protected packages that require biometric authentication for modification -->
+  <java-symbol type="array" name="config_biometric_protected_package_names" />
+
 </resources>
