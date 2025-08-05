@@ -2943,7 +2943,7 @@ public final class ActivityRecord extends WindowToken implements WindowManagerSe
         reparent(newTaskFrag, position);
     }
 
-    private boolean isHomeIntent(Intent intent) {
+    static boolean isHomeIntent(Intent intent) {
         return ACTION_MAIN.equals(intent.getAction())
                 && (intent.hasCategory(CATEGORY_HOME)
                 || intent.hasCategory(CATEGORY_SECONDARY_HOME))
