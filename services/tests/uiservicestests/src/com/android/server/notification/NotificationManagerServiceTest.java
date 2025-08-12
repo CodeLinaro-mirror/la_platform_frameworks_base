@@ -3773,7 +3773,42 @@ public class NotificationManagerServiceTest extends UiServiceTestCase {
 
         doThrow(new SecurityException("no access")).when(mUgmInternal)
                 .checkGrantUriPermission(eq(Process.myUid()), any(), eq(soundUri),
-                    anyInt(), eq(Process.myUserHandle().getIdentifier()));
+                anyInt(), eq(Process.myUserHandle().getIdentifier()));
+
+        mBinderService.updateNotificationChannelFromPrivilegedListener(
+                null, mPkg, Process.myUserHandle(), updatedNotificationChannel);
+
+        verify(mPreferencesHelper, times(1)).updateNotificationChannel(
+                anyString(), anyInt(), any(), anyBoolean(),  anyInt(), anyBoolean());
+
+        verify(mListeners, never()).notifyNotificationChannelChanged(eq(mPkg),
+                eq(Process.myUserHandle()), eq(mTestNotificationChannel),
+                eq(NotificationListenerService.NOTIFICATION_CHANNEL_OR_GROUP_UPDATED));
+    }
+
+    @Test
+    public void
+        testUpdateNotificationChannelFromPrivilegedListener_oldSoundNoUriPerm_newSoundHasUriPerm()
+            throws Exception {
+        mService.setPreferencesHelper(mPreferencesHelper);
+        when(mCompanionMgr.getAssociations(mPkg, mUserId))
+                .thenReturn(singletonList(mock(AssociationInfo.class)));
+        when(mPreferencesHelper.getNotificationChannel(eq(mPkg), anyInt(),
+                eq(mTestNotificationChannel.getId()), anyBoolean()))
+                .thenReturn(mTestNotificationChannel);
+
+        // Missing Uri permissions for the old channel sound
+        final Uri oldSoundUri = Settings.System.DEFAULT_NOTIFICATION_URI;
+        doThrow(new SecurityException("no access")).when(mUgmInternal)
+                .checkGrantUriPermission(eq(Process.myUid()), any(), eq(oldSoundUri),
+                anyInt(), eq(Process.myUserHandle().getIdentifier()));
+
+        // Has Uri permissions for the old channel sound
+        final Uri newSoundUri = Uri.parse("content://media/test/sound/uri");
+        final NotificationChannel updatedNotificationChannel = new NotificationChannel(
+                TEST_CHANNEL_ID, TEST_CHANNEL_ID, IMPORTANCE_DEFAULT);
+        updatedNotificationChannel.setSound(newSoundUri,
+                updatedNotificationChannel.getAudioAttributes());
 
         mBinderService.updateNotificationChannelFromPrivilegedListener(
                 null, PKG, Process.myUserHandle(), updatedNotificationChannel);
@@ -12359,9 +12394,436 @@ public class NotificationManagerServiceTest extends UiServiceTestCase {
     }
 
     @Test
+    public void enqueue_updatesEnqueueRate() throws Exception {
+        Notification n = generateNotificationRecord(null).getNotification();
+
+        mBinderService.enqueueNotificationWithTag(PKG, PKG, "tag", 0, n, mUserId);
+        // Don't waitForIdle() here. We want to verify the "intermediate" state.
+
+        verify(mUsageStats).registerEnqueuedByApp(eq(PKG));
+        verify(mUsageStats).registerEnqueuedByAppAndAccepted(eq(PKG));
+        verify(mUsageStats, never()).registerPostedByApp(any());
+
+        waitForIdle();
+    }
+
+    @Test
+    public void enqueue_withPost_updatesEnqueueRateAndPost() throws Exception {
+        Notification n = generateNotificationRecord(null).getNotification();
+
+        mBinderService.enqueueNotificationWithTag(PKG, PKG, "tag", 0, n, mUserId);
+        waitForIdle();
+
+        verify(mUsageStats).registerEnqueuedByApp(eq(PKG));
+        verify(mUsageStats).registerEnqueuedByAppAndAccepted(eq(PKG));
+        verify(mUsageStats).registerPostedByApp(any());
+    }
+
+    @Test
+    public void enqueueNew_whenOverEnqueueRate_accepts() throws Exception {
+        Notification n = generateNotificationRecord(null).getNotification();
+        when(mUsageStats.getAppEnqueueRate(eq(PKG)))
+                .thenReturn(DEFAULT_MAX_NOTIFICATION_ENQUEUE_RATE + 1f);
+
+        mBinderService.enqueueNotificationWithTag(PKG, PKG, "tag", 0, n, mUserId);
+        waitForIdle();
+
+        assertThat(mService.mNotificationsByKey).hasSize(1);
+        verify(mUsageStats).registerEnqueuedByApp(eq(PKG));
+        verify(mUsageStats).registerEnqueuedByAppAndAccepted(eq(PKG));
+        verify(mUsageStats).registerPostedByApp(any());
+    }
+
+    @Test
+    public void enqueueUpdate_whenBelowMaxEnqueueRate_accepts() throws Exception {
+        // Post the first version.
+        Notification original = generateNotificationRecord(null).getNotification();
+        original.when = 111;
+        mBinderService.enqueueNotificationWithTag(PKG, PKG, "tag", 0, original, mUserId);
+        waitForIdle();
+        assertThat(mService.mNotificationList).hasSize(1);
+        assertThat(mService.mNotificationList.get(0).getNotification().when).isEqualTo(111);
+
+        reset(mUsageStats);
+        when(mUsageStats.getAppEnqueueRate(eq(PKG)))
+                .thenReturn(DEFAULT_MAX_NOTIFICATION_ENQUEUE_RATE - 1f);
+
+        // Post the update.
+        Notification update = generateNotificationRecord(null).getNotification();
+        update.when = 222;
+        mBinderService.enqueueNotificationWithTag(PKG, PKG, "tag", 0, update, mUserId);
+        waitForIdle();
+
+        verify(mUsageStats).registerEnqueuedByApp(eq(PKG));
+        verify(mUsageStats).registerEnqueuedByAppAndAccepted(eq(PKG));
+        verify(mUsageStats, never()).registerPostedByApp(any());
+        verify(mUsageStats).registerUpdatedByApp(any(), any());
+        assertThat(mService.mNotificationList).hasSize(1);
+        assertThat(mService.mNotificationList.get(0).getNotification().when).isEqualTo(222);
+    }
+
+    @Test
+    public void enqueueUpdate_whenAboveMaxEnqueueRate_rejects() throws Exception {
+        // Post the first version.
+        Notification original = generateNotificationRecord(null).getNotification();
+        original.when = 111;
+        mBinderService.enqueueNotificationWithTag(PKG, PKG, "tag", 0, original, mUserId);
+        waitForIdle();
+        assertThat(mService.mNotificationList).hasSize(1);
+        assertThat(mService.mNotificationList.get(0).getNotification().when).isEqualTo(111);
+
+        reset(mUsageStats);
+        when(mUsageStats.getAppEnqueueRate(eq(PKG)))
+                .thenReturn(DEFAULT_MAX_NOTIFICATION_ENQUEUE_RATE + 1f);
+
+        // Post the update.
+        Notification update = generateNotificationRecord(null).getNotification();
+        update.when = 222;
+        mBinderService.enqueueNotificationWithTag(PKG, PKG, "tag", 0, update, mUserId);
+        waitForIdle();
+
+        verify(mUsageStats).registerEnqueuedByApp(eq(PKG));
+        verify(mUsageStats, never()).registerEnqueuedByAppAndAccepted(any());
+        verify(mUsageStats, never()).registerPostedByApp(any());
+        verify(mUsageStats, never()).registerUpdatedByApp(any(), any());
+        assertThat(mService.mNotificationList).hasSize(1);
+        assertThat(mService.mNotificationList.get(0).getNotification().when).isEqualTo(111); // old
+    }
+
+    @Test
     public void enqueueNotification_acceptsCorrectToken() throws RemoteException {
         Notification sent = new Notification.Builder(mContext, TEST_CHANNEL_ID)
                 .setContentIntent(createPendingIntent("content"))
+                .build();
+        Notification received = parcelAndUnparcel(sent, Notification.CREATOR);
+        assertThat(received.getAllowlistToken()).isEqualTo(
+                NotificationManagerService.ALLOWLIST_TOKEN);
+
+        mBinderService.enqueueNotificationWithTag(mPkg, mPkg, "tag", 1,
+                parcelAndUnparcel(received, Notification.CREATOR), mUserId);
+        waitForIdle();
+
+        assertThat(mService.mNotificationList).hasSize(1);
+        assertThat(mService.mNotificationList.get(0).getNotification().getAllowlistToken())
+                .isEqualTo(NotificationManagerService.ALLOWLIST_TOKEN);
+    }
+
+    @Test
+    public void enqueueNotification_acceptsNullToken_andPopulatesIt() throws RemoteException {
+        Notification receivedWithoutParceling = new Notification.Builder(mContext, TEST_CHANNEL_ID)
+                .setContentIntent(createPendingIntent("content"))
+                .build();
+        assertThat(receivedWithoutParceling.getAllowlistToken()).isNull();
+
+        mBinderService.enqueueNotificationWithTag(mPkg, mPkg, "tag", 1,
+                parcelAndUnparcel(receivedWithoutParceling, Notification.CREATOR), mUserId);
+        waitForIdle();
+
+        assertThat(mService.mNotificationList).hasSize(1);
+        assertThat(mService.mNotificationList.get(0).getNotification().getAllowlistToken())
+                .isEqualTo(NotificationManagerService.ALLOWLIST_TOKEN);
+    }
+
+    @Test
+    public void enqueueNotification_directlyThroughRunnable_populatesAllowlistToken() {
+        Notification receivedWithoutParceling = new Notification.Builder(mContext, TEST_CHANNEL_ID)
+                .setContentIntent(createPendingIntent("content"))
+                .build();
+        NotificationRecord record = new NotificationRecord(
+                mContext,
+                new StatusBarNotification(mPkg, mPkg, 1, "tag", mUid, 44, receivedWithoutParceling,
+                        mUser, "groupKey", 0),
+                mTestNotificationChannel);
+        assertThat(record.getNotification().getAllowlistToken()).isNull();
+
+        mWorkerHandler.post(
+                mService.new EnqueueNotificationRunnable(mUserId, record, false,
+                mPostNotificationTrackerFactory.newTracker(null)));
+        waitForIdle();
+
+        assertThat(mService.mNotificationList).hasSize(1);
+        assertThat(mService.mNotificationList.get(0).getNotification().getAllowlistToken())
+                .isEqualTo(NotificationManagerService.ALLOWLIST_TOKEN);
+    }
+
+    @Test
+    public void enqueueNotification_rejectsOtherToken() throws RemoteException {
+        Notification sent = new Notification.Builder(mContext, TEST_CHANNEL_ID)
+                .setContentIntent(createPendingIntent("content"))
+                .build();
+        sent.overrideAllowlistToken(new Binder());
+        Notification received = parcelAndUnparcel(sent, Notification.CREATOR);
+        assertThat(received.getAllowlistToken()).isEqualTo(sent.getAllowlistToken());
+
+        assertThrows(SecurityException.class, () ->
+                mBinderService.enqueueNotificationWithTag(mPkg, mPkg, "tag", 1,
+                        parcelAndUnparcel(received, Notification.CREATOR), mUserId));
+        waitForIdle();
+
+        assertThat(mService.mNotificationList).isEmpty();
+    }
+
+    @Test
+    public void enqueueNotification_customParcelingWithFakeInnerToken_hasCorrectTokenInIntents()
+            throws RemoteException {
+        Notification sentFromApp = new Notification.Builder(mContext, TEST_CHANNEL_ID)
+                .setContentIntent(createPendingIntent("content"))
+                .setPublicVersion(new Notification.Builder(mContext, TEST_CHANNEL_ID)
+                        .setContentIntent(createPendingIntent("public"))
+                        .build())
+                .build();
+        sentFromApp.publicVersion.overrideAllowlistToken(new Binder());
+
+        // Instead of using the normal parceling, assume the caller parcels it by hand, including a
+        // null token in the outer notification (as would be expected, and as is verified by
+        // enqueue) but trying to sneak in a different one in the inner notification, hoping it gets
+        // propagated to the PendingIntents.
+        Parcel parcelSentFromApp = Parcel.obtain();
+        writeNotificationToParcelCustom(parcelSentFromApp, sentFromApp, new ArraySet<>(
+                Lists.newArrayList(sentFromApp.contentIntent,
+                        sentFromApp.publicVersion.contentIntent)));
+
+        // Use the unparceling as received in enqueueNotificationWithTag()
+        parcelSentFromApp.setDataPosition(0);
+        Notification receivedByNms = new Notification(parcelSentFromApp);
+
+        // Verify that all the pendingIntents have the correct token.
+        assertThat(receivedByNms.contentIntent.getWhitelistToken()).isEqualTo(
+                NotificationManagerService.ALLOWLIST_TOKEN);
+        assertThat(receivedByNms.publicVersion.contentIntent.getWhitelistToken()).isEqualTo(
+                NotificationManagerService.ALLOWLIST_TOKEN);
+    }
+
+    /**
+     * Replicates the behavior of {@link Notification#writeToParcel} but excluding the
+     * "always use the same allowlist token as the root notification" parts.
+     */
+    private static void writeNotificationToParcelCustom(Parcel parcel, Notification notif,
+            ArraySet<PendingIntent> allPendingIntents) {
+        int flags = 0;
+        parcel.writeInt(1); // version?
+
+        parcel.writeStrongBinder(notif.getAllowlistToken());
+        parcel.writeLong(notif.when);
+        parcel.writeLong(1234L); // notif.creationTime is private
+        if (notif.getSmallIcon() != null) {
+            parcel.writeInt(1);
+            notif.getSmallIcon().writeToParcel(parcel, 0);
+        } else {
+            parcel.writeInt(0);
+        }
+        parcel.writeInt(notif.number);
+        if (notif.contentIntent != null) {
+            parcel.writeInt(1);
+            notif.contentIntent.writeToParcel(parcel, 0);
+        } else {
+            parcel.writeInt(0);
+        }
+        if (notif.deleteIntent != null) {
+            parcel.writeInt(1);
+            notif.deleteIntent.writeToParcel(parcel, 0);
+        } else {
+            parcel.writeInt(0);
+        }
+        if (notif.tickerText != null) {
+            parcel.writeInt(1);
+            TextUtils.writeToParcel(notif.tickerText, parcel, flags);
+        } else {
+            parcel.writeInt(0);
+        }
+        if (notif.tickerView != null) {
+            parcel.writeInt(1);
+            notif.tickerView.writeToParcel(parcel, 0);
+        } else {
+            parcel.writeInt(0);
+        }
+        if (notif.contentView != null) {
+            parcel.writeInt(1);
+            notif.contentView.writeToParcel(parcel, 0);
+        } else {
+            parcel.writeInt(0);
+        }
+        if (notif.getLargeIcon() != null) {
+            parcel.writeInt(1);
+            notif.getLargeIcon().writeToParcel(parcel, 0);
+        } else {
+            parcel.writeInt(0);
+        }
+
+        parcel.writeInt(notif.defaults);
+        parcel.writeInt(notif.flags);
+
+        if (notif.sound != null) {
+            parcel.writeInt(1);
+            notif.sound.writeToParcel(parcel, 0);
+        } else {
+            parcel.writeInt(0);
+        }
+        parcel.writeInt(notif.audioStreamType);
+
+        if (notif.audioAttributes != null) {
+            parcel.writeInt(1);
+            notif.audioAttributes.writeToParcel(parcel, 0);
+        } else {
+            parcel.writeInt(0);
+        }
+
+        parcel.writeLongArray(notif.vibrate);
+        parcel.writeInt(notif.ledARGB);
+        parcel.writeInt(notif.ledOnMS);
+        parcel.writeInt(notif.ledOffMS);
+        parcel.writeInt(notif.iconLevel);
+
+        if (notif.fullScreenIntent != null) {
+            parcel.writeInt(1);
+            notif.fullScreenIntent.writeToParcel(parcel, 0);
+        } else {
+            parcel.writeInt(0);
+        }
+
+        parcel.writeInt(notif.priority);
+
+        parcel.writeString8(notif.category);
+
+        parcel.writeString8(notif.getGroup());
+
+        parcel.writeString8(notif.getSortKey());
+
+        parcel.writeBundle(notif.extras); // null ok
+
+        parcel.writeTypedArray(notif.actions, 0); // null ok
+
+        if (notif.bigContentView != null) {
+            parcel.writeInt(1);
+            notif.bigContentView.writeToParcel(parcel, 0);
+        } else {
+            parcel.writeInt(0);
+        }
+
+        if (notif.headsUpContentView != null) {
+            parcel.writeInt(1);
+            notif.headsUpContentView.writeToParcel(parcel, 0);
+        } else {
+            parcel.writeInt(0);
+        }
+
+        parcel.writeInt(notif.visibility);
+
+        if (notif.publicVersion != null) {
+            parcel.writeInt(1);
+            writeNotificationToParcelCustom(parcel, notif.publicVersion, new ArraySet<>());
+        } else {
+            parcel.writeInt(0);
+        }
+
+        parcel.writeInt(notif.color);
+
+        if (notif.getChannelId() != null) {
+            parcel.writeInt(1);
+            parcel.writeString8(notif.getChannelId());
+        } else {
+            parcel.writeInt(0);
+        }
+        parcel.writeLong(notif.getTimeoutAfter());
+
+        if (notif.getShortcutId() != null) {
+            parcel.writeInt(1);
+            parcel.writeString8(notif.getShortcutId());
+        } else {
+            parcel.writeInt(0);
+        }
+
+        if (notif.getLocusId() != null) {
+            parcel.writeInt(1);
+            notif.getLocusId().writeToParcel(parcel, 0);
+        } else {
+            parcel.writeInt(0);
+        }
+
+        parcel.writeInt(notif.getBadgeIconType());
+
+        if (notif.getSettingsText() != null) {
+            parcel.writeInt(1);
+            TextUtils.writeToParcel(notif.getSettingsText(), parcel, flags);
+        } else {
+            parcel.writeInt(0);
+        }
+
+        parcel.writeInt(notif.getGroupAlertBehavior());
+
+        if (notif.getBubbleMetadata() != null) {
+            parcel.writeInt(1);
+            notif.getBubbleMetadata().writeToParcel(parcel, 0);
+        } else {
+            parcel.writeInt(0);
+        }
+
+        parcel.writeBoolean(notif.getAllowSystemGeneratedContextualActions());
+
+        parcel.writeInt(Notification.FOREGROUND_SERVICE_DEFAULT); // no getter for mFgsDeferBehavior
+
+        // mUsesStandardHeader is not written because it should be recomputed in listeners
+
+        parcel.writeArraySet(allPendingIntents);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    public void getActiveNotifications_doesNotLeakAllowlistToken() throws RemoteException {
+        Notification sentFromApp = new Notification.Builder(mContext, TEST_CHANNEL_ID)
+                .setContentIntent(createPendingIntent("content"))
+                .setPublicVersion(new Notification.Builder(mContext, TEST_CHANNEL_ID)
+                        .setContentIntent(createPendingIntent("public"))
+                        .build())
+                .extend(new Notification.WearableExtender()
+                        .addPage(new Notification.Builder(mContext, TEST_CHANNEL_ID)
+                                .setContentIntent(createPendingIntent("wearPage"))
+                                .build()))
+                .build();
+        // Binder transition: app -> NMS
+        Notification receivedByNms = parcelAndUnparcel(sentFromApp, Notification.CREATOR);
+        assertThat(receivedByNms.getAllowlistToken()).isEqualTo(
+                NotificationManagerService.ALLOWLIST_TOKEN);
+        mBinderService.enqueueNotificationWithTag(mPkg, mPkg, "tag", 1,
+                parcelAndUnparcel(receivedByNms, Notification.CREATOR), mUserId);
+        waitForIdle();
+        assertThat(mService.mNotificationList).hasSize(1);
+        Notification posted = mService.mNotificationList.get(0).getNotification();
+        assertThat(posted.getAllowlistToken()).isEqualTo(
+                NotificationManagerService.ALLOWLIST_TOKEN);
+        assertThat(posted.contentIntent.getWhitelistToken()).isEqualTo(
+                NotificationManagerService.ALLOWLIST_TOKEN);
+
+        ParceledListSlice<StatusBarNotification> listSentFromNms =
+                mBinderService.getAppActiveNotifications(mPkg, mUserId);
+        // Binder transition: NMS -> app. App doesn't have the allowlist token so clear it
+        // (having a different one would produce the same effect; the relevant thing is to not let
+        // out ALLOWLIST_TOKEN).
+        // Note: for other tests, this is restored by constructing TestableNMS in setup().
+        Notification.processAllowlistToken = null;
+        ParceledListSlice<StatusBarNotification> listReceivedByApp = parcelAndUnparcel(
+                listSentFromNms, ParceledListSlice.CREATOR);
+        Notification gottenBackByApp = listReceivedByApp.getList().get(0).getNotification();
+
+        assertThat(gottenBackByApp.getAllowlistToken()).isNull();
+        assertThat(gottenBackByApp.contentIntent.getWhitelistToken()).isNull();
+        assertThat(gottenBackByApp.publicVersion.getAllowlistToken()).isNull();
+        assertThat(gottenBackByApp.publicVersion.contentIntent.getWhitelistToken()).isNull();
+        assertThat(new Notification.WearableExtender(gottenBackByApp).getPages()
+                .get(0).getAllowlistToken()).isNull();
+        assertThat(new Notification.WearableExtender(gottenBackByApp).getPages()
+                .get(0).contentIntent.getWhitelistToken()).isNull();
+    }
+
+    @Test
+    public void enqueueNotification_allowlistsPendingIntents() throws RemoteException {
+        PendingIntent contentIntent = createPendingIntent("content");
+        PendingIntent actionIntent1 = createPendingIntent("action1");
+        PendingIntent actionIntent2 = createPendingIntent("action2");
+        Notification n = new Notification.Builder(mContext, TEST_CHANNEL_ID)
+                .setContentIntent(contentIntent)
+                .addAction(new Notification.Action.Builder(null, "action1", actionIntent1).build())
+                .addAction(new Notification.Action.Builder(null, "action2", actionIntent2).build())
                 .build();
         Notification received = parcelAndUnparcel(sent, Notification.CREATOR);
         assertThat(received.getAllowlistToken()).isEqualTo(
