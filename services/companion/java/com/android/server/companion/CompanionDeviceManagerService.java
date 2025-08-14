@@ -43,7 +43,6 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.FeatureInfo;
 import android.content.pm.PackageInfo;
-import android.content.pm.PackageItemInfo;
 import android.content.pm.PackageManager;
 import android.net.NetworkPolicyManager;
 import android.os.Binder;
@@ -121,6 +120,7 @@ public class CompanionDeviceManagerService extends SystemService implements Bind
 
     private static final String PREF_FILE_NAME = "companion_device_preferences.xml";
     private static final String PREF_KEY_AUTO_REVOKE_GRANTS_DONE = "auto_revoke_grants_done";
+    private static final int MAX_CN_LENGTH = 500;
 
     private static final String XML_TAG_ASSOCIATIONS = "associations";
     private static final String XML_TAG_ASSOCIATION = "association";
@@ -385,20 +385,15 @@ public class CompanionDeviceManagerService extends SystemService implements Bind
             String callingPackage = component.getPackageName();
             checkCanCallNotificationApi(callingPackage);
             int userId = getCallingUserId();
-            String packageTitle = BidiFormatter.getInstance().unicodeWrap(
-                    getPackageInfo(callingPackage, userId)
-                            .applicationInfo
-                            .loadSafeLabel(getContext().getPackageManager(),
-                                    PackageItemInfo.DEFAULT_MAX_LABEL_SIZE_PX,
-                                    PackageItemInfo.SAFE_LABEL_FLAG_TRIM
-                                            | PackageItemInfo.SAFE_LABEL_FLAG_FIRST_LINE)
-                            .toString());
-            long identity = Binder.clearCallingIdentity();
+            if (component.flattenToString().length() > MAX_CN_LENGTH) {
+                throw new IllegalArgumentException("Component name is too long.");
+            }
+            final long identity = Binder.clearCallingIdentity();
             try {
                 return PendingIntent.getActivity(getContext(),
                         0 /* request code */,
                         NotificationAccessConfirmationActivityContract.launcherIntent(
-                                userId, component, packageTitle),
+                                getContext(), userId, component),
                         PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_ONE_SHOT
                                 | PendingIntent.FLAG_CANCEL_CURRENT);
             } finally {

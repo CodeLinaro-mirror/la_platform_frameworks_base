@@ -1154,7 +1154,7 @@ public class TelecomManager {
         try {
             if (isServiceConnected()) {
                 return getTelecomService().getPhoneAccountsSupportingScheme(uriScheme,
-                        mContext.getOpPackageName());
+                        mContext.getOpPackageName()).getList();
             }
         } catch (RemoteException e) {
             Log.e(TAG, "Error calling ITelecomService#getPhoneAccountsSupportingScheme", e);
@@ -1197,7 +1197,7 @@ public class TelecomManager {
         try {
             if (isServiceConnected()) {
                 return getTelecomService().getSelfManagedPhoneAccounts(mContext.getOpPackageName(),
-                        mContext.getAttributionTag());
+                        mContext.getAttributionTag()).getList();
             }
         } catch (RemoteException e) {
             Log.e(TAG, "Error calling ITelecomService#getSelfManagedPhoneAccounts()", e);
@@ -1223,7 +1223,7 @@ public class TelecomManager {
         try {
             if (isServiceConnected()) {
                 return getTelecomService().getCallCapablePhoneAccounts(includeDisabledAccounts,
-                        mContext.getOpPackageName(), mContext.getAttributionTag());
+                        mContext.getOpPackageName(), mContext.getAttributionTag()).getList();
             }
         } catch (RemoteException e) {
             Log.e(TAG, "Error calling ITelecomService#getCallCapablePhoneAccounts(" +
@@ -1243,7 +1243,8 @@ public class TelecomManager {
     public List<PhoneAccountHandle> getPhoneAccountsForPackage() {
         try {
             if (isServiceConnected()) {
-                return getTelecomService().getPhoneAccountsForPackage(mContext.getPackageName());
+                return getTelecomService()
+                  .getPhoneAccountsForPackage(mContext.getPackageName()).getList();
             }
         } catch (RemoteException e) {
             Log.e(TAG, "Error calling ITelecomService#getPhoneAccountsForPackage", e);
@@ -1297,7 +1298,7 @@ public class TelecomManager {
     public List<PhoneAccount> getAllPhoneAccounts() {
         try {
             if (isServiceConnected()) {
-                return getTelecomService().getAllPhoneAccounts();
+                return getTelecomService().getAllPhoneAccounts().getList();
             }
         } catch (RemoteException e) {
             Log.e(TAG, "Error calling ITelecomService#getAllPhoneAccounts", e);
@@ -1315,7 +1316,7 @@ public class TelecomManager {
     public List<PhoneAccountHandle> getAllPhoneAccountHandles() {
         try {
             if (isServiceConnected()) {
-                return getTelecomService().getAllPhoneAccountHandles();
+                return getTelecomService().getAllPhoneAccountHandles().getList();
             }
         } catch (RemoteException e) {
             Log.e(TAG, "Error calling ITelecomService#getAllPhoneAccountHandles", e);
@@ -1331,9 +1332,14 @@ public class TelecomManager {
      * when placing calls. The user may still need to enable the {@link PhoneAccount} within
      * the phone app settings before the account is usable.
      * <p>
+     * Note: Each package is limited to 10 {@link PhoneAccount} registrations.
+     * <p>
      * A {@link SecurityException} will be thrown if an app tries to register a
      * {@link PhoneAccountHandle} where the package name specified within
      * {@link PhoneAccountHandle#getComponentName()} does not match the package name of the app.
+     * <p>
+     * A {@link IllegalArgumentException} will be thrown if an app tries to register a
+     * {@link PhoneAccount} when the upper bound limit, 10, has already been reached.
      *
      * @param account The complete {@link PhoneAccount}.
      */
