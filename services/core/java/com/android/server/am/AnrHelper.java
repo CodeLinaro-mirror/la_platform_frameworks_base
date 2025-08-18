@@ -125,18 +125,9 @@ class AnrHelper {
              auxiliaryTaskExecutor = mAuxiliaryTaskExecutor;
          }
 
-        Future<File> firstPidDumpPromise = mEarlyDumpExecutor.submit(() -> {
-            // the class AnrLatencyTracker is not generally thread safe but the values
-            // recorded/touched by the Temporary dump thread(s) are all volatile/atomic.
-            File tracesFile = StackTracesDumpHelper.dumpStackTracesTempFile(anrProcess.mPid,
-                    timeoutRecord.mLatencyTracker);
-            mTempDumpedPids.remove(anrProcess.mPid);
-            return tracesFile;
-        });
-
         appNotResponding(new AnrRecord(anrProcess, activityShortComponentName, aInfo,
                    parentShortComponentName, parentProcess, aboveSystem, timeoutRecord,
-                   isContinuousAnr, firstPidDumpPromise));
+                   isContinuousAnr, null));
     }
 
     void deferAppNotResponding(ProcessRecord anrProcess, String activityShortComponentName,
@@ -148,17 +139,9 @@ class AnrHelper {
             auxiliaryTaskExecutor = mAuxiliaryTaskExecutor;
         }
 
-        Future<File> firstPidDumpPromise = mEarlyDumpExecutor.submit(() -> {
-            // the class AnrLatencyTracker is not generally thread safe but the values
-            // recorded/touched by the Temporary dump thread(s) are all volatile/atomic.
-            File tracesFile = StackTracesDumpHelper.dumpStackTracesTempFile(anrProcess.mPid,
-                    timeoutRecord.mLatencyTracker);
-            mTempDumpedPids.remove(anrProcess.mPid);
-            return tracesFile;
-        });
         AnrRecord anrRecord = new AnrRecord(anrProcess, activityShortComponentName, aInfo,
                 parentShortComponentName, parentProcess, aboveSystem, timeoutRecord,
-                isContinuousAnr, firstPidDumpPromise);
+                isContinuousAnr, null);
         Message msg = Message.obtain();
         msg.what = APP_NOT_RESPONDING_DEFER_MSG;
         msg.obj = anrRecord;
@@ -217,7 +200,7 @@ class AnrHelper {
                     mTempDumpedPids.remove(incomingPid);
                     return tracesFile;
                 });
-
+                anrRecord.setFirstPidFilePromise(firstPidDumpPromise);
                 mAnrRecords.add(anrRecord);
             }
             startAnrConsumerIfNeeded();
@@ -326,7 +309,7 @@ class AnrHelper {
         final boolean mAboveSystem;
         final long mTimestamp = SystemClock.uptimeMillis();
         final boolean mIsContinuousAnr;
-        final Future<File> mFirstPidFilePromise;
+        Future<File> mFirstPidFilePromise;
         AnrRecord(ProcessRecord anrProcess, String activityShortComponentName,
                 ApplicationInfo aInfo, String parentShortComponentName,
                 WindowProcessController parentProcess, boolean aboveSystem,
@@ -341,6 +324,10 @@ class AnrHelper {
             mParentProcess = parentProcess;
             mAboveSystem = aboveSystem;
             mIsContinuousAnr = isContinuousAnr;
+            mFirstPidFilePromise = firstPidFilePromise;
+        }
+
+        void setFirstPidFilePromise(Future<File> firstPidFilePromise){
             mFirstPidFilePromise = firstPidFilePromise;
         }
 
