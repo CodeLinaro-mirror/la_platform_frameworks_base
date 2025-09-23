@@ -156,6 +156,7 @@ import android.compat.annotation.ChangeId;
 import android.compat.annotation.EnabledAfter;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
+import android.content.ContentProvider;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.IIntentReceiver;
@@ -11750,7 +11751,14 @@ public class PackageManagerService extends IPackageManager.Stub
             int callingUid) {
         if (!mUserManager.exists(userId)) return null;
         flags = updateFlagsForComponent(flags, userId);
-        final ProviderInfo providerInfo = mComponentResolver.queryProvider(name, flags, userId);
+
+        // Callers of this API may not always separate the userID and authority. Let's parse it
+        // before resolving
+        String authorityWithoutUserId = ContentProvider.getAuthorityWithoutUserId(name);
+        userId = ContentProvider.getUserIdFromAuthority(name, userId);
+
+        final ProviderInfo providerInfo = mComponentResolver.queryProvider(authorityWithoutUserId,
+            flags, userId);
         boolean checkedGrants = false;
         if (providerInfo != null) {
             // Looking for cross-user grants before enforcing the typical cross-users permissions
@@ -16291,6 +16299,9 @@ public class PackageManagerService extends IPackageManager.Stub
                     (installFlags & PackageManager.INSTALL_INSTANT_APP) != 0;
             final boolean fullApp =
                     (installFlags & PackageManager.INSTALL_FULL_APP) != 0;
+            final boolean isPackageDeviceAdmin = isPackageDeviceAdmin(packageName, userId);
+            final boolean isProtectedPackage = mProtectedPackages != null
+                    && mProtectedPackages.isPackageStateProtected(userId, packageName);
 
             // writer
             synchronized (mLock) {
@@ -16298,7 +16309,8 @@ public class PackageManagerService extends IPackageManager.Stub
                 if (pkgSetting == null) {
                     return PackageManager.INSTALL_FAILED_INVALID_URI;
                 }
-                if (instantApp && (pkgSetting.isSystem() || isUpdatedSystemApp(pkgSetting))) {
+                if (instantApp && (pkgSetting.isSystem() || isUpdatedSystemApp(pkgSetting)
+                        || isPackageDeviceAdmin || isProtectedPackage)) {
                     return PackageManager.INSTALL_FAILED_INVALID_URI;
                 }
                 if (!canViewInstantApps(callingUid, UserHandle.getUserId(callingUid))) {

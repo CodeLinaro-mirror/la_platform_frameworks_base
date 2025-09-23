@@ -12,6 +12,11 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Changes from Qualcomm Technologies, Inc. are provided under the following license:
+ *
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear.
  */
 
 package android.bluetooth;
@@ -844,12 +849,31 @@ public final class BluetoothHeadsetClient implements BluetoothProfile {
     @RequiresBluetoothConnectPermission
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     public boolean acceptCall(BluetoothDevice device, int flag) {
+        return acceptCall(device, flag, null);
+    }
+
+    /**
+     * Accepts a call
+     *
+     * @param device remote device
+     * @param flag action policy while accepting a call. Possible values {@link #CALL_ACCEPT_NONE},
+     * @param call Handle of call obtained in {@link #dial(BluetoothDevice, String)} or obtained via
+     * {@link #ACTION_CALL_CHANGED}. {@code call} may be null in which case we will hangup all active
+     * calls.
+     * {@link #CALL_ACCEPT_HOLD}, {@link #CALL_ACCEPT_TERMINATE}
+     * @return <code>true</code> if command has been issued successfully; <code>false</code>
+     * otherwise; upon completion HFP sends {@link #ACTION_CALL_CHANGED} intent.
+     */
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @RequiresBluetoothConnectPermission
+    @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
+    public boolean acceptCall(BluetoothDevice device, int flag, BluetoothHeadsetClientCall call) {
         if (DBG) log("acceptCall()");
         final IBluetoothHeadsetClient service =
                 getService();
         if (service != null && isEnabled() && isValidDevice(device)) {
             try {
-                return service.acceptCall(device, flag, mAttributionSource);
+                return service.acceptCall(device, flag, call, mAttributionSource);
             } catch (RemoteException e) {
                 Log.e(TAG, Log.getStackTraceString(new Throwable()));
             }
@@ -868,12 +892,28 @@ public final class BluetoothHeadsetClient implements BluetoothProfile {
     @RequiresBluetoothConnectPermission
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     public boolean holdCall(BluetoothDevice device) {
+        return holdCall(device, null);
+    }
+
+    /**
+     * Holds a call.
+     *
+     * @param device remote device
+     * @param call Handle of call obtained in {@link #dial(BluetoothDevice, String)} or obtained via
+     * {@link #ACTION_CALL_CHANGED}. {@code call} may be null in which case we will hangup all active
+     * calls.
+     * @return <code>true</code> if command has been issued successfully; <code>false</code>
+     * otherwise; upon completion HFP sends {@link #ACTION_CALL_CHANGED} intent.
+     */
+    @RequiresBluetoothConnectPermission
+    @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
+    public boolean holdCall(BluetoothDevice device, BluetoothHeadsetClientCall call) {
         if (DBG) log("holdCall()");
         final IBluetoothHeadsetClient service =
                 getService();
         if (service != null && isEnabled() && isValidDevice(device)) {
             try {
-                return service.holdCall(device, mAttributionSource);
+                return service.holdCall(device, call, mAttributionSource);
             } catch (RemoteException e) {
                 Log.e(TAG, Log.getStackTraceString(new Throwable()));
             }

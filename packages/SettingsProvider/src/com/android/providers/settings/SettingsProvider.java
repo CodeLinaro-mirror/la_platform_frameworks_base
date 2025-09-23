@@ -1906,6 +1906,9 @@ public class SettingsProvider extends ContentProvider {
             cacheName = Settings.System.ALARM_ALERT_CACHE;
         }
         if (cacheName != null) {
+            if (!isValidMediaUri(name, value)) {
+                return false;
+            }
             final File cacheFile = new File(
                     getRingtoneCacheDir(owningUserId), cacheName);
             cacheFile.delete();
@@ -1936,6 +1939,37 @@ public class SettingsProvider extends ContentProvider {
 
             return false;
         }
+    }
+
+    private boolean isValidMediaUri(String name, String uri) {
+        if (uri != null) {
+            Uri audioUri = Uri.parse(uri);
+            if (Settings.AUTHORITY.equals(
+                    ContentProvider.getAuthorityWithoutUserId(audioUri.getAuthority()))) {
+                // Don't accept setting the default uri to self-referential URIs like
+                // Settings.System.DEFAULT_RINGTONE_URI, which is an alias to the value of this
+                // setting.
+                return false;
+            }
+            final String mimeType = getContext().getContentResolver().getType(audioUri);
+            if (mimeType == null) {
+                Slog.e(LOG_TAG,
+                        "mutateSystemSetting for setting: " + name + " URI: " + audioUri
+                        + " ignored: failure to find mimeType (no access from this context?)");
+                return false;
+            }
+            if (!(mimeType.startsWith("audio/") || mimeType.equals("application/ogg")
+                    || mimeType.equals("application/x-flac")
+                    // also check for video ringtones
+                    || mimeType.startsWith("video/") || mimeType.equals("application/mp4"))) {
+                Slog.e(LOG_TAG,
+                        "mutateSystemSetting for setting: " + name + " URI: " + audioUri
+                        + " ignored: associated MIME type: " + mimeType
+                        + " is not a recognized audio or video type");
+                return false;
+            }
+        }
+        return true;
     }
 
     private boolean hasWriteSecureSettingsPermission() {
