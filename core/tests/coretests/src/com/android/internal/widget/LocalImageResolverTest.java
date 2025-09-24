@@ -270,4 +270,12 @@ public class LocalImageResolverTest {
         assertThat(bd.getBitmap().getHeight()).isEqualTo(originalHeight);
 
     }
+
+    @Test(expected = IOException.class)
+    public void resolveImage_veryLargeResource_throwsException() throws IOException {
+        // Passing in an unreasonably large image should throw an exception.
+        Uri uri = Uri.parse("android.resource://"
+                + mContext.getPackageName() + "/" + R.drawable.test16000x16000);
+        LocalImageResolver.resolveImage(uri, mContext);
+    }
 }
