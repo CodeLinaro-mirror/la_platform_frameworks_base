@@ -51,6 +51,7 @@ import android.util.Slog;
 import com.android.internal.annotations.GuardedBy;
 
 import dalvik.annotation.optimization.NeverCompile;
+import com.android.qcomfeatureconfig.QcomLowRamConfig;
 
 import java.io.PrintWriter;
 import java.util.Arrays;
@@ -156,7 +157,12 @@ final class ActivityManagerConstants extends ContentObserver {
     static final String KEY_TIERED_CACHED_ADJ_DECAY_TIME = "tiered_cached_adj_decay_time";
     static final String KEY_USE_MODERN_TRIM = "use_modern_trim";
 
-    private static int DEFAULT_MAX_CACHED_PROCESSES = 1024;
+    private static int DEFAULT_MAX_CACHED_PROCESSES;
+
+    static {
+        DEFAULT_MAX_CACHED_PROCESSES = QcomLowRamConfig.TARGET_QCOM_IOT_LOW_RAM ? 10 : 1024;
+    }
+
     private static final boolean DEFAULT_PRIORITIZE_ALARM_BROADCASTS = true;
     private static final long DEFAULT_FGSERVICE_MIN_SHOWN_TIME = 2*1000;
     private static final long DEFAULT_FGSERVICE_MIN_REPORT_TIME = 3*1000;
@@ -836,6 +842,7 @@ final class ActivityManagerConstants extends ContentObserver {
 
     public static BoostFramework mPerf = new BoostFramework();
 
+    static int COMPACTION_DELAY_MS = 300 * 1000;
     static boolean USE_TRIM_SETTINGS = true;
     static int EMPTY_APP_PERCENT = 50;
     static int TRIM_EMPTY_PERCENT = 100;
@@ -1338,6 +1345,7 @@ final class ActivityManagerConstants extends ContentObserver {
             DEFAULT_MAX_CACHED_PROCESSES = MAX_CACHED_PROCESSES = CUR_MAX_CACHED_PROCESSES = Integer.valueOf(
                                                  mPerf.perfGetProp("ro.vendor.qti.sys.fw.bg_apps_limit", "32"));
 
+            COMPACTION_DELAY_MS = Integer.valueOf(mPerf.perfGetProp("ro.vendor.qti.sys.fw.compaction_delay_sec", "300")) * 1000;
             //Trim Settings
             USE_TRIM_SETTINGS = Boolean.parseBoolean(mPerf.perfGetProp("ro.vendor.qti.sys.fw.use_trim_settings", "true"));
             EMPTY_APP_PERCENT = Integer.valueOf(mPerf.perfGetProp("ro.vendor.qti.sys.fw.empty_app_percent", "50"));
