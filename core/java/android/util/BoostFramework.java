@@ -33,6 +33,7 @@
 package android.util;
 
 import android.content.Context;
+import android.content.res.Resources;
 import android.graphics.BLASTBufferQueue;
 import android.os.SystemProperties;
 import android.util.Log;
@@ -82,6 +83,9 @@ public class BoostFramework {
     private static boolean sUxIsLoaded = false;
     private static Class<?> sUxPerfClass = null;
     private static Method sUxIOPStart = null;
+    private static boolean mIsCpuBoostEnabled = Resources.getSystem()
+                .getBoolean(com.android.internal.R.bool.config_enableCpuBoostForScroller);
+
 
     /** @hide */
     private Object mPerf = null;
@@ -241,7 +245,7 @@ public class BoostFramework {
 
     private void initFunctions () {
         synchronized(BoostFramework.class) {
-            if (sIsLoaded == false) {
+            if (sIsLoaded == false && mIsCpuBoostEnabled == true) {
                 try {
                     sPerfClass = Class.forName(PERFORMANCE_CLASS);
 
@@ -444,14 +448,18 @@ public class BoostFramework {
     public int perfIOPrefetchStart(int pid, String pkgName, String codePath) {
         int ret = -1;
         try {
-            Object retVal = sIOPStart.invoke(mPerf, pid, pkgName, codePath);
-            ret = (int) retVal;
+            if (sIOPStart != null) {
+                Object retVal = sIOPStart.invoke(mPerf, pid, pkgName, codePath);
+                ret = (int) retVal;
+            }
         } catch (Exception e) {
             Log.e(TAG, "Exception " + e);
         }
         try {
-             Object retVal = sUxIOPStart.invoke(mUxPerf, pid, pkgName, codePath);
-             ret = (int) retVal;
+             if (sUxIOPStart != null) {
+                 Object retVal = sUxIOPStart.invoke(mUxPerf, pid, pkgName, codePath);
+                 ret = (int) retVal;
+             }
          } catch (Exception e) {
              Log.e(TAG, "Ux Perf Exception " + e);
          }
@@ -463,8 +471,10 @@ public class BoostFramework {
     public int perfIOPrefetchStop() {
         int ret = -1;
         try {
-            Object retVal = sIOPStop.invoke(mPerf);
-            ret = (int) retVal;
+            if (sIOPStop != null) {
+                Object retVal = sIOPStop.invoke(mPerf);
+                ret = (int) retVal;
+            }
         } catch (Exception e) {
             Log.e(TAG, "Exception " + e);
         }
