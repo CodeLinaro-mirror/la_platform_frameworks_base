@@ -26,6 +26,7 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.RemoteException;
 import android.os.ServiceManager;
+import android.os.UserHandle;
 
 import com.android.internal.telephony.IMms;
 
@@ -68,9 +69,9 @@ public class MmsManager {
             if (iMms == null) {
                 return;
             }
-
-            iMms.sendMessage(subId, ActivityThread.currentPackageName(), contentUri,
-                    locationUrl, configOverrides, sentIntent, messageId);
+            iMms.sendMessage(subId, /* placeholder callingUser= */ UserHandle.USER_NULL,
+                    ActivityThread.currentPackageName(), contentUri, locationUrl,
+                    configOverrides, sentIntent, messageId, mContext.getAttributionTag());
         } catch (RemoteException e) {
             // Ignore it
         }
@@ -100,9 +101,9 @@ public class MmsManager {
             if (iMms == null) {
                 return;
             }
-            iMms.downloadMessage(subId, ActivityThread.currentPackageName(),
-                    locationUrl, contentUri, configOverrides, downloadedIntent,
-                    messageId);
+            iMms.downloadMessage(subId, /* placeholder callingUser= */ UserHandle.USER_NULL,
+                    ActivityThread.currentPackageName(), locationUrl, contentUri,
+                    configOverrides, downloadedIntent, messageId, mContext.getAttributionTag());
         } catch (RemoteException e) {
             // Ignore it
         }
