@@ -18,6 +18,7 @@ import android.content.ContentProvider;
 import android.content.Context;
 import android.net.Uri;
 import android.os.Environment;
+import android.os.FileUtils;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
@@ -49,6 +50,7 @@ public class SlicePermissionManager implements DirtyTracker {
 
     private static final String TAG = "SlicePermissionManager";
 
+    private static final int MAX_FILE_NAME_SIZE = 223;
     /**
      * The amount of time we'll cache a SliceProviderPermissions or SliceClientPermissions
      * in case they are used again.
@@ -410,6 +412,7 @@ public class SlicePermissionManager implements DirtyTracker {
         public PkgUser(String pkg, int userId) {
             mPkg = pkg;
             mUserId = userId;
+            enforceValidPackage();
         }
 
         public PkgUser(String pkgUserStr) throws IllegalArgumentException {
@@ -419,6 +422,43 @@ public class SlicePermissionManager implements DirtyTracker {
                 mUserId = Integer.parseInt(vals[1]);
             } catch (Exception e) {
                 throw new IllegalArgumentException(e);
+            }
+            enforceValidPackage();
+        }
+
+        private void enforceValidPackage() {
+            final int N = mPkg.length();
+            boolean requireSeparator = false;
+            boolean requireFileName = true;
+            boolean hasSep = false;
+            boolean front = true;
+            for (int i = 0; i < N; i++) {
+                final char c = mPkg.charAt(i);
+                if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+                    front = false;
+                    continue;
+                }
+                if (!front) {
+                    if ((c >= '0' && c <= '9') || c == '_') {
+                        continue;
+                    }
+                }
+                if (c == '.') {
+                    hasSep = true;
+                    front = true;
+                    continue;
+                }
+                throw new IllegalArgumentException("bad character '" + c + "'");
+            }
+            if (requireFileName) {
+                if (!FileUtils.isValidExtFilename(mPkg)) {
+                    throw new IllegalArgumentException("Invalid filename");
+                } else if (N > MAX_FILE_NAME_SIZE) {
+                    throw new IllegalArgumentException("the length of the name is greater than " + MAX_FILE_NAME_SIZE);
+                }
+            }
+            if (!(hasSep || !requireSeparator)) {
+                throw new IllegalArgumentException("must have at least one '.' separator");
             }
         }
 
