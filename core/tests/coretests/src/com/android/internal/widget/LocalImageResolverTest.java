@@ -326,4 +326,12 @@ public class LocalImageResolverTest {
         Icon icon = Icon.createWithResource("invalid.package", R.drawable.test32x24);
         assertThat(LocalImageResolver.resolveResourcesForIcon(mContext, icon)).isNull();
     }
+
+    @Test(expected = IOException.class)
+    public void resolveImage_veryLargeResource_throwsException() throws IOException {
+        // Passing in an unreasonably large image should throw an exception.
+        Uri uri = Uri.parse("android.resource://"
+                + mContext.getPackageName() + "/" + R.drawable.test16000x16000);
+        LocalImageResolver.resolveImage(uri, mContext);
+    }
 }
