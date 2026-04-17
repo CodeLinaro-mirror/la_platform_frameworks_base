@@ -2926,23 +2926,26 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
             // tells us it's safe to do so with startKeyguardExitAnimation.
             // Posting to mUiOffloadThread to ensure that calls to ActivityTaskManager will be
             // in order.
-            final int keyguardFlag = flags;
-            mUiBgExecutor.execute(() -> {
-                int currentUserId = KeyguardUpdateMonitor.getCurrentUser();
-                if (mGoingAwayRequestedForUserId != currentUserId) {
-                    Log.e(TAG, "Not executing goingAwayRunnable() due to userId mismatch. "
-                            + "Requested: " + mGoingAwayRequestedForUserId + ", current: "
-                            + currentUserId);
-                    mUpdateMonitor.setKeyguardGoingAway(false);
-                    mKeyguardViewControllerLazy.get().setKeyguardGoingAwayState(false);
-                    return;
-                }
-                try {
-                    ActivityTaskManager.getService().keyguardGoingAway(keyguardFlag);
-                } catch (RemoteException e) {
-                    Log.e(TAG, "Error while calling WindowManager", e);
-                }
-            });
+            if (!mFeatureFlags.isEnabled(Flags.KEYGUARD_WM_STATE_REFACTOR)) {
+                final int keyguardFlag = flags;
+                mUiBgExecutor.execute(() -> {
+                   int currentUserId = KeyguardUpdateMonitor.getCurrentUser();
+                   if (mGoingAwayRequestedForUserId != -1
+                             && mGoingAwayRequestedForUserId != currentUserId) {
+                       Log.e(TAG, "Not executing goingAwayRunnable() due to userId mismatch. "
+                                  + "Requested: " + mGoingAwayRequestedForUserId + ", current: "
+                                  + currentUserId);
+                       mUpdateMonitor.setKeyguardGoingAway(false);
+                       mKeyguardViewControllerLazy.get().setKeyguardGoingAwayState(false);
+                       return;
+                   }
+                   try {
+                       ActivityTaskManager.getService().keyguardGoingAway(keyguardFlag);
+                   } catch (RemoteException e) {
+                       Log.e(TAG, "Error while calling WindowManager", e);
+                   }
+                });
+            }
 
             Trace.endSection();
         }
@@ -3054,7 +3057,8 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
         Log.d(TAG, "handleStartKeyguardExitAnimation startTime=" + startTime
                 + " fadeoutDuration=" + fadeoutDuration);
         int currentUserId = KeyguardUpdateMonitor.getCurrentUser();
-        if (mGoingAwayRequestedForUserId != currentUserId) {
+        if (mGoingAwayRequestedForUserId != -1
+                  && mGoingAwayRequestedForUserId != currentUserId) {
             Log.e(TAG, "Not executing handleStartKeyguardExitAnimationInner() due to userId "
                     + "mismatch. Requested: " + mGoingAwayRequestedForUserId + ", current: "
                     + currentUserId);
@@ -3304,7 +3308,8 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
      * app transition before finishing the current RemoteAnimation, or the keyguard being re-shown).
      */
     private void handleCancelKeyguardExitAnimation() {
-        if (mGoingAwayRequestedForUserId != KeyguardUpdateMonitor.getCurrentUser()) {
+        if (mGoingAwayRequestedForUserId != -1
+                  && mGoingAwayRequestedForUserId != KeyguardUpdateMonitor.getCurrentUser()) {
             Log.e(TAG, "Setting pendingLock = true due to userId mismatch. Requested: "
                     + mGoingAwayRequestedForUserId + ", current: "
                     + KeyguardUpdateMonitor.getCurrentUser());
@@ -3434,7 +3439,10 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
             mGoingAwayRequestedForUserId = KeyguardUpdateMonitor.getCurrentUser();
             Log.d(TAG, "keyguardGoingAway requested for userId: "
                     + mGoingAwayRequestedForUserId);
-            ActivityTaskManager.getService().keyguardGoingAway(flags);
+            if (!mFeatureFlags.isEnabled(Flags.KEYGUARD_WM_STATE_REFACTOR)) {
+                // Handled in WmLockscreenVisibilityManager.
+                ActivityTaskManager.getService().keyguardGoingAway(flags);
+            }
             mKeyguardStateController.notifyKeyguardGoingAway(true);
         } catch (RemoteException e) {
             mSurfaceBehindRemoteAnimationRequested = false;
