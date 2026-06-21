@@ -22,7 +22,7 @@ import static com.android.server.wm.ActivityTaskManagerDebugConfig.TAG_ATM;
 import static com.android.server.wm.ActivityTaskManagerDebugConfig.TAG_WITH_CLASS_NAME;
 import static com.android.server.wm.ActivityTaskManagerService.ACTIVITY_BG_START_GRACE_PERIOD_MS;
 import static com.android.server.wm.ActivityTaskManagerService.APP_SWITCH_ALLOW;
-import static com.android.server.wm.ActivityTaskManagerService.APP_SWITCH_FG_ONLY;
+import static com.android.server.wm.ActivityTaskManagerService.APP_SWITCH_DISALLOW;
 import static com.android.server.wm.BackgroundActivityStartController.BAL_ALLOW_FOREGROUND;
 import static com.android.server.wm.BackgroundActivityStartController.BAL_ALLOW_GRACE_PERIOD;
 import static com.android.server.wm.BackgroundActivityStartController.BAL_ALLOW_PERMISSION;
@@ -74,6 +74,9 @@ class BackgroundLaunchProcessController {
     /** It is {@link ActivityTaskManagerService#hasActiveVisibleWindow(int)}. */
     private final IntPredicate mUidHasActiveVisibleWindowPredicate;
 
+    /** It is {@link ActivityTaskManagerService#hasActiveVisibleNotPinnedWindow(int)}. */
+    private final IntPredicate mUidHasActiveVisibleNotPinnedWindowPredicate;
+
     private final @Nullable BackgroundActivityStartCallback mBackgroundActivityStartCallback;
 
     /**
@@ -91,15 +94,18 @@ class BackgroundLaunchProcessController {
     private @Nullable IntArray mBalOptInBoundClientUids;
 
     BackgroundLaunchProcessController(@NonNull IntPredicate uidHasActiveVisibleWindowPredicate,
+            @NonNull IntPredicate uidHasActiveVisibleNotPinnedWindowPredicate,
             @Nullable BackgroundActivityStartCallback callback) {
         mUidHasActiveVisibleWindowPredicate = uidHasActiveVisibleWindowPredicate;
+        mUidHasActiveVisibleNotPinnedWindowPredicate = uidHasActiveVisibleNotPinnedWindowPredicate;
         mBackgroundActivityStartCallback = callback;
     }
 
     @BackgroundActivityStartController.BalCode
     int areBackgroundActivityStartsAllowed(int pid, int uid, String packageName,
             int appSwitchState, boolean isCheckingForFgsStart,
-            boolean hasActivityInVisibleTask, boolean hasBackgroundActivityStartPrivileges,
+            boolean hasActivityInVisibleTask, boolean inPinnedWindow,
+            boolean hasBackgroundActivityStartPrivileges,
             long lastStopAppSwitchesTime, long lastActivityLaunchTime,
             long lastActivityFinishTime) {
         // Allow if the proc is instrumenting with background activity starts privs.
@@ -116,14 +122,19 @@ class BackgroundLaunchProcessController {
                     pid, "Activity start allowed: process allowed by token");
         }
         // Allow if the caller is bound by a UID that's currently foreground.
-        if (isBoundByForegroundUid()) {
+        // But still respect the appSwitchState.
+        if (appSwitchState != APP_SWITCH_DISALLOW
+                && isBoundByForegroundUid(isCheckingForFgsStart
+                ? mUidHasActiveVisibleWindowPredicate
+                : mUidHasActiveVisibleNotPinnedWindowPredicate)) {
             return BackgroundActivityStartController.logStartAllowedAndReturnCode(
                     BAL_ALLOW_VISIBLE_WINDOW, /*background*/ false, uid, uid, /*intent*/ null,
                     pid, "Activity start allowed: process bound by foreground uid");
         }
-        // Allow if the caller has an activity in any foreground task.
-        if (hasActivityInVisibleTask
-                && (appSwitchState == APP_SWITCH_ALLOW || appSwitchState == APP_SWITCH_FG_ONLY)) {
+        // Allow if the caller has an activity in any foreground task, unless it's a pinned window
+        // and not a foreground service start.
+        if ((isCheckingForFgsStart || !inPinnedWindow)
+                && hasActivityInVisibleTask && appSwitchState != APP_SWITCH_DISALLOW) {
             return BackgroundActivityStartController.logStartAllowedAndReturnCode(
                     BAL_ALLOW_FOREGROUND, /*background*/ false, uid, uid, /*intent*/ null,
                     pid, "Activity start allowed: process has activity in foreground task");
@@ -213,11 +224,11 @@ class BackgroundLaunchProcessController {
         return originatingTokens;
     }
 
-    private boolean isBoundByForegroundUid() {
+    private boolean isBoundByForegroundUid(IntPredicate uidVisibilityPredicate) {
         synchronized (this) {
             if (mBalOptInBoundClientUids != null) {
                 for (int i = mBalOptInBoundClientUids.size() - 1; i >= 0; i--) {
-                    if (mUidHasActiveVisibleWindowPredicate.test(mBalOptInBoundClientUids.get(i))) {
+                    if (uidVisibilityPredicate.test(mBalOptInBoundClientUids.get(i))) {
                         return true;
                     }
                 }
