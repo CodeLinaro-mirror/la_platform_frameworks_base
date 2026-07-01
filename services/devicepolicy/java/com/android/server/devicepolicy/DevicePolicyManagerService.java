@@ -317,6 +317,7 @@ import android.app.admin.ParcelableGranteeMap;
 import android.app.admin.ParcelableResource;
 import android.app.admin.PasswordMetrics;
 import android.app.admin.PasswordPolicy;
+import android.app.admin.PolicySizeVerifier;
 import android.app.admin.PolicyKey;
 import android.app.admin.PolicyValue;
 import android.app.admin.PreferentialNetworkServiceConfig;
@@ -8405,7 +8406,10 @@ public class DevicePolicyManagerService extends IDevicePolicyManager.Stub {
                 admin.globalProxySpec = null;
                 admin.globalProxyExclusionList = null;
             } else {
-
+                PolicySizeVerifier.enforceMaxStringLength(proxySpec, "proxySpec");
+                if (exclusionList != null) {
+                    PolicySizeVerifier.enforceMaxStringLength(exclusionList, "exclusionList");
+                }
                 admin.specifiesGlobalProxy = true;
                 admin.globalProxySpec = proxySpec;
                 admin.globalProxyExclusionList = exclusionList;
@@ -14574,6 +14578,9 @@ public class DevicePolicyManagerService extends IDevicePolicyManager.Stub {
         if (!mHasFeature) {
             return;
         }
+        if (policy != null) {
+            enforcePackagePolicyPackageNamesLength(policy);
+        }
         final CallerIdentity caller = getCallerIdentity();
         Preconditions.checkCallAuthorization((isProfileOwner(caller)
                 && isManagedProfile(caller.getUserId())));
@@ -14623,6 +14630,9 @@ public class DevicePolicyManagerService extends IDevicePolicyManager.Stub {
     public void setManagedProfileContactsAccessPolicy(PackagePolicy policy) {
         if (!mHasFeature) {
             return;
+        }
+        if (policy != null) {
+            enforcePackagePolicyPackageNamesLength(policy);
         }
         final CallerIdentity caller = getCallerIdentity();
         Preconditions.checkCallAuthorization((isProfileOwner(caller)
@@ -16795,6 +16805,9 @@ public class DevicePolicyManagerService extends IDevicePolicyManager.Stub {
         if (!mHasFeature) {
             return;
         }
+        if (policy != null) {
+            enforcePackagePolicyPackageNamesLength(policy);
+        }
         final CallerIdentity caller = getCallerIdentity();
         Preconditions.checkCallAuthorization(canWriteCredentialManagerPolicy(caller));
 
@@ -16813,6 +16826,16 @@ public class DevicePolicyManagerService extends IDevicePolicyManager.Stub {
         return (isProfileOwner(caller) && isManagedProfile(caller.getUserId()))
                         || isDefaultDeviceOwner(caller)
                         || hasCallingOrSelfPermission(MANAGE_PROFILE_AND_DEVICE_OWNERS);
+    }
+
+    private void enforcePackagePolicyPackageNamesLength(@NonNull PackagePolicy policy) {
+        for (String pkg : policy.getPackageNames()) {
+            if (pkg == null) {
+                continue;
+            }
+            Preconditions.checkArgument(
+                    pkg.length() <= MAX_PACKAGE_NAME_LENGTH, "Package name too long");
+        }
     }
 
     @Override
