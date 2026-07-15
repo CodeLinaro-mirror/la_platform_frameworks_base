@@ -3035,6 +3035,9 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
                 mKeyguardGoingAwayRunnable.run();
             } else {
                 // TODO(bc-unlock): Fill parameters
+                mGoingAwayRequestedForUserId = KeyguardUpdateMonitor.getCurrentUser();
+                Log.d(TAG, "keyguardGoingAway requested for userId: "
+                        + mGoingAwayRequestedForUserId);
                 mNotificationShadeWindowControllerLazy.get().batchApplyWindowLayoutParams(() -> {
                     handleStartKeyguardExitAnimation(
                             mSystemClock.uptimeMillis() + mHideAnimation.getStartOffset(),
